@@ -271,6 +271,7 @@ class DocumentProcessor:
             # =================================================================
             # GraphRAG: Extract entities and relationships from chunks
             # Uses R2R-style extraction with document summary for context
+            # Processes multiple chunks concurrently based on concurrent_extractions setting
             # =================================================================
             if self.graph_extractor.is_available and self.settings.enable_graph_extraction:
                 self.neo4j.update_document_status(
@@ -290,36 +291,60 @@ class DocumentProcessor:
                 
                 self.neo4j.update_document_progress(doc_id, 40, 100, "Extracting entities and relationships...")
                 
-                for idx, chunk in enumerate(embedded_chunks):
-                    chunk_id = chunk_ids[idx]
-                    
-                    # Update progress for extraction (40-95%)
-                    extraction_progress = 40 + int((idx + 1) / len(embedded_chunks) * 55)
-                    self.neo4j.update_document_progress(
-                        doc_id, extraction_progress, 100,
-                        f"Extracting from chunk {idx + 1}/{len(embedded_chunks)} ({total_entities} entities found)"
-                    )
-                    
-                    try:
-                        # Extract entities and relationships with document context (R2R-style)
-                        extraction = await self.graph_extractor.extract_from_text_async(
-                            chunk.content, 
-                            document_summary=document_summary
-                        )
-                        
-                        if extraction.entities or extraction.relationships:
-                            # Store in Neo4j
-                            counts = self.neo4j.store_graph_extraction(chunk_id, extraction)
-                            total_entities += counts["entities"]
-                            total_relationships += counts["relationships"]
-                            
-                            logger.debug(
-                                f"Chunk {idx}: extracted {counts['entities']} entities, "
-                                f"{counts['relationships']} relationships"
+                # Use semaphore for concurrent extraction (controlled by config)
+                concurrent_limit = self.settings.concurrent_extractions
+                semaphore = asyncio.Semaphore(concurrent_limit)
+                extraction_results = {}  # Store results by index
+                completed_count = 0
+                
+                async def extract_chunk(idx: int, chunk, chunk_id: str):
+                    """Extract from a single chunk with semaphore control."""
+                    nonlocal completed_count
+                    async with semaphore:
+                        try:
+                            extraction = await self.graph_extractor.extract_from_text_async(
+                                chunk.content, 
+                                document_summary=document_summary
                             )
-                    except Exception as e:
-                        logger.warning(f"Graph extraction failed for chunk {chunk_id}: {e}")
-                        # Continue processing other chunks
+                            extraction_results[idx] = (chunk_id, extraction)
+                        except Exception as e:
+                            logger.warning(f"Graph extraction failed for chunk {chunk_id}: {e}")
+                            extraction_results[idx] = (chunk_id, None)
+                        
+                        # Update progress
+                        completed_count += 1
+                        extraction_progress = 40 + int(completed_count / len(embedded_chunks) * 55)
+                        self.neo4j.update_document_progress(
+                            doc_id, extraction_progress, 100,
+                            f"Extracted {completed_count}/{len(embedded_chunks)} chunks ({total_entities} entities found)"
+                        )
+                
+                # Create extraction tasks for all chunks
+                extraction_tasks = [
+                    extract_chunk(idx, chunk, chunk_ids[idx])
+                    for idx, chunk in enumerate(embedded_chunks)
+                ]
+                
+                logger.info(
+                    f"Document {doc_id}: processing {len(extraction_tasks)} chunks "
+                    f"with concurrency limit of {concurrent_limit}"
+                )
+                
+                # Run all extractions concurrently (limited by semaphore)
+                await asyncio.gather(*extraction_tasks)
+                
+                # Store results in order
+                for idx in sorted(extraction_results.keys()):
+                    chunk_id, extraction = extraction_results[idx]
+                    if extraction and (extraction.entities or extraction.relationships):
+                        counts = self.neo4j.store_graph_extraction(chunk_id, extraction)
+                        total_entities += counts["entities"]
+                        total_relationships += counts["relationships"]
+                        
+                        logger.debug(
+                            f"Chunk {idx}: extracted {counts['entities']} entities, "
+                            f"{counts['relationships']} relationships"
+                        )
                 
                 logger.info(
                     f"Document {doc_id}: graph extraction complete - "

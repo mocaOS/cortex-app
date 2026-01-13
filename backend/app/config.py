@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     enable_graph_extraction: bool = True  # Enable LLM-based entity/relationship extraction
     graph_extraction_model: str = ""  # Model for extraction (defaults to openai_model if empty)
     max_graph_hops: int = 2  # Maximum hops for graph traversal in queries
+    concurrent_extractions: int = 20  # Number of chunks to process concurrently for graph extraction
     
     # Enhanced RAG Configuration
     enable_reranking: bool = True  # Enable cross-encoder reranking
