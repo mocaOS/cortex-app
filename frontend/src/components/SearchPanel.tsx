@@ -1,0 +1,184 @@
+"use client";
+
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Search, FileText, Loader2, Sparkles } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface SearchResult {
+  document_id: string;
+  chunk_id: string;
+  content: string;
+  score: number;
+  metadata: {
+    filename: string;
+    chunk_index: number;
+  };
+}
+
+export default function SearchPanel() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+
+    setIsSearching(true);
+    setHasSearched(true);
+
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, top_k: 10 }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setResults(data.results);
+      }
+    } catch (error) {
+      console.error("Search failed:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Search Input */}
+      <form onSubmit={handleSearch}>
+        <div className="relative group">
+          <div className="absolute inset-0 bg-gradient-to-r from-ocean-500/20 via-cyan-500/20 to-teal-500/20 rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
+
+          <div className="relative glass rounded-2xl p-2 flex items-center gap-3">
+            <div className="pl-4">
+              <Search className="w-5 h-5 text-white/40" />
+            </div>
+
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search the knowledge base..."
+              className="flex-1 bg-transparent border-none outline-none text-white/90 placeholder:text-white/30 py-3"
+            />
+
+            <button
+              type="submit"
+              disabled={isSearching || !query.trim()}
+              className={cn(
+                "px-6 py-3 rounded-xl font-medium transition-all duration-300",
+                "bg-gradient-to-r from-ocean-500 to-cyan-500",
+                "hover:from-ocean-400 hover:to-cyan-400",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                "flex items-center gap-2"
+              )}
+            >
+              {isSearching ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>Search</span>
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {/* Results */}
+      <AnimatePresence mode="wait">
+        {hasSearched && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-4"
+          >
+            {isSearching ? (
+              <div className="glass rounded-xl p-12 text-center">
+                <Loader2 className="w-8 h-8 text-ocean-400 animate-spin mx-auto mb-4" />
+                <p className="text-white/50">Searching...</p>
+              </div>
+            ) : results.length > 0 ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-white/50">
+                    Found {results.length} results
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {results.map((result, index) => (
+                    <motion.div
+                      key={result.chunk_id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className="glass glass-hover rounded-xl p-5 group"
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-ocean-500/20 flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5 text-ocean-400" />
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="text-sm font-medium text-white/80">
+                              {result.metadata.filename}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-ocean-500/20 text-ocean-400">
+                              {(result.score * 100).toFixed(1)}% match
+                            </span>
+                            <span className="text-xs text-white/30">
+                              Chunk #{result.metadata.chunk_index + 1}
+                            </span>
+                          </div>
+
+                          <p className="text-sm text-white/60 leading-relaxed line-clamp-3">
+                            {result.content}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="glass rounded-xl p-12 text-center">
+                <Search className="w-12 h-12 text-white/20 mx-auto mb-4" />
+                <p className="text-white/50">No results found</p>
+                <p className="text-sm text-white/30 mt-2">
+                  Try different keywords or upload more documents
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Empty State */}
+      {!hasSearched && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="glass rounded-xl p-12 text-center"
+        >
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-ocean-500/20 to-cyan-500/20 flex items-center justify-center mb-6">
+            <Search className="w-8 h-8 text-ocean-400/60" />
+          </div>
+          <h3 className="text-lg font-medium text-white/70 mb-2">
+            Semantic Search
+          </h3>
+          <p className="text-white/40 max-w-md mx-auto">
+            Search through your knowledge base using natural language. Our AI
+            understands meaning, not just keywords.
+          </p>
+        </motion.div>
+      )}
+    </div>
+  );
+}
