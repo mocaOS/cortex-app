@@ -300,6 +300,69 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    def delete_document_chunks(self, doc_id: str) -> dict:
+        """
+        Delete only the chunks and orphaned entities of a document, keeping the document node.
+        
+        Used for reprocessing documents without losing the document metadata.
+        
+        Returns:
+            Dict with 'chunks_deleted' (int), 'orphaned_entities_removed' (int)
+        """
+        with self.driver.session() as session:
+            # Step 1: Find entities that will become orphaned after deletion
+            orphaned_result = session.run("""
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                WITH e, collect(DISTINCT c) as doc_chunks
+                
+                // Check if entity is mentioned by chunks from OTHER documents
+                OPTIONAL MATCH (other_chunk:Chunk)-[:MENTIONS]->(e)
+                WHERE NOT other_chunk IN doc_chunks
+                
+                WITH e, doc_chunks, collect(other_chunk) as other_chunks
+                WHERE size(other_chunks) = 0
+                
+                RETURN collect(e.name) as orphaned_entities
+            """, id=doc_id)
+            
+            orphaned_record = orphaned_result.single()
+            orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
+            
+            # Step 2: Delete orphaned entities
+            orphaned_count = 0
+            if orphaned_entities:
+                session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    DETACH DELETE e
+                """, names=orphaned_entities)
+                orphaned_count = len(orphaned_entities)
+                logger.info(f"Deleted {orphaned_count} orphaned entities for document {doc_id}")
+            
+            # Step 3: Delete only the chunks (not the document)
+            result = session.run("""
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)
+                WITH collect(c) as chunks
+                UNWIND chunks as chunk
+                DETACH DELETE chunk
+                RETURN count(*) as deleted
+            """, id=doc_id)
+            
+            chunks_deleted = result.single()["deleted"]
+            
+            # Reset document chunk count
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.chunk_count = 0
+            """, id=doc_id)
+            
+            logger.info(f"Deleted {chunks_deleted} chunks for document {doc_id}")
+            
+            return {
+                "chunks_deleted": chunks_deleted,
+                "orphaned_entities_removed": orphaned_count
+            }
+    
     def delete_document(self, doc_id: str) -> dict:
         """
         Delete a document, its chunks, and orphaned entities.
@@ -626,6 +689,137 @@ class Neo4jService:
                 "chunks": chunks[:10]  # Limit chunks
             }
     
+    def fulltext_search(
+        self,
+        query_text: str,
+        top_k: int = 10
+    ) -> List[dict]:
+        """
+        Perform full-text keyword search on chunk content.
+        """
+        with self.driver.session() as session:
+            try:
+                # Escape special characters for Lucene query
+                escaped_query = query_text.replace('"', '\\"').replace('~', '\\~')
+                
+                result = session.run("""
+                    CALL db.index.fulltext.queryNodes('chunk_content', $search_text)
+                    YIELD node as chunk, score
+                    MATCH (d:Document)-[:HAS_CHUNK]->(chunk)
+                    WHERE d.processing_status = 'completed'
+                    RETURN d.id as document_id,
+                           d.filename as filename,
+                           chunk.id as chunk_id,
+                           chunk.content as content,
+                           chunk.chunk_index as chunk_index,
+                           score
+                    ORDER BY score DESC
+                    LIMIT $top_k
+                """, search_text=escaped_query, top_k=top_k)
+                
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.warning(f"Fulltext search failed: {e}")
+                return []
+    
+    def _reciprocal_rank_fusion(
+        self,
+        result_lists: List[List[dict]],
+        weights: List[float],
+        k: int = 60
+    ) -> List[dict]:
+        """
+        Apply Reciprocal Rank Fusion to combine multiple ranked lists.
+        
+        RRF score = sum(weight_i / (k + rank_i)) for each list
+        """
+        scores = {}
+        all_results = {}
+        
+        for list_idx, (results, weight) in enumerate(zip(result_lists, weights)):
+            for rank, result in enumerate(results):
+                chunk_id = result.get("chunk_id", "")
+                if not chunk_id:
+                    continue
+                
+                # Calculate RRF score for this result in this list
+                rrf_score = weight / (k + rank + 1)
+                
+                if chunk_id not in scores:
+                    scores[chunk_id] = 0
+                    all_results[chunk_id] = result
+                
+                scores[chunk_id] += rrf_score
+        
+        # Sort by combined RRF score
+        sorted_chunks = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Build final results with combined scores
+        final_results = []
+        for chunk_id, rrf_score in sorted_chunks:
+            result = all_results[chunk_id].copy()
+            result["score"] = rrf_score
+            result["rrf_score"] = rrf_score
+            final_results.append(result)
+        
+        return final_results
+    
+    def hybrid_search_rrf(
+        self,
+        query_embedding: List[float],
+        query_text: str,
+        entity_names: List[str],
+        top_k: int = 5,
+        max_hops: int = 2,
+        vector_weight: float = 0.5,
+        keyword_weight: float = 0.3,
+        graph_weight: float = 0.2
+    ) -> dict:
+        """
+        Perform hybrid search with Reciprocal Rank Fusion (R2R-style).
+        Combines: vector similarity + full-text keyword + graph traversal
+        
+        Returns:
+            Dict with 'results' (RRF-fused) and 'graph_context'
+        """
+        # 1. Vector search
+        vector_results = self.vector_search(query_embedding, top_k * 3)
+        
+        # 2. Keyword/full-text search
+        keyword_results = self.fulltext_search(query_text, top_k * 3)
+        
+        # 3. Graph traversal for context
+        graph_context = self.traverse_from_entities(entity_names, max_hops)
+        
+        # 4. Get chunks from graph context
+        graph_chunks = graph_context.get("chunks", [])
+        # Convert graph chunks to same format as vector results
+        graph_chunk_results = []
+        for chunk in graph_chunks:
+            if chunk.get("chunk_id"):
+                graph_chunk_results.append({
+                    "document_id": chunk.get("document_id", ""),
+                    "filename": chunk.get("filename", ""),
+                    "chunk_id": chunk.get("chunk_id", ""),
+                    "content": chunk.get("content", ""),
+                    "chunk_index": 0,
+                    "score": 1.0  # Default score for graph results
+                })
+        
+        # 5. Apply RRF fusion
+        result_lists = [vector_results, keyword_results, graph_chunk_results]
+        weights = [vector_weight, keyword_weight, graph_weight]
+        
+        fused_results = self._reciprocal_rank_fusion(result_lists, weights)
+        
+        return {
+            "results": fused_results[:top_k],
+            "graph_context": graph_context,
+            "vector_count": len(vector_results),
+            "keyword_count": len(keyword_results),
+            "graph_chunk_count": len(graph_chunk_results)
+        }
+    
     def hybrid_search(
         self,
         query_embedding: List[float],
@@ -635,6 +829,7 @@ class Neo4jService:
     ) -> dict:
         """
         Perform hybrid search combining vector similarity and graph traversal.
+        (Legacy method - use hybrid_search_rrf for better results)
         
         Returns:
             Dict with 'vector_results' and 'graph_context'
@@ -649,6 +844,89 @@ class Neo4jService:
             "vector_results": vector_results,
             "graph_context": graph_context
         }
+    
+    # =========================================================================
+    # Entity Resolution with Fuzzy Matching
+    # =========================================================================
+    
+    def find_similar_entities(
+        self,
+        entity_name: str,
+        threshold: float = 0.85
+    ) -> List[dict]:
+        """
+        Find entities with similar names using Levenshtein distance.
+        """
+        with self.driver.session() as session:
+            try:
+                # Use APOC for string similarity if available
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WITH e, apoc.text.levenshteinSimilarity(toLower(e.name), toLower($name)) as similarity
+                    WHERE similarity >= $threshold
+                    RETURN e.name as name, e.type as type, e.description as description, similarity
+                    ORDER BY similarity DESC
+                    LIMIT 5
+                """, name=entity_name, threshold=threshold)
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.debug(f"APOC similarity not available, using exact match: {e}")
+                # Fallback: exact match only
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE toLower(e.name) = toLower($name)
+                    RETURN e.name as name, e.type as type, e.description as description, 1.0 as similarity
+                """, name=entity_name)
+                return [dict(record) for record in result]
+    
+    def store_entity_with_resolution(
+        self,
+        entity: Entity,
+        chunk_id: str,
+        similarity_threshold: float = 0.85
+    ) -> str:
+        """
+        Store entity with fuzzy deduplication.
+        Merges with existing similar entities if found.
+        """
+        # First, check for similar existing entities
+        similar = self.find_similar_entities(entity.name, similarity_threshold)
+        
+        if similar and similar[0]["similarity"] >= similarity_threshold:
+            # Merge into existing entity
+            canonical_name = similar[0]["name"]
+            
+            # Add alias if names are different
+            if canonical_name.lower() != entity.name.lower():
+                self._add_entity_alias(canonical_name, entity.name)
+            
+            # Link to chunk
+            with self.driver.session() as session:
+                session.run("""
+                    MATCH (e:Entity {name: $name})
+                    MATCH (c:Chunk {id: $chunk_id})
+                    MERGE (c)-[:MENTIONS]->(e)
+                """, name=canonical_name, chunk_id=chunk_id)
+            
+            return canonical_name
+        
+        # No similar entity, create new
+        return self.store_entity(entity, chunk_id)
+    
+    def _add_entity_alias(self, canonical_name: str, alias: str):
+        """Add an alias for an entity."""
+        with self.driver.session() as session:
+            try:
+                session.run("""
+                    MATCH (e:Entity {name: $canonical})
+                    SET e.aliases = CASE 
+                        WHEN e.aliases IS NULL THEN [$alias]
+                        WHEN NOT $alias IN e.aliases THEN e.aliases + $alias
+                        ELSE e.aliases
+                    END
+                """, canonical=canonical_name, alias=alias)
+            except Exception as e:
+                logger.debug(f"Failed to add entity alias: {e}")
     
     def get_stats(self) -> dict:
         """Get knowledge base and knowledge graph statistics."""

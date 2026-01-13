@@ -13,16 +13,16 @@ class Settings(BaseSettings):
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "openai/minimax-m21"
     
     # Upload Configuration
     upload_dir: str = "./uploads"
     max_file_size_mb: int = 50
     allowed_extensions: list[str] = [".pdf", ".txt", ".md", ".docx", ".xlsx"]
     
-    # Embedding Configuration (Neo4j max 2048 dimensions)
-    embedding_model: str = "text-embedding-3-large"
-    embedding_dimension: int = 2048  # text-embedding-3-large reduced to fit Neo4j limit
+    # Embedding Configuration
+    embedding_model: str = "openai/text-embedding-3-small"
+    embedding_dimension: int = 1536  # text-embedding-3-small native dimension
     use_openai_embeddings: bool = True
     
     # Chunking Configuration
@@ -33,6 +33,21 @@ class Settings(BaseSettings):
     enable_graph_extraction: bool = True  # Enable LLM-based entity/relationship extraction
     graph_extraction_model: str = ""  # Model for extraction (defaults to openai_model if empty)
     max_graph_hops: int = 2  # Maximum hops for graph traversal in queries
+    
+    # Enhanced RAG Configuration
+    enable_reranking: bool = True  # Enable cross-encoder reranking
+    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder model
+    enable_hybrid_search: bool = True  # Enable hybrid (vector + keyword) search
+    vector_weight: float = 0.5  # Weight for vector search in hybrid
+    keyword_weight: float = 0.3  # Weight for keyword search in hybrid
+    graph_weight: float = 0.2  # Weight for graph context in hybrid
+    max_conversation_history: int = 6  # Max messages to include from conversation
+    enable_agentic_rag: bool = True  # Enable multi-step agentic RAG
+    max_agentic_steps: int = 3  # Maximum steps in agentic RAG
+    
+    # Chunking Configuration (enhanced)
+    chunk_by: str = "sentence"  # "word" or "sentence" based splitting
+    sentences_per_chunk: int = 5  # Sentences per chunk when using sentence splitting
     
     @property
     def extraction_model(self) -> str:

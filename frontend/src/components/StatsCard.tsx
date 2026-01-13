@@ -8,7 +8,7 @@ interface StatsCardProps {
   label: string;
   value: number | string;
   icon: LucideIcon;
-  color: "ocean" | "cyan" | "teal" | "coral";
+  color: "ocean" | "cyan" | "teal" | "coral" | "purple" | "pink";
   isText?: boolean;
 }
 
@@ -36,6 +36,18 @@ const colorMap = {
     border: "border-coral-500/20",
     icon: "text-coral-400",
     text: "text-coral-300",
+  },
+  purple: {
+    bg: "from-purple-500/20 to-purple-600/10",
+    border: "border-purple-500/20",
+    icon: "text-purple-400",
+    text: "text-purple-300",
+  },
+  pink: {
+    bg: "from-pink-500/20 to-pink-600/10",
+    border: "border-pink-500/20",
+    icon: "text-pink-400",
+    text: "text-pink-300",
   },
 };
 

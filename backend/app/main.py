@@ -8,8 +8,9 @@ from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import aiofiles
+import json
 
 from app.config import get_settings
 from app.models import (
@@ -23,6 +24,8 @@ from app.models import (
     ProcessingStatus,
     GraphStatsResponse,
     GraphContext,
+    ConversationMessage,
+    ReprocessRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -217,6 +220,115 @@ async def delete_document(document_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/documents/{document_id}/reprocess")
+async def reprocess_document(document_id: str, file: UploadFile = File(...)):
+    """
+    Reprocess a single document by re-uploading the file.
+    
+    This deletes existing chunks and entities, then reprocesses the file.
+    """
+    settings = get_settings()
+    neo4j = get_neo4j_service()
+    
+    # Check document exists
+    document = neo4j.get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Validate file extension
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in settings.allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
+        )
+    
+    # Read file content
+    content = await file.read()
+    file_size = len(content)
+    
+    # Validate file size
+    max_size = settings.max_file_size_mb * 1024 * 1024
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
+        )
+    
+    # Save file temporarily
+    import uuid
+    temp_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = os.path.join(settings.upload_dir, temp_filename)
+    
+    async with aiofiles.open(file_path, 'wb') as f:
+        await f.write(content)
+    
+    try:
+        processor = get_document_processor()
+        await processor.reprocess_document_from_file(document_id, file_path, file_ext)
+        
+        return {
+            "document_id": document_id,
+            "filename": file.filename,
+            "status": ProcessingStatus.PROCESSING,
+            "message": "Reprocessing started"
+        }
+    except Exception as e:
+        logger.error(f"Error reprocessing document: {e}")
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documents/reprocess")
+async def reprocess_documents(request: ReprocessRequest):
+    """
+    Mark multiple documents for reprocessing.
+    
+    Since original files are not stored, this resets documents to 'pending' status
+    and clears their chunks. Documents need to be re-uploaded to complete reprocessing.
+    
+    Returns a list of document IDs that were successfully queued for reprocessing.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        processor = get_document_processor()
+        
+        results = []
+        for doc_id in request.document_ids:
+            try:
+                doc = neo4j.get_document(doc_id)
+                if doc:
+                    await processor.reprocess_document(doc_id)
+                    results.append({
+                        "document_id": doc_id,
+                        "status": "queued",
+                        "message": "Document chunks cleared, ready for re-upload"
+                    })
+                else:
+                    results.append({
+                        "document_id": doc_id,
+                        "status": "error",
+                        "message": "Document not found"
+                    })
+            except Exception as e:
+                results.append({
+                    "document_id": doc_id,
+                    "status": "error",
+                    "message": str(e)
+                })
+        
+        return {
+            "results": results,
+            "total_queued": len([r for r in results if r["status"] == "queued"])
+        }
+    except Exception as e:
+        logger.error(f"Error reprocessing documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/cleanup/orphaned-entities")
 async def cleanup_orphaned_entities():
     """
@@ -271,14 +383,31 @@ async def search(request: SearchRequest):
 
 @app.post("/api/ask", response_model=RAGResponse)
 async def ask_question(request: RAGRequest):
-    """Ask a question using GraphRAG (vector search + knowledge graph traversal)."""
+    """
+    Ask a question using enhanced GraphRAG.
+    
+    Features:
+    - Hybrid search with RRF (vector + keyword + graph)
+    - Cross-encoder re-ranking for precision
+    - Conversation memory for context
+    - Agentic multi-step reasoning (optional)
+    """
     try:
         processor = get_query_processor()
+        
+        # Convert conversation history if provided
+        conversation_history = None
+        if request.conversation_history:
+            conversation_history = request.conversation_history
+        
         result = await processor.rag_query(
             question=request.question,
             top_k=request.top_k,
             use_graph=request.use_graph,
-            max_hops=request.max_hops
+            max_hops=request.max_hops,
+            conversation_history=conversation_history,
+            use_reranking=request.use_reranking,
+            use_agentic=request.use_agentic
         )
         
         sources = [
@@ -286,8 +415,12 @@ async def ask_question(request: RAGRequest):
                 document_id=r["document_id"],
                 chunk_id=r["chunk_id"],
                 content=r["content"],
-                score=r["score"],
-                metadata={"filename": r["filename"], "chunk_index": r["chunk_index"]}
+                score=r.get("rerank_score", r.get("score", 0)),
+                metadata={
+                    "filename": r["filename"], 
+                    "chunk_index": r.get("chunk_index", 0),
+                    "rerank_score": r.get("rerank_score")
+                }
             )
             for r in result["sources"]
         ]
@@ -301,11 +434,175 @@ async def ask_question(request: RAGRequest):
             question=result["question"],
             answer=result["answer"],
             sources=sources,
-            graph_context=graph_context
+            graph_context=graph_context,
+            reranked=result.get("reranked", False),
+            reasoning_steps=result.get("reasoning_steps")
         )
     except Exception as e:
         logger.error(f"Error in GraphRAG query: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ask/stream")
+async def ask_question_stream(request: RAGRequest):
+    """
+    Stream the RAG response for better UX.
+    
+    Returns Server-Sent Events (SSE) with:
+    - content: Streamed answer tokens
+    - sources: Retrieved sources (at end)
+    - graph_context: Graph context (at end)
+    - done: Completion signal
+    """
+    settings = get_settings()
+    
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=400, 
+            detail="OpenAI API key required for streaming"
+        )
+    
+    async def generate():
+        try:
+            from openai import OpenAI
+            
+            processor = get_query_processor()
+            
+            # First, do the retrieval (non-streaming part)
+            conversation_history = request.conversation_history
+            
+            graph_context = None
+            
+            if request.use_graph:
+                search_result = await processor.graph_search_async(
+                    request.question,
+                    top_k=request.top_k * 2,
+                    max_hops=request.max_hops,
+                    use_hybrid_rrf=settings.enable_hybrid_search
+                )
+                results = search_result["results"]
+                graph_data = search_result["graph_context"]
+                
+                if graph_data["entities"] or graph_data["relationships"]:
+                    graph_context = GraphContext(
+                        entities=graph_data["entities"],
+                        relationships=graph_data["relationships"],
+                        chunks=graph_data["chunks"]
+                    )
+            else:
+                results = processor.search(request.question, top_k=request.top_k * 2)
+            
+            # Re-rank if enabled
+            if request.use_reranking and settings.enable_reranking and results:
+                results = await processor.rerank_results_async(
+                    request.question, results, request.top_k
+                )
+            else:
+                results = results[:request.top_k]
+            
+            # Send sources first
+            sources = [
+                {
+                    "document_id": r["document_id"],
+                    "chunk_id": r["chunk_id"],
+                    "content": r["content"],
+                    "score": r.get("rerank_score", r.get("score", 0)),
+                    "metadata": {"filename": r["filename"]}
+                }
+                for r in results
+            ]
+            yield f"data: {json.dumps({'sources': sources})}\n\n"
+            
+            # Send graph context
+            if graph_context:
+                yield f"data: {json.dumps({'graph_context': graph_context.model_dump()})}\n\n"
+            
+            # Build context for generation
+            formatted_sources = ""
+            for idx, r in enumerate(results):
+                ref_id = f"src_{idx+1}"
+                formatted_sources += f"\n[{ref_id}] Source: {r['filename']}\n{r['content']}\n"
+            
+            graph_context_str = ""
+            if graph_context and graph_context.entities:
+                entity_info = "\n".join([
+                    f"- {e['name']} ({e.get('type', 'Unknown')}): {e.get('description', '')}"
+                    for e in graph_context.entities[:10]
+                ])
+                graph_context_str += f"\n\n=== Related Entities ===\n{entity_info}"
+            
+            if graph_context and graph_context.relationships:
+                rel_info = "\n".join([
+                    f"- {r['source']} --[{r['type']}]--> {r['target']}"
+                    for r in graph_context.relationships[:15]
+                ])
+                graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
+            
+            system_prompt = """You are an expert research assistant. Answer based ONLY on the provided context.
+
+Guidelines:
+1. Synthesize information from multiple sources into a coherent answer
+2. Cite sources inline: [src_1], [src_2] for document references
+3. Be precise and avoid hallucination - only state what the sources support
+4. If the context doesn't contain enough information, say so explicitly"""
+            
+            prompt = f"""Answer the question based on the provided context. Cite your sources.
+
+=== Document Context ===
+{formatted_sources if formatted_sources else "No documents available."}
+{graph_context_str}
+
+### Question:
+{request.question}
+
+### Answer:"""
+            
+            # Build messages with conversation history
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            if conversation_history:
+                max_history = settings.max_conversation_history
+                for msg in conversation_history[-max_history:]:
+                    messages.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+            
+            messages.append({"role": "user", "content": prompt})
+            
+            # Stream the response
+            client = OpenAI(
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_api_base,
+            )
+            
+            stream = client.chat.completions.create(
+                model=settings.openai_model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1200,
+                stream=True
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    yield f"data: {json.dumps({'content': content})}\n\n"
+            
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in streaming RAG: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 # =============================================================================

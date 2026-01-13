@@ -120,12 +120,24 @@ class SearchResponse(BaseModel):
     total_results: int
 
 
+class ConversationMessage(BaseModel):
+    """A message in a conversation."""
+    role: str = Field(..., description="Role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
 class RAGRequest(BaseModel):
     """Request model for RAG-based question answering."""
     question: str
     top_k: int = Field(default=5, ge=1, le=20)
     use_graph: bool = Field(default=True, description="Whether to use graph-enhanced retrieval")
     max_hops: int = Field(default=2, ge=1, le=3, description="Max hops for graph traversal")
+    conversation_history: Optional[List[ConversationMessage]] = Field(
+        default=None, 
+        description="Previous conversation messages for context"
+    )
+    use_reranking: bool = Field(default=True, description="Whether to use cross-encoder reranking")
+    use_agentic: bool = Field(default=False, description="Whether to use agentic multi-step RAG for complex questions")
 
 
 class RAGResponse(BaseModel):
@@ -134,6 +146,8 @@ class RAGResponse(BaseModel):
     answer: str
     sources: list[SearchResult]
     graph_context: Optional[GraphContext] = None
+    reasoning_steps: Optional[List[str]] = Field(default=None, description="Steps taken in agentic RAG")
+    reranked: bool = Field(default=False, description="Whether results were reranked")
 
 
 class GraphStatsResponse(BaseModel):
@@ -164,3 +178,8 @@ class HealthResponse(BaseModel):
     status: str
     neo4j_connected: bool
     version: str
+
+
+class ReprocessRequest(BaseModel):
+    """Request model for reprocessing documents."""
+    document_ids: List[str] = Field(..., description="List of document IDs to reprocess")

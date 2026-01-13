@@ -41,10 +41,56 @@ export interface SearchResponse {
   total_results: number;
 }
 
+export interface GraphContext {
+  entities: Array<{
+    name: string;
+    type: string;
+    description: string;
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    type: string;
+    description?: string;
+  }>;
+  chunks: Array<{
+    chunk_id: string;
+    content: string;
+    document_id: string;
+    filename: string;
+  }>;
+}
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface RAGRequest {
+  question: string;
+  top_k?: number;
+  use_graph?: boolean;
+  max_hops?: number;
+  conversation_history?: ConversationMessage[];
+  use_reranking?: boolean;
+  use_agentic?: boolean;
+}
+
 export interface RAGResponse {
   question: string;
   answer: string;
   sources: SearchResult[];
+  graph_context?: GraphContext;
+  reranked?: boolean;
+  reasoning_steps?: string[];
+}
+
+export interface StreamEvent {
+  content?: string;
+  sources?: SearchResult[];
+  graph_context?: GraphContext;
+  done?: boolean;
+  error?: string;
 }
 
 export interface UploadResponse {
@@ -58,6 +104,8 @@ export interface Stats {
   document_count: number;
   chunk_count: number;
   total_size: number;
+  entity_count?: number;
+  relationship_count?: number;
 }
 
 export interface HealthResponse {

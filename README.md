@@ -10,13 +10,18 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 ## ✨ Features
 
 - **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files
-- **🔍 Semantic Search**: AI-powered search using sentence embeddings
+- **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface built with Next.js
 - **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction
-- **🔄 Hybrid Retrieval**: Combines vector similarity with graph traversal for enhanced context
+- **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
+- **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
+- **💭 Conversation Memory**: Multi-turn conversations with context retention
+- **🚀 Streaming Responses**: Real-time answer generation with SSE
+- **🔬 Deep Research Mode**: Agentic multi-step RAG for complex questions
+- **📊 Entity Resolution**: Fuzzy matching for entity deduplication
 
 ## 🏗️ Architecture
 
@@ -131,7 +136,8 @@ npm run dev
 | GET | `/api/documents/{id}` | Get document details |
 | DELETE | `/api/documents/{id}` | Delete a document |
 | POST | `/api/search` | Semantic search |
-| POST | `/api/ask` | GraphRAG-based Q&A |
+| POST | `/api/ask` | Enhanced GraphRAG Q&A (hybrid search, reranking, agentic mode) |
+| POST | `/api/ask/stream` | Streaming GraphRAG Q&A with SSE |
 
 ### GraphRAG Endpoints
 
@@ -159,8 +165,33 @@ curl -X POST http://localhost:8000/api/ask \
   -d '{
     "question": "Explain the main concepts from the documents",
     "use_graph": true,
-    "max_hops": 2
+    "max_hops": 2,
+    "use_reranking": true,
+    "use_agentic": false
   }'
+```
+
+### Example: Deep Research Mode
+
+```bash
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Compare the different approaches and their trade-offs",
+    "use_agentic": true,
+    "conversation_history": [
+      {"role": "user", "content": "What is machine learning?"},
+      {"role": "assistant", "content": "Machine learning is..."}
+    ]
+  }'
+```
+
+### Example: Streaming Response
+
+```bash
+curl -X POST http://localhost:8000/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Summarize the key points"}'
 ```
 
 ### Example: Get Graph Visualization
@@ -207,11 +238,22 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `NEO4J_PASSWORD` | Neo4j password | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies) | No | `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | LLM model for generation | No | `gpt-4o-mini` |
+| `OPENAI_MODEL` | LLM model for generation | No | `openai/minimax-m21` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
-| `EMBEDDING_MODEL` | Embedding model name | No | `text-embedding-3-large` |
+| `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
+| `CHUNK_BY` | Chunking strategy: `word` or `sentence` | No | `sentence` |
+| `SENTENCES_PER_CHUNK` | Sentences per chunk (if sentence mode) | No | `5` |
+| `ENABLE_RERANKING` | Enable cross-encoder re-ranking | No | `true` |
+| `RERANKING_MODEL` | Cross-encoder model for re-ranking | No | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `ENABLE_HYBRID_SEARCH` | Enable hybrid (vector + keyword) search | No | `true` |
+| `VECTOR_WEIGHT` | Weight for vector search in RRF | No | `0.5` |
+| `KEYWORD_WEIGHT` | Weight for keyword search in RRF | No | `0.3` |
+| `GRAPH_WEIGHT` | Weight for graph context in RRF | No | `0.2` |
+| `MAX_CONVERSATION_HISTORY` | Max messages in conversation context | No | `6` |
+| `ENABLE_AGENTIC_RAG` | Enable multi-step agentic RAG | No | `true` |
+| `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG | No | `3` |
 
 ## 🔧 Configuration
 
@@ -225,8 +267,8 @@ chunk_size: int = 500        # Words per chunk
 chunk_overlap: int = 50      # Overlap between chunks
 
 # Embedding model
-embedding_model: str = "text-embedding-3-large"
-embedding_dimension: int = 2048
+embedding_model: str = "openai/text-embedding-3-small"
+embedding_dimension: int = 1536
 
 # File limits
 max_file_size_mb: int = 50
@@ -315,16 +357,29 @@ When a document is uploaded, the following pipeline executes:
 5. **Relationship Extraction** - LLM identifies relationships between entities
 6. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
 
-### Query Pipeline
+### Query Pipeline (Enhanced)
 
 When you ask a question:
 
 1. **Query Embedding** - Convert question to vector
 2. **Entity Extraction** - Extract entity names from the question
-3. **Vector Search** - Find similar chunks using cosine similarity
-4. **Graph Traversal** - Explore relationships from mentioned entities
-5. **Context Assembly** - Combine vector results + graph context
-6. **LLM Generation** - Generate answer using enriched context
+3. **Hybrid Search with RRF** - Combine three search methods:
+   - Vector similarity search (semantic matching)
+   - Full-text keyword search (exact term matching)
+   - Graph traversal (relationship-based retrieval)
+   - Reciprocal Rank Fusion combines rankings
+4. **Cross-Encoder Re-ranking** - Re-score results for precision
+5. **Context Assembly** - Combine results + graph context
+6. **LLM Generation** - Generate answer with conversation history
+
+### Deep Research Mode (Agentic RAG)
+
+For complex questions, enable Deep Research mode:
+
+1. **Question Decomposition** - Break into sub-questions
+2. **Iterative Retrieval** - Research each sub-question
+3. **Result Aggregation** - Merge and deduplicate findings
+4. **Comprehensive Synthesis** - Generate detailed answer
 
 ## 🛠️ Tech Stack
 

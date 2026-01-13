@@ -15,6 +15,8 @@ import {
   Sparkles,
   BookOpen,
   Zap,
+  Network,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FileUpload from "@/components/FileUpload";
@@ -29,6 +31,8 @@ interface Stats {
   document_count: number;
   chunk_count: number;
   total_size: number;
+  entity_count?: number;
+  relationship_count?: number;
 }
 
 export default function Home() {
@@ -109,7 +113,7 @@ export default function Home() {
 
       {/* Stats Bar */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           <StatsCard
             label="Documents"
             value={stats?.document_count ?? 0}
@@ -121,6 +125,18 @@ export default function Home() {
             value={stats?.chunk_count ?? 0}
             icon={BookOpen}
             color="cyan"
+          />
+          <StatsCard
+            label="Entities"
+            value={stats?.entity_count ?? 0}
+            icon={Network}
+            color="purple"
+          />
+          <StatsCard
+            label="Relations"
+            value={stats?.relationship_count ?? 0}
+            icon={Link2}
+            color="pink"
           />
           <StatsCard
             label="Storage"
