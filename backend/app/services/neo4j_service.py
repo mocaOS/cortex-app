@@ -422,6 +422,72 @@ class Neo4jService:
                 "orphaned_entities_removed": orphaned_count
             }
     
+    def delete_documents(self, doc_ids: list[str]) -> dict:
+        """
+        Delete multiple documents, their chunks, and orphaned entities.
+        
+        Args:
+            doc_ids: List of document IDs to delete
+            
+        Returns:
+            Dict with 'deleted_count' (int), 'orphaned_entities_removed' (int)
+        """
+        total_deleted = 0
+        total_orphaned = 0
+        
+        for doc_id in doc_ids:
+            result = self.delete_document(doc_id)
+            if result["deleted"]:
+                total_deleted += 1
+                total_orphaned += result["orphaned_entities_removed"]
+        
+        logger.info(f"Bulk deleted {total_deleted} documents, removed {total_orphaned} orphaned entities")
+        
+        return {
+            "deleted_count": total_deleted,
+            "orphaned_entities_removed": total_orphaned
+        }
+    
+    def delete_all_documents(self) -> dict:
+        """
+        Delete all documents, chunks, and entities from the knowledge base.
+        
+        This is a destructive operation that clears the entire knowledge base.
+        
+        Returns:
+            Dict with 'deleted_count' (int), 'entities_removed' (int)
+        """
+        with self.driver.session() as session:
+            # Get counts before deletion
+            count_result = session.run("""
+                MATCH (d:Document)
+                RETURN count(d) as doc_count
+            """)
+            doc_count = count_result.single()["doc_count"]
+            
+            entity_result = session.run("""
+                MATCH (e:Entity)
+                RETURN count(e) as entity_count
+            """)
+            entity_count = entity_result.single()["entity_count"]
+            
+            # Delete all entities (they will all be orphaned)
+            session.run("MATCH (e:Entity) DETACH DELETE e")
+            
+            # Delete all chunks and documents
+            session.run("""
+                MATCH (d:Document)
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                DETACH DELETE d, c
+            """)
+            
+            logger.info(f"Deleted all documents: {doc_count} documents, {entity_count} entities")
+            
+            return {
+                "deleted_count": doc_count,
+                "entities_removed": entity_count
+            }
+    
     def cleanup_orphaned_entities(self) -> int:
         """
         Find and delete all orphaned entities in the database.

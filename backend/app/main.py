@@ -26,6 +26,7 @@ from app.models import (
     GraphContext,
     ConversationMessage,
     ReprocessRequest,
+    DeleteRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -217,6 +218,48 @@ async def delete_document(document_id: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documents/delete")
+async def delete_documents(request: DeleteRequest):
+    """
+    Delete multiple documents from the knowledge base.
+    
+    This endpoint deletes the specified documents and cleans up any orphaned entities.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        result = neo4j.delete_documents(request.document_ids)
+        
+        return {
+            "message": f"Successfully deleted {result['deleted_count']} document(s)",
+            "deleted_count": result["deleted_count"],
+            "orphaned_entities_removed": result["orphaned_entities_removed"]
+        }
+    except Exception as e:
+        logger.error(f"Error deleting documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/documents")
+async def delete_all_documents():
+    """
+    Delete all documents from the knowledge base.
+    
+    WARNING: This is a destructive operation that removes all documents, chunks, and entities.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        result = neo4j.delete_all_documents()
+        
+        return {
+            "message": f"Successfully deleted all {result['deleted_count']} document(s)",
+            "deleted_count": result["deleted_count"],
+            "entities_removed": result["entities_removed"]
+        }
+    except Exception as e:
+        logger.error(f"Error deleting all documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -464,7 +507,7 @@ async def ask_question_stream(request: RAGRequest):
     
     async def generate():
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
             
             processor = get_query_processor()
             
@@ -570,13 +613,13 @@ Guidelines:
             
             messages.append({"role": "user", "content": prompt})
             
-            # Stream the response
-            client = OpenAI(
+            # Stream the response using async client
+            client = AsyncOpenAI(
                 api_key=settings.openai_api_key,
                 base_url=settings.openai_api_base,
             )
             
-            stream = client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model=settings.openai_model,
                 messages=messages,
                 temperature=0.3,
@@ -584,7 +627,7 @@ Guidelines:
                 stream=True
             )
             
-            for chunk in stream:
+            async for chunk in stream:
                 if chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     yield f"data: {json.dumps({'content': content})}\n\n"

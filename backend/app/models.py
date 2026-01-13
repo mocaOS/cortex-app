@@ -183,3 +183,8 @@ class HealthResponse(BaseModel):
 class ReprocessRequest(BaseModel):
     """Request model for reprocessing documents."""
     document_ids: List[str] = Field(..., description="List of document IDs to reprocess")
+
+
+class DeleteRequest(BaseModel):
+    """Request model for deleting multiple documents."""
+    document_ids: List[str] = Field(..., description="List of document IDs to delete")

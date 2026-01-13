@@ -112,8 +112,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       );
     };
 
-    // Start polling interval (poll every 3 seconds)
-    pollingRef.current = setInterval(poll, 3000);
+    // Start polling interval (poll every 20 seconds)
+    pollingRef.current = setInterval(poll, 20000);
     
     // Initial poll after a short delay
     const initialPollTimeout = setTimeout(poll, 500);

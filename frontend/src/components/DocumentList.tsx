@@ -42,6 +42,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isReprocessing, setIsReprocessing] = useState(false);
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const fileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   const fetchDocuments = async () => {
@@ -154,6 +155,37 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       setIsReprocessing(false);
     }
   };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+
+    const confirmed = confirm(
+      `Are you sure you want to delete ${selectedIds.size} document(s)? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setIsDeletingSelected(true);
+    try {
+      const res = await fetch("/api/documents/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_ids: Array.from(selectedIds) }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        console.log("Delete results:", data);
+        setSelectedIds(new Set());
+        await fetchDocuments();
+        onDelete(); // Refresh stats
+      }
+    } catch (error) {
+      console.error("Failed to delete documents:", error);
+    } finally {
+      setIsDeletingSelected(false);
+    }
+  };
+
 
   const handleReprocessWithFile = async (docId: string, file: File) => {
     setReprocessingIds((prev) => new Set(prev).add(docId));
@@ -314,6 +346,26 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                 <RotateCcw className="w-4 h-4" />
               )}
               Reprocess Selected
+            </button>
+          )}
+
+          {/* Delete Selected */}
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              disabled={isDeletingSelected}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all",
+                "bg-coral-500/20 text-coral-400 hover:bg-coral-500/30",
+                isDeletingSelected && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              {isDeletingSelected ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              Delete Selected ({selectedIds.size})
             </button>
           )}
 
