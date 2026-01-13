@@ -131,7 +131,10 @@ class Neo4jService:
                     d.upload_date = $upload_date,
                     d.chunk_count = $chunk_count,
                     d.processing_status = $status,
-                    d.error_message = $error_message
+                    d.error_message = $error_message,
+                    d.progress_current = $progress_current,
+                    d.progress_total = $progress_total,
+                    d.progress_message = $progress_message
                 RETURN d.id as id
             """,
                 id=doc_id,
@@ -141,6 +144,9 @@ class Neo4jService:
                 upload_date=metadata.upload_date.isoformat(),
                 chunk_count=metadata.chunk_count,
                 status=metadata.processing_status.value,
+                progress_current=metadata.progress_current,
+                progress_total=metadata.progress_total,
+                progress_message=metadata.progress_message,
                 error_message=metadata.error_message
             )
             return result.single()["id"]
@@ -177,7 +183,8 @@ class Neo4jService:
         doc_id: str, 
         status: ProcessingStatus, 
         chunk_count: int = 0,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        progress_message: str = ""
     ):
         """Update the processing status of a document."""
         with self.driver.session() as session:
@@ -185,12 +192,35 @@ class Neo4jService:
                 MATCH (d:Document {id: $id})
                 SET d.processing_status = $status,
                     d.chunk_count = $chunk_count,
-                    d.error_message = $error_message
+                    d.error_message = $error_message,
+                    d.progress_message = $progress_message
             """,
                 id=doc_id,
                 status=status.value,
                 chunk_count=chunk_count,
-                error_message=error_message
+                error_message=error_message,
+                progress_message=progress_message
+            )
+    
+    def update_document_progress(
+        self,
+        doc_id: str,
+        current: int,
+        total: int,
+        message: str
+    ):
+        """Update the processing progress of a document."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.progress_current = $current,
+                    d.progress_total = $total,
+                    d.progress_message = $message
+            """,
+                id=doc_id,
+                current=current,
+                total=total,
+                message=message
             )
     
     def vector_search(
@@ -239,7 +269,10 @@ class Neo4jService:
                        d.upload_date as upload_date,
                        d.chunk_count as chunk_count,
                        d.processing_status as processing_status,
-                       d.error_message as error_message
+                       d.error_message as error_message,
+                       coalesce(d.progress_current, 0) as progress_current,
+                       coalesce(d.progress_total, 0) as progress_total,
+                       coalesce(d.progress_message, '') as progress_message
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -258,15 +291,57 @@ class Neo4jService:
                        d.chunk_count as chunk_count,
                        d.processing_status as processing_status,
                        d.error_message as error_message,
+                       coalesce(d.progress_current, 0) as progress_current,
+                       coalesce(d.progress_total, 0) as progress_total,
+                       coalesce(d.progress_message, '') as progress_message,
                        collect(c.id) as chunk_ids
             """, id=doc_id)
             
             record = result.single()
             return dict(record) if record else None
     
-    def delete_document(self, doc_id: str) -> bool:
-        """Delete a document and all its chunks."""
+    def delete_document(self, doc_id: str) -> dict:
+        """
+        Delete a document, its chunks, and orphaned entities.
+        
+        Entities are only deleted if they have no other connections to chunks
+        from other documents. This keeps the Neo4j database clean.
+        
+        Returns:
+            Dict with 'deleted' (bool), 'orphaned_entities_removed' (int)
+        """
         with self.driver.session() as session:
+            # Step 1: Find entities that will become orphaned after deletion
+            # These are entities ONLY mentioned by chunks of this document
+            orphaned_result = session.run("""
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                WITH e, collect(DISTINCT c) as doc_chunks
+                
+                // Check if entity is mentioned by chunks from OTHER documents
+                OPTIONAL MATCH (other_chunk:Chunk)-[:MENTIONS]->(e)
+                WHERE NOT other_chunk IN doc_chunks
+                
+                WITH e, doc_chunks, collect(other_chunk) as other_chunks
+                WHERE size(other_chunks) = 0
+                
+                RETURN collect(e.name) as orphaned_entities
+            """, id=doc_id)
+            
+            orphaned_record = orphaned_result.single()
+            orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
+            
+            # Step 2: Delete orphaned entities (DETACH DELETE removes their relationships too)
+            orphaned_count = 0
+            if orphaned_entities:
+                session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    DETACH DELETE e
+                """, names=orphaned_entities)
+                orphaned_count = len(orphaned_entities)
+                logger.info(f"Deleted {orphaned_count} orphaned entities for document {doc_id}")
+            
+            # Step 3: Delete document and its chunks
             result = session.run("""
                 MATCH (d:Document {id: $id})
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
@@ -274,7 +349,43 @@ class Neo4jService:
                 RETURN count(d) as deleted
             """, id=doc_id)
             
-            return result.single()["deleted"] > 0
+            deleted = result.single()["deleted"] > 0
+            
+            if deleted:
+                logger.info(f"Deleted document {doc_id} with orphaned entity cleanup")
+            
+            return {
+                "deleted": deleted,
+                "orphaned_entities_removed": orphaned_count
+            }
+    
+    def cleanup_orphaned_entities(self) -> int:
+        """
+        Find and delete all orphaned entities in the database.
+        
+        An orphaned entity is one that is not mentioned by any chunk.
+        This is useful for cleaning up after previous deletions or data inconsistencies.
+        
+        Returns:
+            Number of orphaned entities deleted
+        """
+        with self.driver.session() as session:
+            # Find entities not connected to any chunk
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE NOT EXISTS { MATCH (:Chunk)-[:MENTIONS]->(e) }
+                WITH collect(e) as orphans
+                UNWIND orphans as orphan
+                DETACH DELETE orphan
+                RETURN count(*) as deleted
+            """)
+            
+            deleted_count = result.single()["deleted"]
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} orphaned entities")
+            
+            return deleted_count
     
     # =========================================================================
     # GraphRAG: Entity and Relationship Storage
@@ -311,7 +422,7 @@ class Neo4jService:
     def store_relationship(self, relationship: Relationship) -> bool:
         """
         Store a relationship between two entities.
-        Creates a dynamic relationship type.
+        Creates a dynamic relationship type with weight.
         """
         with self.driver.session() as session:
             # Use APOC if available, otherwise use a workaround
@@ -319,13 +430,14 @@ class Neo4jService:
                 result = session.run("""
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
-                    CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description}, t) YIELD rel
+                    CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description, weight: $weight}, t) YIELD rel
                     RETURN type(rel) as rel_type
                 """,
                     source=relationship.source,
                     target=relationship.target,
                     rel_type=relationship.relationship_type,
-                    description=relationship.description
+                    description=relationship.description,
+                    weight=relationship.weight
                 )
                 return result.single() is not None
             except Exception as e:
@@ -335,13 +447,14 @@ class Neo4jService:
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
                     MERGE (s)-[r:RELATED_TO {type: $rel_type}]->(t)
-                    SET r.description = $description
+                    SET r.description = $description, r.weight = $weight
                     RETURN type(r) as rel_type
                 """,
                     source=relationship.source,
                     target=relationship.target,
                     rel_type=relationship.relationship_type,
-                    description=relationship.description
+                    description=relationship.description,
+                    weight=relationship.weight
                 )
                 return result.single() is not None
     
@@ -429,15 +542,16 @@ class Neo4jService:
         
         with self.driver.session() as session:
             # Find related entities and relationships within max_hops
-            result = session.run("""
+            # Note: max_hops must be injected as literal - Neo4j doesn't allow parameters in variable-length patterns
+            result = session.run(f"""
                 MATCH (start:Entity)
                 WHERE start.name IN $entity_names
-                CALL {
+                CALL {{
                     WITH start
-                    MATCH path = (start)-[r*1..$max_hops]-(related:Entity)
+                    MATCH path = (start)-[r*1..{int(max_hops)}]-(related:Entity)
                     RETURN related, relationships(path) as rels
                     LIMIT $limit
-                }
+                }}
                 WITH start, collect(DISTINCT related) as related_entities, 
                      collect(rels) as all_rels
                 
@@ -449,16 +563,15 @@ class Neo4jService:
                 RETURN start.name as start_entity,
                        start.type as start_type,
                        start.description as start_description,
-                       [e IN related_entities | {name: e.name, type: e.type, description: e.description}] as related,
-                       collect(DISTINCT {
+                       [e IN related_entities | {{name: e.name, type: e.type, description: e.description}}] as related,
+                       collect(DISTINCT {{
                            chunk_id: c.id, 
                            content: c.content, 
                            document_id: d.id,
                            filename: d.filename
-                       }) as chunks
+                       }}) as chunks
             """, 
                 entity_names=entity_names, 
-                max_hops=max_hops,
                 limit=limit
             )
             

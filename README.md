@@ -209,7 +209,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies) | No | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | LLM model for generation | No | `gpt-4o-mini` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
-| `EMBEDDING_MODEL` | Embedding model name | No | `text-embedding-3-small` |
+| `EMBEDDING_MODEL` | Embedding model name | No | `text-embedding-3-large` |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
 
@@ -225,8 +225,8 @@ chunk_size: int = 500        # Words per chunk
 chunk_overlap: int = 50      # Overlap between chunks
 
 # Embedding model
-embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-embedding_dimension: int = 384
+embedding_model: str = "text-embedding-3-large"
+embedding_dimension: int = 2048
 
 # File limits
 max_file_size_mb: int = 50

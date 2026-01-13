@@ -7,9 +7,13 @@ export interface Document {
   chunk_count: number;
   processing_status: ProcessingStatus;
   error_message?: string;
+  // Progress tracking fields
+  progress_current?: number;
+  progress_total?: number;
+  progress_message?: string;
 }
 
-export type ProcessingStatus = "pending" | "processing" | "completed" | "failed";
+export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";
 
 export interface DocumentChunk {
   id: string;

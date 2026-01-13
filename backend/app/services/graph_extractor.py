@@ -1,4 +1,7 @@
-"""GraphRAG entity and relationship extraction service using LLM."""
+"""GraphRAG entity and relationship extraction service using LLM.
+
+Prompts inspired by R2R (https://github.com/SciPhi-AI/R2R) for high-quality knowledge graph extraction.
+"""
 
 import logging
 from typing import Optional, List
@@ -18,66 +21,161 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="graph_extractor")
 
 
-# System prompt for entity and relationship extraction (works with any model)
-EXTRACTION_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract entities and relationships from text to build a knowledge graph.
+# =============================================================================
+# Default Entity and Relationship Type Constraints
+# =============================================================================
 
-## Entity Types to Extract:
-- **Person**: Named individuals
-- **Organization**: Companies, institutions, groups
-- **Location**: Places, regions, addresses
-- **Concept**: Abstract ideas, theories, methodologies
-- **Technology**: Software, tools, platforms, programming languages
-- **Event**: Named events, conferences, incidents
-- **Product**: Named products or services
-- **Document**: Referenced documents, papers, standards
+DEFAULT_ENTITY_TYPES = [
+    "Person",
+    "Organization", 
+    "Location",
+    "Concept",
+    "Technology",
+    "Event",
+    "Product",
+    "Document",
+    "System",
+    "Process",
+]
 
-## Relationship Types to Use:
-- **WORKS_FOR**: Person works for Organization
-- **LOCATED_IN**: Entity is located in Location
-- **USES**: Entity uses Technology/Product
-- **RELATED_TO**: General relationship between entities
-- **PART_OF**: Entity is part of another entity
-- **CREATED_BY**: Entity was created by Person/Organization
-- **IMPLEMENTS**: Technology implements Concept
-- **MENTIONS**: Document mentions Entity
-- **DEPENDS_ON**: Entity depends on another entity
-- **IS_A**: Entity is a type of another entity (taxonomy)
-- **HAS_PROPERTY**: Entity has a specific property
+DEFAULT_RELATION_TYPES = [
+    "WORKS_FOR",
+    "LOCATED_IN",
+    "USES",
+    "RELATED_TO",
+    "PART_OF",
+    "CREATED_BY",
+    "IMPLEMENTS",
+    "MENTIONS",
+    "DEPENDS_ON",
+    "IS_A",
+    "HAS_PROPERTY",
+    "FOUNDED_BY",
+    "FEATURES",
+    "CONTAINS",
+    "INTERACTS_WITH",
+]
 
-## Guidelines:
-1. Extract only entities that are explicitly mentioned or strongly implied
-2. Use consistent naming (e.g., always "Neo4j" not "neo4j" or "Neo4J")
-3. Create relationships only between extracted entities
-4. Provide brief, contextual descriptions
-5. Focus on the most important entities and relationships
-6. Avoid extracting overly generic terms unless they're central concepts
 
-IMPORTANT: You MUST respond with ONLY valid JSON, no other text before or after."""
+# =============================================================================
+# R2R-Style Graph Extraction Prompts (XML Format for Better Parsing)
+# =============================================================================
+
+EXTRACTION_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract entities and their relationships from text to build a comprehensive knowledge graph.
+
+# Goal
+Given text (and optionally a document summary for context), identify all entities and their entity types, along with all relationships among the identified entities.
+
+# Steps
+1. Identify all entities in the text. For each identified entity, extract:
+   - entity: Name of the entity, properly capitalized
+   - entity_type: Type of the entity (use the provided entity types if specified)
+   - entity_description: Comprehensive description of the entity based on the text
+
+   Format each entity in XML tags as follows:
+   <entity name="entity"><type>entity_type</type><description>entity_description</description></entity>
+
+   Note: Generate additional entities from descriptions if they contain named entities needed for relationship mapping.
+
+2. From the identified entities, identify all related entity pairs:
+   - source_entity: name of the source entity
+   - target_entity: name of the target entity
+   - relation: relationship type (use the provided relation types if specified)
+   - relationship_description: justification and context for the relationship
+   - relationship_weight: strength score from 0-10 (10 = strongest/most direct)
+
+   Format each relationship in XML tags as follows:
+   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type><description>relationship_description</description><weight>relationship_weight</weight></relationship>
+
+3. Coverage Requirements:
+   - Each entity should have at least one relationship when possible
+   - Create intermediate entities if needed to establish relationships
+   - Focus on the most significant and well-supported relationships
+   - Use consistent naming for entities (e.g., always "Neo4j" not "neo4j")
+
+IMPORTANT: Output ONLY the XML entities and relationships, no other text."""
 
 
 EXTRACTION_USER_PROMPT = """Extract entities and relationships from the following text.
 
+Entity Types: {entity_types}
+Relation Types: {relation_types}
+
+{context_section}
+
 Text:
 {text}
 
-Respond with ONLY a JSON object in this exact format (no markdown, no explanation):
-{{"entities": [{{"name": "Entity Name", "type": "EntityType", "description": "Brief description"}}], "relationships": [{{"source": "Source Entity", "target": "Target Entity", "relationship_type": "RELATIONSHIP_TYPE", "description": "How they relate"}}]}}"""
+######################
+Example Output (for reference):
+<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
+<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
+<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
+
+######################
+Now extract entities and relationships from the text above:"""
 
 
+# Document summary prompt for context generation (R2R style)
+SUMMARY_PROMPT = """Generate a descriptive summary of the following document. The summary should:
+- Be roughly 10% of the input document size
+- Retain key points, entities, and relationships mentioned
+- Provide context for entity extraction
+
+Document:
+{document}
+
+Summary:"""
+
+
+# Entity description enrichment prompt (R2R style)
+ENTITY_DESCRIPTION_PROMPT = """Given the following information about an entity, generate a comprehensive description.
+
+Document Context:
+{document_summary}
+
+Entity Information:
+- Name: {entity_name}
+- Type: {entity_type}
+- Current Description: {entity_description}
+
+Related Entities:
+{relationships_txt}
+
+Generate a comprehensive entity description that:
+1. Opens with a clear definition identifying the entity's primary classification and function
+2. Incorporates key data points from the document context
+3. Emphasizes the entity's role within its broader context
+4. Highlights critical relationships
+
+Format Requirements:
+- Length: 2-3 sentences
+- Style: Technical and precise
+- Tone: Objective and authoritative
+
+Enhanced Description:"""
+
+
+# Query entity extraction prompt
 QUERY_ENTITY_PROMPT = """Extract entity names from the following question. Focus on specific named entities like people, organizations, technologies, concepts, places, etc.
 
 Question: {query}
 
-Respond with ONLY a JSON object in this exact format (no markdown, no explanation):
-{{"entities": ["entity1", "entity2"]}}"""
+Output ONLY the XML format:
+<entities>
+<entity>entity_name_1</entity>
+<entity>entity_name_2</entity>
+</entities>"""
 
 
 class GraphExtractor:
-    """Extract entities and relationships from text using LLM."""
+    """Extract entities and relationships from text using LLM with R2R-style prompts."""
     
     def __init__(self):
         self.settings = get_settings()
         self._client: Optional[OpenAI] = None
+        self.entity_types = DEFAULT_ENTITY_TYPES
+        self.relation_types = DEFAULT_RELATION_TYPES
         
         if not self.settings.openai_api_key:
             logger.warning("OpenAI API key not configured - graph extraction will be disabled")
@@ -97,10 +195,96 @@ class GraphExtractor:
         """Check if graph extraction is available."""
         return self.client is not None
     
+    def _extract_xml_entities(self, content: str) -> List[dict]:
+        """
+        Extract entities from XML-formatted LLM response.
+        Handles format: <entity name="..."><type>...</type><description>...</description></entity>
+        """
+        entities = []
+        
+        # Pattern for XML entity format
+        entity_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*</entity>'
+        
+        matches = re.findall(entity_pattern, content, re.IGNORECASE | re.DOTALL)
+        for name, etype, description in matches:
+            entities.append({
+                "name": name.strip(),
+                "type": etype.strip(),
+                "description": description.strip()
+            })
+        
+        # Also try simpler format without description
+        simple_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*</entity>'
+        simple_matches = re.findall(simple_pattern, content, re.IGNORECASE | re.DOTALL)
+        existing_names = {e["name"].lower() for e in entities}
+        for name, etype in simple_matches:
+            if name.strip().lower() not in existing_names:
+                entities.append({
+                    "name": name.strip(),
+                    "type": etype.strip(),
+                    "description": ""
+                })
+        
+        return entities
+    
+    def _extract_xml_relationships(self, content: str) -> List[dict]:
+        """
+        Extract relationships from XML-formatted LLM response.
+        Handles format: <relationship><source>...</source><target>...</target><type>...</type><description>...</description><weight>...</weight></relationship>
+        """
+        relationships = []
+        
+        # Pattern for full XML relationship format
+        rel_pattern = r'<relationship>\s*<source>([^<]+)</source>\s*<target>([^<]+)</target>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*<weight>([^<]*)</weight>\s*</relationship>'
+        
+        matches = re.findall(rel_pattern, content, re.IGNORECASE | re.DOTALL)
+        for source, target, rtype, description, weight in matches:
+            try:
+                weight_val = float(weight.strip()) if weight.strip() else 5.0
+            except ValueError:
+                weight_val = 5.0
+            
+            relationships.append({
+                "source": source.strip(),
+                "target": target.strip(),
+                "relationship_type": rtype.strip().upper().replace(" ", "_"),
+                "description": description.strip(),
+                "weight": min(10.0, max(0.0, weight_val))
+            })
+        
+        # Also try without weight
+        simple_pattern = r'<relationship>\s*<source>([^<]+)</source>\s*<target>([^<]+)</target>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*</relationship>'
+        simple_matches = re.findall(simple_pattern, content, re.IGNORECASE | re.DOTALL)
+        existing = {(r["source"].lower(), r["target"].lower(), r["relationship_type"]) for r in relationships}
+        
+        for source, target, rtype, description in simple_matches:
+            key = (source.strip().lower(), target.strip().lower(), rtype.strip().upper().replace(" ", "_"))
+            if key not in existing:
+                relationships.append({
+                    "source": source.strip(),
+                    "target": target.strip(),
+                    "relationship_type": rtype.strip().upper().replace(" ", "_"),
+                    "description": description.strip(),
+                    "weight": 5.0
+                })
+        
+        return relationships
+    
+    def _extract_xml_entity_names(self, content: str) -> List[str]:
+        """Extract entity names from XML format: <entities><entity>name</entity>...</entities>"""
+        entities = []
+        
+        # Pattern for entity list format
+        pattern = r'<entity>([^<]+)</entity>'
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        entities = [m.strip() for m in matches if m.strip()]
+        
+        return entities
+    
     def _extract_json_from_response(self, content: str) -> dict:
         """
         Extract JSON from LLM response, handling various formats.
-        Works with models that may include markdown or extra text.
+        Fallback for models that may not follow XML format.
         """
         if not content:
             return {}
@@ -134,44 +318,114 @@ class GraphExtractor:
                 except json.JSONDecodeError:
                     continue
         
-        logger.warning(f"Could not extract JSON from response: {content[:200]}...")
+        logger.debug(f"Could not extract JSON from response, trying XML parsing...")
         return {}
     
-    def extract_from_text(self, text: str) -> ExtractionResult:
+    def extract_from_text(
+        self, 
+        text: str, 
+        document_summary: Optional[str] = None,
+        entity_types: Optional[List[str]] = None,
+        relation_types: Optional[List[str]] = None
+    ) -> ExtractionResult:
         """
-        Extract entities and relationships from text using LLM.
+        Extract entities and relationships from text using LLM with R2R-style prompts.
         
         Args:
             text: The text to extract from
+            document_summary: Optional document summary for context
+            entity_types: Optional list of entity types to constrain extraction
+            relation_types: Optional list of relation types to constrain extraction
             
         Returns:
-            ExtractionResult containing entities and relationships
+            ExtractionResult containing entities and relationships with weights
         """
         if not self.is_available:
             logger.warning("Graph extraction unavailable - returning empty result")
             return ExtractionResult()
         
+        # Use provided types or defaults
+        e_types = entity_types or self.entity_types
+        r_types = relation_types or self.relation_types
+        
+        # Build context section if summary provided
+        context_section = ""
+        if document_summary:
+            context_section = f"Document Summary (for context):\n{document_summary}\n"
+        
+        # Format the user prompt
+        user_prompt = EXTRACTION_USER_PROMPT.format(
+            entity_types=", ".join(e_types),
+            relation_types=", ".join(r_types),
+            context_section=context_section,
+            text=text
+        )
+        
         try:
-            # Make API call without response_format for broader model compatibility
+            # Make API call
             response = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": EXTRACTION_USER_PROMPT.format(text=text)}
+                    {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,  # Low temperature for consistent extraction
-                max_tokens=2000,
+                max_tokens=3000,
             )
             
-            # Parse the response (handles various formats)
             content = response.choices[0].message.content
+            
+            # Try XML parsing first (R2R format)
+            xml_entities = self._extract_xml_entities(content)
+            xml_relationships = self._extract_xml_relationships(content)
+            
+            # If XML parsing worked, use those results
+            if xml_entities or xml_relationships:
+                entities = []
+                for e in xml_entities:
+                    try:
+                        entities.append(Entity(
+                            name=e["name"],
+                            type=e.get("type", "Concept"),
+                            description=e.get("description", "")
+                        ))
+                    except Exception as ex:
+                        logger.warning(f"Failed to parse entity {e}: {ex}")
+                
+                relationships = []
+                entity_names = {e.name.lower() for e in entities}
+                
+                for r in xml_relationships:
+                    try:
+                        source = r.get("source", "").strip()
+                        target = r.get("target", "").strip()
+                        
+                        # Only include relationships where both entities exist
+                        if source.lower() in entity_names and target.lower() in entity_names:
+                            relationships.append(Relationship(
+                                source=source,
+                                target=target,
+                                relationship_type=r.get("relationship_type", "RELATED_TO"),
+                                description=r.get("description", ""),
+                                weight=r.get("weight", 5.0)
+                            ))
+                        else:
+                            logger.debug(f"Skipping relationship with unknown entities: {source} -> {target}")
+                    except Exception as ex:
+                        logger.warning(f"Failed to parse relationship {r}: {ex}")
+                
+                result = ExtractionResult(entities=entities, relationships=relationships)
+                logger.info(f"Extracted {len(entities)} entities and {len(relationships)} relationships (XML format)")
+                return result
+            
+            # Fall back to JSON parsing
             data = self._extract_json_from_response(content)
             
             if not data:
-                logger.warning("No valid JSON extracted from LLM response")
+                logger.warning("No valid extraction from LLM response")
                 return ExtractionResult()
             
-            # Validate and create models
+            # Validate and create models from JSON
             entities = []
             for e in data.get("entities", []):
                 try:
@@ -192,7 +446,6 @@ class GraphExtractor:
                     logger.warning(f"Failed to parse entity {e}: {ex}")
             
             relationships = []
-            # Create a set of entity names for validation
             entity_names = {e.name.lower() for e in entities}
             
             for r in data.get("relationships", []):
@@ -204,11 +457,19 @@ class GraphExtractor:
                     
                     # Only include relationships where both entities exist
                     if source.lower() in entity_names and target.lower() in entity_names:
+                        weight = 5.0
+                        if "weight" in r:
+                            try:
+                                weight = float(r["weight"])
+                            except (ValueError, TypeError):
+                                pass
+                        
                         relationships.append(Relationship(
                             source=source,
                             target=target,
                             relationship_type=r.get("relationship_type", "RELATED_TO").strip().upper().replace(" ", "_"),
-                            description=r.get("description", "").strip()
+                            description=r.get("description", "").strip(),
+                            weight=min(10.0, max(0.0, weight))
                         ))
                     else:
                         logger.debug(f"Skipping relationship with unknown entities: {source} -> {target}")
@@ -216,7 +477,7 @@ class GraphExtractor:
                     logger.warning(f"Failed to parse relationship {r}: {ex}")
             
             result = ExtractionResult(entities=entities, relationships=relationships)
-            logger.info(f"Extracted {len(entities)} entities and {len(relationships)} relationships")
+            logger.info(f"Extracted {len(entities)} entities and {len(relationships)} relationships (JSON format)")
             return result
             
         except Exception as e:
@@ -250,13 +511,24 @@ class GraphExtractor:
     # Async methods - run LLM calls in thread pool to avoid blocking event loop
     # =========================================================================
     
-    async def extract_from_text_async(self, text: str) -> ExtractionResult:
+    async def extract_from_text_async(
+        self, 
+        text: str, 
+        document_summary: Optional[str] = None
+    ) -> ExtractionResult:
         """
         Async version of extract_from_text that runs in a thread pool.
         Use this from async contexts to avoid blocking the event loop.
+        
+        Args:
+            text: The text to extract from
+            document_summary: Optional document summary for context
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_executor, self.extract_from_text, text)
+        return await loop.run_in_executor(
+            _executor, 
+            lambda: self.extract_from_text(text, document_summary)
+        )
     
     async def extract_entities_from_query_async(self, query: str) -> List[str]:
         """
@@ -265,6 +537,14 @@ class GraphExtractor:
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(_executor, self.extract_entities_from_query, query)
+    
+    async def generate_document_summary_async(self, document: str) -> str:
+        """
+        Async version of generate_document_summary that runs in a thread pool.
+        Use this from async contexts to avoid blocking the event loop.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(_executor, self.generate_document_summary, document)
     
     def extract_entities_from_query(self, query: str) -> List[str]:
         """
@@ -283,7 +563,7 @@ class GraphExtractor:
             response = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=[
-                    {"role": "system", "content": "You extract entity names from questions. Respond with ONLY valid JSON, no other text."},
+                    {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
                     {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
                 ],
                 temperature=0,
@@ -291,8 +571,14 @@ class GraphExtractor:
             )
             
             content = response.choices[0].message.content
-            data = self._extract_json_from_response(content)
-            entities = [str(e).strip() for e in data.get("entities", []) if e]
+            
+            # Try XML parsing first
+            entities = self._extract_xml_entity_names(content)
+            
+            # Fall back to JSON parsing
+            if not entities:
+                data = self._extract_json_from_response(content)
+                entities = [str(e).strip() for e in data.get("entities", []) if e]
             
             logger.info(f"Extracted {len(entities)} entities from query: {entities}")
             return entities
@@ -300,6 +586,94 @@ class GraphExtractor:
         except Exception as e:
             logger.error(f"Error extracting entities from query: {e}")
             return []
+    
+    def generate_document_summary(self, document: str) -> str:
+        """
+        Generate a document summary for context in extraction.
+        Uses R2R-style summary prompt.
+        
+        Args:
+            document: The full document text
+            
+        Returns:
+            Summary string (roughly 10% of input size)
+        """
+        if not self.is_available:
+            return ""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are a document summarization assistant."},
+                    {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}  # Limit input
+                ],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            logger.info(f"Generated document summary: {len(summary)} chars")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error generating document summary: {e}")
+            return ""
+    
+    def enrich_entity_description(
+        self, 
+        entity_name: str, 
+        entity_type: str, 
+        entity_description: str,
+        document_summary: str,
+        relationships: List[dict]
+    ) -> str:
+        """
+        Enrich an entity description using R2R-style prompt.
+        
+        Args:
+            entity_name: Name of the entity
+            entity_type: Type of the entity
+            entity_description: Current description
+            document_summary: Document context
+            relationships: Related entity information
+            
+        Returns:
+            Enhanced description string
+        """
+        if not self.is_available:
+            return entity_description
+        
+        # Format relationships text
+        rel_txt = "\n".join([
+            f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}: {r.get('description', '')}"
+            for r in relationships[:10]
+        ]) if relationships else "No relationships found."
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are an entity description enrichment assistant."},
+                    {"role": "user", "content": ENTITY_DESCRIPTION_PROMPT.format(
+                        document_summary=document_summary or "No summary available.",
+                        entity_name=entity_name,
+                        entity_type=entity_type,
+                        entity_description=entity_description or "No description available.",
+                        relationships_txt=rel_txt
+                    )}
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+            
+            enhanced = response.choices[0].message.content.strip()
+            logger.debug(f"Enhanced description for {entity_name}")
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"Error enriching entity description: {e}")
+            return entity_description
 
 
 # Singleton instance

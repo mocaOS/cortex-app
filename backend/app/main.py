@@ -199,17 +199,41 @@ async def get_document(document_id: str):
 
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str):
-    """Delete a document from the knowledge base."""
+    """Delete a document and clean up orphaned entities from the knowledge base."""
     try:
         neo4j = get_neo4j_service()
-        deleted = neo4j.delete_document(document_id)
-        if not deleted:
+        result = neo4j.delete_document(document_id)
+        if not result["deleted"]:
             raise HTTPException(status_code=404, detail="Document not found")
-        return {"message": "Document deleted successfully"}
+        
+        return {
+            "message": "Document deleted successfully",
+            "orphaned_entities_removed": result["orphaned_entities_removed"]
+        }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/cleanup/orphaned-entities")
+async def cleanup_orphaned_entities():
+    """
+    Clean up orphaned entities from the knowledge graph.
+    
+    Orphaned entities are those not connected to any document chunk.
+    This can happen from previous deletions or data inconsistencies.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        deleted_count = neo4j.cleanup_orphaned_entities()
+        return {
+            "message": "Cleanup completed",
+            "orphaned_entities_removed": deleted_count
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning up orphaned entities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

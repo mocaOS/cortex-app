@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     allowed_extensions: list[str] = [".pdf", ".txt", ".md", ".docx", ".xlsx"]
     
     # Embedding Configuration (Neo4j max 2048 dimensions)
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536  # text-embedding-3-small dimension
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimension: int = 2048  # text-embedding-3-large reduced to fit Neo4j limit
     use_openai_embeddings: bool = True
     
     # Chunking Configuration

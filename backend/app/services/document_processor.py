@@ -56,8 +56,9 @@ class DocumentProcessor:
                 api_key=Secret.from_token(self.settings.openai_api_key),
                 api_base_url=self.settings.openai_api_base,
                 model=self.settings.embedding_model,
+                dimensions=self.settings.embedding_dimension,
             )
-            logger.info(f"Using OpenAI embeddings: {self.settings.embedding_model}")
+            logger.info(f"Using OpenAI embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})")
         else:
             from haystack.components.embedders import SentenceTransformersDocumentEmbedder
             self.embedder = SentenceTransformersDocumentEmbedder(
@@ -116,7 +117,11 @@ class DocumentProcessor:
         
         try:
             # Update status to processing
-            self.neo4j.update_document_status(doc_id, ProcessingStatus.PROCESSING)
+            self.neo4j.update_document_status(
+                doc_id, ProcessingStatus.PROCESSING,
+                progress_message="Starting document processing..."
+            )
+            self.neo4j.update_document_progress(doc_id, 0, 100, "Converting document...")
             
             # Convert file to Haystack document
             converter = self._get_converter(file_type)
@@ -130,13 +135,19 @@ class DocumentProcessor:
             if not documents:
                 raise ValueError("No content extracted from file")
             
+            self.neo4j.update_document_progress(doc_id, 10, 100, "Splitting into chunks...")
+            
             # Split documents into chunks
             split_result = self.splitter.run(documents=documents)
             chunks = split_result.get("documents", [])
             
+            self.neo4j.update_document_progress(doc_id, 15, 100, f"Generating embeddings for {len(chunks)} chunks...")
+            
             # Generate embeddings
             embed_result = self.embedder.run(documents=chunks)
             embedded_chunks = embed_result.get("documents", [])
+            
+            self.neo4j.update_document_progress(doc_id, 25, 100, "Storing chunks in database...")
             
             # Store chunks in Neo4j
             chunk_ids = []
@@ -152,23 +163,55 @@ class DocumentProcessor:
                     metadata=chunk.meta
                 )
                 self.neo4j.store_chunk(chunk_model)
+                
+                # Update progress for chunk storage (25-35%)
+                storage_progress = 25 + int((idx + 1) / len(embedded_chunks) * 10)
+                if idx % 5 == 0 or idx == len(embedded_chunks) - 1:  # Update every 5 chunks
+                    self.neo4j.update_document_progress(
+                        doc_id, storage_progress, 100, 
+                        f"Stored chunk {idx + 1}/{len(embedded_chunks)}"
+                    )
             
             logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
             
             # =================================================================
             # GraphRAG: Extract entities and relationships from chunks
-            # Uses async extraction to avoid blocking the event loop
+            # Uses R2R-style extraction with document summary for context
             # =================================================================
             if self.graph_extractor.is_available and self.settings.enable_graph_extraction:
-                self.neo4j.update_document_status(doc_id, ProcessingStatus.EXTRACTING)
+                self.neo4j.update_document_status(
+                    doc_id, ProcessingStatus.EXTRACTING,
+                    progress_message="Extracting knowledge graph..."
+                )
+                self.neo4j.update_document_progress(doc_id, 35, 100, "Generating document summary...")
                 logger.info(f"Document {doc_id}: starting graph extraction...")
+                
+                # Generate document summary for context (R2R-style)
+                # Combine all chunk content for summary (limited to first ~5000 chars)
+                full_text = " ".join([c.content for c in embedded_chunks])[:5000]
+                document_summary = await self.graph_extractor.generate_document_summary_async(full_text)
+                
+                if document_summary:
+                    logger.info(f"Document {doc_id}: generated summary for extraction context")
+                
+                self.neo4j.update_document_progress(doc_id, 40, 100, "Extracting entities and relationships...")
                 
                 for idx, chunk in enumerate(embedded_chunks):
                     chunk_id = chunk_ids[idx]
                     
+                    # Update progress for extraction (40-95%)
+                    extraction_progress = 40 + int((idx + 1) / len(embedded_chunks) * 55)
+                    self.neo4j.update_document_progress(
+                        doc_id, extraction_progress, 100,
+                        f"Extracting from chunk {idx + 1}/{len(embedded_chunks)} ({total_entities} entities found)"
+                    )
+                    
                     try:
-                        # Extract entities and relationships (async to not block event loop)
-                        extraction = await self.graph_extractor.extract_from_text_async(chunk.content)
+                        # Extract entities and relationships with document context (R2R-style)
+                        extraction = await self.graph_extractor.extract_from_text_async(
+                            chunk.content, 
+                            document_summary=document_summary
+                        )
                         
                         if extraction.entities or extraction.relationships:
                             # Store in Neo4j
@@ -188,6 +231,8 @@ class DocumentProcessor:
                     f"Document {doc_id}: graph extraction complete - "
                     f"{total_entities} entities, {total_relationships} relationships"
                 )
+            
+            self.neo4j.update_document_progress(doc_id, 100, 100, "Processing complete!")
             
             # Update document status
             self.neo4j.update_document_status(
@@ -233,8 +278,9 @@ class QueryProcessor:
                 api_key=Secret.from_token(self.settings.openai_api_key),
                 api_base_url=self.settings.openai_api_base,
                 model=self.settings.embedding_model,
+                dimensions=self.settings.embedding_dimension,
             )
-            logger.info(f"Using OpenAI text embeddings: {self.settings.embedding_model}")
+            logger.info(f"Using OpenAI text embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})")
         else:
             from haystack.components.embedders import SentenceTransformersTextEmbedder
             self.text_embedder = SentenceTransformersTextEmbedder(
@@ -368,7 +414,7 @@ class QueryProcessor:
                 "graph_context": graph_context.model_dump() if graph_context else None
             }
         
-        # Use OpenAI for generation with enhanced context
+        # Use OpenAI for generation with enhanced context (R2R-style)
         try:
             from openai import OpenAI
             
@@ -377,20 +423,33 @@ class QueryProcessor:
                 base_url=self.settings.openai_api_base,
             )
             
+            # R2R-style system prompt with source referencing
             system_prompt = """You are a helpful assistant that answers questions based on the provided context.
-Use information from both the document excerpts and the knowledge graph (entities and relationships) to provide comprehensive answers.
-If the knowledge graph provides relevant entity information or relationships, incorporate that into your answer.
-Be concise and accurate. Only use information from the context to answer."""
+
+Guidelines:
+1. Use information from both document excerpts and the knowledge graph (entities and relationships)
+2. Cite sources using the reference IDs provided (e.g., [src_1], [src_2])
+3. If the knowledge graph provides relevant entity information or relationships, incorporate them
+4. Be concise, accurate, and comprehensive
+5. Only use information from the provided context to answer"""
             
-            prompt = f"""Answer the question based on the provided context.
+            # Format sources with reference IDs (R2R-style)
+            formatted_sources = ""
+            if results:
+                for idx, r in enumerate(results):
+                    ref_id = f"src_{idx+1}"
+                    formatted_sources += f"\n[{ref_id}] Source: {r['filename']}\n{r['content']}\n"
+            
+            prompt = f"""Answer the question based on the provided context. Use reference IDs like [src_1], [src_2] to cite your sources.
 
 === Document Context ===
-{vector_context if vector_context else "No document excerpts available."}
+{formatted_sources if formatted_sources else "No document excerpts available."}
 {graph_context_str if graph_context_str else ""}
 
-Question: {question}
+### Question:
+{question}
 
-Answer:"""
+### Answer:"""
             
             response = client.chat.completions.create(
                 model=self.settings.openai_model,
@@ -399,7 +458,7 @@ Answer:"""
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=700
+                max_tokens=800
             )
             
             answer = response.choices[0].message.content

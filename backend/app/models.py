@@ -38,6 +38,7 @@ class Relationship(BaseModel):
     target: str = Field(..., description="The name of the target entity")
     relationship_type: str = Field(..., description="Type of relationship: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, etc.")
     description: str = Field(default="", description="Description of how the entities are related")
+    weight: float = Field(default=5.0, ge=0.0, le=10.0, description="Relationship strength score (0-10)")
     
     class Config:
         json_schema_extra = {
@@ -45,7 +46,8 @@ class Relationship(BaseModel):
                 "source": "Neo4j",
                 "target": "Graph Database",
                 "relationship_type": "IS_A",
-                "description": "Neo4j is a type of graph database"
+                "description": "Neo4j is a type of graph database",
+                "weight": 8.0
             }
         }
 
@@ -72,6 +74,10 @@ class DocumentMetadata(BaseModel):
     chunk_count: int = 0
     processing_status: ProcessingStatus = ProcessingStatus.PENDING
     error_message: Optional[str] = None
+    # Progress tracking fields
+    progress_current: int = Field(default=0, description="Current step in processing")
+    progress_total: int = Field(default=0, description="Total steps in processing")
+    progress_message: str = Field(default="", description="Human-readable progress message")
 
 
 class DocumentChunk(BaseModel):

@@ -22,6 +22,9 @@ interface Document {
   chunk_count: number;
   processing_status: string;
   error_message?: string;
+  progress_current?: number;
+  progress_total?: number;
+  progress_message?: string;
 }
 
 interface DocumentListProps {
@@ -75,6 +78,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       case "completed":
         return <CheckCircle className="w-4 h-4 text-mint-400" />;
       case "processing":
+      case "extracting":
         return <Loader2 className="w-4 h-4 text-ocean-400 animate-spin" />;
       case "failed":
         return <AlertCircle className="w-4 h-4 text-coral-400" />;
@@ -89,11 +93,22 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         return "bg-mint-500/20 text-mint-400";
       case "processing":
         return "bg-ocean-500/20 text-ocean-400";
+      case "extracting":
+        return "bg-cyan-500/20 text-cyan-400";
       case "failed":
         return "bg-coral-500/20 text-coral-400";
       default:
         return "bg-white/10 text-white/50";
     }
+  };
+
+  const getProgressPercent = (doc: Document) => {
+    if (!doc.progress_total || doc.progress_total === 0) return 0;
+    return Math.min(100, Math.round((doc.progress_current || 0) / doc.progress_total * 100));
+  };
+
+  const isProcessing = (status: string) => {
+    return status === "processing" || status === "extracting" || status === "pending";
   };
 
   if (isLoading) {
@@ -208,6 +223,29 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                       </span>
                     )}
                   </div>
+
+                  {/* Progress bar for processing documents */}
+                  {isProcessing(doc.processing_status) && doc.progress_total > 0 && (
+                    <div className="mt-3 space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-white/50">{doc.progress_message || "Processing..."}</span>
+                        <span className="text-ocean-400 font-medium">{getProgressPercent(doc)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          className={cn(
+                            "h-full rounded-full",
+                            doc.processing_status === "extracting" 
+                              ? "bg-gradient-to-r from-cyan-500 to-teal-400"
+                              : "bg-gradient-to-r from-ocean-500 to-cyan-400"
+                          )}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${getProgressPercent(doc)}%` }}
+                          transition={{ duration: 0.3 }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </motion.div>

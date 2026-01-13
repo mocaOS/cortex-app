@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Upload,
@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Loader2,
   X,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,17 +19,113 @@ interface FileUploadProps {
 
 interface UploadingFile {
   file: File;
-  status: "uploading" | "success" | "error";
+  status: "uploading" | "processing" | "extracting" | "success" | "error";
   message?: string;
   documentId?: string;
+  progressCurrent?: number;
+  progressTotal?: number;
+  progressMessage?: string;
 }
 
 export default function FileUpload({ onUpload }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Keep track of document IDs to poll in a ref (stable reference)
+  const documentIdsToPolRef = useRef<Map<string, boolean>>(new Map());
 
   const allowedTypes = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
+
+  // Update the ref when uploadingFiles changes
+  useEffect(() => {
+    const newMap = new Map<string, boolean>();
+    uploadingFiles.forEach((uf) => {
+      if ((uf.status === "processing" || uf.status === "extracting") && uf.documentId) {
+        newMap.set(uf.documentId, true);
+      }
+    });
+    documentIdsToPolRef.current = newMap;
+  }, [uploadingFiles]);
+
+  // Single stable polling interval - runs every 3 seconds
+  useEffect(() => {
+    const poll = async () => {
+      const docIds = Array.from(documentIdsToPolRef.current.keys());
+      
+      if (docIds.length === 0) return;
+
+      // Poll all documents in parallel
+      const results = await Promise.all(
+        docIds.map(async (docId) => {
+          try {
+            const res = await fetch(`/api/documents/${docId}`);
+            if (!res.ok) return null;
+            return await res.json();
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      // Update state based on results
+      setUploadingFiles((prev) =>
+        prev.map((f) => {
+          if (!f.documentId) return f;
+          
+          const docIndex = docIds.indexOf(f.documentId);
+          if (docIndex === -1) return f;
+          
+          const doc = results[docIndex];
+          if (!doc) return f;
+
+          if (doc.processing_status === "completed") {
+            // Remove from polling list
+            documentIdsToPolRef.current.delete(f.documentId);
+            return {
+              ...f,
+              status: "success" as const,
+              message: `Completed! ${doc.chunk_count} chunks, ready for search`,
+              progressCurrent: 100,
+              progressTotal: 100,
+              progressMessage: "Complete!",
+            };
+          } else if (doc.processing_status === "failed") {
+            // Remove from polling list
+            documentIdsToPolRef.current.delete(f.documentId);
+            return {
+              ...f,
+              status: "error" as const,
+              message: doc.error_message || "Processing failed",
+            };
+          } else {
+            return {
+              ...f,
+              status: doc.processing_status as "processing" | "extracting",
+              progressCurrent: doc.progress_current || 0,
+              progressTotal: doc.progress_total || 100,
+              progressMessage: doc.progress_message || "Processing...",
+            };
+          }
+        })
+      );
+    };
+
+    // Start polling interval (poll every 3 seconds)
+    pollingRef.current = setInterval(poll, 3000);
+    
+    // Initial poll after a short delay
+    const initialPollTimeout = setTimeout(poll, 500);
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      clearTimeout(initialPollTimeout);
+    };
+  }, []); // Empty deps - only run once on mount
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -91,9 +188,12 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
             ? result.success
               ? {
                   ...uf,
-                  status: "success" as const,
+                  status: "processing" as const,
                   documentId: result.data.document_id,
-                  message: "Processing started",
+                  message: "Processing started...",
+                  progressCurrent: 0,
+                  progressTotal: 100,
+                  progressMessage: "Starting...",
                 }
               : {
                   ...uf,
@@ -106,6 +206,11 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     }
 
     onUpload();
+  };
+
+  const getProgressPercent = (uf: UploadingFile) => {
+    if (!uf.progressTotal || uf.progressTotal === 0) return 0;
+    return Math.min(100, Math.round((uf.progressCurrent || 0) / uf.progressTotal * 100));
   };
 
   const handleDrop = useCallback(
@@ -130,8 +235,14 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
   };
 
   const clearCompleted = () => {
-    setUploadingFiles((prev) => prev.filter((uf) => uf.status === "uploading"));
+    setUploadingFiles((prev) => prev.filter((uf) => 
+      uf.status === "uploading" || uf.status === "processing" || uf.status === "extracting"
+    ));
   };
+
+  const hasCompletedFiles = uploadingFiles.some(
+    (f) => f.status === "success" || f.status === "error"
+  );
 
   return (
     <div className="space-y-6">
@@ -212,7 +323,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
               <h4 className="text-sm font-medium text-white/80">
                 Upload Progress
               </h4>
-              {uploadingFiles.some((f) => f.status !== "uploading") && (
+              {hasCompletedFiles && (
                 <button
                   onClick={clearCompleted}
                   className="text-xs text-white/40 hover:text-white/60 transition-colors"
@@ -229,51 +340,90 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  className="flex items-center gap-4 p-4"
+                  className="p-4"
                 >
-                  <div
-                    className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center",
-                      uf.status === "uploading" && "bg-ocean-500/20",
-                      uf.status === "success" && "bg-mint-500/20",
-                      uf.status === "error" && "bg-coral-500/20"
-                    )}
-                  >
-                    {uf.status === "uploading" && (
-                      <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
-                    )}
-                    {uf.status === "success" && (
-                      <CheckCircle className="w-5 h-5 text-mint-400" />
-                    )}
-                    {uf.status === "error" && (
-                      <AlertCircle className="w-5 h-5 text-coral-400" />
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white/80 truncate">
-                      {uf.file.name}
-                    </p>
-                    <p
+                  <div className="flex items-center gap-4">
+                    <div
                       className={cn(
-                        "text-xs",
-                        uf.status === "uploading" && "text-white/40",
-                        uf.status === "success" && "text-mint-400/70",
-                        uf.status === "error" && "text-coral-400/70"
+                        "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
+                        uf.status === "uploading" && "bg-ocean-500/20",
+                        uf.status === "processing" && "bg-ocean-500/20",
+                        uf.status === "extracting" && "bg-cyan-500/20",
+                        uf.status === "success" && "bg-mint-500/20",
+                        uf.status === "error" && "bg-coral-500/20"
                       )}
                     >
-                      {uf.status === "uploading" && "Uploading..."}
-                      {uf.status === "success" && uf.message}
-                      {uf.status === "error" && uf.message}
-                    </p>
+                      {uf.status === "uploading" && (
+                        <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                      )}
+                      {uf.status === "processing" && (
+                        <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                      )}
+                      {uf.status === "extracting" && (
+                        <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
+                      )}
+                      {uf.status === "success" && (
+                        <CheckCircle className="w-5 h-5 text-mint-400" />
+                      )}
+                      {uf.status === "error" && (
+                        <AlertCircle className="w-5 h-5 text-coral-400" />
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white/80 truncate">
+                        {uf.file.name}
+                      </p>
+                      <p
+                        className={cn(
+                          "text-xs",
+                          uf.status === "uploading" && "text-white/40",
+                          uf.status === "processing" && "text-ocean-400/70",
+                          uf.status === "extracting" && "text-cyan-400/70",
+                          uf.status === "success" && "text-mint-400/70",
+                          uf.status === "error" && "text-coral-400/70"
+                        )}
+                      >
+                        {uf.status === "uploading" && "Uploading..."}
+                        {uf.status === "processing" && (uf.progressMessage || "Processing...")}
+                        {uf.status === "extracting" && (uf.progressMessage || "Extracting knowledge graph...")}
+                        {uf.status === "success" && uf.message}
+                        {uf.status === "error" && uf.message}
+                      </p>
+                    </div>
+
+                    {(uf.status === "processing" || uf.status === "extracting") && (
+                      <span className="text-xs font-medium text-ocean-400 shrink-0">
+                        {getProgressPercent(uf)}%
+                      </span>
+                    )}
+
+                    <button
+                      onClick={() => removeFile(uf.file)}
+                      className="p-2 hover:bg-white/5 rounded-lg transition-colors shrink-0"
+                    >
+                      <X className="w-4 h-4 text-white/40" />
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => removeFile(uf.file)}
-                    className="p-2 hover:bg-white/5 rounded-lg transition-colors"
-                  >
-                    <X className="w-4 h-4 text-white/40" />
-                  </button>
+                  {/* Progress bar for processing files */}
+                  {(uf.status === "processing" || uf.status === "extracting") && uf.progressTotal > 0 && (
+                    <div className="mt-3 ml-14">
+                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          className={cn(
+                            "h-full rounded-full",
+                            uf.status === "extracting"
+                              ? "bg-gradient-to-r from-cyan-500 to-teal-400"
+                              : "bg-gradient-to-r from-ocean-500 to-cyan-400"
+                          )}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${getProgressPercent(uf)}%` }}
+                          transition={{ duration: 0.3 }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>
