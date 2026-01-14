@@ -1,157 +1,77 @@
-# MOCA - GraphRAG Document Intelligence Platform
-# Coolify Docker Compose Configuration
-#
-# Domain: https://kg.moca.qwellco.de
-#
-# IMPORTANT: Coolify passes ALL env vars to ALL containers.
-# Do NOT use NEO4J_* prefixed variables in Coolify - they break Neo4j.
-# Use DB_USER and DB_PASSWORD instead.
+# Docker Compose for Coolify deployment
+# Uses Coolify magic variables for dynamic URL generation
+# Deploy this via Coolify's Docker Compose resource
 
 services:
-  # ==========================================================================
-  # Neo4j Graph Database (Community Edition)
-  # ==========================================================================
   neo4j:
     image: neo4j:5.15.0-community
     environment:
-      # Auth uses DB_USER/DB_PASSWORD from Coolify env vars
-      - NEO4J_AUTH=${DB_USER:-neo4j}/${DB_PASSWORD:-password123}
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${SERVICE_PASSWORD_NEO4J}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      # Memory settings (Neo4j 5.x syntax)
-      - NEO4J_server_memory_heap_initial__size=512m
-      - NEO4J_server_memory_heap_max__size=2G
-      - NEO4J_server_memory_pagecache_size=512m
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_pagecache_size=512m
     volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-plugins:/plugins
+      - neo4j_data:/data
+      - neo4j_logs:/logs
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
-  # ==========================================================================
-  # Backend API (FastAPI + Haystack + GraphRAG)
-  # ==========================================================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
     environment:
-      # Neo4j Connection (maps DB_* to NEO4J_* for the app)
       - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=${DB_USER:-neo4j}
-      - NEO4J_PASSWORD=${DB_PASSWORD:-password123}
-      
-      # OpenAI / LiteLLM Configuration
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${SERVICE_PASSWORD_NEO4J}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.openai.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
-      
-      # Embedding Configuration
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-openai/text-embedding-3-small}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
-      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS:-true}
-      
-      # Upload Configuration
+      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
+      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       - UPLOAD_DIR=/app/uploads
-      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
-      
-      # Chunking Configuration
-      - CHUNK_SIZE=${CHUNK_SIZE:-500}
-      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
-      - CHUNK_BY=${CHUNK_BY:-sentence}
-      - SENTENCES_PER_CHUNK=${SENTENCES_PER_CHUNK:-5}
-      
-      # GraphRAG Configuration
-      - ENABLE_GRAPH_EXTRACTION=${ENABLE_GRAPH_EXTRACTION:-true}
-      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
-      - MAX_GRAPH_HOPS=${MAX_GRAPH_HOPS:-2}
-      - CONCURRENT_EXTRACTIONS=${CONCURRENT_EXTRACTIONS:-20}
-      
-      # Enhanced RAG Configuration
-      - ENABLE_RERANKING=${ENABLE_RERANKING:-true}
-      - RERANKING_MODEL=${RERANKING_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
-      - ENABLE_HYBRID_SEARCH=${ENABLE_HYBRID_SEARCH:-true}
-      - VECTOR_WEIGHT=${VECTOR_WEIGHT:-0.5}
-      - KEYWORD_WEIGHT=${KEYWORD_WEIGHT:-0.3}
-      - GRAPH_WEIGHT=${GRAPH_WEIGHT:-0.2}
-      - MAX_CONVERSATION_HISTORY=${MAX_CONVERSATION_HISTORY:-6}
-      - ENABLE_AGENTIC_RAG=${ENABLE_AGENTIC_RAG:-true}
-      - MAX_AGENTIC_STEPS=${MAX_AGENTIC_STEPS:-3}
-      
-      # Community Detection & Graph Summarization
-      - ENABLE_COMMUNITY_DETECTION=${ENABLE_COMMUNITY_DETECTION:-true}
-      - MIN_COMMUNITY_SIZE=${MIN_COMMUNITY_SIZE:-3}
-      - MAX_COMMUNITIES=${MAX_COMMUNITIES:-50}
-      - ENABLE_GRAPH_SUMMARIZATION=${ENABLE_GRAPH_SUMMARIZATION:-true}
-      - COMMUNITY_SUMMARY_MODEL=${COMMUNITY_SUMMARY_MODEL:-}
-      
-      # Semantic Entity Resolution
-      - ENABLE_SEMANTIC_ENTITY_RESOLUTION=${ENABLE_SEMANTIC_ENTITY_RESOLUTION:-true}
-      - ENTITY_SIMILARITY_THRESHOLD=${ENTITY_SIMILARITY_THRESHOLD:-0.85}
-      - ENTITY_EMBEDDING_MODEL=${ENTITY_EMBEDDING_MODEL:-}
-      
-      # Collection-Level Graphs
-      - ENABLE_COLLECTIONS=${ENABLE_COLLECTIONS:-true}
-      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-default}
-      
-      # Extended Thinking / Reasoning Visibility
-      - STREAM_REASONING_STEPS=${STREAM_REASONING_STEPS:-true}
-      - SHOW_RETRIEVAL_STATS=${SHOW_RETRIEVAL_STATS:-true}
-      
-      # Python settings
       - PYTHONUNBUFFERED=1
+      # Coolify magic variable - exposes backend at api subdomain on port 8000
+      - SERVICE_FQDN_API_8000
     volumes:
-      - uploads-data:/app/uploads
+      - uploads_data:/app/uploads
     depends_on:
       neo4j:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
-    restart: unless-stopped
+      retries: 3
 
-  # ==========================================================================
-  # Frontend (Next.js)
-  # ==========================================================================
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
+      args:
+        # Build-time arg for the public API URL
+        - NEXT_PUBLIC_API_URL=${SERVICE_URL_API_8000}
     environment:
-      # Coolify magic variable - exposes frontend on the main domain
+      # Coolify magic variable - generates the FQDN for frontend on port 3000
       - SERVICE_FQDN_FRONTEND_3000
-      
-      # The API URL that the browser uses (public URL)
-      - NEXT_PUBLIC_API_URL=https://kg.moca.qwellco.de
-      
-      # Internal API URL for server-side requests (Next.js rewrites)
+      # Public API URL uses the backend's Coolify-assigned URL
+      - NEXT_PUBLIC_API_URL=${SERVICE_URL_API_8000}
+      # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      
-      - NODE_ENV=production
     depends_on:
       - backend
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
     restart: unless-stopped
 
-# ==========================================================================
-# Volumes
-# ==========================================================================
 volumes:
-  neo4j-data:
-  neo4j-logs:
-  neo4j-plugins:
-  uploads-data:
+  neo4j_data:
+  neo4j_logs:
+  uploads_data:
