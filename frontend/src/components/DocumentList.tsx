@@ -535,7 +535,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                   )}
 
                   {/* Progress bar for processing documents */}
-                  {isProcessing(doc.processing_status) && doc.progress_total > 0 && (
+                  {isProcessing(doc.processing_status) && doc.progress_total !== undefined && doc.progress_total > 0 && (
                     <div className="mt-3 space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/50">{doc.progress_message || "Processing..."}</span>
