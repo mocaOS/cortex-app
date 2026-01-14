@@ -119,7 +119,7 @@ export default function Home() {
 
       {/* Stats Bar */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           <StatsCard
             label="Documents"
             value={stats?.document_count ?? 0}
