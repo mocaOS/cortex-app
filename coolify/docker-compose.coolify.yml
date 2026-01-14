@@ -1,46 +1,56 @@
-# Coolify-compatible docker-compose for production deployment
-# Deploy this via Coolify's Docker Compose deployment option
-# 
-# IMPORTANT: In Coolify, set the "Base Directory" to "/" (the repo root)
-# so that build contexts resolve correctly.
+# MOCA - GraphRAG Document Intelligence Platform
+# Coolify Docker Compose Configuration
+#
+# Domain: https://kg.moca.qwellco.de
+#
+# Coolify handles SSL/TLS and routing via Traefik.
+# Uses Coolify magic variables for dynamic configuration.
 
 services:
+  # ==========================================================================
+  # Neo4j Graph Database (Community Edition)
+  # ==========================================================================
   neo4j:
-    image: neo4j:5.15.0-enterprise
-    # Use inline command to unset NEO4J_URI before starting Neo4j
-    # This prevents Neo4j from trying to parse NEO4J_URI as a config setting
-    entrypoint: ["/bin/bash", "-c", "unset NEO4J_URI && exec /startup/docker-entrypoint.sh neo4j"]
+    image: neo4j:5.15.0-community
     environment:
-      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}
-      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4J_dbms_memory_heap_initial__size=512m
-      - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_pagecache_size=512m
+      - NEO4J_dbms_memory_heap_initial__size=${NEO4J_HEAP_INITIAL:-512m}
+      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP_MAX:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-512m}
+      - NEO4J_dbms_connector_bolt_listen__address=:7687
+      - NEO4J_dbms_connector_http_listen__address=:7474
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-plugins:/plugins
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     restart: unless-stopped
 
+  # ==========================================================================
+  # Backend API (FastAPI + Haystack + GraphRAG)
+  # ==========================================================================
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile.prod
     environment:
-      # Neo4j Configuration
+      # Coolify magic variable - generates URL for this service
+      - SERVICE_FQDN_BACKEND_8000=/api
+      
+      # Neo4j Connection (internal network)
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=${NEO4J_USER:-neo4j}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-changeme}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123}
       
       # OpenAI / LiteLLM Configuration
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.openai.com/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       
@@ -61,6 +71,7 @@ services:
       
       # GraphRAG Configuration
       - ENABLE_GRAPH_EXTRACTION=${ENABLE_GRAPH_EXTRACTION:-true}
+      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
       - MAX_GRAPH_HOPS=${MAX_GRAPH_HOPS:-2}
       - CONCURRENT_EXTRACTIONS=${CONCURRENT_EXTRACTIONS:-20}
       
@@ -80,10 +91,12 @@ services:
       - MIN_COMMUNITY_SIZE=${MIN_COMMUNITY_SIZE:-3}
       - MAX_COMMUNITIES=${MAX_COMMUNITIES:-50}
       - ENABLE_GRAPH_SUMMARIZATION=${ENABLE_GRAPH_SUMMARIZATION:-true}
+      - COMMUNITY_SUMMARY_MODEL=${COMMUNITY_SUMMARY_MODEL:-}
       
       # Semantic Entity Resolution
       - ENABLE_SEMANTIC_ENTITY_RESOLUTION=${ENABLE_SEMANTIC_ENTITY_RESOLUTION:-true}
       - ENTITY_SIMILARITY_THRESHOLD=${ENTITY_SIMILARITY_THRESHOLD:-0.85}
+      - ENTITY_EMBEDDING_MODEL=${ENTITY_EMBEDDING_MODEL:-}
       
       # Collection-Level Graphs
       - ENABLE_COLLECTIONS=${ENABLE_COLLECTIONS:-true}
@@ -93,44 +106,55 @@ services:
       - STREAM_REASONING_STEPS=${STREAM_REASONING_STEPS:-true}
       - SHOW_RETRIEVAL_STATS=${SHOW_RETRIEVAL_STATS:-true}
       
+      # Python settings
       - PYTHONUNBUFFERED=1
     volumes:
-      - uploads_data:/app/uploads
+      - uploads-data:/app/uploads
     depends_on:
       neo4j:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
+  # ==========================================================================
+  # Frontend (Next.js)
+  # ==========================================================================
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile.prod
-      args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
     environment:
+      # Coolify magic variable - exposes frontend on the main domain
+      - SERVICE_FQDN_FRONTEND_3000
+      
+      # The API URL that the browser uses (public URL)
+      - NEXT_PUBLIC_API_URL=https://kg.moca.qwellco.de
+      
+      # Internal API URL for server-side requests (Next.js rewrites)
       - API_URL=http://backend:8000
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+      
+      - NODE_ENV=production
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    # Coolify will handle the port mapping and reverse proxy
-    expose:
-      - "3000"
+    restart: unless-stopped
 
+# ==========================================================================
+# Volumes
+# ==========================================================================
 volumes:
-  neo4j_data:
-  neo4j_logs:
-  uploads_data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-plugins:
+  uploads-data:
