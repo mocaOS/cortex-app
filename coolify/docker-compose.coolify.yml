@@ -40,6 +40,8 @@ services:
       - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       - UPLOAD_DIR=/app/uploads
       - PYTHONUNBUFFERED=1
+      # Number of uvicorn workers (default 1, increase if you have RAM - each uses ~1-2GB)
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
       # Expose backend at api-kg subdomain on port 8000
       # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.moca.qwellco.de)
       - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
