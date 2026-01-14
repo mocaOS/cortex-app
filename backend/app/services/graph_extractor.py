@@ -674,6 +674,220 @@ class GraphExtractor:
         except Exception as e:
             logger.error(f"Error enriching entity description: {e}")
             return entity_description
+    
+    # =========================================================================
+    # Community Summarization (R2R-style)
+    # =========================================================================
+    
+    def generate_community_summary(
+        self,
+        entities: List[dict],
+        relationships: List[dict]
+    ) -> dict:
+        """
+        Generate a summary and name for a community of related entities.
+        
+        R2R-style community summarization for improved RAG context.
+        
+        Args:
+            entities: List of entity dicts with name, type, description
+            relationships: List of relationship dicts within the community
+            
+        Returns:
+            Dict with 'name' and 'summary' keys
+        """
+        if not self.is_available or not entities:
+            return {"name": None, "summary": None}
+        
+        # Format entity information
+        entity_info = "\n".join([
+            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:100]}"
+            for e in entities[:15]
+        ])
+        
+        # Format relationship information
+        rel_info = "\n".join([
+            f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
+            for r in relationships[:20]
+        ]) if relationships else "No explicit relationships."
+        
+        prompt = f"""Analyze this community of related entities from a knowledge graph.
+
+=== Entities ===
+{entity_info}
+
+=== Relationships ===
+{rel_info}
+
+Generate a JSON object with:
+- "name": A short descriptive name (3-5 words)
+- "summary": A 2-3 sentence explanation of what connects these entities
+
+Respond with ONLY the JSON object, no other text:
+{{"name": "...", "summary": "..."}}"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+            
+            content = response.choices[0].message.content.strip()
+            
+            # Parse JSON response with multiple strategies
+            import re
+            
+            # Strategy 1: Direct JSON parse
+            try:
+                result = json.loads(content)
+                if "name" in result and "summary" in result:
+                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
+                    return result
+            except json.JSONDecodeError:
+                pass
+            
+            # Strategy 2: Extract JSON block from markdown code fence
+            json_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_block_match:
+                try:
+                    result = json.loads(json_block_match.group(1))
+                    if "name" in result:
+                        logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
+                        return result
+                except json.JSONDecodeError:
+                    pass
+            
+            # Strategy 3: Find any JSON object in the content
+            json_match = re.search(r'\{[^{}]*"name"\s*:\s*"[^"]*"[^{}]*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    result = json.loads(json_match.group())
+                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            
+            # Strategy 4: Extract name and summary with regex patterns
+            name_match = re.search(r'"name"\s*:\s*"([^"]+)"', content)
+            summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', content)
+            
+            if name_match:
+                logger.info(f"Generated community summary (regex): {name_match.group(1)}")
+                return {
+                    "name": name_match.group(1),
+                    "summary": summary_match.group(1) if summary_match else content[:500]
+                }
+            
+            # Fallback: use content as summary with generic name
+            logger.warning("Could not parse community summary as JSON, using fallback")
+            return {
+                "name": f"Community ({len(entities)} entities)",
+                "summary": content[:500] if content else None
+            }
+                
+        except Exception as e:
+            logger.error(f"Error generating community summary: {e}")
+            return {"name": None, "summary": None}
+    
+    async def generate_community_summary_async(
+        self,
+        entities: List[dict],
+        relationships: List[dict]
+    ) -> dict:
+        """Async version of generate_community_summary."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            _executor,
+            lambda: self.generate_community_summary(entities, relationships)
+        )
+    
+    def generate_community_name(self, entities: List[dict]) -> str:
+        """Generate a short name for a community based on its entities."""
+        if not self.is_available or not entities:
+            return f"Community ({len(entities)} entities)"
+        
+        # Get entity names for quick naming
+        entity_names = [e.get("name", "") for e in entities[:10]]
+        entity_types = list(set(e.get("type", "") for e in entities if e.get("type")))
+        
+        prompt = f"""Generate a short, descriptive name (3-5 words) for a community containing these entities:
+
+Entities: {', '.join(entity_names)}
+Types present: {', '.join(entity_types)}
+
+Respond with ONLY the community name, nothing else."""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You name knowledge graph communities. Respond with only the name."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=50,
+            )
+            
+            name = response.choices[0].message.content.strip().strip('"').strip("'")
+            return name if name else f"Community ({len(entities)} entities)"
+            
+        except Exception as e:
+            logger.error(f"Error generating community name: {e}")
+            return f"Community ({len(entities)} entities)"
+    
+    # =========================================================================
+    # Entity Embedding Generation (for Semantic Resolution)
+    # =========================================================================
+    
+    def generate_entity_embedding(self, entity_name: str, entity_type: str, description: str) -> Optional[List[float]]:
+        """
+        Generate an embedding for an entity for semantic resolution.
+        
+        Combines entity name, type, and description for rich embedding.
+        """
+        if not self.settings.openai_api_key:
+            return None
+        
+        # Create rich text for embedding
+        text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
+        
+        try:
+            from openai import OpenAI
+            
+            client = OpenAI(
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_api_base,
+            )
+            
+            response = client.embeddings.create(
+                model=self.settings.entity_embed_model,
+                input=text,
+                dimensions=self.settings.embedding_dimension
+            )
+            
+            return response.data[0].embedding
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate entity embedding: {e}")
+            return None
+    
+    async def generate_entity_embedding_async(
+        self,
+        entity_name: str,
+        entity_type: str,
+        description: str
+    ) -> Optional[List[float]]:
+        """Async version of generate_entity_embedding."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            _executor,
+            lambda: self.generate_entity_embedding(entity_name, entity_type, description)
+        )
 
 
 # Singleton instance

@@ -50,10 +50,48 @@ class Settings(BaseSettings):
     chunk_by: str = "sentence"  # "word" or "sentence" based splitting
     sentences_per_chunk: int = 5  # Sentences per chunk when using sentence splitting
     
+    # ==========================================================================
+    # Community Detection & Graph Summarization (R2R-style)
+    # ==========================================================================
+    enable_community_detection: bool = True  # Enable entity community detection
+    min_community_size: int = 3  # Minimum entities for a valid community
+    max_communities: int = 50  # Maximum number of communities to track
+    enable_graph_summarization: bool = True  # Generate LLM summaries of communities
+    community_summary_model: str = ""  # Model for summaries (defaults to openai_model)
+    
+    # ==========================================================================
+    # Enhanced Entity Resolution (Semantic Similarity)
+    # ==========================================================================
+    enable_semantic_entity_resolution: bool = True  # Use embeddings for entity matching
+    entity_similarity_threshold: float = 0.85  # Threshold for entity deduplication
+    entity_embedding_model: str = ""  # Model for entity embeddings (defaults to embedding_model)
+    
+    # ==========================================================================
+    # Collection-Level Graphs (R2R-style)
+    # ==========================================================================
+    enable_collections: bool = True  # Enable collection-based organization
+    default_collection: str = "default"  # Default collection name for documents
+    
+    # ==========================================================================
+    # Extended Thinking / Reasoning Visibility (R2R-style)
+    # ==========================================================================
+    stream_reasoning_steps: bool = True  # Stream reasoning steps in agentic mode
+    show_retrieval_stats: bool = True  # Show retrieval statistics in responses
+    
     @property
     def extraction_model(self) -> str:
         """Get the model to use for graph extraction."""
         return self.graph_extraction_model or self.openai_model
+    
+    @property
+    def summary_model(self) -> str:
+        """Get the model to use for community summarization."""
+        return self.community_summary_model or self.openai_model
+    
+    @property
+    def entity_embed_model(self) -> str:
+        """Get the model to use for entity embeddings."""
+        return self.entity_embedding_model or self.embedding_model
     
     class Config:
         env_file = ".env"

@@ -106,10 +106,72 @@ export interface Stats {
   total_size: number;
   entity_count?: number;
   relationship_count?: number;
+  community_count?: number;
+  collection_count?: number;
 }
 
 export interface HealthResponse {
   status: string;
   neo4j_connected: boolean;
   version: string;
+}
+
+// =============================================================================
+// Collection Types (R2R-style)
+// =============================================================================
+
+export interface Collection {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  document_count: number;
+  entity_count: number;
+}
+
+export interface CollectionCreate {
+  name: string;
+  description?: string;
+}
+
+export interface CollectionEntity {
+  name: string;
+  type: string;
+  description: string;
+  community_id?: number;
+  mention_count: number;
+}
+
+// =============================================================================
+// Community Types (R2R-style)
+// =============================================================================
+
+export interface Community {
+  id: number;
+  name?: string;
+  summary?: string;
+  entity_count: number;
+  entities?: Array<{
+    name: string;
+    type: string;
+    description: string;
+  }>;
+  sample_entities?: string[];
+}
+
+// =============================================================================
+// Extended Thinking Types
+// =============================================================================
+
+export interface ThinkingStreamEvent extends StreamEvent {
+  thinking?: string;
+  search?: string;
+  retrieval?: string;
+  sub_questions?: string[];
+  retrieval_stats?: {
+    total_sources: number;
+    unique_sources: number;
+    communities_used: number;
+  };
+  communities_used?: number[];
 }

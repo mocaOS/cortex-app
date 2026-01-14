@@ -10,8 +10,10 @@ import {
   Loader2,
   X,
   Sparkles,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import CollectionSelector from "./CollectionSelector";
 
 interface FileUploadProps {
   onUpload: () => void;
@@ -30,6 +32,7 @@ interface UploadingFile {
 export default function FileUpload({ onUpload }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
+  const [selectedCollection, setSelectedCollection] = useState<string | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -141,8 +144,13 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     const formData = new FormData();
     formData.append("file", file);
 
+    // Build URL with optional collection_id
+    const url = selectedCollection
+      ? `/api/upload?collection_id=${encodeURIComponent(selectedCollection)}`
+      : "/api/upload";
+
     try {
-      const res = await fetch("/api/upload", {
+      const res = await fetch(url, {
         method: "POST",
         body: formData,
       });
@@ -246,6 +254,20 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
 
   return (
     <div className="space-y-6">
+      {/* Collection Selector */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 text-sm text-white/50">
+          <FolderOpen className="w-4 h-4" />
+          <span>Upload to:</span>
+        </div>
+        <CollectionSelector
+          value={selectedCollection}
+          onChange={setSelectedCollection}
+          allowCreate={true}
+          className="w-64"
+        />
+      </div>
+
       {/* Upload Zone */}
       <motion.div
         className={cn(

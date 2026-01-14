@@ -8,6 +8,11 @@ import type {
   HealthResponse,
   ConversationMessage,
   StreamEvent,
+  Collection,
+  CollectionCreate,
+  CollectionEntity,
+  Community,
+  ThinkingStreamEvent,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -42,11 +47,15 @@ class ApiClient {
     return this.request<Stats>("/api/stats");
   }
 
-  async uploadFile(file: File): Promise<UploadResponse> {
+  async uploadFile(file: File, collectionId?: string): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`${API_BASE}/api/upload`, {
+    const url = collectionId 
+      ? `${API_BASE}/api/upload?collection_id=${encodeURIComponent(collectionId)}`
+      : `${API_BASE}/api/upload`;
+
+    const res = await fetch(url, {
       method: "POST",
       body: formData,
     });
@@ -219,6 +228,152 @@ class ApiClient {
           try {
             const data = JSON.parse(line.slice(6));
             yield data as StreamEvent;
+          } catch (e) {
+            console.warn("Failed to parse SSE data:", line);
+          }
+        }
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Collection API (R2R-style)
+  // ===========================================================================
+
+  async getCollections(): Promise<{ collections: Collection[]; total: number }> {
+    return this.request<{ collections: Collection[]; total: number }>("/api/collections");
+  }
+
+  async getCollection(id: string): Promise<Collection> {
+    return this.request<Collection>(`/api/collections/${id}`);
+  }
+
+  async createCollection(data: CollectionCreate): Promise<Collection> {
+    return this.request<Collection>("/api/collections", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCollection(id: string, deleteDocuments = false): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/api/collections/${id}?delete_documents=${deleteDocuments}`,
+      { method: "DELETE" }
+    );
+  }
+
+  async addDocumentToCollection(collectionId: string, documentId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/api/collections/${collectionId}/documents/${documentId}`,
+      { method: "POST" }
+    );
+  }
+
+  async getCollectionEntities(collectionId: string, limit = 100): Promise<{ entities: CollectionEntity[]; total: number }> {
+    return this.request<{ entities: CollectionEntity[]; total: number }>(
+      `/api/collections/${collectionId}/entities?limit=${limit}`
+    );
+  }
+
+  // ===========================================================================
+  // Community API (R2R-style)
+  // ===========================================================================
+
+  async getCommunities(limit = 50): Promise<{ communities: Community[]; total: number }> {
+    return this.request<{ communities: Community[]; total: number }>(
+      `/api/graph/communities?limit=${limit}`
+    );
+  }
+
+  async detectCommunities(minSize = 3, collectionId?: string): Promise<{ communities: Community[]; total: number }> {
+    const params = new URLSearchParams({ min_size: String(minSize) });
+    if (collectionId) params.set("collection_id", collectionId);
+    
+    return this.request<{ communities: Community[]; total: number }>(
+      `/api/graph/communities/detect?${params}`,
+      { method: "POST" }
+    );
+  }
+
+  async getCommunity(id: number): Promise<Community> {
+    return this.request<Community>(`/api/graph/communities/${id}`);
+  }
+
+  async summarizeCommunities(communityIds?: number[], forceRegenerate = false): Promise<{ results: Array<{ id: number; status: string; name?: string; summary?: string }>; total_processed: number }> {
+    return this.request<{ results: Array<{ id: number; status: string; name?: string; summary?: string }>; total_processed: number }>(
+      "/api/graph/communities/summarize",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          community_ids: communityIds,
+          force_regenerate: forceRegenerate,
+        }),
+      }
+    );
+  }
+
+  // ===========================================================================
+  // Extended Thinking Stream (R2R-style)
+  // ===========================================================================
+
+  async *askStreamWithThinking(
+    question: string,
+    options: {
+      topK?: number;
+      conversationHistory?: ConversationMessage[];
+      useGraph?: boolean;
+      maxHops?: number;
+    } = {}
+  ): AsyncGenerator<ThinkingStreamEvent, void, unknown> {
+    const {
+      topK = 5,
+      conversationHistory,
+      useGraph = true,
+      maxHops = 2,
+    } = options;
+
+    const res = await fetch(`${API_BASE}/api/ask/stream/thinking`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        question,
+        top_k: topK,
+        conversation_history: conversationHistory,
+        use_graph: useGraph,
+        max_hops: maxHops,
+        use_agentic: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Stream failed" }));
+      throw new Error(error.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      throw new Error("No response body");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            yield data as ThinkingStreamEvent;
           } catch (e) {
             console.warn("Failed to parse SSE data:", line);
           }

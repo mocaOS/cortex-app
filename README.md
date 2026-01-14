@@ -9,19 +9,28 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 
 ## ✨ Features
 
+### Core Features
 - **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface built with Next.js
+
+### GraphRAG Features
 - **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
 - **🚀 Streaming Responses**: Real-time answer generation with SSE
 - **🔬 Deep Research Mode**: Agentic multi-step RAG for complex questions
-- **📊 Entity Resolution**: Fuzzy matching for entity deduplication
+
+### R2R-Inspired Advanced Features (NEW)
+- **🌐 Community Detection**: Automatic grouping of related entities using graph algorithms
+- **📝 Graph Summarization**: LLM-generated summaries for entity communities
+- **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
+- **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
+- **🎯 Semantic Entity Resolution**: Embedding-based entity deduplication for cleaner graphs
 
 ## 🏗️ Architecture
 
@@ -149,6 +158,33 @@ npm run dev
 | GET | `/api/graph/entity/{name}` | Get entity details and relationships |
 | GET | `/api/graph/search` | Search entities by name |
 
+### Collection Endpoints (NEW)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/collections` | List all collections |
+| POST | `/api/collections` | Create a new collection |
+| GET | `/api/collections/{id}` | Get collection details with stats |
+| DELETE | `/api/collections/{id}` | Delete a collection |
+| POST | `/api/collections/{id}/documents/{doc_id}` | Add document to collection |
+| GET | `/api/collections/{id}/entities` | Get entities in collection's graph |
+
+### Community Detection Endpoints (NEW)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/graph/communities` | List detected communities |
+| POST | `/api/graph/communities/detect` | Run community detection algorithm |
+| GET | `/api/graph/communities/{id}` | Get community details |
+| POST | `/api/graph/communities/summarize` | Generate community summaries |
+| GET | `/api/graph/communities/search` | Search communities by content |
+
+### Extended Thinking Endpoints (NEW)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/ask/stream/thinking` | Streaming RAG with visible reasoning |
+
 ### Example: Search
 
 ```bash
@@ -192,6 +228,64 @@ curl -X POST http://localhost:8000/api/ask \
 curl -X POST http://localhost:8000/api/ask/stream \
   -H "Content-Type: application/json" \
   -d '{"question": "Summarize the key points"}'
+```
+
+### Example: Extended Thinking Stream (NEW)
+
+Stream the agent's reasoning process in real-time:
+
+```bash
+curl -X POST http://localhost:8000/api/ask/stream/thinking \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What are the relationships between the main concepts?",
+    "use_agentic": true
+  }'
+```
+
+Response events:
+```json
+{"thinking": "Analyzing question complexity..."}
+{"thinking": "Identified 2 research areas"}
+{"sub_questions": ["What are the main concepts?", "How are they related?"]}
+{"thinking": "Searching knowledge graph communities..."}
+{"thinking": "Researching (1/2): What are the main concepts?..."}
+{"retrieval": "Found 5 sources for sub-question 1"}
+{"sources": [...]}
+{"graph_context": {"entities": [...], "communities": [...]}}
+{"content": "Based on the analysis..."}
+{"done": true, "communities_used": [1, 3]}
+```
+
+### Example: Create and Use Collections (NEW)
+
+```bash
+# Create a collection
+curl -X POST http://localhost:8000/api/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Research Papers", "description": "ML research papers"}'
+
+# Upload document to collection
+curl -X POST "http://localhost:8000/api/upload?collection_id=<collection-id>" \
+  -F "file=@paper.pdf"
+
+# Get collection entities
+curl http://localhost:8000/api/collections/<collection-id>/entities
+```
+
+### Example: Community Detection (NEW)
+
+```bash
+# Detect communities in the knowledge graph
+curl -X POST "http://localhost:8000/api/graph/communities/detect?min_size=3"
+
+# Generate summaries for communities
+curl -X POST http://localhost:8000/api/graph/communities/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"force_regenerate": false}'
+
+# Search communities
+curl "http://localhost:8000/api/graph/communities/search?query=machine+learning"
 ```
 
 ### Example: Get Graph Visualization
@@ -254,6 +348,36 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `MAX_CONVERSATION_HISTORY` | Max messages in conversation context | No | `6` |
 | `ENABLE_AGENTIC_RAG` | Enable multi-step agentic RAG | No | `true` |
 | `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG | No | `3` |
+
+#### Community Detection & Graph Summarization (NEW)
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_COMMUNITY_DETECTION` | Enable entity community detection | No | `true` |
+| `MIN_COMMUNITY_SIZE` | Minimum entities for a valid community | No | `3` |
+| `MAX_COMMUNITIES` | Maximum number of communities to track | No | `50` |
+| `ENABLE_GRAPH_SUMMARIZATION` | Generate LLM summaries of communities | No | `true` |
+
+#### Semantic Entity Resolution (NEW)
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | Use embeddings for entity matching | No | `true` |
+| `ENTITY_SIMILARITY_THRESHOLD` | Threshold for entity deduplication | No | `0.85` |
+
+#### Collection-Level Graphs (NEW)
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_COLLECTIONS` | Enable collection-based organization | No | `true` |
+| `DEFAULT_COLLECTION` | Default collection name for documents | No | `default` |
+
+#### Extended Thinking (NEW)
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `STREAM_REASONING_STEPS` | Stream reasoning steps in agentic mode | No | `true` |
+| `SHOW_RETRIEVAL_STATS` | Show retrieval statistics in responses | No | `true` |
 
 ## 🔧 Configuration
 
@@ -354,8 +478,10 @@ When a document is uploaded, the following pipeline executes:
 2. **Chunking** - Split into manageable chunks (default: 500 words)
 3. **Embedding Generation** - Create vector embeddings for each chunk
 4. **Entity Extraction** - LLM extracts entities (Person, Organization, Concept, etc.)
-5. **Relationship Extraction** - LLM identifies relationships between entities
-6. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
+5. **Semantic Entity Resolution** - Match entities with similar embeddings to avoid duplicates
+6. **Relationship Extraction** - LLM identifies relationships between entities
+7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
+8. **Collection Assignment** - Optionally add document to a collection scope
 
 ### Query Pipeline (Enhanced)
 
@@ -363,23 +489,34 @@ When you ask a question:
 
 1. **Query Embedding** - Convert question to vector
 2. **Entity Extraction** - Extract entity names from the question
-3. **Hybrid Search with RRF** - Combine three search methods:
+3. **Community Search** - Find relevant entity communities
+4. **Hybrid Search with RRF** - Combine three search methods:
    - Vector similarity search (semantic matching)
    - Full-text keyword search (exact term matching)
    - Graph traversal (relationship-based retrieval)
    - Reciprocal Rank Fusion combines rankings
-4. **Cross-Encoder Re-ranking** - Re-score results for precision
-5. **Context Assembly** - Combine results + graph context
-6. **LLM Generation** - Generate answer with conversation history
+5. **Cross-Encoder Re-ranking** - Re-score results for precision
+6. **Context Assembly** - Combine results + graph context + community summaries
+7. **LLM Generation** - Generate answer with conversation history
 
-### Deep Research Mode (Agentic RAG)
+### Deep Research Mode (Agentic RAG) with Extended Thinking
 
-For complex questions, enable Deep Research mode:
+For complex questions, enable Deep Research mode with visible reasoning:
 
-1. **Question Decomposition** - Break into sub-questions
-2. **Iterative Retrieval** - Research each sub-question
-3. **Result Aggregation** - Merge and deduplicate findings
-4. **Comprehensive Synthesis** - Generate detailed answer
+1. **Question Decomposition** - Break into sub-questions (streamed as thinking events)
+2. **Community Context** - Search relevant entity communities for background
+3. **Iterative Retrieval** - Research each sub-question (progress streamed)
+4. **Result Aggregation** - Merge and deduplicate findings
+5. **Comprehensive Synthesis** - Generate detailed answer with community insights
+
+### Community Detection Pipeline (NEW)
+
+The system can automatically detect communities of related entities:
+
+1. **Graph Analysis** - Use Louvain algorithm (if Neo4j GDS available) or connected components
+2. **Community Extraction** - Group entities that frequently co-occur or are connected
+3. **Summary Generation** - LLM generates descriptive names and summaries for each community
+4. **Context Enhancement** - Community summaries are used to enrich RAG answers
 
 ## 🛠️ Tech Stack
 

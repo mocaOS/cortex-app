@@ -63,6 +63,121 @@ class GraphContext(BaseModel):
     entities: List[dict] = Field(default_factory=list, description="Relevant entities from the graph")
     relationships: List[dict] = Field(default_factory=list, description="Relationships connecting the entities")
     chunks: List[dict] = Field(default_factory=list, description="Text chunks that mention these entities")
+    communities: List[dict] = Field(default_factory=list, description="Relevant entity communities with summaries")
+
+
+# =============================================================================
+# Collection-Level Knowledge Graphs (R2R-style)
+# =============================================================================
+
+class Collection(BaseModel):
+    """A collection of documents with a unified knowledge graph."""
+    id: str = Field(..., description="Unique collection identifier")
+    name: str = Field(..., description="Human-readable collection name")
+    description: Optional[str] = Field(default=None, description="Collection description")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    document_count: int = Field(default=0, description="Number of documents in collection")
+    entity_count: int = Field(default=0, description="Number of entities in collection graph")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "research-papers",
+                "name": "Research Papers",
+                "description": "Academic research papers on AI/ML",
+                "document_count": 15,
+                "entity_count": 234
+            }
+        }
+
+
+class CollectionCreate(BaseModel):
+    """Request model for creating a collection."""
+    name: str = Field(..., min_length=1, max_length=100, description="Collection name")
+    description: Optional[str] = Field(default=None, max_length=500, description="Collection description")
+
+
+class CollectionUpdate(BaseModel):
+    """Request model for updating a collection."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
+# =============================================================================
+# Community Detection & Summarization (R2R-style)
+# =============================================================================
+
+class Community(BaseModel):
+    """A community of related entities detected in the knowledge graph."""
+    id: int = Field(..., description="Community identifier from detection algorithm")
+    name: Optional[str] = Field(default=None, description="Auto-generated community name")
+    summary: Optional[str] = Field(default=None, description="LLM-generated summary of the community")
+    entity_count: int = Field(default=0, description="Number of entities in this community")
+    entities: List[dict] = Field(default_factory=list, description="Entities belonging to this community")
+    key_relationships: List[dict] = Field(default_factory=list, description="Important relationships in this community")
+    collection_id: Optional[str] = Field(default=None, description="Collection this community belongs to")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": 1,
+                "name": "Machine Learning Frameworks",
+                "summary": "This community centers around ML frameworks including TensorFlow, PyTorch, and JAX, connected through their shared use in deep learning research.",
+                "entity_count": 8,
+                "entities": [{"name": "TensorFlow", "type": "Technology"}]
+            }
+        }
+
+
+class CommunitySummaryRequest(BaseModel):
+    """Request to generate/regenerate community summaries."""
+    community_ids: Optional[List[int]] = Field(default=None, description="Specific communities to summarize, or all if None")
+    force_regenerate: bool = Field(default=False, description="Regenerate even if summary exists")
+
+
+# =============================================================================
+# Enhanced Entity with Embedding Support (Semantic Resolution)
+# =============================================================================
+
+class EntityWithEmbedding(Entity):
+    """Entity with embedding for semantic similarity matching."""
+    embedding: Optional[List[float]] = Field(default=None, description="Entity name/description embedding")
+    aliases: List[str] = Field(default_factory=list, description="Alternative names for this entity")
+    community_id: Optional[int] = Field(default=None, description="Community this entity belongs to")
+    collection_id: Optional[str] = Field(default=None, description="Collection scope for this entity")
+
+
+# =============================================================================
+# Extended Thinking / Reasoning Visibility (R2R-style)
+# =============================================================================
+
+class ReasoningStep(BaseModel):
+    """A single step in the agentic reasoning process."""
+    step_number: int = Field(..., description="Step number in the reasoning chain")
+    action: str = Field(..., description="Action type: decompose, search, rerank, synthesize")
+    description: str = Field(..., description="Human-readable description of the step")
+    details: Optional[dict] = Field(default=None, description="Additional details about the step")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ThinkingEvent(BaseModel):
+    """Event emitted during extended thinking/reasoning."""
+    event_type: str = Field(..., description="Type: thinking, search, retrieval, synthesis, done, error")
+    content: str = Field(..., description="Event content or message")
+    metadata: Optional[dict] = Field(default=None, description="Additional event metadata")
+
+
+class AgenticRAGResult(BaseModel):
+    """Result of an agentic RAG query with full reasoning trace."""
+    question: str
+    answer: str
+    sources: List[dict]
+    graph_context: Optional[GraphContext] = None
+    reasoning_steps: List[ReasoningStep] = Field(default_factory=list)
+    sub_questions: List[str] = Field(default_factory=list, description="Decomposed sub-questions")
+    search_method: str = Field(default="agentic_rag")
+    total_sources_considered: int = Field(default=0)
+    communities_used: List[int] = Field(default_factory=list, description="Community IDs used in retrieval")
 
 
 class DocumentMetadata(BaseModel):
@@ -148,6 +263,11 @@ class RAGResponse(BaseModel):
     graph_context: Optional[GraphContext] = None
     reasoning_steps: Optional[List[str]] = Field(default=None, description="Steps taken in agentic RAG")
     reranked: bool = Field(default=False, description="Whether results were reranked")
+    # Extended thinking / reasoning visibility
+    sub_questions: Optional[List[str]] = Field(default=None, description="Decomposed sub-questions in agentic mode")
+    communities_used: Optional[List[int]] = Field(default=None, description="Community IDs used for context")
+    retrieval_stats: Optional[dict] = Field(default=None, description="Search statistics")
+    collection_id: Optional[str] = Field(default=None, description="Collection scope for the query")
 
 
 class GraphStatsResponse(BaseModel):
@@ -157,6 +277,9 @@ class GraphStatsResponse(BaseModel):
     entity_count: int
     relationship_count: int
     total_size: int
+    # Enhanced stats
+    community_count: int = Field(default=0, description="Number of detected communities")
+    collection_count: int = Field(default=0, description="Number of collections")
 
 
 class UploadResponse(BaseModel):

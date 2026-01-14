@@ -1,16 +1,24 @@
-"""Neo4j service for document, vector, and knowledge graph storage."""
+"""Neo4j service for document, vector, and knowledge graph storage.
+
+Enhanced with R2R-style features:
+- Community detection using graph algorithms
+- Collection-level knowledge graphs
+- Semantic entity resolution with embeddings
+- Community summarization support
+"""
 
 from neo4j import GraphDatabase, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import logging
 import numpy as np
 from contextlib import asynccontextmanager
+import uuid
 
 from app.config import get_settings
 from app.models import (
     Document, DocumentChunk, DocumentMetadata, ProcessingStatus,
-    Entity, Relationship, ExtractionResult
+    Entity, Relationship, ExtractionResult, Collection, Community
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +70,29 @@ class Neo4jService:
             """)
             
             # =================================================================
+            # Collection constraints (R2R-style)
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE CONSTRAINT collection_id IF NOT EXISTS
+                    FOR (col:Collection) REQUIRE col.id IS UNIQUE
+                """)
+            except Exception as e:
+                logger.warning(f"Collection constraint may already exist: {e}")
+            
+            # Create default collection
+            try:
+                session.run("""
+                    MERGE (col:Collection {id: $id})
+                    ON CREATE SET 
+                        col.name = $name,
+                        col.description = $description,
+                        col.created_at = datetime()
+                """, id="default", name="Default", description="Default collection for documents")
+            except Exception as e:
+                logger.warning(f"Could not create default collection: {e}")
+            
+            # =================================================================
             # Entity constraints and indexes for Knowledge Graph
             # =================================================================
             session.run("""
@@ -77,6 +108,26 @@ class Neo4jService:
                 """)
             except Exception as e:
                 logger.warning(f"Entity type index may already exist: {e}")
+            
+            # Index on entity community_id for community queries
+            try:
+                session.run("""
+                    CREATE INDEX entity_community IF NOT EXISTS
+                    FOR (e:Entity) ON (e.community_id)
+                """)
+            except Exception as e:
+                logger.warning(f"Entity community index may already exist: {e}")
+            
+            # =================================================================
+            # Community constraints (R2R-style)
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE CONSTRAINT community_id IF NOT EXISTS
+                    FOR (com:Community) REQUIRE com.id IS UNIQUE
+                """)
+            except Exception as e:
+                logger.warning(f"Community constraint may already exist: {e}")
             
             # =================================================================
             # Vector indexes
@@ -96,6 +147,22 @@ class Neo4jService:
                 """, dimensions=self.settings.embedding_dimension)
             except Exception as e:
                 logger.warning(f"Chunk vector index may already exist: {e}")
+            
+            # Vector index for entity embeddings (semantic entity resolution)
+            try:
+                session.run("""
+                    CREATE VECTOR INDEX entity_embedding IF NOT EXISTS
+                    FOR (e:Entity)
+                    ON e.embedding
+                    OPTIONS {
+                        indexConfig: {
+                            `vector.dimensions`: $dimensions,
+                            `vector.similarity_function`: 'cosine'
+                        }
+                    }
+                """, dimensions=self.settings.embedding_dimension)
+            except Exception as e:
+                logger.warning(f"Entity vector index may already exist: {e}")
             
             # =================================================================
             # Full-text indexes
@@ -118,7 +185,16 @@ class Neo4jService:
             except Exception as e:
                 logger.warning(f"Entity fulltext index may already exist: {e}")
             
-            logger.info("Neo4j schema initialized successfully (including GraphRAG indexes)")
+            # Full-text index for community summaries
+            try:
+                session.run("""
+                    CREATE FULLTEXT INDEX community_summary_fulltext IF NOT EXISTS
+                    FOR (com:Community) ON EACH [com.summary, com.name]
+                """)
+            except Exception as e:
+                logger.warning(f"Community fulltext index may already exist: {e}")
+            
+            logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes)")
     
     def store_document(self, doc_id: str, metadata: DocumentMetadata) -> str:
         """Store a document node in Neo4j."""
@@ -1039,6 +1115,7 @@ class Neo4jService:
                        e.name as label,
                        e.type as type,
                        e.description as description,
+                       e.community_id as community_id,
                        mention_count
                 ORDER BY mention_count DESC
                 LIMIT $limit
@@ -1069,6 +1146,536 @@ class Neo4jService:
                 })
             
             return {"nodes": nodes, "edges": edges}
+    
+    # =========================================================================
+    # Collection Management (R2R-style)
+    # =========================================================================
+    
+    def create_collection(self, name: str, description: Optional[str] = None) -> dict:
+        """Create a new collection for organizing documents."""
+        collection_id = str(uuid.uuid4())
+        
+        with self.driver.session() as session:
+            result = session.run("""
+                CREATE (col:Collection {
+                    id: $id,
+                    name: $name,
+                    description: $description,
+                    created_at: datetime()
+                })
+                RETURN col.id as id, col.name as name, col.description as description
+            """, id=collection_id, name=name, description=description)
+            
+            record = result.single()
+            logger.info(f"Created collection: {name} ({collection_id})")
+            return dict(record) if record else None
+    
+    def get_collection(self, collection_id: str) -> Optional[dict]:
+        """Get a collection by ID with stats."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (col:Collection {id: $id})
+                OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
+                OPTIONAL MATCH (col)-[:HAS_ENTITY]->(e:Entity)
+                RETURN col.id as id,
+                       col.name as name,
+                       col.description as description,
+                       col.created_at as created_at,
+                       count(DISTINCT d) as document_count,
+                       count(DISTINCT e) as entity_count
+            """, id=collection_id)
+            
+            record = result.single()
+            return dict(record) if record else None
+    
+    def list_collections(self) -> List[dict]:
+        """List all collections with stats."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (col:Collection)
+                OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
+                OPTIONAL MATCH (col)-[:HAS_ENTITY]->(e:Entity)
+                RETURN col.id as id,
+                       col.name as name,
+                       col.description as description,
+                       col.created_at as created_at,
+                       count(DISTINCT d) as document_count,
+                       count(DISTINCT e) as entity_count
+                ORDER BY col.created_at DESC
+            """)
+            return [dict(record) for record in result]
+    
+    def delete_collection(self, collection_id: str, delete_documents: bool = False) -> dict:
+        """Delete a collection. Optionally delete its documents."""
+        with self.driver.session() as session:
+            if delete_documents:
+                # Delete documents and their chunks/entities
+                result = session.run("""
+                    MATCH (col:Collection {id: $id})
+                    OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
+                    OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                    WITH col, collect(DISTINCT d) as docs, collect(DISTINCT c) as chunks
+                    DETACH DELETE col
+                    WITH docs, chunks
+                    UNWIND docs as d
+                    DETACH DELETE d
+                    WITH chunks
+                    UNWIND chunks as c
+                    DETACH DELETE c
+                    RETURN count(*) as deleted
+                """, id=collection_id)
+            else:
+                # Just delete the collection, keep documents
+                result = session.run("""
+                    MATCH (col:Collection {id: $id})
+                    DETACH DELETE col
+                    RETURN 1 as deleted
+                """, id=collection_id)
+            
+            record = result.single()
+            return {"deleted": record["deleted"] > 0 if record else False}
+    
+    def add_document_to_collection(self, document_id: str, collection_id: str) -> bool:
+        """Add a document to a collection."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (col:Collection {id: $collection_id})
+                MATCH (d:Document {id: $document_id})
+                MERGE (col)-[:CONTAINS]->(d)
+                SET d.collection_id = $collection_id
+                RETURN d.id as id
+            """, collection_id=collection_id, document_id=document_id)
+            
+            record = result.single()
+            return record is not None
+    
+    def get_collection_entities(self, collection_id: str, limit: int = 100) -> List[dict]:
+        """Get entities belonging to a collection."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d:Document)
+                MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                WITH e, count(DISTINCT c) as mention_count
+                RETURN e.name as name,
+                       e.type as type,
+                       e.description as description,
+                       e.community_id as community_id,
+                       mention_count
+                ORDER BY mention_count DESC
+                LIMIT $limit
+            """, collection_id=collection_id, limit=limit)
+            return [dict(record) for record in result]
+    
+    # =========================================================================
+    # Community Detection (R2R-style)
+    # =========================================================================
+    
+    def detect_communities(self, min_size: int = 3, collection_id: Optional[str] = None) -> List[dict]:
+        """
+        Detect communities of related entities using connected components.
+        
+        For production, Neo4j GDS (Graph Data Science) with Louvain algorithm is recommended.
+        This fallback uses connected components via relationship traversal.
+        
+        Returns:
+            List of communities with their entities
+        """
+        with self.driver.session() as session:
+            # Try using Neo4j GDS Louvain if available
+            try:
+                # Check if GDS is available
+                session.run("CALL gds.version()")
+                
+                # Use GDS Louvain for better community detection
+                return self._detect_communities_gds(session, min_size, collection_id)
+            except Exception as e:
+                logger.debug(f"GDS not available, using fallback community detection: {e}")
+                # Fallback to simple connected components
+                return self._detect_communities_fallback(session, min_size, collection_id)
+    
+    def _detect_communities_gds(
+        self, 
+        session, 
+        min_size: int, 
+        collection_id: Optional[str]
+    ) -> List[dict]:
+        """Detect communities using Neo4j GDS Louvain algorithm."""
+        graph_name = f"entity_graph_{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # Create a temporary graph projection
+            if collection_id:
+                # Collection-scoped graph
+                session.run("""
+                    CALL gds.graph.project.cypher(
+                        $graph_name,
+                        'MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity) RETURN id(e) as id',
+                        'MATCH (e1:Entity)-[r:RELATED_TO]->(e2:Entity) RETURN id(e1) as source, id(e2) as target',
+                        {parameters: {col_id: $col_id}}
+                    )
+                """, graph_name=graph_name, col_id=collection_id)
+            else:
+                # Global graph
+                session.run("""
+                    CALL gds.graph.project(
+                        $graph_name,
+                        'Entity',
+                        {RELATED_TO: {orientation: 'UNDIRECTED'}}
+                    )
+                """, graph_name=graph_name)
+            
+            # Run Louvain community detection
+            result = session.run("""
+                CALL gds.louvain.stream($graph_name)
+                YIELD nodeId, communityId
+                WITH gds.util.asNode(nodeId) as entity, communityId
+                WITH communityId, 
+                     collect({
+                         name: entity.name, 
+                         type: entity.type, 
+                         description: entity.description
+                     }) as members
+                WHERE size(members) >= $min_size
+                RETURN communityId as id,
+                       members,
+                       size(members) as entity_count
+                ORDER BY entity_count DESC
+            """, graph_name=graph_name, min_size=min_size)
+            
+            communities = []
+            for record in result:
+                communities.append({
+                    "id": record["id"],
+                    "entities": record["members"],
+                    "entity_count": record["entity_count"]
+                })
+            
+            return communities
+            
+        finally:
+            # Clean up the projected graph
+            try:
+                session.run("CALL gds.graph.drop($graph_name, false)", graph_name=graph_name)
+            except Exception:
+                pass
+    
+    def _detect_communities_fallback(
+        self, 
+        session, 
+        min_size: int, 
+        collection_id: Optional[str]
+    ) -> List[dict]:
+        """Fallback community detection using connected components via BFS."""
+        # Get all entities and their relationships
+        if collection_id:
+            result = session.run("""
+                MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)
+                MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                WITH collect(DISTINCT e.name) as entity_names
+                MATCH (e1:Entity)-[:RELATED_TO]-(e2:Entity)
+                WHERE e1.name IN entity_names AND e2.name IN entity_names
+                RETURN e1.name as source, e2.name as target
+            """, col_id=collection_id)
+        else:
+            result = session.run("""
+                MATCH (e1:Entity)-[:RELATED_TO]-(e2:Entity)
+                RETURN e1.name as source, e2.name as target
+            """)
+        
+        # Build adjacency list
+        adjacency = {}
+        for record in result:
+            source, target = record["source"], record["target"]
+            if source not in adjacency:
+                adjacency[source] = set()
+            if target not in adjacency:
+                adjacency[target] = set()
+            adjacency[source].add(target)
+            adjacency[target].add(source)
+        
+        # Find connected components using BFS
+        visited = set()
+        communities = []
+        community_id = 0
+        
+        for entity in adjacency:
+            if entity in visited:
+                continue
+            
+            # BFS to find all connected entities
+            component = []
+            queue = [entity]
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+                component.append(current)
+                queue.extend([n for n in adjacency.get(current, []) if n not in visited])
+            
+            if len(component) >= min_size:
+                communities.append({
+                    "id": community_id,
+                    "entities": component,
+                    "entity_count": len(component)
+                })
+                community_id += 1
+        
+        # Fetch entity details for each community
+        for community in communities:
+            entity_names = community["entities"]
+            detail_result = session.run("""
+                MATCH (e:Entity)
+                WHERE e.name IN $names
+                RETURN e.name as name, e.type as type, e.description as description
+            """, names=entity_names)
+            
+            community["entities"] = [dict(r) for r in detail_result]
+        
+        return sorted(communities, key=lambda c: c["entity_count"], reverse=True)
+    
+    def store_community(self, community_id: int, entities: List[str], summary: Optional[str] = None, name: Optional[str] = None) -> bool:
+        """Store a detected community and link its entities."""
+        with self.driver.session() as session:
+            # Create or update community node
+            session.run("""
+                MERGE (com:Community {id: $id})
+                SET com.summary = $summary,
+                    com.name = $name,
+                    com.entity_count = $entity_count,
+                    com.updated_at = datetime()
+            """, id=community_id, summary=summary, name=name, entity_count=len(entities))
+            
+            # Link entities to community and update their community_id
+            session.run("""
+                MATCH (com:Community {id: $community_id})
+                MATCH (e:Entity)
+                WHERE e.name IN $entity_names
+                MERGE (com)-[:HAS_MEMBER]->(e)
+                SET e.community_id = $community_id
+            """, community_id=community_id, entity_names=entities)
+            
+            return True
+    
+    def get_community(self, community_id: int) -> Optional[dict]:
+        """Get a community with its entities and relationships."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (com:Community {id: $id})
+                OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                WITH com, collect({name: e.name, type: e.type, description: e.description}) as entities
+                RETURN com.id as id,
+                       com.name as name,
+                       com.summary as summary,
+                       com.entity_count as entity_count,
+                       entities
+            """, id=community_id)
+            
+            record = result.single()
+            if not record:
+                return None
+            
+            community = dict(record)
+            
+            # Get key relationships within the community
+            rel_result = session.run("""
+                MATCH (e1:Entity {community_id: $id})-[r:RELATED_TO]->(e2:Entity {community_id: $id})
+                RETURN e1.name as source, e2.name as target, r.type as type, r.description as description
+                LIMIT 20
+            """, id=community_id)
+            
+            community["key_relationships"] = [dict(r) for r in rel_result]
+            
+            return community
+    
+    def list_communities(self, limit: int = 50) -> List[dict]:
+        """List all stored communities."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (com:Community)
+                OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                WITH com, count(e) as member_count, 
+                     collect(e.name)[0..5] as sample_entities
+                RETURN com.id as id,
+                       com.name as name,
+                       com.summary as summary,
+                       member_count as entity_count,
+                       sample_entities
+                ORDER BY member_count DESC
+                LIMIT $limit
+            """, limit=limit)
+            return [dict(record) for record in result]
+    
+    def get_community_relationships(self, community_id: int, limit: int = 30) -> List[dict]:
+        """Get relationships within a community."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e1:Entity {community_id: $id})-[r:RELATED_TO]->(e2:Entity {community_id: $id})
+                RETURN e1.name as source,
+                       e2.name as target,
+                       r.type as type,
+                       r.description as description,
+                       r.weight as weight
+                ORDER BY r.weight DESC
+                LIMIT $limit
+            """, id=community_id, limit=limit)
+            return [dict(record) for record in result]
+    
+    def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
+        """Search communities by their summary content."""
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    CALL db.index.fulltext.queryNodes('community_summary_fulltext', $query)
+                    YIELD node, score
+                    RETURN node.id as id,
+                           node.name as name,
+                           node.summary as summary,
+                           node.entity_count as entity_count,
+                           score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                """, query=query, limit=limit)
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.warning(f"Community search failed: {e}")
+                return []
+    
+    # =========================================================================
+    # Semantic Entity Resolution (R2R-style)
+    # =========================================================================
+    
+    def find_similar_entities_by_embedding(
+        self,
+        entity_embedding: List[float],
+        threshold: float = 0.85,
+        limit: int = 5
+    ) -> List[dict]:
+        """Find entities with similar embeddings for semantic deduplication."""
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    CALL db.index.vector.queryNodes('entity_embedding', $limit, $embedding)
+                    YIELD node, score
+                    WHERE score >= $threshold
+                    RETURN node.name as name,
+                           node.type as type,
+                           node.description as description,
+                           node.community_id as community_id,
+                           score as similarity
+                    ORDER BY score DESC
+                """, embedding=entity_embedding, threshold=threshold, limit=limit)
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.debug(f"Entity embedding search failed (index may not exist): {e}")
+                return []
+    
+    def store_entity_with_embedding(
+        self,
+        entity: Entity,
+        chunk_id: str,
+        embedding: Optional[List[float]] = None
+    ) -> Tuple[str, bool]:
+        """
+        Store entity with embedding for semantic resolution.
+        
+        Returns:
+            Tuple of (entity_name, is_new_entity)
+        """
+        with self.driver.session() as session:
+            # Convert embedding to list if numpy array
+            if embedding is not None and hasattr(embedding, 'tolist'):
+                embedding = embedding.tolist()
+            
+            # Check for existing similar entities by embedding
+            if embedding and self.settings.enable_semantic_entity_resolution:
+                similar = self.find_similar_entities_by_embedding(
+                    embedding,
+                    threshold=self.settings.entity_similarity_threshold
+                )
+                
+                if similar:
+                    # Merge into existing entity
+                    canonical_name = similar[0]["name"]
+                    
+                    # Add as alias if names are different
+                    if canonical_name.lower() != entity.name.lower():
+                        self._add_entity_alias(canonical_name, entity.name)
+                    
+                    # Link to chunk
+                    session.run("""
+                        MATCH (e:Entity {name: $name})
+                        MATCH (c:Chunk {id: $chunk_id})
+                        MERGE (c)-[:MENTIONS]->(e)
+                    """, name=canonical_name, chunk_id=chunk_id)
+                    
+                    logger.debug(f"Merged entity '{entity.name}' into '{canonical_name}' (similarity: {similar[0]['similarity']:.3f})")
+                    return (canonical_name, False)
+            
+            # Create new entity with embedding
+            result = session.run("""
+                MERGE (e:Entity {name: $name})
+                ON CREATE SET 
+                    e.type = $type,
+                    e.description = $description,
+                    e.embedding = $embedding,
+                    e.created_at = datetime()
+                ON MATCH SET
+                    e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
+                    e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
+                    e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
+                WITH e
+                MATCH (c:Chunk {id: $chunk_id})
+                MERGE (c)-[:MENTIONS]->(e)
+                RETURN e.name as name
+            """,
+                name=entity.name,
+                type=entity.type,
+                description=entity.description,
+                embedding=embedding,
+                chunk_id=chunk_id
+            )
+            
+            record = result.single()
+            return (record["name"] if record else entity.name, True)
+    
+    def get_stats(self) -> dict:
+        """Get knowledge base and knowledge graph statistics."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(d.file_size) as total_size
+                
+                OPTIONAL MATCH (e:Entity)
+                WITH doc_count, chunk_count, total_size, count(e) as entity_count
+                
+                OPTIONAL MATCH ()-[r:RELATED_TO]->()
+                WITH doc_count, chunk_count, total_size, entity_count, count(r) as relationship_count
+                
+                OPTIONAL MATCH (com:Community)
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, count(com) as community_count
+                
+                OPTIONAL MATCH (col:Collection)
+                RETURN doc_count as document_count,
+                       chunk_count,
+                       total_size,
+                       entity_count,
+                       relationship_count,
+                       community_count,
+                       count(col) as collection_count
+            """)
+            
+            record = result.single()
+            return {
+                "document_count": record["document_count"],
+                "chunk_count": record["chunk_count"],
+                "total_size": record["total_size"] or 0,
+                "entity_count": record["entity_count"],
+                "relationship_count": record["relationship_count"],
+                "community_count": record["community_count"],
+                "collection_count": record["collection_count"]
+            }
 
 
 # Singleton instance

@@ -27,6 +27,12 @@ from app.models import (
     ConversationMessage,
     ReprocessRequest,
     DeleteRequest,
+    # New R2R-style models
+    Collection,
+    CollectionCreate,
+    CollectionUpdate,
+    Community,
+    CommunitySummaryRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -112,7 +118,9 @@ async def get_stats():
             chunk_count=stats["chunk_count"],
             entity_count=stats.get("entity_count", 0),
             relationship_count=stats.get("relationship_count", 0),
-            total_size=stats["total_size"]
+            total_size=stats["total_size"],
+            community_count=stats.get("community_count", 0),
+            collection_count=stats.get("collection_count", 0)
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -120,7 +128,10 @@ async def get_stats():
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    collection_id: Optional[str] = Query(default=None, description="Collection to add document to")
+):
     """Upload a file to the knowledge base."""
     settings = get_settings()
     
@@ -155,7 +166,7 @@ async def upload_file(file: UploadFile = File(...)):
     # Process file
     try:
         processor = get_document_processor()
-        doc_id = await processor.process_file(file_path, file.filename, file_size)
+        doc_id = await processor.process_file(file_path, file.filename, file_size, collection_id)
         
         return UploadResponse(
             document_id=doc_id,
@@ -744,10 +755,337 @@ async def get_graph_status():
             "model": settings.openai_model if extractor.is_available else None,
             "entity_count": stats.get("entity_count", 0),
             "relationship_count": stats.get("relationship_count", 0),
+            "community_count": stats.get("community_count", 0),
+            "collection_count": stats.get("collection_count", 0),
+            # New R2R-style features
+            "community_detection_enabled": settings.enable_community_detection,
+            "graph_summarization_enabled": settings.enable_graph_summarization,
+            "semantic_entity_resolution_enabled": settings.enable_semantic_entity_resolution,
+            "collections_enabled": settings.enable_collections,
         }
     except Exception as e:
         logger.error(f"Error getting graph status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Collection Endpoints (R2R-style)
+# =============================================================================
+
+@app.get("/api/collections")
+async def list_collections():
+    """List all collections."""
+    try:
+        neo4j = get_neo4j_service()
+        collections = neo4j.list_collections()
+        return {"collections": collections, "total": len(collections)}
+    except Exception as e:
+        logger.error(f"Error listing collections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/collections")
+async def create_collection(request: CollectionCreate):
+    """Create a new collection."""
+    try:
+        neo4j = get_neo4j_service()
+        collection = neo4j.create_collection(request.name, request.description)
+        if not collection:
+            raise HTTPException(status_code=500, detail="Failed to create collection")
+        return collection
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/collections/{collection_id}")
+async def get_collection(collection_id: str):
+    """Get a specific collection with stats."""
+    try:
+        neo4j = get_neo4j_service()
+        collection = neo4j.get_collection(collection_id)
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        return collection
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/collections/{collection_id}")
+async def delete_collection(
+    collection_id: str,
+    delete_documents: bool = Query(default=False, description="Also delete documents in collection")
+):
+    """Delete a collection."""
+    try:
+        neo4j = get_neo4j_service()
+        result = neo4j.delete_collection(collection_id, delete_documents)
+        if not result.get("deleted"):
+            raise HTTPException(status_code=404, detail="Collection not found")
+        return {"message": "Collection deleted", "documents_deleted": delete_documents}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/collections/{collection_id}/documents/{document_id}")
+async def add_document_to_collection(collection_id: str, document_id: str):
+    """Add a document to a collection."""
+    try:
+        neo4j = get_neo4j_service()
+        success = neo4j.add_document_to_collection(document_id, collection_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Collection or document not found")
+        return {"message": "Document added to collection"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding document to collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/collections/{collection_id}/entities")
+async def get_collection_entities(
+    collection_id: str,
+    limit: int = Query(default=100, ge=1, le=500)
+):
+    """Get entities in a collection's knowledge graph."""
+    try:
+        neo4j = get_neo4j_service()
+        entities = neo4j.get_collection_entities(collection_id, limit)
+        return {"entities": entities, "total": len(entities)}
+    except Exception as e:
+        logger.error(f"Error getting collection entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Community Detection Endpoints (R2R-style)
+# =============================================================================
+
+@app.get("/api/graph/communities")
+async def list_communities(limit: int = Query(default=50, ge=1, le=200)):
+    """List all detected communities."""
+    try:
+        neo4j = get_neo4j_service()
+        communities = neo4j.list_communities(limit)
+        return {"communities": communities, "total": len(communities)}
+    except Exception as e:
+        logger.error(f"Error listing communities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/graph/communities/detect")
+async def detect_communities(
+    min_size: int = Query(default=3, ge=2, le=20, description="Minimum community size"),
+    collection_id: Optional[str] = Query(default=None, description="Scope to collection")
+):
+    """
+    Run community detection on the knowledge graph.
+    
+    Detects groups of related entities using graph algorithms.
+    """
+    try:
+        settings = get_settings()
+        if not settings.enable_community_detection:
+            raise HTTPException(status_code=400, detail="Community detection is disabled")
+        
+        neo4j = get_neo4j_service()
+        extractor = get_graph_extractor()
+        
+        # Detect communities
+        communities = neo4j.detect_communities(min_size, collection_id)
+        
+        # Generate summaries if enabled
+        if settings.enable_graph_summarization and extractor.is_available:
+            for community in communities:
+                # Get relationships for this community
+                entity_names = [e.get("name") for e in community.get("entities", [])]
+                relationships = neo4j.get_community_relationships(community["id"]) if community.get("id") is not None else []
+                
+                # Generate summary
+                summary_result = extractor.generate_community_summary(
+                    community.get("entities", []),
+                    relationships
+                )
+                
+                # Store community with summary
+                neo4j.store_community(
+                    community_id=community["id"],
+                    entities=entity_names,
+                    summary=summary_result.get("summary"),
+                    name=summary_result.get("name")
+                )
+                
+                community["name"] = summary_result.get("name")
+                community["summary"] = summary_result.get("summary")
+        
+        return {
+            "communities": communities,
+            "total": len(communities),
+            "collection_id": collection_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting communities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/communities/{community_id}")
+async def get_community(community_id: int):
+    """Get a specific community with its entities and relationships."""
+    try:
+        neo4j = get_neo4j_service()
+        community = neo4j.get_community(community_id)
+        if not community:
+            raise HTTPException(status_code=404, detail="Community not found")
+        return community
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting community: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/graph/communities/summarize")
+async def summarize_communities(request: CommunitySummaryRequest):
+    """
+    Generate or regenerate summaries for communities.
+    
+    Uses LLM to create descriptive names and summaries for entity communities.
+    """
+    try:
+        settings = get_settings()
+        if not settings.enable_graph_summarization:
+            raise HTTPException(status_code=400, detail="Graph summarization is disabled")
+        
+        neo4j = get_neo4j_service()
+        extractor = get_graph_extractor()
+        
+        if not extractor.is_available:
+            raise HTTPException(status_code=400, detail="LLM not available for summarization")
+        
+        # Get communities to summarize
+        if request.community_ids:
+            communities = [neo4j.get_community(cid) for cid in request.community_ids]
+            communities = [c for c in communities if c]
+        else:
+            communities = neo4j.list_communities(limit=settings.max_communities)
+        
+        results = []
+        for community in communities:
+            # Skip if already has summary and not forcing regeneration
+            if community.get("summary") and not request.force_regenerate:
+                results.append({"id": community["id"], "status": "skipped", "reason": "already has summary"})
+                continue
+            
+            # Get relationships
+            relationships = neo4j.get_community_relationships(community["id"])
+            
+            # Generate summary
+            summary_result = await extractor.generate_community_summary_async(
+                community.get("entities", []),
+                relationships
+            )
+            
+            # Store updated community
+            entity_names = [e.get("name") for e in community.get("entities", [])]
+            neo4j.store_community(
+                community_id=community["id"],
+                entities=entity_names,
+                summary=summary_result.get("summary"),
+                name=summary_result.get("name")
+            )
+            
+            results.append({
+                "id": community["id"],
+                "status": "summarized",
+                "name": summary_result.get("name"),
+                "summary": summary_result.get("summary")
+            })
+        
+        return {"results": results, "total_processed": len(results)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error summarizing communities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/communities/search")
+async def search_communities(
+    query: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(default=5, ge=1, le=20)
+):
+    """Search communities by their summary content."""
+    try:
+        neo4j = get_neo4j_service()
+        results = neo4j.search_communities_by_content(query, limit)
+        return {"query": query, "results": results}
+    except Exception as e:
+        logger.error(f"Error searching communities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Extended Thinking / Streaming Agentic RAG (R2R-style)
+# =============================================================================
+
+@app.post("/api/ask/stream/thinking")
+async def ask_with_thinking_stream(request: RAGRequest):
+    """
+    Stream the RAG response with extended thinking visibility.
+    
+    Returns Server-Sent Events (SSE) with:
+    - thinking: Reasoning step updates (visible agent thinking)
+    - search: Search operations being performed
+    - retrieval: Sources found and retrieval stats
+    - sub_questions: Decomposed research questions
+    - sources: Retrieved sources
+    - graph_context: Graph context including communities
+    - content: Streamed answer tokens
+    - done: Completion signal with final stats
+    
+    This provides R2R-style extended thinking where users can see
+    the agent's reasoning process in real-time.
+    """
+    settings = get_settings()
+    
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key required for streaming")
+    
+    async def generate():
+        try:
+            processor = get_query_processor()
+            
+            async for event in processor.agentic_rag_stream(
+                question=request.question,
+                top_k=request.top_k,
+                max_hops=request.max_hops,
+                conversation_history=request.conversation_history
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in streaming agentic RAG: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 if __name__ == "__main__":

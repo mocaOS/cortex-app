@@ -17,6 +17,8 @@ import {
   Zap,
   Network,
   Link2,
+  FolderOpen,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FileUpload from "@/components/FileUpload";
@@ -24,8 +26,9 @@ import SearchPanel from "@/components/SearchPanel";
 import DocumentList from "@/components/DocumentList";
 import AskPanel from "@/components/AskPanel";
 import StatsCard from "@/components/StatsCard";
+import CollectionPanel from "@/components/CollectionPanel";
 
-type Tab = "upload" | "search" | "ask" | "documents";
+type Tab = "upload" | "search" | "ask" | "documents" | "collections";
 
 interface Stats {
   document_count: number;
@@ -33,6 +36,8 @@ interface Stats {
   total_size: number;
   entity_count?: number;
   relationship_count?: number;
+  community_count?: number;
+  collection_count?: number;
 }
 
 export default function Home() {
@@ -65,6 +70,7 @@ export default function Home() {
     { id: "search" as Tab, label: "Search", icon: Search },
     { id: "ask" as Tab, label: "Ask AI", icon: MessageSquare },
     { id: "documents" as Tab, label: "Documents", icon: FileText },
+    { id: "collections" as Tab, label: "Collections", icon: FolderOpen },
   ];
 
   return (
@@ -113,7 +119,7 @@ export default function Home() {
 
       {/* Stats Bar */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-4">
           <StatsCard
             label="Documents"
             value={stats?.document_count ?? 0}
@@ -137,6 +143,18 @@ export default function Home() {
             value={stats?.relationship_count ?? 0}
             icon={Link2}
             color="pink"
+          />
+          <StatsCard
+            label="Communities"
+            value={stats?.community_count ?? 0}
+            icon={Users}
+            color="purple"
+          />
+          <StatsCard
+            label="Collections"
+            value={stats?.collection_count ?? 0}
+            icon={FolderOpen}
+            color="cyan"
           />
           <StatsCard
             label="Storage"
@@ -163,6 +181,9 @@ export default function Home() {
             {activeTab === "ask" && <AskPanel />}
             {activeTab === "documents" && (
               <DocumentList key={refreshKey} onDelete={refresh} />
+            )}
+            {activeTab === "collections" && (
+              <CollectionPanel onRefresh={refresh} />
             )}
           </motion.div>
         </AnimatePresence>

@@ -4,18 +4,22 @@ Enhanced with R2R-style features:
 - Hybrid search with RRF
 - Conversation memory
 - Re-ranking with cross-encoder
-- Agentic multi-step RAG
+- Agentic multi-step RAG with extended thinking
 - Enhanced chunking
+- Collection-level organization
+- Community-aware retrieval
+- Semantic entity resolution
 """
 
 import os
 import uuid
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, AsyncGenerator, Callable
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
+from datetime import datetime
 
 from haystack import Document as HaystackDocument
 from haystack.components.converters import (
@@ -32,6 +36,8 @@ from app.models import (
     ProcessingStatus,
     GraphContext,
     ConversationMessage,
+    ReasoningStep,
+    ThinkingEvent,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.graph_extractor import get_graph_extractor
@@ -177,11 +183,24 @@ class DocumentProcessor:
         self, 
         file_path: str, 
         filename: str,
-        file_size: int
+        file_size: int,
+        collection_id: Optional[str] = None
     ) -> str:
-        """Process a file and store it in the knowledge base."""
+        """
+        Process a file and store it in the knowledge base.
+        
+        Args:
+            file_path: Path to the uploaded file
+            filename: Original filename
+            file_size: Size in bytes
+            collection_id: Optional collection to add document to
+        """
         doc_id = str(uuid.uuid4())
         file_type = Path(filename).suffix.lower()
+        
+        # Use default collection if enabled and none specified
+        if collection_id is None and self.settings.enable_collections:
+            collection_id = self.settings.default_collection
         
         # Create document metadata
         metadata = DocumentMetadata(
@@ -193,6 +212,10 @@ class DocumentProcessor:
         
         # Store document node
         self.neo4j.store_document(doc_id, metadata)
+        
+        # Add to collection if specified
+        if collection_id:
+            self.neo4j.add_document_to_collection(doc_id, collection_id)
         
         # Process in background
         asyncio.create_task(self._process_document(doc_id, file_path, file_type))
@@ -763,21 +786,40 @@ Response Quality:
         question: str,
         top_k: int = 5,
         max_hops: int = 2,
-        conversation_history: Optional[List[ConversationMessage]] = None
+        conversation_history: Optional[List[ConversationMessage]] = None,
+        collection_id: Optional[str] = None,
+        thinking_callback: Optional[Callable[[ThinkingEvent], None]] = None
     ) -> dict:
         """
-        Agentic multi-step RAG for complex questions.
+        Agentic multi-step RAG for complex questions with extended thinking.
         
-        Inspired by R2R's Deep Research API:
+        R2R-style Deep Research with visible reasoning:
         1. Break down complex questions into sub-questions
-        2. Iteratively retrieve information
+        2. Iteratively retrieve information with community context
         3. Synthesize and identify gaps
         4. Generate comprehensive answer
+        
+        Args:
+            question: The user's question
+            top_k: Number of results per search
+            max_hops: Graph traversal depth
+            conversation_history: Previous conversation messages
+            collection_id: Optional collection scope
+            thinking_callback: Optional callback for streaming thinking events
         """
         from openai import OpenAI
+        import re
+        
+        def emit_thinking(event_type: str, content: str, metadata: dict = None):
+            """Helper to emit thinking events."""
+            if thinking_callback:
+                thinking_callback(ThinkingEvent(
+                    event_type=event_type,
+                    content=content,
+                    metadata=metadata
+                ))
         
         if not self.settings.openai_api_key:
-            # Fall back to regular RAG if no LLM
             return await self.rag_query(
                 question=question,
                 top_k=top_k,
@@ -792,12 +834,23 @@ Response Quality:
             base_url=self.settings.openai_api_base,
         )
         
-        reasoning_steps = []
+        # Extended thinking: detailed reasoning steps
+        reasoning_steps: List[ReasoningStep] = []
         all_results = []
         all_graph_contexts = []
+        communities_used = set()
+        step_number = 0
         
-        # Step 1: Decompose the question into sub-questions
-        reasoning_steps.append("Analyzing question complexity...")
+        # =====================================================================
+        # Step 1: Analyze question complexity and decompose
+        # =====================================================================
+        step_number += 1
+        emit_thinking("thinking", "Analyzing question complexity...")
+        reasoning_steps.append(ReasoningStep(
+            step_number=step_number,
+            action="decompose",
+            description="Analyzing question complexity and identifying sub-questions"
+        ))
         
         decompose_response = client.chat.completions.create(
             model=self.settings.openai_model,
@@ -814,8 +867,6 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
         
         try:
             decompose_text = decompose_response.choices[0].message.content
-            # Extract JSON from response
-            import re
             json_match = re.search(r'\{[^{}]*"sub_questions"[^{}]*\}', decompose_text, re.DOTALL)
             if json_match:
                 sub_questions = json.loads(json_match.group())["sub_questions"]
@@ -825,11 +876,47 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
             logger.warning(f"Failed to decompose question: {e}")
             sub_questions = [question]
         
-        reasoning_steps.append(f"Identified {len(sub_questions)} research areas")
+        emit_thinking("thinking", f"Identified {len(sub_questions)} research areas: {sub_questions}")
+        reasoning_steps.append(ReasoningStep(
+            step_number=step_number,
+            action="decompose",
+            description=f"Identified {len(sub_questions)} research areas",
+            details={"sub_questions": sub_questions}
+        ))
         
-        # Step 2: Research each sub-question
+        # =====================================================================
+        # Step 2: Search relevant communities for context
+        # =====================================================================
+        if self.settings.enable_community_detection:
+            step_number += 1
+            emit_thinking("thinking", "Searching knowledge graph communities for relevant context...")
+            
+            relevant_communities = self.neo4j.search_communities_by_content(question, limit=3)
+            if relevant_communities:
+                communities_used.update(c["id"] for c in relevant_communities)
+                community_context = "\n".join([
+                    f"- {c.get('name') or 'Community ' + str(c['id'])}: {c.get('summary', '')[:200]}"
+                    for c in relevant_communities
+                ])
+                emit_thinking("retrieval", f"Found {len(relevant_communities)} relevant communities")
+                reasoning_steps.append(ReasoningStep(
+                    step_number=step_number,
+                    action="community_search",
+                    description=f"Found {len(relevant_communities)} relevant entity communities",
+                    details={"communities": [c.get("name") for c in relevant_communities]}
+                ))
+        
+        # =====================================================================
+        # Step 3: Research each sub-question
+        # =====================================================================
         for i, sub_q in enumerate(sub_questions[:self.settings.max_agentic_steps]):
-            reasoning_steps.append(f"Researching: {sub_q[:50]}...")
+            step_number += 1
+            emit_thinking("search", f"Researching: {sub_q}")
+            reasoning_steps.append(ReasoningStep(
+                step_number=step_number,
+                action="search",
+                description=f"Searching for: {sub_q[:100]}"
+            ))
             
             search_result = await self.graph_search_async(
                 sub_q,
@@ -852,7 +939,12 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
             if search_result["graph_context"]:
                 all_graph_contexts.append(search_result["graph_context"])
         
-        # Deduplicate results by chunk_id
+        # =====================================================================
+        # Step 4: Deduplicate and rank results
+        # =====================================================================
+        step_number += 1
+        emit_thinking("thinking", "Deduplicating and ranking sources...")
+        
         seen_chunks = set()
         unique_results = []
         for r in all_results:
@@ -861,31 +953,63 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
                 seen_chunks.add(chunk_id)
                 unique_results.append(r)
         
-        # Sort by score and take top results
         unique_results.sort(key=lambda x: x.get("rerank_score", x.get("score", 0)), reverse=True)
         final_results = unique_results[:top_k * 2]
         
-        reasoning_steps.append(f"Gathered {len(final_results)} unique sources")
+        reasoning_steps.append(ReasoningStep(
+            step_number=step_number,
+            action="rerank",
+            description=f"Gathered and ranked {len(final_results)} unique sources from {len(all_results)} total",
+            details={"total_found": len(all_results), "after_dedup": len(final_results)}
+        ))
+        emit_thinking("retrieval", f"Gathered {len(final_results)} unique sources")
         
-        # Merge graph contexts
+        # =====================================================================
+        # Step 5: Merge graph contexts with community awareness
+        # =====================================================================
         merged_entities = {}
         merged_relationships = []
+        merged_communities = []
+        
         for gc in all_graph_contexts:
             for entity in gc.get("entities", []):
                 name = entity.get("name", "")
                 if name and name not in merged_entities:
                     merged_entities[name] = entity
+                    # Track community
+                    if entity.get("community_id"):
+                        communities_used.add(entity["community_id"])
             for rel in gc.get("relationships", []):
                 merged_relationships.append(rel)
+        
+        # Add community summaries if available
+        if communities_used and self.settings.enable_graph_summarization:
+            for com_id in list(communities_used)[:5]:
+                community = self.neo4j.get_community(com_id)
+                if community and community.get("summary"):
+                    merged_communities.append({
+                        "id": com_id,
+                        "name": community.get("name"),
+                        "summary": community.get("summary")
+                    })
         
         graph_context = GraphContext(
             entities=list(merged_entities.values())[:15],
             relationships=merged_relationships[:20],
-            chunks=[]
+            chunks=[],
+            communities=merged_communities
         ) if merged_entities else None
         
-        # Step 3: Generate comprehensive answer
-        reasoning_steps.append("Synthesizing final answer...")
+        # =====================================================================
+        # Step 6: Generate comprehensive answer
+        # =====================================================================
+        step_number += 1
+        emit_thinking("synthesis", "Synthesizing comprehensive answer...")
+        reasoning_steps.append(ReasoningStep(
+            step_number=step_number,
+            action="synthesize",
+            description="Synthesizing comprehensive answer from gathered context"
+        ))
         
         # Build context
         formatted_sources = ""
@@ -908,19 +1032,33 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
             ])
             graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
         
-        # Enhanced system prompt for agentic mode
+        # Add community context (R2R-style)
+        if graph_context and graph_context.communities:
+            community_info = "\n".join([
+                f"- {c.get('name') or 'Community ' + str(c.get('id', ''))}: {c.get('summary', '')}"
+                for c in graph_context.communities
+            ])
+            graph_context_str += f"\n\n=== Relevant Knowledge Communities ===\n{community_info}"
+        
+        # Enhanced system prompt with community awareness
         system_prompt = """You are an expert research assistant that provides comprehensive, well-structured answers.
 
-You have access to information gathered through multiple research steps. Your task is to synthesize this information into a complete, authoritative answer.
+You have access to information gathered through multiple research steps, including:
+- Document excerpts with semantic and keyword matching
+- A knowledge graph with entities and their relationships
+- Community summaries that group related concepts
+
+Your task is to synthesize this information into a complete, authoritative answer.
 
 Guidelines:
 1. Provide a comprehensive answer that addresses all aspects of the question
 2. Organize complex answers with clear structure (sections, bullet points)
 3. Cite sources using reference IDs: [src_1], [src_2], etc.
-4. Highlight key findings and insights
-5. Note any limitations or gaps in the available information
-6. Connect related concepts using the entity relationships provided
-7. Be precise and avoid making claims not supported by the sources"""
+4. Use knowledge community summaries to provide broader context
+5. Highlight key findings and insights
+6. Note any limitations or gaps in the available information
+7. Connect related concepts using the entity relationships provided
+8. Be precise and avoid making claims not supported by the sources"""
         
         # Build messages with conversation history
         messages = [{"role": "system", "content": system_prompt}]
@@ -950,11 +1088,23 @@ Guidelines:
             model=self.settings.openai_model,
             messages=messages,
             temperature=0.3,
-            max_tokens=2000  # Longer for comprehensive answers
+            max_tokens=2000
         )
         
         answer = response.choices[0].message.content
-        reasoning_steps.append("Answer generated successfully")
+        
+        # Final thinking event
+        emit_thinking("done", "Answer generated successfully")
+        reasoning_steps.append(ReasoningStep(
+            step_number=step_number + 1,
+            action="complete",
+            description="Answer generated successfully"
+        ))
+        
+        # Convert reasoning steps to strings for backward compatibility
+        reasoning_step_strings = [
+            f"[{s.action}] {s.description}" for s in reasoning_steps
+        ]
         
         return {
             "question": question,
@@ -962,10 +1112,243 @@ Guidelines:
             "sources": final_results,
             "graph_context": graph_context.model_dump() if graph_context else None,
             "reranked": True,
-            "reasoning_steps": reasoning_steps,
+            "reasoning_steps": reasoning_step_strings,
             "search_method": "agentic_rag",
-            "sub_questions": sub_questions
+            "sub_questions": sub_questions,
+            "communities_used": list(communities_used),
+            "retrieval_stats": {
+                "total_sources_considered": len(all_results),
+                "unique_sources": len(final_results),
+                "sub_questions_researched": len(sub_questions),
+                "communities_referenced": len(communities_used)
+            }
         }
+    
+    async def agentic_rag_stream(
+        self,
+        question: str,
+        top_k: int = 5,
+        max_hops: int = 2,
+        conversation_history: Optional[List[ConversationMessage]] = None,
+        collection_id: Optional[str] = None
+    ) -> AsyncGenerator[dict, None]:
+        """
+        Streaming version of agentic RAG with extended thinking.
+        
+        Yields events as they happen:
+        - thinking: Reasoning step updates
+        - search: Search operations
+        - retrieval: Results found
+        - sources: Retrieved sources
+        - graph_context: Graph context data
+        - content: Streamed answer tokens
+        - done: Completion signal
+        """
+        from openai import AsyncOpenAI
+        import re
+        
+        if not self.settings.openai_api_key:
+            yield {"error": "OpenAI API key required for streaming"}
+            return
+        
+        client = AsyncOpenAI(
+            api_key=self.settings.openai_api_key,
+            base_url=self.settings.openai_api_base,
+        )
+        
+        reasoning_steps = []
+        all_results = []
+        all_graph_contexts = []
+        communities_used = set()
+        
+        # Step 1: Emit thinking - analyzing question
+        yield {"thinking": "Analyzing question complexity..."}
+        
+        decompose_response = await client.chat.completions.create(
+            model=self.settings.openai_model,
+            messages=[
+                {"role": "system", "content": """Break down complex questions into sub-questions.
+Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions."""},
+                {"role": "user", "content": f"Break down: {question}"}
+            ],
+            temperature=0.2,
+            max_tokens=300
+        )
+        
+        try:
+            decompose_text = decompose_response.choices[0].message.content
+            json_match = re.search(r'\{[^{}]*"sub_questions"[^{}]*\}', decompose_text, re.DOTALL)
+            if json_match:
+                sub_questions = json.loads(json_match.group())["sub_questions"]
+            else:
+                sub_questions = [question]
+        except Exception:
+            sub_questions = [question]
+        
+        yield {"thinking": f"Identified {len(sub_questions)} research areas"}
+        yield {"sub_questions": sub_questions}
+        
+        # Step 2: Search communities
+        if self.settings.enable_community_detection:
+            yield {"thinking": "Searching knowledge graph communities..."}
+            relevant_communities = self.neo4j.search_communities_by_content(question, limit=3)
+            if relevant_communities:
+                communities_used.update(c["id"] for c in relevant_communities)
+                yield {"thinking": f"Found {len(relevant_communities)} relevant communities"}
+        
+        # Step 3: Research each sub-question
+        for i, sub_q in enumerate(sub_questions[:self.settings.max_agentic_steps]):
+            yield {"thinking": f"Researching ({i+1}/{len(sub_questions)}): {sub_q[:60]}..."}
+            
+            search_result = await self.graph_search_async(
+                sub_q,
+                top_k=top_k,
+                max_hops=max_hops,
+                use_hybrid_rrf=True
+            )
+            
+            if self.settings.enable_reranking and search_result["results"]:
+                reranked = await self.rerank_results_async(sub_q, search_result["results"], top_k)
+                all_results.extend(reranked)
+            else:
+                all_results.extend(search_result["results"][:top_k])
+            
+            if search_result["graph_context"]:
+                all_graph_contexts.append(search_result["graph_context"])
+            
+            yield {"retrieval": f"Found {len(search_result['results'])} sources for sub-question {i+1}"}
+        
+        # Deduplicate
+        yield {"thinking": "Consolidating and ranking sources..."}
+        seen_chunks = set()
+        unique_results = []
+        for r in all_results:
+            chunk_id = r.get("chunk_id", "")
+            if chunk_id and chunk_id not in seen_chunks:
+                seen_chunks.add(chunk_id)
+                unique_results.append(r)
+        
+        unique_results.sort(key=lambda x: x.get("rerank_score", x.get("score", 0)), reverse=True)
+        final_results = unique_results[:top_k * 2]
+        
+        # Build graph context
+        merged_entities = {}
+        merged_relationships = []
+        merged_communities = []
+        
+        for gc in all_graph_contexts:
+            for entity in gc.get("entities", []):
+                name = entity.get("name", "")
+                if name and name not in merged_entities:
+                    merged_entities[name] = entity
+                    if entity.get("community_id"):
+                        communities_used.add(entity["community_id"])
+            for rel in gc.get("relationships", []):
+                merged_relationships.append(rel)
+        
+        if communities_used and self.settings.enable_graph_summarization:
+            for com_id in list(communities_used)[:5]:
+                community = self.neo4j.get_community(com_id)
+                if community and community.get("summary"):
+                    merged_communities.append({
+                        "id": com_id,
+                        "name": community.get("name"),
+                        "summary": community.get("summary")
+                    })
+        
+        graph_context = GraphContext(
+            entities=list(merged_entities.values())[:15],
+            relationships=merged_relationships[:20],
+            chunks=[],
+            communities=merged_communities
+        ) if merged_entities else None
+        
+        # Yield sources and graph context
+        sources = [
+            {
+                "document_id": r["document_id"],
+                "chunk_id": r["chunk_id"],
+                "content": r["content"],
+                "score": r.get("rerank_score", r.get("score", 0)),
+                "metadata": {"filename": r["filename"]}
+            }
+            for r in final_results
+        ]
+        yield {"sources": sources}
+        
+        if graph_context:
+            yield {"graph_context": graph_context.model_dump()}
+        
+        yield {"retrieval_stats": {
+            "total_sources": len(all_results),
+            "unique_sources": len(final_results),
+            "communities_used": len(communities_used)
+        }}
+        
+        # Step 4: Generate streaming answer
+        yield {"thinking": "Synthesizing comprehensive answer..."}
+        
+        # Build context
+        formatted_sources = ""
+        for idx, r in enumerate(final_results):
+            formatted_sources += f"\n[src_{idx+1}] Source: {r['filename']}\n{r['content']}\n"
+        
+        graph_context_str = ""
+        if graph_context and graph_context.entities:
+            entity_info = "\n".join([
+                f"- {e['name']} ({e.get('type', 'Unknown')}): {e.get('description', '')}"
+                for e in graph_context.entities[:10]
+            ])
+            graph_context_str += f"\n\n=== Related Entities ===\n{entity_info}"
+        
+        if graph_context and graph_context.relationships:
+            rel_info = "\n".join([
+                f"- {r['source']} --[{r['type']}]--> {r['target']}"
+                for r in graph_context.relationships[:15]
+            ])
+            graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
+        
+        if graph_context and graph_context.communities:
+            community_info = "\n".join([
+                f"- {c.get('name') or 'Community ' + str(c.get('id', ''))}: {c.get('summary', '')}"
+                for c in graph_context.communities
+            ])
+            graph_context_str += f"\n\n=== Knowledge Communities ===\n{community_info}"
+        
+        messages = [
+            {"role": "system", "content": """You are an expert research assistant. Synthesize the research context into a comprehensive answer.
+Cite sources as [src_1], [src_2], etc. Use knowledge community insights when relevant. Structure complex answers clearly."""},
+        ]
+        
+        if conversation_history:
+            for msg in conversation_history[-self.settings.max_conversation_history:]:
+                messages.append({"role": msg.role, "content": msg.content})
+        
+        messages.append({
+            "role": "user",
+            "content": f"""Research Context:
+{formatted_sources}
+{graph_context_str}
+
+Question: {question}
+
+Comprehensive Answer:"""
+        })
+        
+        # Stream the response
+        stream = await client.chat.completions.create(
+            model=self.settings.openai_model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2000,
+            stream=True
+        )
+        
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield {"content": chunk.choices[0].delta.content}
+        
+        yield {"done": True, "communities_used": list(communities_used)}
 
 
 # Singleton instances
