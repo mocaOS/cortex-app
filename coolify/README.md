@@ -171,6 +171,6 @@ Make sure `package-lock.json` exists in the frontend directory. Run `npm install
 ### Neo4j Fails with "Unrecognized setting URI" Error
 If Neo4j fails to start with "Unrecognized setting. No declared setting with name: URI", this is because `NEO4J_URI` is set as a global environment variable in Coolify. 
 
-**Solution**: The docker-compose file includes a custom entrypoint wrapper script (`coolify/neo4j-entrypoint.sh`) that filters out `NEO4J_URI` before Neo4j starts. This should handle the issue automatically.
+**Solution**: The docker-compose file includes a custom entrypoint that unsets `NEO4J_URI` before Neo4j starts. This automatically handles the issue even if `NEO4J_URI` is set globally in Coolify.
 
-**Best Practice**: Remove `NEO4J_URI` from Coolify's global environment variables if possible. The docker-compose file already sets `NEO4J_URI=bolt://neo4j:7687` for the backend service, so it doesn't need to be set globally. However, the entrypoint wrapper ensures Neo4j will start even if it's set globally.
+**Best Practice**: While not required, you can remove `NEO4J_URI` from Coolify's global environment variables. The docker-compose file already sets `NEO4J_URI=bolt://neo4j:7687` for the backend service, so it doesn't need to be set globally. The custom entrypoint ensures Neo4j will start correctly regardless.
