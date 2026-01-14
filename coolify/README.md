@@ -39,6 +39,21 @@
 └──────────────────────────────────────────────┘
 ```
 
+## ⚠️ CRITICAL: Variable Naming
+
+Coolify passes ALL environment variables to ALL containers.
+
+**Do NOT use these variable names** (they break Neo4j):
+- ❌ `NEO4J_URI`
+- ❌ `NEO4J_USER`
+- ❌ `NEO4J_PASSWORD`
+- ❌ `NEO4J_HEAP_*`
+- ❌ Any `NEO4J_*` prefixed variable
+
+**Use these instead:**
+- ✅ `DB_USER`
+- ✅ `DB_PASSWORD`
+
 ## Environment Variables for Coolify
 
 Copy this entire block into Coolify:
@@ -50,17 +65,17 @@ Copy this entire block into Coolify:
 # ==========================================================================
 
 # -------------------------------------------------------------------------
-# REQUIRED: OpenAI / LiteLLM Configuration
+# REQUIRED: Database Credentials (NOT NEO4J_* - that breaks Neo4j!)
 # -------------------------------------------------------------------------
-OPENAI_API_KEY=sk-xwgMnWRwlJWtq75YIze7nQ
-OPENAI_API_BASE=https://litellm.deploy.qwellco.de/v1
-OPENAI_MODEL=openai/minimax-m21
+DB_USER=neo4j
+DB_PASSWORD=your-secure-password-here
 
 # -------------------------------------------------------------------------
-# REQUIRED: Neo4j Database Credentials
+# REQUIRED: OpenAI / LiteLLM Configuration
 # -------------------------------------------------------------------------
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your-secure-password-here
+OPENAI_API_KEY=your-api-key-here
+OPENAI_API_BASE=https://litellm.deploy.qwellco.de/v1
+OPENAI_MODEL=openai/minimax-m21
 
 # -------------------------------------------------------------------------
 # Embedding Configuration
@@ -130,14 +145,6 @@ DEFAULT_COLLECTION=default
 # -------------------------------------------------------------------------
 STREAM_REASONING_STEPS=true
 SHOW_RETRIEVAL_STATS=true
-
-# -------------------------------------------------------------------------
-# Neo4j Memory Settings are hardcoded in docker-compose.coolify.yml
-# Edit the compose file directly to adjust:
-#   - NEO4J_server_memory_heap_initial__size=512m
-#   - NEO4J_server_memory_heap_max__size=2G
-#   - NEO4J_server_memory_pagecache_size=512m
-# -------------------------------------------------------------------------
 ```
 
 ## Coolify Domain Configuration
@@ -158,3 +165,21 @@ The frontend's Next.js rewrites will proxy `/api/*` requests to the backend inte
 | `neo4j-logs` | Log files |
 | `neo4j-plugins` | APOC plugin |
 | `uploads-data` | Uploaded documents |
+
+## Troubleshooting
+
+### Neo4j fails with "Unrecognized setting"
+
+This happens when Coolify env vars with `NEO4J_*` prefix are passed to Neo4j.
+
+**Fix:** Delete ALL `NEO4J_*` variables from Coolify and use `DB_USER`/`DB_PASSWORD` instead.
+
+### Memory Settings
+
+Memory is hardcoded in the compose file. To adjust, edit `docker-compose.coolify.yml`:
+
+```yaml
+- NEO4J_server_memory_heap_initial__size=512m
+- NEO4J_server_memory_heap_max__size=2G
+- NEO4J_server_memory_pagecache_size=512m
+```
