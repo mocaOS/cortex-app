@@ -29,6 +29,8 @@ This guide explains how to deploy MOCA Knowledge Base on Coolify.
 
 In Coolify's environment settings, add the variables (see section below).
 
+**IMPORTANT**: Do NOT include `NEO4J_URI` in Coolify's global environment variables. The docker-compose file sets it correctly for the backend service. If you include it globally, Neo4j will try to parse it as a configuration setting and fail to start.
+
 ### 4. Configure Domain
 
 1. Go to the frontend service settings
@@ -55,6 +57,7 @@ Copy and paste the following into Coolify's environment variables section:
 # ===========================================
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your-strong-password-here
+# NOTE: Do NOT set NEO4J_URI here - it's set in docker-compose for the backend service
 OPENAI_API_KEY=sk-your-openai-key-here
 NEXT_PUBLIC_API_URL=https://your-domain.com
 
@@ -166,4 +169,8 @@ The first request may be slow as models are loaded. This is normal.
 Make sure `package-lock.json` exists in the frontend directory. Run `npm install` locally and commit the lock file.
 
 ### Neo4j Fails with "Unrecognized setting URI" Error
-If Neo4j fails to start with "Unrecognized setting. No declared setting with name: URI", this is because Coolify is passing `NEO4J_URI` (which is for backend connection) to the Neo4j container. The docker-compose file includes a setting to disable strict validation to handle this. If the issue persists, ensure `NEO4J_URI` is not set as a global environment variable in Coolify - it should only be used by the backend service.
+If Neo4j fails to start with "Unrecognized setting. No declared setting with name: URI", this is because `NEO4J_URI` is set as a global environment variable in Coolify. 
+
+**Solution**: Remove `NEO4J_URI` from Coolify's global environment variables. The docker-compose file already sets `NEO4J_URI=bolt://neo4j:7687` for the backend service, so it doesn't need to be set globally. 
+
+The docker-compose file includes `NEO4J_URI=` (empty) in the Neo4j service's environment to override any global value, but Neo4j may still try to parse it. The best solution is to not set it globally at all.
