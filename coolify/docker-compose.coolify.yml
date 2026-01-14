@@ -38,7 +38,7 @@ services:
   # ==========================================================================
   backend:
     build:
-      context: ../backend
+      context: ./backend
       dockerfile: Dockerfile.prod
     environment:
       # Coolify magic variable - generates URL for this service
@@ -126,7 +126,7 @@ services:
   # ==========================================================================
   frontend:
     build:
-      context: ../frontend
+      context: ./frontend
       dockerfile: Dockerfile.prod
     environment:
       # Coolify magic variable - exposes frontend on the main domain
