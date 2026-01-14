@@ -429,7 +429,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                   </div>
 
                   {/* Progress bar for processing files */}
-                  {(uf.status === "processing" || uf.status === "extracting") && uf.progressTotal > 0 && (
+                  {(uf.status === "processing" || uf.status === "extracting") && uf.progressTotal !== undefined && uf.progressTotal > 0 && (
                     <div className="mt-3 ml-14">
                       <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
                         <motion.div
