@@ -30,8 +30,7 @@ services:
       dockerfile: Dockerfile.prod
     environment:
       - NEO4J_URI=bolt://neo4j:7687
-      # Username hardcoded to match neo4j service
-      - NEO4J_USER=neo4j
+      # NEO4J_USER not needed - backend defaults to 'neo4j'
       - NEO4J_PASSWORD=${SERVICE_PASSWORD_NEO4J}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
