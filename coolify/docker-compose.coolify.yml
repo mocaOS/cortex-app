@@ -40,8 +40,9 @@ services:
       - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       - UPLOAD_DIR=/app/uploads
       - PYTHONUNBUFFERED=1
-      # Coolify magic variable - exposes backend at api subdomain on port 8000
-      - SERVICE_FQDN_API_8000
+      # Expose backend at api-kg subdomain on port 8000
+      # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.moca.qwellco.de)
+      - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -59,13 +60,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        # Build-time arg for the public API URL
-        - NEXT_PUBLIC_API_URL=${SERVICE_URL_API_8000}
+        # Build-time arg for the public API URL (set BACKEND_URL in Coolify)
+        - NEXT_PUBLIC_API_URL=${BACKEND_URL}
     environment:
-      # Coolify magic variable - generates the FQDN for frontend on port 3000
-      - SERVICE_FQDN_FRONTEND_3000
-      # Public API URL uses the backend's Coolify-assigned URL
-      - NEXT_PUBLIC_API_URL=${SERVICE_URL_API_8000}
+      # Expose frontend at kg subdomain on port 3000
+      # Set FRONTEND_URL in Coolify env vars (e.g., https://kg.moca.qwellco.de)
+      - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
+      # Public API URL for client-side requests
+      - NEXT_PUBLIC_API_URL=${BACKEND_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
     depends_on:
