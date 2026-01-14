@@ -25,7 +25,8 @@ Set these in Coolify's environment configuration:
 | `EMBEDDING_MODEL` | Embedding model name | No |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No |
 | `USE_OPENAI_EMBEDDINGS` | Whether to use OpenAI embeddings | No |
-| `NEO4J_USER` | Neo4j username (defaults to `neo4j`) | No |
+
+> ⚠️ **Do NOT set `NEO4J_USER`** - Neo4j interprets all `NEO4J_*` env vars as config settings, causing startup failures. The username is hardcoded to `neo4j` in the compose file.
 
 ## Deployment Steps
 
