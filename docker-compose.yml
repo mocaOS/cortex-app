@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.15.0-enterprise
+    image: neo4j:5.15.0-community
     container_name: moca-neo4j
     environment:
       - NEO4J_AUTH=neo4j/password123

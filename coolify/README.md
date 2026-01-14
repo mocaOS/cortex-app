@@ -132,11 +132,12 @@ STREAM_REASONING_STEPS=true
 SHOW_RETRIEVAL_STATS=true
 
 # -------------------------------------------------------------------------
-# Neo4j Memory Settings (adjust based on server RAM)
+# Neo4j Memory Settings are hardcoded in docker-compose.coolify.yml
+# Edit the compose file directly to adjust:
+#   - NEO4J_server_memory_heap_initial__size=512m
+#   - NEO4J_server_memory_heap_max__size=2G
+#   - NEO4J_server_memory_pagecache_size=512m
 # -------------------------------------------------------------------------
-NEO4J_HEAP_INITIAL=512m
-NEO4J_HEAP_MAX=2G
-NEO4J_PAGECACHE=512m
 ```
 
 ## Coolify Domain Configuration
