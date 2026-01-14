@@ -164,3 +164,6 @@ The first request may be slow as models are loaded. This is normal.
 
 ### Build Fails with "npm ci" Error
 Make sure `package-lock.json` exists in the frontend directory. Run `npm install` locally and commit the lock file.
+
+### Neo4j Fails with "Unrecognized setting URI" Error
+If Neo4j fails to start with "Unrecognized setting. No declared setting with name: URI", this is because Coolify is passing `NEO4J_URI` (which is for backend connection) to the Neo4j container. The docker-compose file includes a setting to disable strict validation to handle this. If the issue persists, ensure `NEO4J_URI` is not set as a global environment variable in Coolify - it should only be used by the backend service.
