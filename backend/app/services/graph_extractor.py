@@ -10,15 +10,21 @@ import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for running synchronous LLM calls without blocking the event loop
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="graph_extractor")
+# Thread pool for running synchronous LLM calls - size matches concurrent_extractions setting
+# This is used as fallback; prefer async methods which use AsyncOpenAI directly
+_settings = get_settings()
+_executor = ThreadPoolExecutor(
+    max_workers=max(_settings.concurrent_extractions, 10),
+    thread_name_prefix="graph_extractor"
+)
+logger.info(f"Graph extractor thread pool initialized with {max(_settings.concurrent_extractions, 10)} workers")
 
 
 # =============================================================================
@@ -174,6 +180,7 @@ class GraphExtractor:
     def __init__(self):
         self.settings = get_settings()
         self._client: Optional[OpenAI] = None
+        self._async_client: Optional[AsyncOpenAI] = None
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
         
@@ -182,13 +189,23 @@ class GraphExtractor:
     
     @property
     def client(self) -> Optional[OpenAI]:
-        """Lazy initialization of OpenAI client."""
+        """Lazy initialization of synchronous OpenAI client."""
         if self._client is None and self.settings.openai_api_key:
             self._client = OpenAI(
                 api_key=self.settings.openai_api_key,
                 base_url=self.settings.openai_api_base,
             )
         return self._client
+    
+    @property
+    def async_client(self) -> Optional[AsyncOpenAI]:
+        """Lazy initialization of async OpenAI client for concurrent processing."""
+        if self._async_client is None and self.settings.openai_api_key:
+            self._async_client = AsyncOpenAI(
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_api_base,
+            )
+        return self._async_client
     
     @property
     def is_available(self) -> bool:
@@ -508,43 +525,219 @@ class GraphExtractor:
         return results
     
     # =========================================================================
-    # Async methods - run LLM calls in thread pool to avoid blocking event loop
+    # Async methods - use AsyncOpenAI for true concurrent LLM calls
     # =========================================================================
     
     async def extract_from_text_async(
         self, 
         text: str, 
-        document_summary: Optional[str] = None
+        document_summary: Optional[str] = None,
+        entity_types: Optional[List[str]] = None,
+        relation_types: Optional[List[str]] = None
     ) -> ExtractionResult:
         """
-        Async version of extract_from_text that runs in a thread pool.
-        Use this from async contexts to avoid blocking the event loop.
+        Async version of extract_from_text using AsyncOpenAI for true concurrency.
+        
+        This method uses the async OpenAI client directly, allowing many LLM calls
+        to run concurrently without thread pool bottlenecks.
         
         Args:
             text: The text to extract from
             document_summary: Optional document summary for context
+            entity_types: Optional list of entity types to constrain extraction
+            relation_types: Optional list of relation types to constrain extraction
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _executor, 
-            lambda: self.extract_from_text(text, document_summary)
+        if not self.async_client:
+            logger.warning("Graph extraction unavailable - returning empty result")
+            return ExtractionResult()
+        
+        # Use provided types or defaults
+        e_types = entity_types or self.entity_types
+        r_types = relation_types or self.relation_types
+        
+        # Build context section if summary provided
+        context_section = ""
+        if document_summary:
+            context_section = f"Document Summary (for context):\n{document_summary}\n"
+        
+        # Format the user prompt
+        user_prompt = EXTRACTION_USER_PROMPT.format(
+            entity_types=", ".join(e_types),
+            relation_types=", ".join(r_types),
+            context_section=context_section,
+            text=text
         )
+        
+        try:
+            # Make async API call - this is the key for true concurrency
+            response = await self.async_client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=3000,
+            )
+            
+            content = response.choices[0].message.content
+            
+            # Parse response (reuse existing parsing logic)
+            xml_entities = self._extract_xml_entities(content)
+            xml_relationships = self._extract_xml_relationships(content)
+            
+            if xml_entities or xml_relationships:
+                entities = []
+                for e in xml_entities:
+                    try:
+                        entities.append(Entity(
+                            name=e["name"],
+                            type=e.get("type", "Concept"),
+                            description=e.get("description", "")
+                        ))
+                    except Exception as ex:
+                        logger.warning(f"Failed to parse entity {e}: {ex}")
+                
+                relationships = []
+                entity_names = {e.name.lower() for e in entities}
+                
+                for r in xml_relationships:
+                    try:
+                        source = r.get("source", "").strip()
+                        target = r.get("target", "").strip()
+                        
+                        if source.lower() in entity_names and target.lower() in entity_names:
+                            relationships.append(Relationship(
+                                source=source,
+                                target=target,
+                                relationship_type=r.get("relationship_type", "RELATED_TO"),
+                                description=r.get("description", ""),
+                                weight=r.get("weight", 5.0)
+                            ))
+                    except Exception as ex:
+                        logger.warning(f"Failed to parse relationship {r}: {ex}")
+                
+                return ExtractionResult(entities=entities, relationships=relationships)
+            
+            # Fall back to JSON parsing
+            data = self._extract_json_from_response(content)
+            
+            if not data:
+                return ExtractionResult()
+            
+            entities = []
+            for e in data.get("entities", []):
+                try:
+                    name = e.get("name", "") if isinstance(e, dict) else str(e)
+                    if isinstance(e, dict):
+                        entities.append(Entity(
+                            name=name.strip(),
+                            type=e.get("type", "Concept").strip(),
+                            description=e.get("description", "").strip()
+                        ))
+                    elif name.strip():
+                        entities.append(Entity(
+                            name=name.strip(),
+                            type="Concept",
+                            description=""
+                        ))
+                except Exception as ex:
+                    logger.warning(f"Failed to parse entity {e}: {ex}")
+            
+            relationships = []
+            entity_names = {e.name.lower() for e in entities}
+            
+            for r in data.get("relationships", []):
+                try:
+                    if not isinstance(r, dict):
+                        continue
+                    source = r.get("source", "").strip()
+                    target = r.get("target", "").strip()
+                    
+                    if source.lower() in entity_names and target.lower() in entity_names:
+                        weight = 5.0
+                        if "weight" in r:
+                            try:
+                                weight = float(r["weight"])
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        relationships.append(Relationship(
+                            source=source,
+                            target=target,
+                            relationship_type=r.get("relationship_type", "RELATED_TO").strip().upper().replace(" ", "_"),
+                            description=r.get("description", "").strip(),
+                            weight=min(10.0, max(0.0, weight))
+                        ))
+                except Exception as ex:
+                    logger.warning(f"Failed to parse relationship {r}: {ex}")
+            
+            return ExtractionResult(entities=entities, relationships=relationships)
+            
+        except Exception as e:
+            logger.error(f"Error during async graph extraction: {e}")
+            return ExtractionResult()
     
     async def extract_entities_from_query_async(self, query: str) -> List[str]:
         """
-        Async version of extract_entities_from_query that runs in a thread pool.
-        Use this from async contexts to avoid blocking the event loop.
+        Async version of extract_entities_from_query using AsyncOpenAI.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_executor, self.extract_entities_from_query, query)
+        if not self.async_client:
+            return []
+        
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
+                    {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
+                ],
+                temperature=0,
+                max_tokens=500,
+            )
+            
+            content = response.choices[0].message.content
+            
+            # Try XML parsing first
+            entities = self._extract_xml_entity_names(content)
+            
+            # Fall back to JSON parsing
+            if not entities:
+                data = self._extract_json_from_response(content)
+                entities = [str(e).strip() for e in data.get("entities", []) if e]
+            
+            logger.info(f"Extracted {len(entities)} entities from query: {entities}")
+            return entities
+            
+        except Exception as e:
+            logger.error(f"Error extracting entities from query: {e}")
+            return []
     
     async def generate_document_summary_async(self, document: str) -> str:
         """
-        Async version of generate_document_summary that runs in a thread pool.
-        Use this from async contexts to avoid blocking the event loop.
+        Async version of generate_document_summary using AsyncOpenAI.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_executor, self.generate_document_summary, document)
+        if not self.async_client:
+            return ""
+        
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are a document summarization assistant."},
+                    {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
+                ],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            logger.info(f"Generated document summary: {len(summary)} chars")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error generating document summary: {e}")
+            return ""
     
     def extract_entities_from_query(self, query: str) -> List[str]:
         """
@@ -799,12 +992,78 @@ Respond with ONLY the JSON object, no other text:
         entities: List[dict],
         relationships: List[dict]
     ) -> dict:
-        """Async version of generate_community_summary."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _executor,
-            lambda: self.generate_community_summary(entities, relationships)
-        )
+        """Async version of generate_community_summary using AsyncOpenAI."""
+        if not self.async_client or not entities:
+            return {"name": None, "summary": None}
+        
+        # Format entity information
+        entity_info = "\n".join([
+            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:100]}"
+            for e in entities[:15]
+        ])
+        
+        # Format relationship information
+        rel_info = "\n".join([
+            f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
+            for r in relationships[:20]
+        ]) if relationships else "No explicit relationships."
+        
+        prompt = f"""Analyze this community of related entities from a knowledge graph.
+
+=== Entities ===
+{entity_info}
+
+=== Relationships ===
+{rel_info}
+
+Generate a JSON object with:
+- "name": A short descriptive name (3-5 words)
+- "summary": A 2-3 sentence explanation of what connects these entities
+
+Respond with ONLY the JSON object, no other text:
+{{"name": "...", "summary": "..."}}"""
+        
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+            
+            content = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
+            try:
+                result = json.loads(content)
+                if "name" in result and "summary" in result:
+                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
+                    return result
+            except json.JSONDecodeError:
+                pass
+            
+            # Try regex extraction
+            import re
+            name_match = re.search(r'"name"\s*:\s*"([^"]+)"', content)
+            summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', content)
+            
+            if name_match:
+                return {
+                    "name": name_match.group(1),
+                    "summary": summary_match.group(1) if summary_match else content[:500]
+                }
+            
+            return {
+                "name": f"Community ({len(entities)} entities)",
+                "summary": content[:500] if content else None
+            }
+                
+        except Exception as e:
+            logger.error(f"Error generating community summary: {e}")
+            return {"name": None, "summary": None}
     
     def generate_community_name(self, entities: List[dict]) -> str:
         """Generate a short name for a community based on its entities."""
@@ -882,12 +1141,25 @@ Respond with ONLY the community name, nothing else."""
         entity_type: str,
         description: str
     ) -> Optional[List[float]]:
-        """Async version of generate_entity_embedding."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _executor,
-            lambda: self.generate_entity_embedding(entity_name, entity_type, description)
-        )
+        """Async version of generate_entity_embedding using AsyncOpenAI."""
+        if not self.async_client:
+            return None
+        
+        # Create rich text for embedding
+        text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
+        
+        try:
+            response = await self.async_client.embeddings.create(
+                model=self.settings.entity_embed_model,
+                input=text,
+                dimensions=self.settings.embedding_dimension
+            )
+            
+            return response.data[0].embedding
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate entity embedding: {e}")
+            return None
 
 
 # Singleton instance

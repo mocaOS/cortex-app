@@ -2,6 +2,7 @@
 
 import os
 import logging
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -875,7 +876,7 @@ async def list_communities(limit: int = Query(default=50, ge=1, le=200)):
     """List all detected communities."""
     try:
         neo4j = get_neo4j_service()
-        communities = neo4j.list_communities(limit)
+        communities = await asyncio.to_thread(neo4j.list_communities, limit)
         return {"communities": communities, "total": len(communities)}
     except Exception as e:
         logger.error(f"Error listing communities: {e}")
@@ -900,28 +901,32 @@ async def detect_communities(
         neo4j = get_neo4j_service()
         extractor = get_graph_extractor()
         
-        # Detect communities
-        communities = neo4j.detect_communities(min_size, collection_id)
+        # Detect communities - run in thread pool to not block event loop
+        communities = await asyncio.to_thread(neo4j.detect_communities, min_size, collection_id)
         
         # Generate summaries if enabled
         if settings.enable_graph_summarization and extractor.is_available:
             for community in communities:
-                # Get relationships for this community
+                # Get relationships for this community - run in thread pool
                 entity_names = [e.get("name") for e in community.get("entities", [])]
-                relationships = neo4j.get_community_relationships(community["id"]) if community.get("id") is not None else []
+                if community.get("id") is not None:
+                    relationships = await asyncio.to_thread(neo4j.get_community_relationships, community["id"])
+                else:
+                    relationships = []
                 
-                # Generate summary
-                summary_result = extractor.generate_community_summary(
+                # Generate summary using async version
+                summary_result = await extractor.generate_community_summary_async(
                     community.get("entities", []),
                     relationships
                 )
                 
-                # Store community with summary
-                neo4j.store_community(
-                    community_id=community["id"],
-                    entities=entity_names,
-                    summary=summary_result.get("summary"),
-                    name=summary_result.get("name")
+                # Store community with summary - run in thread pool
+                await asyncio.to_thread(
+                    neo4j.store_community,
+                    community["id"],
+                    entity_names,
+                    summary_result.get("summary"),
+                    summary_result.get("name")
                 )
                 
                 community["name"] = summary_result.get("name")
@@ -944,7 +949,7 @@ async def get_community(community_id: int):
     """Get a specific community with its entities and relationships."""
     try:
         neo4j = get_neo4j_service()
-        community = neo4j.get_community(community_id)
+        community = await asyncio.to_thread(neo4j.get_community, community_id)
         if not community:
             raise HTTPException(status_code=404, detail="Community not found")
         return community
@@ -973,12 +978,14 @@ async def summarize_communities(request: CommunitySummaryRequest):
         if not extractor.is_available:
             raise HTTPException(status_code=400, detail="LLM not available for summarization")
         
-        # Get communities to summarize
+        # Get communities to summarize - run in thread pool to not block
         if request.community_ids:
-            communities = [neo4j.get_community(cid) for cid in request.community_ids]
+            # Fetch communities concurrently
+            community_tasks = [asyncio.to_thread(neo4j.get_community, cid) for cid in request.community_ids]
+            communities = await asyncio.gather(*community_tasks)
             communities = [c for c in communities if c]
         else:
-            communities = neo4j.list_communities(limit=settings.max_communities)
+            communities = await asyncio.to_thread(neo4j.list_communities, settings.max_communities)
         
         results = []
         for community in communities:
@@ -987,8 +994,8 @@ async def summarize_communities(request: CommunitySummaryRequest):
                 results.append({"id": community["id"], "status": "skipped", "reason": "already has summary"})
                 continue
             
-            # Get relationships
-            relationships = neo4j.get_community_relationships(community["id"])
+            # Get relationships - run in thread pool
+            relationships = await asyncio.to_thread(neo4j.get_community_relationships, community["id"])
             
             # Generate summary
             summary_result = await extractor.generate_community_summary_async(
@@ -996,13 +1003,14 @@ async def summarize_communities(request: CommunitySummaryRequest):
                 relationships
             )
             
-            # Store updated community
+            # Store updated community - run in thread pool
             entity_names = [e.get("name") for e in community.get("entities", [])]
-            neo4j.store_community(
-                community_id=community["id"],
-                entities=entity_names,
-                summary=summary_result.get("summary"),
-                name=summary_result.get("name")
+            await asyncio.to_thread(
+                neo4j.store_community,
+                community["id"],
+                entity_names,
+                summary_result.get("summary"),
+                summary_result.get("name")
             )
             
             results.append({

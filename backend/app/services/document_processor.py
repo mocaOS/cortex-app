@@ -320,10 +320,24 @@ class DocumentProcessor:
                 extraction_results = {}  # Store results by index
                 completed_count = 0
                 
+                # Track active extractions for logging
+                active_extractions = 0
+                active_lock = asyncio.Lock()
+                
                 async def extract_chunk(idx: int, chunk, chunk_id: str):
                     """Extract from a single chunk with semaphore control."""
-                    nonlocal completed_count
+                    nonlocal completed_count, active_extractions
                     async with semaphore:
+                        async with active_lock:
+                            active_extractions += 1
+                            current_active = active_extractions
+                        
+                        if idx < 5 or idx % 10 == 0:  # Log for first 5 and every 10th
+                            logger.info(
+                                f"Document {doc_id}: Starting chunk {idx+1}/{len(embedded_chunks)} "
+                                f"(active: {current_active}/{concurrent_limit})"
+                            )
+                        
                         try:
                             extraction = await self.graph_extractor.extract_from_text_async(
                                 chunk.content, 
@@ -333,6 +347,9 @@ class DocumentProcessor:
                         except Exception as e:
                             logger.warning(f"Graph extraction failed for chunk {chunk_id}: {e}")
                             extraction_results[idx] = (chunk_id, None)
+                        finally:
+                            async with active_lock:
+                                active_extractions -= 1
                         
                         # Update progress
                         completed_count += 1
