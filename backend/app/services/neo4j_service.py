@@ -334,10 +334,11 @@ class Neo4jService:
             return [dict(record) for record in result]
     
     def get_all_documents(self) -> list[dict]:
-        """Get all documents from the knowledge base."""
+        """Get all documents from the knowledge base with collection info."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document)
+                OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
                        d.filename as filename,
                        d.file_type as file_type,
@@ -348,7 +349,9 @@ class Neo4jService:
                        d.error_message as error_message,
                        coalesce(d.progress_current, 0) as progress_current,
                        coalesce(d.progress_total, 0) as progress_total,
-                       coalesce(d.progress_message, '') as progress_message
+                       coalesce(d.progress_message, '') as progress_message,
+                       col.id as collection_id,
+                       col.name as collection_name
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -1245,6 +1248,63 @@ class Neo4jService:
                 SET d.collection_id = $collection_id
                 RETURN d.id as id
             """, collection_id=collection_id, document_id=document_id)
+            
+            record = result.single()
+            return record is not None
+    
+    def move_document_to_collection(self, document_id: str, target_collection_id: str) -> bool:
+        """
+        Move a document to a different collection.
+        Removes from current collection (if any) and adds to the target collection.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $document_id})
+                MATCH (target:Collection {id: $target_collection_id})
+                // Remove from any existing collection
+                OPTIONAL MATCH (old:Collection)-[r:CONTAINS]->(d)
+                DELETE r
+                // Add to new collection
+                MERGE (target)-[:CONTAINS]->(d)
+                SET d.collection_id = $target_collection_id
+                RETURN d.id as id
+            """, document_id=document_id, target_collection_id=target_collection_id)
+            
+            record = result.single()
+            return record is not None
+    
+    def move_documents_to_collection(self, document_ids: list[str], target_collection_id: str) -> dict:
+        """
+        Move multiple documents to a collection.
+        Returns count of successful moves.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (target:Collection {id: $target_collection_id})
+                UNWIND $document_ids as doc_id
+                MATCH (d:Document {id: doc_id})
+                // Remove from any existing collection
+                OPTIONAL MATCH (old:Collection)-[r:CONTAINS]->(d)
+                DELETE r
+                // Add to new collection
+                MERGE (target)-[:CONTAINS]->(d)
+                SET d.collection_id = $target_collection_id
+                RETURN count(d) as moved_count
+            """, document_ids=document_ids, target_collection_id=target_collection_id)
+            
+            record = result.single()
+            return {"moved_count": record["moved_count"] if record else 0}
+    
+    def remove_document_from_collection(self, document_id: str) -> bool:
+        """Remove a document from its current collection (move to default/no collection)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $document_id})
+                OPTIONAL MATCH (col:Collection)-[r:CONTAINS]->(d)
+                DELETE r
+                REMOVE d.collection_id
+                RETURN d.id as id
+            """, document_id=document_id)
             
             record = result.single()
             return record is not None

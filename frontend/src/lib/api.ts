@@ -269,6 +269,19 @@ class ApiClient {
     );
   }
 
+  async moveDocumentsToCollection(documentIds: string[], targetCollectionId: string): Promise<{ message: string; moved_count: number }> {
+    return this.request<{ message: string; moved_count: number }>(
+      "/api/documents/move",
+      {
+        method: "POST",
+        body: JSON.stringify({ 
+          document_ids: documentIds, 
+          target_collection_id: targetCollectionId 
+        }),
+      }
+    );
+  }
+
   async getCollectionEntities(collectionId: string, limit = 100): Promise<{ entities: CollectionEntity[]; total: number }> {
     return this.request<{ entities: CollectionEntity[]; total: number }>(
       `/api/collections/${collectionId}/entities?limit=${limit}`

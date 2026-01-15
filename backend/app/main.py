@@ -28,6 +28,7 @@ from app.models import (
     ConversationMessage,
     ReprocessRequest,
     DeleteRequest,
+    MoveDocumentsRequest,
     # New R2R-style models
     Collection,
     CollectionCreate,
@@ -593,18 +594,24 @@ async def ask_question_stream(request: RAGRequest):
                 ])
                 graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
             
-            system_prompt = """You are an expert research assistant. Answer based ONLY on the provided context.
+            system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
-1. Synthesize information from multiple sources into a coherent answer
-2. Cite sources inline: [src_1], [src_2] for document references
-3. Be precise and avoid hallucination - only state what the sources support
-4. If the context doesn't contain enough information, say so explicitly"""
-            
-            prompt = f"""Answer the question based on the provided context. Cite your sources.
+1. Synthesize information into a coherent, natural-sounding answer
+2. Cite sources inline using [src_1], [src_2] notation when referencing specific information
+3. Be precise and factual - avoid speculation
+4. If you cannot fully answer, explain what aspects you can address
 
-=== Document Context ===
-{formatted_sources if formatted_sources else "No documents available."}
+Response Style:
+- Write naturally as if you're an expert directly answering the question
+- Never mention "context", "provided documents", or similar phrases
+- Never say "Based on the context" or "According to the documents provided"
+- Present information confidently as expert knowledge"""
+            
+            prompt = f"""Answer the following question. Use [src_1], [src_2], etc. to cite specific information.
+
+=== Reference Material ===
+{formatted_sources if formatted_sources else "No references available."}
 {graph_context_str}
 
 ### Question:
@@ -849,6 +856,24 @@ async def add_document_to_collection(collection_id: str, document_id: str):
         raise
     except Exception as e:
         logger.error(f"Error adding document to collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documents/move")
+async def move_documents_to_collection(request: MoveDocumentsRequest):
+    """Move multiple documents to a collection."""
+    try:
+        neo4j = get_neo4j_service()
+        result = neo4j.move_documents_to_collection(
+            request.document_ids, 
+            request.target_collection_id
+        )
+        return {
+            "message": f"Successfully moved {result['moved_count']} document(s)",
+            "moved_count": result["moved_count"]
+        }
+    except Exception as e:
+        logger.error(f"Error moving documents to collection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

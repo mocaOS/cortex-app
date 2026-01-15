@@ -11,6 +11,9 @@ export interface Document {
   progress_current?: number;
   progress_total?: number;
   progress_message?: string;
+  // Collection info
+  collection_id?: string | null;
+  collection_name?: string | null;
 }
 
 export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";

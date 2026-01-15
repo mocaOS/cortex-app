@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { ConversationMessage, SearchResult, GraphContext } from "@/types";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 interface Source {
   document_id: string;
@@ -384,12 +385,18 @@ export default function AskPanel() {
                           : "bg-white/5 text-white/80"
                       )}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-left">
-                        {msg.content}
-                        {msg.isStreaming && (
-                          <span className="inline-block w-2 h-4 bg-coral-400 animate-pulse ml-1" />
-                        )}
-                      </p>
+                      {msg.role === "user" ? (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-left">
+                          {msg.content}
+                        </p>
+                      ) : (
+                        <div className="text-sm text-left">
+                          <MarkdownRenderer content={msg.content} />
+                          {msg.isStreaming && (
+                            <span className="inline-block w-2 h-4 bg-coral-400 animate-pulse ml-1" />
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Reasoning Steps (for agentic mode) */}

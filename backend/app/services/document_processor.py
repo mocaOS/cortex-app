@@ -697,7 +697,7 @@ class QueryProcessor:
             ]) + graph_context_str
             return {
                 "question": question,
-                "answer": f"Based on the knowledge base, here is the relevant information:\n\n{full_context}",
+                "answer": f"Here is the relevant information:\n\n{full_context}",
                 "sources": results,
                 "graph_context": graph_context.model_dump() if graph_context else None,
                 "reranked": reranked,
@@ -714,21 +714,21 @@ class QueryProcessor:
             )
             
             # Enhanced R2R-style system prompt
-            system_prompt = """You are an expert research assistant. Answer based ONLY on the provided context.
+            system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
-1. Synthesize information from multiple sources into a coherent answer
-2. Use knowledge graph relationships to understand entity connections
-3. Cite sources inline: [src_1], [src_2] for document references
-4. If entities from the graph provide relevant context, mention them
-5. If the context doesn't contain enough information, say so explicitly
-6. Structure longer answers with clear sections when appropriate
-7. Be precise and avoid hallucination - only state what the sources support
+1. Synthesize information into a coherent, natural-sounding answer
+2. Cite sources inline using [src_1], [src_2] notation when referencing specific information
+3. Structure longer answers with clear sections when appropriate
+4. Be precise and factual - avoid speculation beyond what you know
+5. If you cannot fully answer the question, explain what aspects you can address
 
-Response Quality:
+Response Style:
+- Write naturally as if you're an expert directly answering the question
+- Never mention "context", "documents provided", "knowledge base", or similar phrases
 - Prefer specific facts over vague generalizations
-- Connect related concepts using the relationship data when helpful
-- If multiple sources conflict, acknowledge the discrepancy"""
+- Connect related concepts naturally
+- If sources conflict, acknowledge the discrepancy objectively"""
             
             # Format sources with reference IDs
             formatted_sources = ""
@@ -739,10 +739,10 @@ Response Quality:
                     formatted_sources += f"\n[{ref_id}] Source: {r['filename']}{rerank_info}\n{r['content']}\n"
             
             # Build the prompt
-            prompt = f"""Answer the question based on the provided context. Use reference IDs like [src_1], [src_2] to cite your sources.
+            prompt = f"""Answer the following question. Use reference IDs like [src_1], [src_2] to cite specific information.
 
-=== Document Context ===
-{formatted_sources if formatted_sources else "No document excerpts available."}
+=== Reference Material ===
+{formatted_sources if formatted_sources else "No references available."}
 {graph_context_str if graph_context_str else ""}
 
 ### Question:
@@ -1060,22 +1060,20 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
         # Enhanced system prompt with community awareness
         system_prompt = """You are an expert research assistant that provides comprehensive, well-structured answers.
 
-You have access to information gathered through multiple research steps, including:
-- Document excerpts with semantic and keyword matching
-- A knowledge graph with entities and their relationships
-- Community summaries that group related concepts
-
-Your task is to synthesize this information into a complete, authoritative answer.
-
 Guidelines:
 1. Provide a comprehensive answer that addresses all aspects of the question
 2. Organize complex answers with clear structure (sections, bullet points)
 3. Cite sources using reference IDs: [src_1], [src_2], etc.
-4. Use knowledge community summaries to provide broader context
-5. Highlight key findings and insights
-6. Note any limitations or gaps in the available information
-7. Connect related concepts using the entity relationships provided
-8. Be precise and avoid making claims not supported by the sources"""
+4. Highlight key findings and insights
+5. Note any limitations if you cannot fully address the question
+6. Connect related concepts naturally and coherently
+7. Be precise and factual in your statements
+
+Response Style:
+- Write naturally as if you're an expert directly answering the question
+- Never mention "context", "provided documents", "knowledge graph", or similar phrases
+- Never say things like "Based on the provided context" or "According to the documents"
+- Present information confidently as expert knowledge"""
         
         # Build messages with conversation history
         messages = [{"role": "system", "content": system_prompt}]
@@ -1088,16 +1086,16 @@ Guidelines:
                     "content": msg.content
                 })
         
-        prompt = f"""Based on comprehensive research, provide a detailed answer to this question.
+        prompt = f"""Provide a detailed answer to this question.
 
-=== Research Context ===
-{formatted_sources if formatted_sources else "No document excerpts available."}
+=== Reference Material ===
+{formatted_sources if formatted_sources else "No references available."}
 {graph_context_str if graph_context_str else ""}
 
 ### Question:
 {question}
 
-### Comprehensive Answer:"""
+### Answer:"""
         
         messages.append({"role": "user", "content": prompt})
         
@@ -1333,8 +1331,9 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions."""},
             graph_context_str += f"\n\n=== Knowledge Communities ===\n{community_info}"
         
         messages = [
-            {"role": "system", "content": """You are an expert research assistant. Synthesize the research context into a comprehensive answer.
-Cite sources as [src_1], [src_2], etc. Use knowledge community insights when relevant. Structure complex answers clearly."""},
+            {"role": "system", "content": """You are an expert research assistant providing comprehensive, accurate answers.
+Cite sources as [src_1], [src_2], etc. Structure complex answers clearly.
+Never mention "context", "provided documents", "knowledge graph", or similar phrases - answer naturally as an expert."""},
         ]
         
         if conversation_history:

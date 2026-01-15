@@ -14,8 +14,15 @@ import {
   Square,
   CheckSquare,
   Upload,
+  Filter,
+  FolderOpen,
+  ArrowRight,
+  ChevronDown,
+  X,
 } from "lucide-react";
 import { cn, formatBytes, formatDate, getFileTypeIcon } from "@/lib/utils";
+import { api } from "@/lib/api";
+import type { Collection } from "@/types";
 
 interface Document {
   id: string;
@@ -29,6 +36,8 @@ interface Document {
   progress_current?: number;
   progress_total?: number;
   progress_message?: string;
+  collection_id?: string | null;
+  collection_name?: string | null;
 }
 
 interface DocumentListProps {
@@ -37,13 +46,20 @@ interface DocumentListProps {
 
 export default function DocumentList({ onDelete }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isReprocessing, setIsReprocessing] = useState(false);
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
+  const [filterCollectionId, setFilterCollectionId] = useState<string | null>(null);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isMoveOpen, setIsMoveOpen] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
   const fileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const filterRef = useRef<HTMLDivElement>(null);
+  const moveRef = useRef<HTMLDivElement>(null);
 
   const fetchDocuments = async () => {
     try {
@@ -59,11 +75,55 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   };
 
+  const fetchCollections = async () => {
+    try {
+      const data = await api.getCollections();
+      setCollections(data.collections);
+    } catch (error) {
+      console.error("Failed to fetch collections:", error);
+    }
+  };
+
   useEffect(() => {
     fetchDocuments();
+    fetchCollections();
     const interval = setInterval(fetchDocuments, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+        setIsFilterOpen(false);
+      }
+      if (moveRef.current && !moveRef.current.contains(event.target as Node)) {
+        setIsMoveOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Filtered documents based on collection filter
+  const filteredDocuments = filterCollectionId === null
+    ? documents
+    : filterCollectionId === "none"
+      ? documents.filter((d) => !d.collection_id)
+      : documents.filter((d) => d.collection_id === filterCollectionId);
+
+  // Get filter label
+  const getFilterLabel = () => {
+    if (filterCollectionId === null) return "All Collections";
+    if (filterCollectionId === "none") return "No Collection";
+    const col = collections.find((c) => c.id === filterCollectionId);
+    return col?.name || "Unknown";
+  };
+
+  // Get available collections to move to (exclude current filter if it's a specific collection)
+  const availableTargetCollections = collections.filter(
+    (c) => filterCollectionId === null || filterCollectionId === "none" || c.id !== filterCollectionId
+  );
 
   // Clear selected IDs that no longer exist
   useEffect(() => {
@@ -112,18 +172,55 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === documents.length) {
-      setSelectedIds(new Set());
+    const filteredIds = new Set(filteredDocuments.map((d) => d.id));
+    const allFilteredSelected = filteredDocuments.every((d) => selectedIds.has(d.id));
+    
+    if (allFilteredSelected) {
+      // Deselect all filtered
+      setSelectedIds((prev) => {
+        const newSet = new Set(prev);
+        filteredIds.forEach((id) => newSet.delete(id));
+        return newSet;
+      });
     } else {
-      setSelectedIds(new Set(documents.map((d) => d.id)));
+      // Select all filtered
+      setSelectedIds((prev) => new Set([...prev, ...filteredIds]));
     }
   };
 
   const selectAllFailed = () => {
-    const failedIds = documents
+    const failedIds = filteredDocuments
       .filter((d) => d.processing_status === "failed")
       .map((d) => d.id);
     setSelectedIds(new Set(failedIds));
+  };
+
+  const handleMoveToCollection = async (targetCollectionId: string) => {
+    if (selectedIds.size === 0) return;
+
+    const selectedArray = Array.from(selectedIds);
+    const targetCollection = collections.find((c) => c.id === targetCollectionId);
+    
+    const confirmed = confirm(
+      `Move ${selectedIds.size} document(s) to "${targetCollection?.name || 'collection'}"?`
+    );
+    if (!confirmed) return;
+
+    setIsMoving(true);
+    setIsMoveOpen(false);
+    try {
+      const result = await api.moveDocumentsToCollection(selectedArray, targetCollectionId);
+      console.log("Move results:", result);
+      setSelectedIds(new Set());
+      await fetchDocuments();
+      await fetchCollections();
+      onDelete(); // Refresh stats
+    } catch (error) {
+      console.error("Failed to move documents:", error);
+      alert("Failed to move documents");
+    } finally {
+      setIsMoving(false);
+    }
   };
 
   const handleReprocessSelected = async () => {
@@ -262,7 +359,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     return status === "processing" || status === "extracting" || status === "pending";
   };
 
-  const failedDocuments = documents.filter((d) => d.processing_status === "failed");
+  const failedDocuments = filteredDocuments.filter((d) => d.processing_status === "failed");
+  const allFilteredSelected = filteredDocuments.length > 0 && filteredDocuments.every((d) => selectedIds.has(d.id));
+  const selectedInFilter = filteredDocuments.filter((d) => selectedIds.has(d.id)).length;
 
   if (isLoading) {
     return (
@@ -295,27 +394,145 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <p className="text-sm text-white/50">
-            {documents.length} document{documents.length !== 1 ? "s" : ""}
+            {filterCollectionId !== null ? (
+              <>
+                {filteredDocuments.length} of {documents.length} document{documents.length !== 1 ? "s" : ""}
+              </>
+            ) : (
+              <>
+                {documents.length} document{documents.length !== 1 ? "s" : ""}
+              </>
+            )}
             {selectedIds.size > 0 && (
               <span className="text-ocean-400 ml-2">
                 ({selectedIds.size} selected)
               </span>
             )}
           </p>
+
+          {/* Collection Filter Dropdown */}
+          <div ref={filterRef} className="relative">
+            <button
+              onClick={() => setIsFilterOpen(!isFilterOpen)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all",
+                "border border-white/10 hover:border-white/20",
+                filterCollectionId !== null
+                  ? "bg-ocean-500/20 text-ocean-400 border-ocean-500/30"
+                  : "text-white/50 hover:text-white/70 hover:bg-white/5"
+              )}
+            >
+              <Filter className="w-4 h-4" />
+              <span className="hidden sm:inline">{getFilterLabel()}</span>
+              <ChevronDown className={cn("w-3 h-3 transition-transform", isFilterOpen && "rotate-180")} />
+            </button>
+
+            <AnimatePresence>
+              {isFilterOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute z-50 top-full left-0 mt-1 min-w-[200px] glass rounded-lg border border-white/10 shadow-xl overflow-hidden"
+                >
+                  <div className="max-h-64 overflow-y-auto">
+                    {/* All Collections */}
+                    <button
+                      onClick={() => {
+                        setFilterCollectionId(null);
+                        setIsFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterCollectionId === null
+                          ? "bg-ocean-500/10 text-ocean-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      <span className="flex-1 text-left">All Collections</span>
+                      {filterCollectionId === null && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    {/* No Collection */}
+                    <button
+                      onClick={() => {
+                        setFilterCollectionId("none");
+                        setIsFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterCollectionId === "none"
+                          ? "bg-ocean-500/10 text-ocean-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <X className="w-4 h-4" />
+                      <span className="flex-1 text-left">No Collection</span>
+                      <span className="text-xs text-white/30">
+                        {documents.filter((d) => !d.collection_id).length}
+                      </span>
+                      {filterCollectionId === "none" && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    {/* Divider */}
+                    {collections.length > 0 && <div className="border-t border-white/5 my-1" />}
+
+                    {/* Collection options */}
+                    {collections.map((col) => (
+                      <button
+                        key={col.id}
+                        onClick={() => {
+                          setFilterCollectionId(col.id);
+                          setIsFilterOpen(false);
+                        }}
+                        className={cn(
+                          "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                          filterCollectionId === col.id
+                            ? "bg-ocean-500/10 text-ocean-400"
+                            : "text-white/70 hover:bg-white/5"
+                        )}
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                        <span className="flex-1 text-left truncate">{col.name}</span>
+                        <span className="text-xs text-white/30">{col.document_count}</span>
+                        {filterCollectionId === col.id && <CheckCircle className="w-4 h-4" />}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Clear Filter */}
+          {filterCollectionId !== null && (
+            <button
+              onClick={() => setFilterCollectionId(null)}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
+            >
+              <X className="w-3 h-3" />
+              Clear
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Select All / Deselect All */}
+          {/* Select All / Deselect All (for filtered) */}
           <button
             onClick={toggleSelectAll}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/70 hover:bg-white/5 transition-all"
+            disabled={filteredDocuments.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/70 hover:bg-white/5 transition-all disabled:opacity-30"
           >
-            {selectedIds.size === documents.length ? (
+            {allFilteredSelected ? (
               <CheckSquare className="w-4 h-4" />
             ) : (
               <Square className="w-4 h-4" />
             )}
-            {selectedIds.size === documents.length ? "Deselect All" : "Select All"}
+            {allFilteredSelected ? "Deselect All" : "Select All"}
+            {filterCollectionId !== null && filteredDocuments.length > 0 && (
+              <span className="text-xs text-white/30">({filteredDocuments.length})</span>
+            )}
           </button>
 
           {/* Select All Failed */}
@@ -347,6 +564,57 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
               )}
               Reprocess Selected
             </button>
+          )}
+
+          {/* Move to Collection */}
+          {selectedIds.size > 0 && availableTargetCollections.length > 0 && (
+            <div ref={moveRef} className="relative">
+              <button
+                onClick={() => setIsMoveOpen(!isMoveOpen)}
+                disabled={isMoving}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all",
+                  "bg-purple-500/20 text-purple-400 hover:bg-purple-500/30",
+                  isMoving && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                {isMoving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4" />
+                )}
+                Move to...
+                <ChevronDown className={cn("w-3 h-3 transition-transform", isMoveOpen && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {isMoveOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute z-50 top-full right-0 mt-1 min-w-[200px] glass rounded-lg border border-white/10 shadow-xl overflow-hidden"
+                  >
+                    <div className="max-h-64 overflow-y-auto">
+                      <div className="px-3 py-2 text-xs text-white/40 border-b border-white/5">
+                        Move {selectedIds.size} document{selectedIds.size !== 1 ? "s" : ""} to:
+                      </div>
+                      {availableTargetCollections.map((col) => (
+                        <button
+                          key={col.id}
+                          onClick={() => handleMoveToCollection(col.id)}
+                          className="flex items-center gap-2 w-full px-3 py-2 text-sm text-white/70 hover:bg-purple-500/10 hover:text-purple-400 transition-colors"
+                        >
+                          <FolderOpen className="w-4 h-4" />
+                          <span className="flex-1 text-left truncate">{col.name}</span>
+                          <span className="text-xs text-white/30">{col.document_count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           )}
 
           {/* Delete Selected */}
@@ -397,10 +665,25 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         </div>
       )}
 
+      {/* No results message */}
+      {filteredDocuments.length === 0 && filterCollectionId !== null && (
+        <div className="glass rounded-xl p-8 text-center">
+          <FolderOpen className="w-12 h-12 text-white/20 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-white/70 mb-2">
+            No Documents in This Collection
+          </h3>
+          <p className="text-white/40">
+            {filterCollectionId === "none"
+              ? "All documents have been assigned to collections."
+              : "Try selecting a different collection or upload documents to this collection."}
+          </p>
+        </div>
+      )}
+
       {/* Document list */}
       <div className="grid gap-3">
         <AnimatePresence>
-          {documents.map((doc, index) => (
+          {filteredDocuments.map((doc, index) => (
             <motion.div
               key={doc.id}
               initial={{ opacity: 0, y: 20 }}
@@ -520,6 +803,14 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                     {doc.chunk_count > 0 && (
                       <span className="text-xs text-white/30">
                         {doc.chunk_count} chunks
+                      </span>
+                    )}
+
+                    {/* Collection badge */}
+                    {doc.collection_name && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-500/20 text-purple-400">
+                        <FolderOpen className="w-3 h-3" />
+                        {doc.collection_name}
                       </span>
                     )}
                   </div>

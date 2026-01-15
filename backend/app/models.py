@@ -311,3 +311,9 @@ class ReprocessRequest(BaseModel):
 class DeleteRequest(BaseModel):
     """Request model for deleting multiple documents."""
     document_ids: List[str] = Field(..., description="List of document IDs to delete")
+
+
+class MoveDocumentsRequest(BaseModel):
+    """Request model for moving documents to a collection."""
+    document_ids: List[str] = Field(..., description="List of document IDs to move")
+    target_collection_id: str = Field(..., description="Target collection ID to move documents to")

@@ -452,7 +452,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                   <Users className="w-8 h-8 text-purple-400/50 mx-auto mb-3" />
                   <h3 className="text-white/70 font-medium mb-2">No Communities Detected</h3>
                   <p className="text-white/40 text-sm max-w-md mx-auto">
-                    Click "Detect" to find groups of related entities in your knowledge graph.
+                    Click &quot;Detect&quot; to find groups of related entities in your knowledge graph.
                   </p>
                 </div>
               ) : (
