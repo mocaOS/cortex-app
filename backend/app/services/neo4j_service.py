@@ -1586,7 +1586,7 @@ class Neo4jService:
         with self.driver.session() as session:
             try:
                 result = session.run("""
-                    CALL db.index.fulltext.queryNodes('community_summary_fulltext', $query)
+                    CALL db.index.fulltext.queryNodes('community_summary_fulltext', $search_query)
                     YIELD node, score
                     RETURN node.id as id,
                            node.name as name,
@@ -1595,7 +1595,7 @@ class Neo4jService:
                            score
                     ORDER BY score DESC
                     LIMIT $limit
-                """, query=query, limit=limit)
+                """, search_query=query, limit=limit)
                 return [dict(record) for record in result]
             except Exception as e:
                 logger.warning(f"Community search failed: {e}")
