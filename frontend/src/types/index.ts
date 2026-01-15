@@ -178,3 +178,29 @@ export interface ThinkingStreamEvent extends StreamEvent {
   };
   communities_used?: number[];
 }
+
+// =============================================================================
+// Background Task Types
+// =============================================================================
+
+export type TaskStatus = "pending" | "running" | "completed" | "failed";
+
+export interface TaskProgress {
+  task_id: string;
+  task_type: string;
+  status: TaskStatus;
+  progress_current: number;
+  progress_total: number;
+  progress_percent: number;
+  message: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: string;
+  result?: Record<string, unknown>;
+}
+
+export interface TaskStartResponse {
+  task_id: string;
+  status: TaskStatus;
+  message: string;
+}

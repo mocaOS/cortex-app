@@ -317,3 +317,49 @@ class MoveDocumentsRequest(BaseModel):
     """Request model for moving documents to a collection."""
     document_ids: List[str] = Field(..., description="List of document IDs to move")
     target_collection_id: str = Field(..., description="Target collection ID to move documents to")
+
+
+# =============================================================================
+# Background Task Tracking
+# =============================================================================
+
+class TaskStatus(str, Enum):
+    """Status of a background task."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TaskProgress(BaseModel):
+    """Progress information for a background task."""
+    task_id: str = Field(..., description="Unique task identifier")
+    task_type: str = Field(..., description="Type of task: community_detection, summarization, etc.")
+    status: TaskStatus = Field(default=TaskStatus.PENDING, description="Current task status")
+    progress_current: int = Field(default=0, description="Current step number")
+    progress_total: int = Field(default=0, description="Total number of steps")
+    progress_percent: float = Field(default=0.0, description="Completion percentage (0-100)")
+    message: str = Field(default="", description="Human-readable progress message")
+    started_at: Optional[datetime] = Field(default=None, description="When the task started")
+    completed_at: Optional[datetime] = Field(default=None, description="When the task completed")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
+    result: Optional[dict] = Field(default=None, description="Task result when completed")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "task_id": "task_abc123",
+                "task_type": "community_detection",
+                "status": "running",
+                "progress_current": 5,
+                "progress_total": 10,
+                "progress_percent": 50.0,
+                "message": "Generating summaries for community 5/10..."
+            }
+        }
+
+
+class CommunityDetectionTaskRequest(BaseModel):
+    """Request to start a community detection task."""
+    min_size: int = Field(default=3, ge=2, le=20, description="Minimum community size")
+    collection_id: Optional[str] = Field(default=None, description="Scope to collection")

@@ -3,9 +3,11 @@
 import os
 import logging
 import asyncio
+import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Dict
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +37,10 @@ from app.models import (
     CollectionUpdate,
     Community,
     CommunitySummaryRequest,
+    # Task tracking models
+    TaskStatus,
+    TaskProgress,
+    CommunityDetectionTaskRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -94,6 +100,175 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# Background Task Store
+# =============================================================================
+
+# In-memory task store (for production, consider Redis or database)
+_task_store: Dict[str, TaskProgress] = {}
+
+
+def create_task(task_type: str) -> TaskProgress:
+    """Create a new task and return its progress tracker."""
+    task_id = f"task_{uuid.uuid4().hex[:12]}"
+    task = TaskProgress(
+        task_id=task_id,
+        task_type=task_type,
+        status=TaskStatus.PENDING,
+        started_at=datetime.utcnow()
+    )
+    _task_store[task_id] = task
+    return task
+
+
+def get_task(task_id: str) -> Optional[TaskProgress]:
+    """Get a task by ID."""
+    return _task_store.get(task_id)
+
+
+def update_task_progress(
+    task_id: str,
+    current: int,
+    total: int,
+    message: str,
+    status: TaskStatus = TaskStatus.RUNNING
+) -> None:
+    """Update task progress."""
+    task = _task_store.get(task_id)
+    if task:
+        task.progress_current = current
+        task.progress_total = total
+        task.progress_percent = (current / total * 100) if total > 0 else 0
+        task.message = message
+        task.status = status
+
+
+def complete_task(task_id: str, result: dict) -> None:
+    """Mark a task as completed with results."""
+    task = _task_store.get(task_id)
+    if task:
+        task.status = TaskStatus.COMPLETED
+        task.progress_percent = 100.0
+        task.completed_at = datetime.utcnow()
+        task.result = result
+        task.message = "Completed successfully"
+
+
+def fail_task(task_id: str, error: str) -> None:
+    """Mark a task as failed."""
+    task = _task_store.get(task_id)
+    if task:
+        task.status = TaskStatus.FAILED
+        task.completed_at = datetime.utcnow()
+        task.error = error
+        task.message = f"Failed: {error}"
+
+
+def cleanup_old_tasks(max_age_hours: int = 24) -> int:
+    """Remove completed/failed tasks older than max_age_hours."""
+    now = datetime.utcnow()
+    to_remove = []
+    for task_id, task in _task_store.items():
+        if task.completed_at:
+            age = (now - task.completed_at).total_seconds() / 3600
+            if age > max_age_hours:
+                to_remove.append(task_id)
+    for task_id in to_remove:
+        del _task_store[task_id]
+    return len(to_remove)
+
+
+# =============================================================================
+# Task Status Endpoints
+# =============================================================================
+
+@app.get("/api/tasks/{task_id}", response_model=TaskProgress)
+async def get_task_status(task_id: str):
+    """
+    Get the current status and progress of a background task.
+    
+    Poll this endpoint to track long-running operations like community detection.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return task
+
+
+@app.get("/api/tasks/{task_id}/result")
+async def get_task_result(task_id: str):
+    """
+    Get the result of a completed background task.
+    
+    Returns 202 if the task is still running, 200 with result if completed,
+    or 500 if the task failed.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    if task.status == TaskStatus.PENDING or task.status == TaskStatus.RUNNING:
+        return JSONResponse(
+            status_code=202,
+            content={
+                "task_id": task.task_id,
+                "status": task.status.value,
+                "progress_percent": task.progress_percent,
+                "message": task.message
+            }
+        )
+    
+    if task.status == TaskStatus.FAILED:
+        raise HTTPException(status_code=500, detail=task.error or "Task failed")
+    
+    # Task completed
+    return task.result
+
+
+@app.get("/api/tasks")
+async def list_tasks(
+    status: Optional[str] = Query(default=None, description="Filter by status"),
+    task_type: Optional[str] = Query(default=None, description="Filter by task type")
+):
+    """List all active tasks, optionally filtered by status or type."""
+    tasks = list(_task_store.values())
+    
+    if status:
+        tasks = [t for t in tasks if t.status.value == status]
+    if task_type:
+        tasks = [t for t in tasks if t.task_type == task_type]
+    
+    # Sort by started_at descending (newest first)
+    tasks.sort(key=lambda t: t.started_at or datetime.min, reverse=True)
+    
+    return {
+        "tasks": [t.model_dump() for t in tasks],
+        "total": len(tasks)
+    }
+
+
+@app.delete("/api/tasks/{task_id}")
+async def cancel_task(task_id: str):
+    """
+    Cancel/remove a task from the store.
+    
+    Note: This only removes the task record, it doesn't stop a running task.
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    del _task_store[task_id]
+    return {"message": f"Task {task_id} removed"}
+
+
+@app.post("/api/tasks/cleanup")
+async def cleanup_tasks(max_age_hours: int = Query(default=24, ge=1, le=168)):
+    """Remove old completed/failed tasks."""
+    removed = cleanup_old_tasks(max_age_hours)
+    return {"removed": removed, "remaining": len(_task_store)}
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -908,34 +1083,49 @@ async def list_communities(limit: int = Query(default=50, ge=1, le=200)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/graph/communities/detect")
-async def detect_communities(
-    min_size: int = Query(default=3, ge=2, le=20, description="Minimum community size"),
-    collection_id: Optional[str] = Query(default=None, description="Scope to collection")
-):
-    """
-    Run community detection on the knowledge graph.
-    
-    Detects groups of related entities using graph algorithms.
-    """
+async def _run_community_detection_task(
+    task_id: str,
+    min_size: int,
+    collection_id: Optional[str]
+) -> None:
+    """Background task for community detection with progress tracking."""
     try:
         settings = get_settings()
-        if not settings.enable_community_detection:
-            raise HTTPException(status_code=400, detail="Community detection is disabled")
-        
         neo4j = get_neo4j_service()
         extractor = get_graph_extractor()
         
-        # Detect communities - run in thread pool to not block event loop
+        # Step 1: Detect communities
+        update_task_progress(task_id, 0, 1, "Detecting communities in knowledge graph...")
         communities = await asyncio.to_thread(neo4j.detect_communities, min_size, collection_id)
         
-        # Generate summaries if enabled
+        if not communities:
+            complete_task(task_id, {
+                "communities": [],
+                "total": 0,
+                "collection_id": collection_id
+            })
+            return
+        
+        # Step 2: Generate summaries if enabled
         if settings.enable_graph_summarization and extractor.is_available:
-            for community in communities:
-                # Get relationships for this community - run in thread pool
+            total_steps = len(communities)
+            update_task_progress(
+                task_id, 0, total_steps,
+                f"Generating summaries for {total_steps} communities..."
+            )
+            
+            for i, community in enumerate(communities):
+                update_task_progress(
+                    task_id, i, total_steps,
+                    f"Generating summary for community {i + 1}/{total_steps}..."
+                )
+                
+                # Get relationships for this community
                 entity_names = [e.get("name") for e in community.get("entities", [])]
                 if community.get("id") is not None:
-                    relationships = await asyncio.to_thread(neo4j.get_community_relationships, community["id"])
+                    relationships = await asyncio.to_thread(
+                        neo4j.get_community_relationships, community["id"]
+                    )
                 else:
                     relationships = []
                 
@@ -945,7 +1135,7 @@ async def detect_communities(
                     relationships
                 )
                 
-                # Store community with summary - run in thread pool
+                # Store community with summary
                 await asyncio.to_thread(
                     neo4j.store_community,
                     community["id"],
@@ -956,16 +1146,59 @@ async def detect_communities(
                 
                 community["name"] = summary_result.get("name")
                 community["summary"] = summary_result.get("summary")
+            
+            update_task_progress(task_id, total_steps, total_steps, "Finalizing...")
         
-        return {
+        complete_task(task_id, {
             "communities": communities,
             "total": len(communities),
             "collection_id": collection_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in community detection task {task_id}: {e}")
+        fail_task(task_id, str(e))
+
+
+@app.post("/api/graph/communities/detect")
+async def detect_communities(
+    background_tasks: BackgroundTasks,
+    min_size: int = Query(default=3, ge=2, le=20, description="Minimum community size"),
+    collection_id: Optional[str] = Query(default=None, description="Scope to collection")
+):
+    """
+    Start community detection on the knowledge graph as a background task.
+    
+    Returns immediately with a task_id that can be used to poll for progress.
+    Use GET /api/tasks/{task_id} to check progress.
+    Use GET /api/tasks/{task_id}/result to get the final results.
+    """
+    try:
+        settings = get_settings()
+        if not settings.enable_community_detection:
+            raise HTTPException(status_code=400, detail="Community detection is disabled")
+        
+        # Create a task and start it in the background
+        task = create_task("community_detection")
+        task.message = "Initializing community detection..."
+        
+        # Schedule the background task
+        background_tasks.add_task(
+            _run_community_detection_task,
+            task.task_id,
+            min_size,
+            collection_id
+        )
+        
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "message": "Community detection started. Poll /api/tasks/{task_id} for progress."
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error detecting communities: {e}")
+        logger.error(f"Error starting community detection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

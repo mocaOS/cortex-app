@@ -13,6 +13,8 @@ import type {
   CollectionEntity,
   Community,
   ThinkingStreamEvent,
+  TaskProgress,
+  TaskStartResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -298,14 +300,74 @@ class ApiClient {
     );
   }
 
-  async detectCommunities(minSize = 3, collectionId?: string): Promise<{ communities: Community[]; total: number }> {
+  async detectCommunities(minSize = 3, collectionId?: string): Promise<TaskStartResponse> {
     const params = new URLSearchParams({ min_size: String(minSize) });
     if (collectionId) params.set("collection_id", collectionId);
     
-    return this.request<{ communities: Community[]; total: number }>(
+    return this.request<TaskStartResponse>(
       `/api/graph/communities/detect?${params}`,
       { method: "POST" }
     );
+  }
+
+  // ===========================================================================
+  // Task API (Background Task Tracking)
+  // ===========================================================================
+
+  async getTaskStatus(taskId: string): Promise<TaskProgress> {
+    return this.request<TaskProgress>(`/api/tasks/${taskId}`);
+  }
+
+  async getTaskResult<T = Record<string, unknown>>(taskId: string): Promise<T | null> {
+    const url = `${API_BASE}/api/tasks/${taskId}/result`;
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json" },
+    });
+    
+    if (res.status === 202) {
+      // Task still running
+      return null;
+    }
+    
+    if (!res.ok) {
+      const error = await res.text();
+      throw new Error(error || `Request failed with status ${res.status}`);
+    }
+    
+    return res.json();
+  }
+
+  async pollTask<T = Record<string, unknown>>(
+    taskId: string,
+    onProgress?: (progress: TaskProgress) => void,
+    intervalMs = 1000,
+    maxAttempts = 600 // 10 minutes max
+  ): Promise<T> {
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      const status = await this.getTaskStatus(taskId);
+      
+      if (onProgress) {
+        onProgress(status);
+      }
+      
+      if (status.status === "completed") {
+        // Fetch the result
+        const result = await this.getTaskResult<T>(taskId);
+        if (result) return result;
+      }
+      
+      if (status.status === "failed") {
+        throw new Error(status.error || "Task failed");
+      }
+      
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      attempts++;
+    }
+    
+    throw new Error("Task polling timeout");
   }
 
   async getCommunity(id: number): Promise<Community> {

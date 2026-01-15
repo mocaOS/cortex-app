@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import type { Collection, CollectionEntity, Community } from "@/types";
+import type { Collection, CollectionEntity, Community, TaskProgress } from "@/types";
 
 interface CollectionPanelProps {
   onRefresh?: () => void;
@@ -42,6 +42,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   const [isDetecting, setIsDetecting] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
+  const [detectionProgress, setDetectionProgress] = useState<TaskProgress | null>(null);
 
   useEffect(() => {
     fetchCollections();
@@ -134,13 +135,27 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
 
   const handleDetectCommunities = async () => {
     setIsDetecting(true);
+    setDetectionProgress(null);
     try {
-      const data = await api.detectCommunities(3);
-      setCommunities(data.communities);
+      // Start the detection task
+      const taskStart = await api.detectCommunities(3);
+      
+      // Poll for progress
+      const result = await api.pollTask<{ communities: Community[]; total: number }>(
+        taskStart.task_id,
+        (progress) => {
+          setDetectionProgress(progress);
+        },
+        1000 // Poll every second
+      );
+      
+      setCommunities(result.communities);
+      setShowCommunities(true);
     } catch (error) {
       console.error("Failed to detect communities:", error);
     } finally {
       setIsDetecting(false);
+      setDetectionProgress(null);
     }
   };
 
@@ -433,6 +448,43 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
             </button>
           </div>
         </div>
+
+        {/* Detection Progress Display */}
+        <AnimatePresence>
+          {isDetecting && detectionProgress && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4"
+            >
+              <div className="glass rounded-xl p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
+                  <div className="flex-1">
+                    <p className="text-sm text-white/80">{detectionProgress.message}</p>
+                    <p className="text-xs text-white/40 mt-0.5">
+                      {detectionProgress.progress_current > 0 && detectionProgress.progress_total > 0
+                        ? `Step ${detectionProgress.progress_current} of ${detectionProgress.progress_total}`
+                        : "Initializing..."}
+                    </p>
+                  </div>
+                  <span className="text-sm font-medium text-purple-400">
+                    {Math.round(detectionProgress.progress_percent)}%
+                  </span>
+                </div>
+                <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${detectionProgress.progress_percent}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {showCommunities && (
