@@ -44,9 +44,42 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   const [showCommunities, setShowCommunities] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState<TaskProgress | null>(null);
 
+  const TASK_STORAGE_KEY = "moca_community_detection_task";
+
+  // Resume polling for an existing task on mount
+  const resumeTaskPolling = async (taskId: string) => {
+    setIsDetecting(true);
+    setShowCommunities(true);
+    try {
+      const result = await api.pollTask<{ communities: Community[]; total: number }>(
+        taskId,
+        (progress) => {
+          setDetectionProgress(progress);
+        },
+        1000
+      );
+      
+      setCommunities(result.communities);
+      localStorage.removeItem(TASK_STORAGE_KEY);
+    } catch (error) {
+      console.error("Failed to resume task polling:", error);
+      localStorage.removeItem(TASK_STORAGE_KEY);
+    } finally {
+      setIsDetecting(false);
+      setDetectionProgress(null);
+    }
+  };
+
   useEffect(() => {
     fetchCollections();
     fetchCommunities();
+    
+    // Check for existing task in localStorage
+    const savedTaskId = localStorage.getItem(TASK_STORAGE_KEY);
+    if (savedTaskId) {
+      resumeTaskPolling(savedTaskId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchCollections = async () => {
@@ -140,6 +173,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       // Start the detection task
       const taskStart = await api.detectCommunities(3);
       
+      // Save task ID to localStorage for resume on refresh
+      localStorage.setItem(TASK_STORAGE_KEY, taskStart.task_id);
+      
       // Poll for progress
       const result = await api.pollTask<{ communities: Community[]; total: number }>(
         taskStart.task_id,
@@ -151,8 +187,13 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       
       setCommunities(result.communities);
       setShowCommunities(true);
+      
+      // Clear task from localStorage on success
+      localStorage.removeItem(TASK_STORAGE_KEY);
     } catch (error) {
       console.error("Failed to detect communities:", error);
+      // Clear task from localStorage on error
+      localStorage.removeItem(TASK_STORAGE_KEY);
     } finally {
       setIsDetecting(false);
       setDetectionProgress(null);
