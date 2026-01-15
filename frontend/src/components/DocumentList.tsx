@@ -19,6 +19,7 @@ import {
   ArrowRight,
   ChevronDown,
   X,
+  Search,
 } from "lucide-react";
 import { cn, formatBytes, formatDate, getFileTypeIcon } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -54,6 +55,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [filterCollectionId, setFilterCollectionId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isMoveOpen, setIsMoveOpen] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -105,12 +107,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Filtered documents based on collection filter
-  const filteredDocuments = filterCollectionId === null
-    ? documents
-    : filterCollectionId === "none"
-      ? documents.filter((d) => !d.collection_id)
-      : documents.filter((d) => d.collection_id === filterCollectionId);
+  // Filtered documents based on collection filter and search query
+  const filteredDocuments = documents.filter((doc) => {
+    // Collection filter
+    const matchesCollection = 
+      filterCollectionId === null ||
+      (filterCollectionId === "none" ? !doc.collection_id : doc.collection_id === filterCollectionId);
+    
+    // Search filter (case-insensitive search on filename)
+    const matchesSearch = 
+      searchQuery.trim() === "" ||
+      doc.filename.toLowerCase().includes(searchQuery.toLowerCase().trim());
+    
+    return matchesCollection && matchesSearch;
+  });
 
   // Get filter label
   const getFilterLabel = () => {
@@ -390,11 +400,37 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
   return (
     <div className="space-y-4">
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search documents by filename..."
+          className={cn(
+            "w-full pl-10 pr-10 py-2.5 rounded-xl text-sm",
+            "bg-white/5 border border-white/10",
+            "text-white placeholder:text-white/30",
+            "focus:outline-none focus:border-ocean-500/50 focus:ring-1 focus:ring-ocean-500/20",
+            "transition-all"
+          )}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-white/30 hover:text-white/50 hover:bg-white/5 transition-colors"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
       {/* Header with actions */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <p className="text-sm text-white/50">
-            {filterCollectionId !== null ? (
+            {filterCollectionId !== null || searchQuery.trim() !== "" ? (
               <>
                 {filteredDocuments.length} of {documents.length} document{documents.length !== 1 ? "s" : ""}
               </>
@@ -666,17 +702,35 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       )}
 
       {/* No results message */}
-      {filteredDocuments.length === 0 && filterCollectionId !== null && (
+      {filteredDocuments.length === 0 && (filterCollectionId !== null || searchQuery.trim() !== "") && (
         <div className="glass rounded-xl p-8 text-center">
-          <FolderOpen className="w-12 h-12 text-white/20 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-white/70 mb-2">
-            No Documents in This Collection
-          </h3>
-          <p className="text-white/40">
-            {filterCollectionId === "none"
-              ? "All documents have been assigned to collections."
-              : "Try selecting a different collection or upload documents to this collection."}
-          </p>
+          {searchQuery.trim() !== "" ? (
+            <>
+              <Search className="w-12 h-12 text-white/20 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-white/70 mb-2">
+                No Documents Found
+              </h3>
+              <p className="text-white/40">
+                No documents match &quot;{searchQuery}&quot;
+                {filterCollectionId !== null && (
+                  <> in the selected collection</>
+                )}
+                . Try a different search term.
+              </p>
+            </>
+          ) : (
+            <>
+              <FolderOpen className="w-12 h-12 text-white/20 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-white/70 mb-2">
+                No Documents in This Collection
+              </h3>
+              <p className="text-white/40">
+                {filterCollectionId === "none"
+                  ? "All documents have been assigned to collections."
+                  : "Try selecting a different collection or upload documents to this collection."}
+              </p>
+            </>
+          )}
         </div>
       )}
 
