@@ -171,6 +171,12 @@ class ApiClient {
   /**
    * Stream the RAG response for better UX.
    * Returns an async generator that yields stream events.
+   * 
+   * When useAgentic is true, additional events are yielded:
+   * - thinking: Reasoning step updates
+   * - sub_questions: Decomposed research questions
+   * - retrieval: Source retrieval progress
+   * - retrieval_stats: Final retrieval statistics
    */
   async *askStream(
     question: string,
@@ -179,6 +185,7 @@ class ApiClient {
       conversationHistory?: ConversationMessage[];
       useReranking?: boolean;
       useGraph?: boolean;
+      useAgentic?: boolean;
     } = {}
   ): AsyncGenerator<StreamEvent, void, unknown> {
     const {
@@ -186,6 +193,7 @@ class ApiClient {
       conversationHistory,
       useReranking = true,
       useGraph = true,
+      useAgentic = false,
     } = options;
 
     const res = await fetch(`${API_BASE}/api/ask/stream`, {
@@ -199,6 +207,7 @@ class ApiClient {
         conversation_history: conversationHistory,
         use_reranking: useReranking,
         use_graph: useGraph,
+        use_agentic: useAgentic,
       }),
     });
 

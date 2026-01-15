@@ -94,6 +94,16 @@ export interface StreamEvent {
   graph_context?: GraphContext;
   done?: boolean;
   error?: string;
+  // Agentic mode events
+  thinking?: string;
+  sub_questions?: string[];
+  retrieval?: string;
+  retrieval_stats?: {
+    total_sources: number;
+    unique_sources: number;
+    communities_used: number;
+  };
+  communities_used?: number[];
 }
 
 export interface UploadResponse {

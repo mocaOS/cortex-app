@@ -684,6 +684,12 @@ async def ask_question_stream(request: RAGRequest):
     - sources: Retrieved sources (at end)
     - graph_context: Graph context (at end)
     - done: Completion signal
+    
+    When use_agentic=True (deep research mode), also includes:
+    - thinking: Reasoning step updates
+    - sub_questions: Decomposed research questions
+    - retrieval: Source retrieval progress
+    - retrieval_stats: Final retrieval statistics
     """
     settings = get_settings()
     
@@ -693,6 +699,34 @@ async def ask_question_stream(request: RAGRequest):
             detail="OpenAI API key required for streaming"
         )
     
+    # Route to agentic streaming if deep research is enabled
+    if request.use_agentic and settings.enable_agentic_rag:
+        async def generate_agentic():
+            try:
+                processor = get_query_processor()
+                
+                async for event in processor.agentic_rag_stream(
+                    question=request.question,
+                    top_k=request.top_k,
+                    max_hops=request.max_hops,
+                    conversation_history=request.conversation_history
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in streaming agentic RAG: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        
+        return StreamingResponse(
+            generate_agentic(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
+        )
+    
+    # Standard streaming RAG
     async def generate():
         try:
             from openai import AsyncOpenAI

@@ -42,6 +42,8 @@ interface Message {
   sources?: Source[];
   graphContext?: GraphContext;
   reasoningSteps?: string[];
+  thinkingSteps?: string[];
+  subQuestions?: string[];
   isStreaming?: boolean;
   reranked?: boolean;
 }
@@ -82,12 +84,14 @@ export default function AskPanel() {
 
     const conversationHistory = getConversationHistory();
 
-    if (useStreaming && !useAgentic) {
-      // Streaming mode
+    if (useStreaming) {
+      // Streaming mode (supports both regular and agentic)
       const assistantMessage: Message = {
         role: "assistant",
         content: "",
         isStreaming: true,
+        thinkingSteps: useAgentic ? [] : undefined,
+        subQuestions: useAgentic ? [] : undefined,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -95,12 +99,53 @@ export default function AskPanel() {
         let sources: Source[] = [];
         let graphContext: GraphContext | undefined;
         let content = "";
+        let thinkingSteps: string[] = [];
+        let subQuestions: string[] = [];
 
         for await (const event of api.askStream(question, {
           conversationHistory,
           useReranking: true,
           useGraph: true,
+          useAgentic,
         })) {
+          // Handle agentic-specific events
+          if (event.thinking) {
+            thinkingSteps = [...thinkingSteps, event.thinking as string];
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                thinkingSteps,
+              };
+              return updated;
+            });
+          }
+          if (event.sub_questions) {
+            subQuestions = event.sub_questions as string[];
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                subQuestions,
+              };
+              return updated;
+            });
+          }
+          if (event.retrieval) {
+            // Add retrieval info as a thinking step
+            thinkingSteps = [...thinkingSteps, event.retrieval as string];
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                thinkingSteps,
+              };
+              return updated;
+            });
+          }
           if (event.sources) {
             sources = event.sources as Source[];
           }
@@ -128,6 +173,8 @@ export default function AskPanel() {
                 content,
                 sources,
                 graphContext,
+                thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+                subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
                 isStreaming: false,
                 reranked: true,
               };
@@ -160,7 +207,7 @@ export default function AskPanel() {
         });
       }
     } else {
-      // Non-streaming mode (includes agentic)
+      // Non-streaming mode
       try {
         const data = await api.ask(question, {
           conversationHistory,
@@ -293,10 +340,7 @@ export default function AskPanel() {
                   <input
                     type="checkbox"
                     checked={useAgentic}
-                    onChange={(e) => {
-                      setUseAgentic(e.target.checked);
-                      if (e.target.checked) setUseStreaming(false);
-                    }}
+                    onChange={(e) => setUseAgentic(e.target.checked)}
                     className="w-4 h-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50"
                   />
                   <div>
@@ -399,7 +443,65 @@ export default function AskPanel() {
                       )}
                     </div>
 
-                    {/* Reasoning Steps (for agentic mode) */}
+                    {/* Sub-Questions (for agentic streaming mode) */}
+                    {msg.subQuestions && msg.subQuestions.length > 0 && (
+                      <div className="mt-3 p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Search className="w-3 h-3 text-teal-400" />
+                          <span className="text-xs text-teal-400 font-medium">
+                            Research Questions
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {msg.subQuestions.map((q, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-start gap-2 text-xs text-white/60"
+                            >
+                              <span className="w-4 h-4 rounded-full bg-teal-500/20 flex items-center justify-center text-[10px] text-teal-400 shrink-0 mt-0.5">
+                                {idx + 1}
+                              </span>
+                              <span>{q}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Thinking Steps (for agentic streaming mode) */}
+                    {msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
+                      <div className="mt-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Zap className="w-3 h-3 text-cyan-400" />
+                          <span className="text-xs text-cyan-400 font-medium">
+                            {msg.isStreaming ? "Thinking..." : "Research Process"}
+                          </span>
+                          {msg.isStreaming && (
+                            <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
+                          )}
+                        </div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {msg.thinkingSteps.map((step, idx) => (
+                            <div
+                              key={idx}
+                              className={cn(
+                                "flex items-start gap-2 text-xs",
+                                idx === msg.thinkingSteps!.length - 1 && msg.isStreaming
+                                  ? "text-cyan-300"
+                                  : "text-white/50"
+                              )}
+                            >
+                              <span className="w-4 h-4 rounded-full bg-cyan-500/20 flex items-center justify-center text-[10px] text-cyan-400 shrink-0 mt-0.5">
+                                {idx + 1}
+                              </span>
+                              <span>{step}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Reasoning Steps (for non-streaming agentic mode) */}
                     {msg.reasoningSteps && msg.reasoningSteps.length > 0 && (
                       <div className="mt-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
                         <div className="flex items-center gap-2 mb-2">
