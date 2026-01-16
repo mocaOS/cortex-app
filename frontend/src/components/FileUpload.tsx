@@ -312,7 +312,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       setUploadingFiles((prev) =>
         prev.map((uf) =>
           uf.file === file
-            ? result.success
+            ? result.success && result.data
               ? {
                   ...uf,
                   status: "uploaded" as const,
