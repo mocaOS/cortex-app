@@ -185,6 +185,7 @@ class DocumentMetadata(BaseModel):
     filename: str
     file_type: str
     file_size: int
+    file_path: Optional[str] = Field(default=None, description="Path to stored original file")
     upload_date: datetime = Field(default_factory=datetime.utcnow)
     chunk_count: int = 0
     processing_status: ProcessingStatus = ProcessingStatus.PENDING

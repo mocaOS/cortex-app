@@ -3,6 +3,7 @@ export interface Document {
   filename: string;
   file_type: string;
   file_size: number;
+  file_path?: string | null;  // Path to stored original file
   upload_date: string;
   chunk_count: number;
   processing_status: ProcessingStatus;

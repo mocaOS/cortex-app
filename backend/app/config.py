@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     max_graph_hops: int = Field(default=2)  # Maximum hops for graph traversal in queries
     concurrent_extractions: int = Field(default=20)  # Number of chunks to process concurrently for graph extraction
     
+    # Batch Processing Configuration
+    batch_processing_concurrency: int = Field(default=10)  # Number of documents to process concurrently in batch mode
+    
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking
     reranking_model: str = Field(default="cross-encoder/ms-marco-MiniLM-L-6-v2")  # Cross-encoder model

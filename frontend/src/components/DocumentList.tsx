@@ -30,6 +30,7 @@ interface Document {
   filename: string;
   file_type: string;
   file_size: number;
+  file_path?: string | null;  // Path to stored original file
   upload_date: string;
   chunk_count: number;
   processing_status: string;
@@ -237,27 +238,28 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     if (selectedIds.size === 0) return;
 
     const confirmed = confirm(
-      `Reprocess ${selectedIds.size} document(s)? This will clear their chunks and require re-uploading the files.`
+      `Reprocess ${selectedIds.size} document(s)? Original files are stored - no re-upload needed.`
     );
     if (!confirmed) return;
 
     setIsReprocessing(true);
     try {
-      const res = await fetch("/api/documents/reprocess", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_ids: Array.from(selectedIds) }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        console.log("Reprocess results:", data);
-        setSelectedIds(new Set());
-        await fetchDocuments();
-        onDelete(); // Refresh stats
+      const result = await api.reprocessDocuments(Array.from(selectedIds));
+      console.log("Reprocess results:", result);
+      
+      // Check for any errors
+      const errors = result.results.filter(r => r.status === "error");
+      if (errors.length > 0) {
+        const errorMsgs = errors.map(e => `${e.document_id}: ${e.message}`).join("\n");
+        alert(`Some documents failed to reprocess:\n${errorMsgs}`);
       }
+      
+      setSelectedIds(new Set());
+      await fetchDocuments();
+      onDelete(); // Refresh stats
     } catch (error) {
       console.error("Failed to reprocess documents:", error);
+      alert(`Failed to reprocess: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsReprocessing(false);
     }
@@ -297,24 +299,31 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const handleReprocessWithFile = async (docId: string, file: File) => {
     setReprocessingIds((prev) => new Set(prev).add(docId));
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const res = await fetch(`/api/documents/${docId}/reprocess`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (res.ok) {
-        await fetchDocuments();
-        onDelete(); // Refresh stats
-      } else {
-        const error = await res.json();
-        alert(`Reprocess failed: ${error.detail || "Unknown error"}`);
-      }
+      await api.reprocessDocument(docId, file);
+      await fetchDocuments();
+      onDelete(); // Refresh stats
     } catch (error) {
       console.error("Failed to reprocess document:", error);
-      alert("Failed to reprocess document");
+      alert(`Reprocess failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setReprocessingIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(docId);
+        return newSet;
+      });
+    }
+  };
+
+  // Reprocess using stored file (no upload needed)
+  const handleReprocessDocument = async (docId: string) => {
+    setReprocessingIds((prev) => new Set(prev).add(docId));
+    try {
+      await api.reprocessDocument(docId);
+      await fetchDocuments();
+      onDelete(); // Refresh stats
+    } catch (error) {
+      console.error("Failed to reprocess document:", error);
+      alert(`Reprocess failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setReprocessingIds((prev) => {
         const newSet = new Set(prev);
@@ -694,7 +703,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                 {failedDocuments.length} document{failedDocuments.length !== 1 ? "s" : ""} failed to process
               </h4>
               <p className="text-xs text-white/40 mt-0.5">
-                Select failed documents and reprocess them, or use the retry button on each document.
+                Click the <RotateCcw className="w-3 h-3 inline mx-0.5" /> button to reprocess, or select multiple and use &quot;Reprocess Selected&quot;.
               </p>
             </div>
           </div>
@@ -782,41 +791,65 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                     </div>
 
                     <div className="flex items-center gap-1">
-                      {/* Reprocess with file button for failed/pending documents */}
-                      {(doc.processing_status === "failed" || doc.processing_status === "pending") && (
+                      {/* Reprocess button for failed/completed documents */}
+                      {(doc.processing_status === "failed" || doc.processing_status === "completed") && (
                         <>
-                          <input
-                            ref={(el) => {
-                              if (el) fileInputRefs.current.set(doc.id, el);
-                            }}
-                            type="file"
-                            className="hidden"
-                            accept=".pdf,.txt,.md,.markdown"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                handleReprocessWithFile(doc.id, file);
-                                e.target.value = "";
-                              }
-                            }}
-                          />
-                          <button
-                            onClick={() => triggerFileUpload(doc.id)}
-                            disabled={reprocessingIds.has(doc.id)}
-                            className={cn(
-                              "p-2 rounded-lg transition-all duration-200",
-                              "hover:bg-ocean-500/20 hover:text-ocean-400",
-                              "text-white/40",
-                              reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
-                            )}
-                            title="Retry with file"
-                          >
-                            {reprocessingIds.has(doc.id) ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Upload className="w-4 h-4" />
-                            )}
-                          </button>
+                          {/* If file is stored, show simple reprocess button */}
+                          {doc.file_path ? (
+                            <button
+                              onClick={() => handleReprocessDocument(doc.id)}
+                              disabled={reprocessingIds.has(doc.id)}
+                              className={cn(
+                                "p-2 rounded-lg transition-all duration-200",
+                                "hover:bg-ocean-500/20 hover:text-ocean-400",
+                                "text-white/40",
+                                reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
+                              )}
+                              title="Reprocess document"
+                            >
+                              {reprocessingIds.has(doc.id) ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <RotateCcw className="w-4 h-4" />
+                              )}
+                            </button>
+                          ) : (
+                            /* No stored file - show upload button for legacy documents */
+                            <>
+                              <input
+                                ref={(el) => {
+                                  if (el) fileInputRefs.current.set(doc.id, el);
+                                }}
+                                type="file"
+                                className="hidden"
+                                accept=".pdf,.txt,.md,.markdown"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    handleReprocessWithFile(doc.id, file);
+                                    e.target.value = "";
+                                  }
+                                }}
+                              />
+                              <button
+                                onClick={() => triggerFileUpload(doc.id)}
+                                disabled={reprocessingIds.has(doc.id)}
+                                className={cn(
+                                  "p-2 rounded-lg transition-all duration-200",
+                                  "hover:bg-ocean-500/20 hover:text-ocean-400",
+                                  "text-white/40",
+                                  reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
+                                )}
+                                title="Retry with file (no stored file)"
+                              >
+                                {reprocessingIds.has(doc.id) ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Upload className="w-4 h-4" />
+                                )}
+                              </button>
+                            </>
+                          )}
                         </>
                       )}
 

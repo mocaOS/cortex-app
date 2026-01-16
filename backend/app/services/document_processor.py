@@ -101,24 +101,25 @@ class DocumentProcessor:
     
     async def reprocess_document(self, doc_id: str) -> bool:
         """
-        Reprocess an existing document by deleting its chunks and re-extracting.
+        Reprocess an existing document using its stored file.
         
         Returns True if reprocessing started successfully.
+        Raises ValueError if document not found or file not available.
         """
         # Get document info
         doc_info = self.neo4j.get_document(doc_id)
         if not doc_info:
             raise ValueError(f"Document {doc_id} not found")
         
-        filename = doc_info["filename"]
+        file_path = doc_info.get("file_path")
         file_type = doc_info["file_type"]
         
-        # Get the upload directory
-        settings = get_settings()
-        
-        # Check if original file still exists (it shouldn't, but just in case)
-        # We need to re-read from chunks if they exist, otherwise this won't work
-        # For now, we need the file to be re-uploaded or we use the stored content
+        # Check if original file exists
+        if not file_path or not os.path.exists(file_path):
+            raise ValueError(
+                f"Original file not available for document {doc_id}. "
+                f"File path: {file_path}"
+            )
         
         # Delete existing chunks and entities
         cleanup_result = self.neo4j.delete_document_chunks(doc_id)
@@ -128,20 +129,15 @@ class DocumentProcessor:
             f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
         )
         
-        # Get stored chunk content to rebuild (if any chunks existed)
-        # Since we just deleted them, we need another approach
-        # The best approach is to require the file to be available
-        # For reprocessing, we'll need the file path to be provided or stored
-        
-        # For now, we'll mark this as needing file re-upload
-        # A better approach would be to store file content in object storage
-        
-        # Update status to pending for reprocessing
+        # Update status to pending
         self.neo4j.update_document_status(
             doc_id, 
             ProcessingStatus.PENDING,
-            progress_message="Ready for reprocessing - please re-upload the file"
+            progress_message="Queued for reprocessing"
         )
+        
+        # Start reprocessing in background using stored file
+        asyncio.create_task(self._process_document(doc_id, file_path, file_type))
         
         return True
     
@@ -179,6 +175,54 @@ class DocumentProcessor:
         }
         return converters.get(file_type.lower())
     
+    async def store_file_only(
+        self, 
+        file_path: str, 
+        filename: str,
+        file_size: int,
+        collection_id: Optional[str] = None
+    ) -> str:
+        """
+        Store a file without processing it.
+        
+        Used for bulk uploads where processing happens later.
+        Call process_pending_documents() after all uploads complete.
+        
+        Args:
+            file_path: Path to the uploaded file
+            filename: Original filename
+            file_size: Size in bytes
+            collection_id: Optional collection to add document to
+            
+        Returns:
+            Document ID
+        """
+        doc_id = str(uuid.uuid4())
+        file_type = Path(filename).suffix.lower()
+        
+        # Use default collection if enabled and none specified
+        if collection_id is None and self.settings.enable_collections:
+            collection_id = self.settings.default_collection
+        
+        # Create document metadata with file path for permanent storage
+        metadata = DocumentMetadata(
+            filename=filename,
+            file_type=file_type,
+            file_size=file_size,
+            file_path=file_path,
+            processing_status=ProcessingStatus.PENDING
+        )
+        
+        # Store document node (no processing yet)
+        self.neo4j.store_document(doc_id, metadata)
+        
+        # Add to collection if specified
+        if collection_id:
+            self.neo4j.add_document_to_collection(doc_id, collection_id)
+        
+        logger.info(f"Stored file {filename} as document {doc_id} (pending processing)")
+        return doc_id
+
     async def process_file(
         self, 
         file_path: str, 
@@ -189,38 +233,94 @@ class DocumentProcessor:
         """
         Process a file and store it in the knowledge base.
         
+        The original file is permanently stored and can be used for reprocessing.
+        
         Args:
             file_path: Path to the uploaded file
             filename: Original filename
             file_size: Size in bytes
             collection_id: Optional collection to add document to
         """
-        doc_id = str(uuid.uuid4())
+        # First store the file
+        doc_id = await self.store_file_only(file_path, filename, file_size, collection_id)
+        
+        # Then start processing
         file_type = Path(filename).suffix.lower()
-        
-        # Use default collection if enabled and none specified
-        if collection_id is None and self.settings.enable_collections:
-            collection_id = self.settings.default_collection
-        
-        # Create document metadata
-        metadata = DocumentMetadata(
-            filename=filename,
-            file_type=file_type,
-            file_size=file_size,
-            processing_status=ProcessingStatus.PENDING
-        )
-        
-        # Store document node
-        self.neo4j.store_document(doc_id, metadata)
-        
-        # Add to collection if specified
-        if collection_id:
-            self.neo4j.add_document_to_collection(doc_id, collection_id)
-        
-        # Process in background
         asyncio.create_task(self._process_document(doc_id, file_path, file_type))
         
         return doc_id
+    
+    def get_pending_documents(self) -> List[dict]:
+        """Get all documents with pending status."""
+        all_docs = self.neo4j.get_all_documents()
+        return [d for d in all_docs if d.get("processing_status") == "pending"]
+    
+    async def process_pending_documents(
+        self,
+        concurrency: int = 3,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None
+    ) -> dict:
+        """
+        Process all pending documents with controlled concurrency.
+        
+        Args:
+            concurrency: Number of documents to process concurrently
+            progress_callback: Optional callback(current, total, message)
+            
+        Returns:
+            Dict with processing stats
+        """
+        pending = self.get_pending_documents()
+        total = len(pending)
+        
+        if total == 0:
+            return {"processed": 0, "total": 0, "message": "No pending documents"}
+        
+        logger.info(f"Starting processing of {total} pending documents (concurrency: {concurrency})")
+        
+        semaphore = asyncio.Semaphore(concurrency)
+        completed = 0
+        failed = 0
+        
+        async def process_one(doc: dict):
+            nonlocal completed, failed
+            async with semaphore:
+                doc_id = doc["id"]
+                file_path = doc.get("file_path")
+                file_type = doc.get("file_type", "")
+                
+                if not file_path or not os.path.exists(file_path):
+                    logger.error(f"File not found for document {doc_id}: {file_path}")
+                    self.neo4j.update_document_status(
+                        doc_id,
+                        ProcessingStatus.FAILED,
+                        error_message=f"File not found: {file_path}"
+                    )
+                    failed += 1
+                    return
+                
+                try:
+                    await self._process_document(doc_id, file_path, file_type)
+                    completed += 1
+                except Exception as e:
+                    logger.error(f"Error processing document {doc_id}: {e}")
+                    failed += 1
+                
+                if progress_callback:
+                    progress_callback(completed + failed, total, f"Processed {completed + failed}/{total}")
+        
+        # Process all pending documents
+        tasks = [process_one(doc) for doc in pending]
+        await asyncio.gather(*tasks)
+        
+        logger.info(f"Processing complete: {completed} succeeded, {failed} failed out of {total}")
+        
+        return {
+            "processed": completed,
+            "failed": failed,
+            "total": total,
+            "message": f"Processed {completed} documents, {failed} failed"
+        }
     
     async def _process_document(
         self, 
@@ -413,12 +513,8 @@ class DocumentProcessor:
                 ProcessingStatus.FAILED,
                 error_message=str(e)
             )
-        finally:
-            # Clean up uploaded file
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
+        # NOTE: We no longer delete the file after processing.
+        # Files are kept for reprocessing without needing re-upload.
 
 
 class QueryProcessor:

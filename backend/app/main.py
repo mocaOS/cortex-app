@@ -307,9 +307,15 @@ async def get_stats():
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
-    collection_id: Optional[str] = Query(default=None, description="Collection to add document to")
+    collection_id: Optional[str] = Query(default=None, description="Collection to add document to"),
+    start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)")
 ):
-    """Upload a file to the knowledge base."""
+    """
+    Upload a file to the knowledge base.
+    
+    For bulk uploads (100+ files), set start_processing=false to upload all files first,
+    then call POST /api/documents/process-pending to start processing.
+    """
     settings = get_settings()
     
     # Validate file extension
@@ -332,28 +338,39 @@ async def upload_file(
             detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
         )
     
-    # Save file temporarily
+    # Save file permanently
     import uuid
-    temp_filename = f"{uuid.uuid4()}{file_ext}"
-    file_path = os.path.join(settings.upload_dir, temp_filename)
+    doc_id = str(uuid.uuid4())
+    stored_filename = f"{doc_id}{file_ext}"
+    file_path = os.path.join(settings.upload_dir, stored_filename)
     
     async with aiofiles.open(file_path, 'wb') as f:
         await f.write(content)
     
-    # Process file
     try:
         processor = get_document_processor()
-        doc_id = await processor.process_file(file_path, file.filename, file_size, collection_id)
         
-        return UploadResponse(
-            document_id=doc_id,
-            filename=file.filename,
-            status=ProcessingStatus.PROCESSING,
-            message="File uploaded and processing started"
-        )
+        if start_processing:
+            # Legacy behavior: start processing immediately
+            doc_id = await processor.process_file(file_path, file.filename, file_size, collection_id)
+            return UploadResponse(
+                document_id=doc_id,
+                filename=file.filename,
+                status=ProcessingStatus.PROCESSING,
+                message="File uploaded and processing started"
+            )
+        else:
+            # New behavior: just store the file, don't process yet
+            doc_id = await processor.store_file_only(file_path, file.filename, file_size, collection_id)
+            return UploadResponse(
+                document_id=doc_id,
+                filename=file.filename,
+                status=ProcessingStatus.PENDING,
+                message="File uploaded. Call /api/documents/process-pending to start processing."
+            )
     except Exception as e:
-        logger.error(f"Error processing file: {e}")
-        # Clean up
+        logger.error(f"Error storing file: {e}")
+        # Clean up on error
         try:
             os.remove(file_path)
         except Exception:
@@ -452,74 +469,95 @@ async def delete_all_documents():
 
 
 @app.post("/api/documents/{document_id}/reprocess")
-async def reprocess_document(document_id: str, file: UploadFile = File(...)):
+async def reprocess_document(
+    document_id: str,
+    file: Optional[UploadFile] = File(default=None)
+):
     """
-    Reprocess a single document by re-uploading the file.
+    Reprocess a single document.
     
-    This deletes existing chunks and entities, then reprocesses the file.
+    If no file is provided, uses the stored original file.
+    If a file is provided, updates the stored file and reprocesses.
     """
     settings = get_settings()
     neo4j = get_neo4j_service()
+    processor = get_document_processor()
     
     # Check document exists
     document = neo4j.get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Validate file extension
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in settings.allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
-        )
-    
-    # Read file content
-    content = await file.read()
-    file_size = len(content)
-    
-    # Validate file size
-    max_size = settings.max_file_size_mb * 1024 * 1024
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
-        )
-    
-    # Save file temporarily
-    import uuid
-    temp_filename = f"{uuid.uuid4()}{file_ext}"
-    file_path = os.path.join(settings.upload_dir, temp_filename)
-    
-    async with aiofiles.open(file_path, 'wb') as f:
-        await f.write(content)
-    
-    try:
-        processor = get_document_processor()
-        await processor.reprocess_document_from_file(document_id, file_path, file_ext)
+    # If file is provided, use it (and update stored file)
+    if file and file.filename:
+        # Validate file extension
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in settings.allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
+            )
         
-        return {
-            "document_id": document_id,
-            "filename": file.filename,
-            "status": ProcessingStatus.PROCESSING,
-            "message": "Reprocessing started"
-        }
-    except Exception as e:
-        logger.error(f"Error reprocessing document: {e}")
+        # Read file content
+        content = await file.read()
+        file_size = len(content)
+        
+        # Validate file size
+        max_size = settings.max_file_size_mb * 1024 * 1024
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
+            )
+        
+        # Save new file (use document_id to maintain consistent path)
+        new_filename = f"{document_id}{file_ext}"
+        file_path = os.path.join(settings.upload_dir, new_filename)
+        
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.write(content)
+        
         try:
-            os.remove(file_path)
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=str(e))
+            await processor.reprocess_document_from_file(document_id, file_path, file_ext)
+            
+            return {
+                "document_id": document_id,
+                "filename": file.filename,
+                "status": ProcessingStatus.PROCESSING,
+                "message": "Reprocessing started with new file"
+            }
+        except Exception as e:
+            logger.error(f"Error reprocessing document: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        # No file provided - use stored file
+        try:
+            await processor.reprocess_document(document_id)
+            
+            return {
+                "document_id": document_id,
+                "filename": document["filename"],
+                "status": ProcessingStatus.PROCESSING,
+                "message": "Reprocessing started from stored file"
+            }
+        except ValueError as e:
+            # File not available
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+        except Exception as e:
+            logger.error(f"Error reprocessing document: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/documents/reprocess")
 async def reprocess_documents(request: ReprocessRequest):
     """
-    Mark multiple documents for reprocessing.
+    Reprocess multiple documents using their stored original files.
     
-    Since original files are not stored, this resets documents to 'pending' status
-    and clears their chunks. Documents need to be re-uploaded to complete reprocessing.
+    Original files are permanently stored, so no re-upload is needed.
+    This clears existing chunks and entities, then reprocesses from the stored file.
     
     Returns a list of document IDs that were successfully queued for reprocessing.
     """
@@ -531,19 +569,27 @@ async def reprocess_documents(request: ReprocessRequest):
         for doc_id in request.document_ids:
             try:
                 doc = neo4j.get_document(doc_id)
-                if doc:
-                    await processor.reprocess_document(doc_id)
-                    results.append({
-                        "document_id": doc_id,
-                        "status": "queued",
-                        "message": "Document chunks cleared, ready for re-upload"
-                    })
-                else:
+                if not doc:
                     results.append({
                         "document_id": doc_id,
                         "status": "error",
                         "message": "Document not found"
                     })
+                    continue
+                
+                await processor.reprocess_document(doc_id)
+                results.append({
+                    "document_id": doc_id,
+                    "status": "queued",
+                    "message": "Reprocessing started from stored file"
+                })
+            except ValueError as e:
+                # File not available
+                results.append({
+                    "document_id": doc_id,
+                    "status": "error",
+                    "message": str(e)
+                })
             except Exception as e:
                 results.append({
                     "document_id": doc_id,
@@ -557,6 +603,118 @@ async def reprocess_documents(request: ReprocessRequest):
         }
     except Exception as e:
         logger.error(f"Error reprocessing documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Batch Processing Endpoints
+# =============================================================================
+
+@app.get("/api/documents/pending")
+async def get_pending_documents():
+    """
+    Get all documents with 'pending' status that are waiting to be processed.
+    
+    Use this to check how many documents are queued before calling process-pending.
+    """
+    try:
+        processor = get_document_processor()
+        pending = processor.get_pending_documents()
+        return {
+            "pending_count": len(pending),
+            "documents": pending
+        }
+    except Exception as e:
+        logger.error(f"Error getting pending documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _run_batch_processing_task(
+    task_id: str,
+    concurrency: int
+) -> None:
+    """Background task for batch document processing with progress tracking."""
+    try:
+        processor = get_document_processor()
+        pending = processor.get_pending_documents()
+        total = len(pending)
+        
+        if total == 0:
+            complete_task(task_id, {
+                "processed": 0,
+                "failed": 0,
+                "total": 0,
+                "message": "No pending documents to process"
+            })
+            return
+        
+        update_task_progress(task_id, 0, total, f"Starting processing of {total} documents...")
+        
+        def progress_callback(current: int, total: int, message: str):
+            update_task_progress(task_id, current, total, message)
+        
+        result = await processor.process_pending_documents(
+            concurrency=concurrency,
+            progress_callback=progress_callback
+        )
+        
+        complete_task(task_id, result)
+        
+    except Exception as e:
+        logger.error(f"Error in batch processing task {task_id}: {e}")
+        fail_task(task_id, str(e))
+
+
+@app.post("/api/documents/process-pending")
+async def process_pending_documents(
+    background_tasks: BackgroundTasks,
+    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently (defaults to BATCH_PROCESSING_CONCURRENCY env var)")
+):
+    """
+    Start processing all pending documents as a background task.
+    
+    Use this after bulk uploading files with start_processing=false.
+    Processing happens with controlled concurrency to avoid server overload.
+    
+    Returns a task_id that can be used to poll for progress:
+    - GET /api/tasks/{task_id} - Check progress
+    - GET /api/tasks/{task_id}/result - Get final results
+    """
+    try:
+        settings = get_settings()
+        processor = get_document_processor()
+        pending = processor.get_pending_documents()
+        
+        # Use provided concurrency or fall back to config default
+        actual_concurrency = concurrency if concurrency is not None else settings.batch_processing_concurrency
+        
+        if len(pending) == 0:
+            return {
+                "message": "No pending documents to process",
+                "pending_count": 0
+            }
+        
+        # Create a task and start it in the background
+        task = create_task("batch_processing")
+        task.message = f"Queued {len(pending)} documents for processing..."
+        task.progress_total = len(pending)
+        
+        # Schedule the background task
+        background_tasks.add_task(
+            _run_batch_processing_task,
+            task.task_id,
+            actual_concurrency
+        )
+        
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "pending_count": len(pending),
+            "concurrency": actual_concurrency,
+            "message": f"Started processing {len(pending)} documents. Poll /api/tasks/{task.task_id} for progress."
+        }
+    except Exception as e:
+        logger.error(f"Error starting batch processing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

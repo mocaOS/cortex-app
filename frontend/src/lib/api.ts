@@ -49,13 +49,22 @@ class ApiClient {
     return this.request<Stats>("/api/stats");
   }
 
-  async uploadFile(file: File, collectionId?: string): Promise<UploadResponse> {
+  /**
+   * Upload a file to the knowledge base.
+   * 
+   * @param file - The file to upload
+   * @param collectionId - Optional collection to add document to
+   * @param startProcessing - If false, file is stored but not processed (use for bulk uploads)
+   */
+  async uploadFile(file: File, collectionId?: string, startProcessing = false): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
 
-    const url = collectionId 
-      ? `${API_BASE}/api/upload?collection_id=${encodeURIComponent(collectionId)}`
-      : `${API_BASE}/api/upload`;
+    const params = new URLSearchParams();
+    if (collectionId) params.set("collection_id", collectionId);
+    params.set("start_processing", String(startProcessing));
+
+    const url = `${API_BASE}/api/upload?${params}`;
 
     const res = await fetch(url, {
       method: "POST",
@@ -68,6 +77,24 @@ class ApiClient {
     }
 
     return res.json();
+  }
+
+  /**
+   * Get all pending documents waiting to be processed.
+   */
+  async getPendingDocuments(): Promise<{ pending_count: number; documents: Document[] }> {
+    return this.request<{ pending_count: number; documents: Document[] }>("/api/documents/pending");
+  }
+
+  /**
+   * Start processing all pending documents as a background task.
+   * Use after bulk uploads.
+   */
+  async processPendingDocuments(concurrency = 3): Promise<TaskStartResponse & { pending_count: number }> {
+    return this.request<TaskStartResponse & { pending_count: number }>(
+      `/api/documents/process-pending?concurrency=${concurrency}`,
+      { method: "POST" }
+    );
   }
 
   async getDocuments(): Promise<{ documents: Document[]; total: number }> {
@@ -84,6 +111,10 @@ class ApiClient {
     });
   }
 
+  /**
+   * Reprocess multiple documents using their stored original files.
+   * No file re-upload needed - files are stored permanently.
+   */
   async reprocessDocuments(documentIds: string[]): Promise<{
     results: Array<{
       document_id: string;
@@ -105,6 +136,54 @@ class ApiClient {
     });
   }
 
+  /**
+   * Reprocess a single document.
+   * If no file is provided, uses the stored original file.
+   * If a file is provided, updates the stored file and reprocesses.
+   */
+  async reprocessDocument(
+    documentId: string,
+    file?: File
+  ): Promise<{
+    document_id: string;
+    filename: string;
+    status: string;
+    message: string;
+  }> {
+    if (file) {
+      // With new file
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${API_BASE}/api/documents/${documentId}/reprocess`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: "Reprocess failed" }));
+        throw new Error(error.detail || `HTTP ${res.status}`);
+      }
+
+      return res.json();
+    } else {
+      // Without file - use stored file
+      const res = await fetch(`${API_BASE}/api/documents/${documentId}/reprocess`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: "Reprocess failed" }));
+        throw new Error(error.detail || `HTTP ${res.status}`);
+      }
+
+      return res.json();
+    }
+  }
+
+  /**
+   * @deprecated Use reprocessDocument instead
+   */
   async reprocessDocumentWithFile(
     documentId: string,
     file: File
@@ -114,20 +193,7 @@ class ApiClient {
     status: string;
     message: string;
   }> {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch(`${API_BASE}/api/documents/${documentId}/reprocess`, {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Reprocess failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
-    }
-
-    return res.json();
+    return this.reprocessDocument(documentId, file);
   }
 
   async search(query: string, topK = 10): Promise<SearchResponse> {
