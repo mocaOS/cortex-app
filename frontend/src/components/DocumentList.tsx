@@ -287,7 +287,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       const errors = result.results.filter(r => r.status === "error");
       if (errors.length > 0) {
         const errorMsgs = errors.map(e => `${e.document_id}: ${e.message}`).join("\n");
-        alert(`Some documents failed to reprocess:\n${errorMsgs}`);
+        alert(`Some documents failed to queue:\n${errorMsgs}`);
+      } else if (result.task_id) {
+        console.log(`Batch processing started: task=${result.task_id}, concurrency=${result.concurrency}`);
       }
       
       setSelectedIds(new Set());
@@ -325,7 +327,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       const errors = result.results.filter(r => r.status === "error");
       if (errors.length > 0) {
         const errorMsgs = errors.map(e => `${e.document_id}: ${e.message}`).join("\n");
-        alert(`Some documents failed to restart:\n${errorMsgs}`);
+        alert(`Some documents failed to queue:\n${errorMsgs}`);
+      } else if (result.task_id) {
+        console.log(`Batch restart started: task=${result.task_id}, concurrency=${result.concurrency}`);
       }
       
       setSelectedIds(new Set());

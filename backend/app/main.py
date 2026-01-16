@@ -552,20 +552,28 @@ async def reprocess_document(
 
 
 @app.post("/api/documents/reprocess")
-async def reprocess_documents(request: ReprocessRequest):
+async def reprocess_documents(
+    request: ReprocessRequest,
+    background_tasks: BackgroundTasks,
+    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently")
+):
     """
     Reprocess multiple documents using their stored original files.
     
     Original files are permanently stored, so no re-upload is needed.
-    This clears existing chunks and entities, then reprocesses from the stored file.
+    This clears existing chunks and entities, queues them for reprocessing,
+    then starts batch processing with controlled concurrency.
     
-    Returns a list of document IDs that were successfully queued for reprocessing.
+    Returns a task_id that can be used to poll for progress.
     """
     try:
+        settings = get_settings()
         neo4j = get_neo4j_service()
         processor = get_document_processor()
         
+        # Queue all documents for reprocessing (doesn't start processing yet)
         results = []
+        queued_count = 0
         for doc_id in request.document_ids:
             try:
                 doc = neo4j.get_document(doc_id)
@@ -577,12 +585,14 @@ async def reprocess_documents(request: ReprocessRequest):
                     })
                     continue
                 
-                await processor.reprocess_document(doc_id)
+                # Queue for reprocessing (sets status to pending)
+                processor.queue_document_for_reprocessing(doc_id)
                 results.append({
                     "document_id": doc_id,
                     "status": "queued",
-                    "message": "Reprocessing started from stored file"
+                    "message": "Queued for reprocessing"
                 })
+                queued_count += 1
             except ValueError as e:
                 # File not available
                 results.append({
@@ -597,10 +607,35 @@ async def reprocess_documents(request: ReprocessRequest):
                     "message": str(e)
                 })
         
-        return {
-            "results": results,
-            "total_queued": len([r for r in results if r["status"] == "queued"])
-        }
+        # If any documents were queued, start batch processing
+        if queued_count > 0:
+            actual_concurrency = concurrency if concurrency is not None else settings.batch_processing_concurrency
+            
+            # Create a task and start it in the background
+            task = create_task("reprocess_batch")
+            task.message = f"Queued {queued_count} documents for reprocessing..."
+            task.progress_total = queued_count
+            
+            # Schedule the background task
+            background_tasks.add_task(
+                _run_batch_processing_task,
+                task.task_id,
+                actual_concurrency
+            )
+            
+            return {
+                "results": results,
+                "total_queued": queued_count,
+                "task_id": task.task_id,
+                "concurrency": actual_concurrency,
+                "message": f"Queued {queued_count} documents. Processing with concurrency={actual_concurrency}. Poll /api/tasks/{task.task_id} for progress."
+            }
+        else:
+            return {
+                "results": results,
+                "total_queued": 0,
+                "message": "No documents were queued for reprocessing"
+            }
     except Exception as e:
         logger.error(f"Error reprocessing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -117,9 +117,53 @@ class DocumentProcessor:
         
         logger.info(f"Document processor initialized (GraphRAG: {self.graph_extractor.is_available})")
     
+    def queue_document_for_reprocessing(self, doc_id: str) -> bool:
+        """
+        Queue a document for reprocessing by resetting its status to pending.
+        
+        This only clears chunks and sets status - does NOT start processing.
+        Call process_pending_documents() to start the actual processing.
+        
+        Returns True if successfully queued.
+        Raises ValueError if document not found or file not available.
+        """
+        # Get document info
+        doc_info = self.neo4j.get_document(doc_id)
+        if not doc_info:
+            raise ValueError(f"Document {doc_id} not found")
+        
+        file_path = doc_info.get("file_path")
+        
+        # Check if original file exists
+        if not file_path or not os.path.exists(file_path):
+            raise ValueError(
+                f"Original file not available for document {doc_id}. "
+                f"File path: {file_path}"
+            )
+        
+        # Delete existing chunks and entities
+        cleanup_result = self.neo4j.delete_document_chunks(doc_id)
+        logger.info(
+            f"Cleaned up document {doc_id}: "
+            f"{cleanup_result['chunks_deleted']} chunks, "
+            f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
+        )
+        
+        # Update status to pending (will be picked up by process_pending_documents)
+        self.neo4j.update_document_status(
+            doc_id, 
+            ProcessingStatus.PENDING,
+            progress_message="Queued for reprocessing"
+        )
+        
+        return True
+
     async def reprocess_document(self, doc_id: str) -> bool:
         """
         Reprocess an existing document using its stored file.
+        
+        WARNING: This starts processing immediately. For batch reprocessing,
+        use queue_document_for_reprocessing() + process_pending_documents() instead.
         
         Returns True if reprocessing started successfully.
         Raises ValueError if document not found or file not available.

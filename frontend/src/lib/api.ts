@@ -118,15 +118,28 @@ class ApiClient {
   /**
    * Reprocess multiple documents using their stored original files.
    * No file re-upload needed - files are stored permanently.
+   * Documents are queued and processed with controlled concurrency.
+   * 
+   * @param documentIds - Array of document IDs to reprocess
+   * @param concurrency - Optional concurrency limit (defaults to server config)
    */
-  async reprocessDocuments(documentIds: string[]): Promise<{
+  async reprocessDocuments(documentIds: string[], concurrency?: number): Promise<{
     results: Array<{
       document_id: string;
       status: string;
       message: string;
     }>;
     total_queued: number;
+    task_id?: string;
+    concurrency?: number;
+    message: string;
   }> {
+    const params = new URLSearchParams();
+    if (concurrency) params.set("concurrency", String(concurrency));
+    
+    const queryString = params.toString();
+    const url = `/api/documents/reprocess${queryString ? `?${queryString}` : ""}`;
+    
     return this.request<{
       results: Array<{
         document_id: string;
@@ -134,7 +147,10 @@ class ApiClient {
         message: string;
       }>;
       total_queued: number;
-    }>("/api/documents/reprocess", {
+      task_id?: string;
+      concurrency?: number;
+      message: string;
+    }>(url, {
       method: "POST",
       body: JSON.stringify({ document_ids: documentIds }),
     });
