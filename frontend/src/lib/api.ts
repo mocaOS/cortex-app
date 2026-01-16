@@ -90,11 +90,15 @@ class ApiClient {
    * Start processing all pending documents as a background task.
    * Use after bulk uploads.
    */
-  async processPendingDocuments(concurrency = 3): Promise<TaskStartResponse & { pending_count: number }> {
-    return this.request<TaskStartResponse & { pending_count: number }>(
-      `/api/documents/process-pending?concurrency=${concurrency}`,
-      { method: "POST" }
-    );
+  /**
+   * Start processing all pending documents.
+   * If concurrency is not provided, uses BATCH_PROCESSING_CONCURRENCY from backend config.
+   */
+  async processPendingDocuments(concurrency?: number): Promise<TaskStartResponse & { pending_count: number }> {
+    const url = concurrency !== undefined
+      ? `/api/documents/process-pending?concurrency=${concurrency}`
+      : `/api/documents/process-pending`;
+    return this.request<TaskStartResponse & { pending_count: number }>(url, { method: "POST" });
   }
 
   async getDocuments(): Promise<{ documents: Document[]; total: number }> {

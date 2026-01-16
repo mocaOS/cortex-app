@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(default=10)  # Number of documents to process concurrently in batch mode
+    processing_thread_workers: int = Field(default=4)  # Thread pool workers for CPU-intensive operations
     
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking

@@ -20,6 +20,7 @@ import {
   ChevronDown,
   X,
   Search,
+  StopCircle,
 } from "lucide-react";
 import { cn, formatBytes, formatDate, getFileTypeIcon } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -56,12 +57,15 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [filterCollectionId, setFilterCollectionId] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const [isMoveOpen, setIsMoveOpen] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const fileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const filterRef = useRef<HTMLDivElement>(null);
+  const statusFilterRef = useRef<HTMLDivElement>(null);
   const moveRef = useRef<HTMLDivElement>(null);
 
   const fetchDocuments = async () => {
@@ -100,6 +104,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
         setIsFilterOpen(false);
       }
+      if (statusFilterRef.current && !statusFilterRef.current.contains(event.target as Node)) {
+        setIsStatusFilterOpen(false);
+      }
       if (moveRef.current && !moveRef.current.contains(event.target as Node)) {
         setIsMoveOpen(false);
       }
@@ -108,19 +115,28 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Filtered documents based on collection filter and search query
+  // Filtered documents based on collection filter, status filter, and search query
   const filteredDocuments = documents.filter((doc) => {
     // Collection filter
     const matchesCollection = 
       filterCollectionId === null ||
       (filterCollectionId === "none" ? !doc.collection_id : doc.collection_id === filterCollectionId);
     
+    // Status filter
+    const matchesStatus = (() => {
+      if (filterStatus === null) return true;
+      if (filterStatus === "in_progress") {
+        return doc.processing_status === "processing" || doc.processing_status === "extracting";
+      }
+      return doc.processing_status === filterStatus;
+    })();
+    
     // Search filter (case-insensitive search on filename)
     const matchesSearch = 
       searchQuery.trim() === "" ||
       doc.filename.toLowerCase().includes(searchQuery.toLowerCase().trim());
     
-    return matchesCollection && matchesSearch;
+    return matchesCollection && matchesStatus && matchesSearch;
   });
 
   // Get filter label
@@ -129,6 +145,26 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     if (filterCollectionId === "none") return "No Collection";
     const col = collections.find((c) => c.id === filterCollectionId);
     return col?.name || "Unknown";
+  };
+
+  // Get status filter label
+  const getStatusFilterLabel = () => {
+    switch (filterStatus) {
+      case null: return "All Status";
+      case "completed": return "Completed";
+      case "in_progress": return "In Progress";
+      case "failed": return "Failed";
+      case "pending": return "Pending";
+      default: return filterStatus;
+    }
+  };
+
+  // Get status counts for filter badges
+  const statusCounts = {
+    completed: documents.filter((d) => d.processing_status === "completed").length,
+    in_progress: documents.filter((d) => ["processing", "extracting"].includes(d.processing_status)).length,
+    pending: documents.filter((d) => d.processing_status === "pending").length,
+    failed: documents.filter((d) => d.processing_status === "failed").length,
   };
 
   // Get available collections to move to (exclude current filter if it's a specific collection)
@@ -265,6 +301,44 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   };
 
+  // Restart selected in-progress documents from scratch
+  const handleRestartSelected = async () => {
+    // Get only in-progress documents with stored files
+    const inProgressSelected = documents.filter(
+      (d) => selectedIds.has(d.id) && isProcessing(d.processing_status) && d.file_path
+    );
+    
+    if (inProgressSelected.length === 0) return;
+
+    const confirmed = confirm(
+      `Restart ${inProgressSelected.length} in-progress document(s)? This will cancel current processing and start from scratch.`
+    );
+    if (!confirmed) return;
+
+    setIsReprocessing(true);
+    try {
+      const docIds = inProgressSelected.map((d) => d.id);
+      const result = await api.reprocessDocuments(docIds);
+      console.log("Restart results:", result);
+      
+      // Check for any errors
+      const errors = result.results.filter(r => r.status === "error");
+      if (errors.length > 0) {
+        const errorMsgs = errors.map(e => `${e.document_id}: ${e.message}`).join("\n");
+        alert(`Some documents failed to restart:\n${errorMsgs}`);
+      }
+      
+      setSelectedIds(new Set());
+      await fetchDocuments();
+      onDelete(); // Refresh stats
+    } catch (error) {
+      console.error("Failed to restart documents:", error);
+      alert(`Failed to restart: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsReprocessing(false);
+    }
+  };
+
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
 
@@ -333,6 +407,30 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   };
 
+  // Restart in-progress document (cancel current processing and start fresh)
+  const handleRestartDocument = async (docId: string) => {
+    const confirmed = confirm(
+      "Restart this document? This will cancel current processing and start from scratch."
+    );
+    if (!confirmed) return;
+
+    setReprocessingIds((prev) => new Set(prev).add(docId));
+    try {
+      await api.reprocessDocument(docId);
+      await fetchDocuments();
+      onDelete(); // Refresh stats
+    } catch (error) {
+      console.error("Failed to restart document:", error);
+      alert(`Restart failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setReprocessingIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(docId);
+        return newSet;
+      });
+    }
+  };
+
   const triggerFileUpload = (docId: string) => {
     const input = fileInputRefs.current.get(docId);
     if (input) {
@@ -379,6 +477,10 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   };
 
   const failedDocuments = filteredDocuments.filter((d) => d.processing_status === "failed");
+  const inProgressDocuments = filteredDocuments.filter((d) => isProcessing(d.processing_status));
+  const selectedInProgressCount = documents.filter(
+    (d) => selectedIds.has(d.id) && isProcessing(d.processing_status) && d.file_path
+  ).length;
   const allFilteredSelected = filteredDocuments.length > 0 && filteredDocuments.every((d) => selectedIds.has(d.id));
   const selectedInFilter = filteredDocuments.filter((d) => selectedIds.has(d.id)).length;
 
@@ -439,7 +541,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <p className="text-sm text-white/50">
-            {filterCollectionId !== null || searchQuery.trim() !== "" ? (
+            {filterCollectionId !== null || filterStatus !== null || searchQuery.trim() !== "" ? (
               <>
                 {filteredDocuments.length} of {documents.length} document{documents.length !== 1 ? "s" : ""}
               </>
@@ -550,14 +652,160 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
             </AnimatePresence>
           </div>
 
-          {/* Clear Filter */}
-          {filterCollectionId !== null && (
+          {/* Status Filter Dropdown */}
+          <div ref={statusFilterRef} className="relative">
             <button
-              onClick={() => setFilterCollectionId(null)}
+              onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all",
+                "border border-white/10 hover:border-white/20",
+                filterStatus !== null
+                  ? filterStatus === "failed"
+                    ? "bg-coral-500/20 text-coral-400 border-coral-500/30"
+                    : filterStatus === "in_progress"
+                    ? "bg-ocean-500/20 text-ocean-400 border-ocean-500/30"
+                    : filterStatus === "pending"
+                    ? "bg-white/10 text-white/70 border-white/20"
+                    : "bg-mint-500/20 text-mint-400 border-mint-500/30"
+                  : "text-white/50 hover:text-white/70 hover:bg-white/5"
+              )}
+            >
+              {filterStatus === "completed" ? (
+                <CheckCircle className="w-4 h-4" />
+              ) : filterStatus === "failed" ? (
+                <AlertCircle className="w-4 h-4" />
+              ) : filterStatus === "in_progress" ? (
+                <Loader2 className="w-4 h-4" />
+              ) : filterStatus === "pending" ? (
+                <Clock className="w-4 h-4" />
+              ) : (
+                <Clock className="w-4 h-4" />
+              )}
+              <span className="hidden sm:inline">{getStatusFilterLabel()}</span>
+              <ChevronDown className={cn("w-3 h-3 transition-transform", isStatusFilterOpen && "rotate-180")} />
+            </button>
+
+            <AnimatePresence>
+              {isStatusFilterOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute z-50 top-full left-0 mt-1 min-w-[180px] glass rounded-lg border border-white/10 shadow-xl overflow-hidden"
+                >
+                  <div className="max-h-64 overflow-y-auto">
+                    {/* All Status */}
+                    <button
+                      onClick={() => {
+                        setFilterStatus(null);
+                        setIsStatusFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterStatus === null
+                          ? "bg-ocean-500/10 text-ocean-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span className="flex-1 text-left">All Status</span>
+                      {filterStatus === null && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    <div className="border-t border-white/5 my-1" />
+
+                    {/* Completed */}
+                    <button
+                      onClick={() => {
+                        setFilterStatus("completed");
+                        setIsStatusFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterStatus === "completed"
+                          ? "bg-mint-500/10 text-mint-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <CheckCircle className="w-4 h-4 text-mint-400" />
+                      <span className="flex-1 text-left">Completed</span>
+                      <span className="text-xs text-white/30">{statusCounts.completed}</span>
+                      {filterStatus === "completed" && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    {/* In Progress */}
+                    <button
+                      onClick={() => {
+                        setFilterStatus("in_progress");
+                        setIsStatusFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterStatus === "in_progress"
+                          ? "bg-ocean-500/10 text-ocean-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <Loader2 className="w-4 h-4 text-ocean-400" />
+                      <span className="flex-1 text-left">In Progress</span>
+                      <span className="text-xs text-white/30">{statusCounts.in_progress}</span>
+                      {filterStatus === "in_progress" && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    {/* Pending */}
+                    <button
+                      onClick={() => {
+                        setFilterStatus("pending");
+                        setIsStatusFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterStatus === "pending"
+                          ? "bg-white/10 text-white/80"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <Clock className="w-4 h-4 text-white/40" />
+                      <span className="flex-1 text-left">Pending</span>
+                      <span className="text-xs text-white/30">{statusCounts.pending}</span>
+                      {filterStatus === "pending" && <CheckCircle className="w-4 h-4" />}
+                    </button>
+
+                    {/* Failed */}
+                    <button
+                      onClick={() => {
+                        setFilterStatus("failed");
+                        setIsStatusFilterOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        filterStatus === "failed"
+                          ? "bg-coral-500/10 text-coral-400"
+                          : "text-white/70 hover:bg-white/5"
+                      )}
+                    >
+                      <AlertCircle className="w-4 h-4 text-coral-400" />
+                      <span className="flex-1 text-left">Failed</span>
+                      <span className="text-xs text-white/30">{statusCounts.failed}</span>
+                      {filterStatus === "failed" && <CheckCircle className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Clear Filters */}
+          {(filterCollectionId !== null || filterStatus !== null) && (
+            <button
+              onClick={() => {
+                setFilterCollectionId(null);
+                setFilterStatus(null);
+              }}
               className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
             >
               <X className="w-3 h-3" />
-              Clear
+              Clear Filters
             </button>
           )}
         </div>
@@ -579,6 +827,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
               <span className="text-xs text-white/30">({filteredDocuments.length})</span>
             )}
           </button>
+
+          {/* Select All In-Progress */}
+          {inProgressDocuments.length > 0 && (
+            <button
+              onClick={() => {
+                const inProgressIds = inProgressDocuments.map((d) => d.id);
+                setSelectedIds(new Set(inProgressIds));
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-amber-400/70 hover:text-amber-400 hover:bg-amber-500/10 transition-all"
+            >
+              <Loader2 className="w-4 h-4" />
+              Select In-Progress ({inProgressDocuments.length})
+            </button>
+          )}
 
           {/* Select All Failed */}
           {failedDocuments.length > 0 && (
@@ -608,6 +870,26 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                 <RotateCcw className="w-4 h-4" />
               )}
               Reprocess Selected
+            </button>
+          )}
+
+          {/* Restart In-Progress Selected */}
+          {selectedInProgressCount > 0 && (
+            <button
+              onClick={handleRestartSelected}
+              disabled={isReprocessing}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all",
+                "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30",
+                isReprocessing && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              {isReprocessing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <StopCircle className="w-4 h-4" />
+              )}
+              Restart In-Progress ({selectedInProgressCount})
             </button>
           )}
 
@@ -711,7 +993,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       )}
 
       {/* No results message */}
-      {filteredDocuments.length === 0 && (filterCollectionId !== null || searchQuery.trim() !== "") && (
+      {filteredDocuments.length === 0 && (filterCollectionId !== null || filterStatus !== null || searchQuery.trim() !== "") && (
         <div className="glass rounded-xl p-8 text-center">
           {searchQuery.trim() !== "" ? (
             <>
@@ -724,7 +1006,34 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                 {filterCollectionId !== null && (
                   <> in the selected collection</>
                 )}
+                {filterStatus !== null && (
+                  <> with status &quot;{getStatusFilterLabel()}&quot;</>
+                )}
                 . Try a different search term.
+              </p>
+            </>
+          ) : filterStatus !== null ? (
+            <>
+              {filterStatus === "failed" ? (
+                <AlertCircle className="w-12 h-12 text-coral-400/40 mx-auto mb-4" />
+              ) : filterStatus === "in_progress" ? (
+                <Loader2 className="w-12 h-12 text-ocean-400/40 mx-auto mb-4" />
+              ) : filterStatus === "pending" ? (
+                <Clock className="w-12 h-12 text-white/20 mx-auto mb-4" />
+              ) : (
+                <CheckCircle className="w-12 h-12 text-mint-400/40 mx-auto mb-4" />
+              )}
+              <h3 className="text-lg font-medium text-white/70 mb-2">
+                No {getStatusFilterLabel()} Documents
+              </h3>
+              <p className="text-white/40">
+                {filterStatus === "failed"
+                  ? "Great! No documents have failed processing."
+                  : filterStatus === "in_progress"
+                  ? "No documents are currently being processed."
+                  : filterStatus === "pending"
+                  ? "No documents are waiting in the queue."
+                  : "No documents match the selected status filter."}
               </p>
             </>
           ) : (
@@ -791,6 +1100,27 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                     </div>
 
                     <div className="flex items-center gap-1">
+                      {/* Restart button for in-progress documents */}
+                      {isProcessing(doc.processing_status) && doc.file_path && (
+                        <button
+                          onClick={() => handleRestartDocument(doc.id)}
+                          disabled={reprocessingIds.has(doc.id)}
+                          className={cn(
+                            "p-2 rounded-lg transition-all duration-200",
+                            "hover:bg-amber-500/20 hover:text-amber-400",
+                            "text-white/40",
+                            reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
+                          )}
+                          title="Restart processing from scratch"
+                        >
+                          {reprocessingIds.has(doc.id) ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <StopCircle className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+
                       {/* Reprocess button for failed/completed documents */}
                       {(doc.processing_status === "failed" || doc.processing_status === "completed") && (
                         <>

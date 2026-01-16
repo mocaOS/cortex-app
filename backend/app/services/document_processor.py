@@ -14,6 +14,7 @@ Enhanced with R2R-style features:
 import os
 import uuid
 import logging
+import functools
 from pathlib import Path
 from typing import Optional, List, AsyncGenerator, Callable
 import asyncio
@@ -46,6 +47,23 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for re-ranking (cross-encoder can be slow)
 _rerank_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reranker")
+
+# Thread pool for document processing (CPU-intensive operations like embeddings)
+# Initialized lazily to use config settings
+_processing_executor: Optional[ThreadPoolExecutor] = None
+
+
+def _get_processing_executor() -> ThreadPoolExecutor:
+    """Get or create the processing thread pool executor."""
+    global _processing_executor
+    if _processing_executor is None:
+        settings = get_settings()
+        _processing_executor = ThreadPoolExecutor(
+            max_workers=settings.processing_thread_workers,
+            thread_name_prefix="docproc"
+        )
+        logger.info(f"Initialized processing executor with {settings.processing_thread_workers} workers")
+    return _processing_executor
 
 
 class DocumentProcessor:
@@ -257,19 +275,23 @@ class DocumentProcessor:
     
     async def process_pending_documents(
         self,
-        concurrency: int = 3,
+        concurrency: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None
     ) -> dict:
         """
         Process all pending documents with controlled concurrency.
         
         Args:
-            concurrency: Number of documents to process concurrently
+            concurrency: Number of documents to process concurrently (defaults to config)
             progress_callback: Optional callback(current, total, message)
             
         Returns:
             Dict with processing stats
         """
+        # Use config default if not specified
+        if concurrency is None:
+            concurrency = self.settings.batch_processing_concurrency
+        
         pending = self.get_pending_documents()
         total = len(pending)
         
@@ -328,43 +350,82 @@ class DocumentProcessor:
         file_path: str,
         file_type: str
     ):
-        """Background task to process a document with GraphRAG extraction."""
+        """Background task to process a document with GraphRAG extraction.
+        
+        CPU-intensive operations are run in a thread pool to avoid blocking
+        the async event loop, keeping the API responsive during batch processing.
+        """
         total_entities = 0
         total_relationships = 0
+        loop = asyncio.get_event_loop()
         
         try:
-            # Update status to processing
-            self.neo4j.update_document_status(
-                doc_id, ProcessingStatus.PROCESSING,
-                progress_message="Starting document processing..."
+            # Update status to processing (run in executor to not block)
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.update_document_status,
+                    doc_id, ProcessingStatus.PROCESSING,
+                    progress_message="Starting document processing..."
+                )
             )
-            self.neo4j.update_document_progress(doc_id, 0, 100, "Converting document...")
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.neo4j.update_document_progress, doc_id, 0, 100, "Converting document...")
+            )
+            
+            # Yield control to allow other async tasks to run
+            await asyncio.sleep(0)
             
             # Convert file to Haystack document
             converter = self._get_converter(file_type)
             if not converter:
                 raise ValueError(f"Unsupported file type: {file_type}")
             
-            # Run conversion
-            result = converter.run(sources=[Path(file_path)])
+            # Run conversion in thread pool (CPU-bound)
+            result = await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(converter.run, sources=[Path(file_path)])
+            )
             documents = result.get("documents", [])
             
             if not documents:
                 raise ValueError("No content extracted from file")
             
-            self.neo4j.update_document_progress(doc_id, 10, 100, "Splitting into chunks...")
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.neo4j.update_document_progress, doc_id, 10, 100, "Splitting into chunks...")
+            )
             
-            # Split documents into chunks
-            split_result = self.splitter.run(documents=documents)
+            # Yield control
+            await asyncio.sleep(0)
+            
+            # Split documents into chunks (run in thread pool)
+            split_result = await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.splitter.run, documents=documents)
+            )
             chunks = split_result.get("documents", [])
             
-            self.neo4j.update_document_progress(doc_id, 15, 100, f"Generating embeddings for {len(chunks)} chunks...")
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.neo4j.update_document_progress, doc_id, 15, 100, f"Generating embeddings for {len(chunks)} chunks...")
+            )
             
-            # Generate embeddings
-            embed_result = self.embedder.run(documents=chunks)
+            # Yield control before heavy embedding operation
+            await asyncio.sleep(0)
+            
+            # Generate embeddings (most CPU-intensive - run in thread pool)
+            embed_result = await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.embedder.run, documents=chunks)
+            )
             embedded_chunks = embed_result.get("documents", [])
             
-            self.neo4j.update_document_progress(doc_id, 25, 100, "Storing chunks in database...")
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.neo4j.update_document_progress, doc_id, 25, 100, "Storing chunks in database...")
+            )
             
             # Store chunks in Neo4j
             chunk_ids = []
@@ -379,15 +440,27 @@ class DocumentProcessor:
                     chunk_index=idx,
                     metadata=chunk.meta
                 )
-                self.neo4j.store_chunk(chunk_model)
+                # Store chunk in thread pool
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(self.neo4j.store_chunk, chunk_model)
+                )
                 
                 # Update progress for chunk storage (25-35%)
                 storage_progress = 25 + int((idx + 1) / len(embedded_chunks) * 10)
                 if idx % 5 == 0 or idx == len(embedded_chunks) - 1:  # Update every 5 chunks
-                    self.neo4j.update_document_progress(
-                        doc_id, storage_progress, 100, 
-                        f"Stored chunk {idx + 1}/{len(embedded_chunks)}"
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.update_document_progress,
+                            doc_id, storage_progress, 100, 
+                            f"Stored chunk {idx + 1}/{len(embedded_chunks)}"
+                        )
                     )
+                
+                # Yield control every 10 chunks to keep API responsive
+                if idx % 10 == 0:
+                    await asyncio.sleep(0)
             
             logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
             
@@ -397,12 +470,22 @@ class DocumentProcessor:
             # Processes multiple chunks concurrently based on concurrent_extractions setting
             # =================================================================
             if self.graph_extractor.is_available and self.settings.enable_graph_extraction:
-                self.neo4j.update_document_status(
-                    doc_id, ProcessingStatus.EXTRACTING,
-                    progress_message="Extracting knowledge graph..."
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_status,
+                        doc_id, ProcessingStatus.EXTRACTING,
+                        progress_message="Extracting knowledge graph..."
+                    )
                 )
-                self.neo4j.update_document_progress(doc_id, 35, 100, "Generating document summary...")
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(self.neo4j.update_document_progress, doc_id, 35, 100, "Generating document summary...")
+                )
                 logger.info(f"Document {doc_id}: starting graph extraction...")
+                
+                # Yield control before graph extraction
+                await asyncio.sleep(0)
                 
                 # Generate document summary for context (R2R-style)
                 # Combine all chunk content for summary (limited to first ~5000 chars)
@@ -412,7 +495,10 @@ class DocumentProcessor:
                 if document_summary:
                     logger.info(f"Document {doc_id}: generated summary for extraction context")
                 
-                self.neo4j.update_document_progress(doc_id, 40, 100, "Extracting entities and relationships...")
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(self.neo4j.update_document_progress, doc_id, 40, 100, "Extracting entities and relationships...")
+                )
                 
                 # Use semaphore for concurrent extraction (controlled by config)
                 concurrent_limit = self.settings.concurrent_extractions
@@ -426,7 +512,7 @@ class DocumentProcessor:
                 
                 async def extract_chunk(idx: int, chunk, chunk_id: str):
                     """Extract from a single chunk with semaphore control."""
-                    nonlocal completed_count, active_extractions
+                    nonlocal completed_count, active_extractions, total_entities
                     async with semaphore:
                         async with active_lock:
                             active_extractions += 1
@@ -451,13 +537,21 @@ class DocumentProcessor:
                             async with active_lock:
                                 active_extractions -= 1
                         
-                        # Update progress
+                        # Update progress (run in executor)
                         completed_count += 1
                         extraction_progress = 40 + int(completed_count / len(embedded_chunks) * 55)
-                        self.neo4j.update_document_progress(
-                            doc_id, extraction_progress, 100,
-                            f"Extracted {completed_count}/{len(embedded_chunks)} chunks ({total_entities} entities found)"
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.update_document_progress,
+                                doc_id, extraction_progress, 100,
+                                f"Extracted {completed_count}/{len(embedded_chunks)} chunks ({total_entities} entities found)"
+                            )
                         )
+                        
+                        # Yield control periodically
+                        if completed_count % 5 == 0:
+                            await asyncio.sleep(0)
                 
                 # Create extraction tasks for all chunks
                 extraction_tasks = [
@@ -473,11 +567,17 @@ class DocumentProcessor:
                 # Run all extractions concurrently (limited by semaphore)
                 await asyncio.gather(*extraction_tasks)
                 
-                # Store results in order
+                # Yield control after all extractions
+                await asyncio.sleep(0)
+                
+                # Store results in order (run Neo4j operations in executor)
                 for idx in sorted(extraction_results.keys()):
                     chunk_id, extraction = extraction_results[idx]
                     if extraction and (extraction.entities or extraction.relationships):
-                        counts = self.neo4j.store_graph_extraction(chunk_id, extraction)
+                        counts = await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(self.neo4j.store_graph_extraction, chunk_id, extraction)
+                        )
                         total_entities += counts["entities"]
                         total_relationships += counts["relationships"]
                         
@@ -485,19 +585,30 @@ class DocumentProcessor:
                             f"Chunk {idx}: extracted {counts['entities']} entities, "
                             f"{counts['relationships']} relationships"
                         )
+                    
+                    # Yield control every 10 chunks
+                    if idx % 10 == 0:
+                        await asyncio.sleep(0)
                 
                 logger.info(
                     f"Document {doc_id}: graph extraction complete - "
                     f"{total_entities} entities, {total_relationships} relationships"
                 )
             
-            self.neo4j.update_document_progress(doc_id, 100, 100, "Processing complete!")
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(self.neo4j.update_document_progress, doc_id, 100, 100, "Processing complete!")
+            )
             
             # Update document status
-            self.neo4j.update_document_status(
-                doc_id, 
-                ProcessingStatus.COMPLETED,
-                chunk_count=len(embedded_chunks)
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.update_document_status,
+                    doc_id, 
+                    ProcessingStatus.COMPLETED,
+                    chunk_count=len(embedded_chunks)
+                )
             )
             
             logger.info(
@@ -508,10 +619,14 @@ class DocumentProcessor:
             
         except Exception as e:
             logger.error(f"Error processing document {doc_id}: {e}")
-            self.neo4j.update_document_status(
-                doc_id,
-                ProcessingStatus.FAILED,
-                error_message=str(e)
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.update_document_status,
+                    doc_id,
+                    ProcessingStatus.FAILED,
+                    error_message=str(e)
+                )
             )
         # NOTE: We no longer delete the file after processing.
         # Files are kept for reprocessing without needing re-upload.

@@ -174,7 +174,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
   const startProcessing = async () => {
     setIsStartingProcessing(true);
     try {
-      const result = await api.processPendingDocuments(3);
+      // Use backend's configured BATCH_PROCESSING_CONCURRENCY (default: 10)
+      const result = await api.processPendingDocuments();
       
       if (result.task_id) {
         setProcessingTask({
