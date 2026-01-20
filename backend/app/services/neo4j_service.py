@@ -1183,7 +1183,7 @@ class Neo4jService:
             result = session.run("""
                 MATCH (col:Collection {id: $id})
                 OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
-                OPTIONAL MATCH (col)-[:HAS_ENTITY]->(e:Entity)
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                 RETURN col.id as id,
                        col.name as name,
                        col.description as description,
@@ -1201,7 +1201,7 @@ class Neo4jService:
             result = session.run("""
                 MATCH (col:Collection)
                 OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
-                OPTIONAL MATCH (col)-[:HAS_ENTITY]->(e:Entity)
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                 RETURN col.id as id,
                        col.name as name,
                        col.description as description,
