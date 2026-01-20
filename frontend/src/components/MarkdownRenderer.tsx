@@ -31,13 +31,13 @@ function CodeBlock({
     <div className="relative group my-3">
       <button
         onClick={handleCopy}
-        className="absolute right-2 top-2 p-1.5 rounded-md bg-white/10 hover:bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute right-2 top-2 p-1.5 rounded-md bg-muted hover:bg-border opacity-0 group-hover:opacity-100 transition-opacity"
         title="Copy code"
       >
         {copied ? (
-          <Check className="w-4 h-4 text-green-400" />
+          <Check className="w-4 h-4 text-accent" />
         ) : (
-          <Copy className="w-4 h-4 text-white/60" />
+          <Copy className="w-4 h-4 text-muted-foreground" />
         )}
       </button>
       <SyntaxHighlighter
@@ -48,19 +48,18 @@ function CodeBlock({
           margin: 0,
           borderRadius: "0.5rem",
           fontSize: "0.8rem",
-          background: "rgba(0, 0, 0, 0.4)",
+          background: "var(--card)",
         }}
         codeTagProps={{
           style: {
-            fontFamily:
-              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace',
+            fontFamily: "var(--font-mono)",
           },
         }}
       >
         {children}
       </SyntaxHighlighter>
       {language && (
-        <span className="absolute top-2 left-3 text-[10px] text-white/40 uppercase tracking-wider">
+        <span className="absolute top-2 left-3 text-[10px] text-muted-foreground uppercase tracking-wider">
           {language}
         </span>
       )}
@@ -77,7 +76,6 @@ export default function MarkdownRenderer({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-        // Code blocks
         code({ node, inline, className, children, ...props }: any) {
           const match = /language-(\w+)/.exec(className || "");
           const codeContent = String(children).replace(/\n$/, "");
@@ -90,7 +88,7 @@ export default function MarkdownRenderer({
 
           return (
             <code
-              className="px-1.5 py-0.5 rounded bg-white/10 text-coral-300 text-[0.85em] font-mono"
+              className="px-1.5 py-0.5 rounded bg-muted text-foreground text-[0.85em] font-mono"
               {...props}
             >
               {children}
@@ -98,35 +96,32 @@ export default function MarkdownRenderer({
           );
         },
 
-        // Paragraphs
         p({ children }) {
           return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>;
         },
 
-        // Headings
         h1({ children }) {
           return (
-            <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0 text-white">
+            <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0 text-foreground">
               {children}
             </h1>
           );
         },
         h2({ children }) {
           return (
-            <h2 className="text-lg font-semibold mb-2 mt-3 first:mt-0 text-white">
+            <h2 className="text-lg font-semibold mb-2 mt-3 first:mt-0 text-foreground">
               {children}
             </h2>
           );
         },
         h3({ children }) {
           return (
-            <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0 text-white">
+            <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0 text-foreground">
               {children}
             </h3>
           );
         },
 
-        // Lists
         ul({ children }) {
           return (
             <ul className="list-disc list-inside mb-3 space-y-1 ml-2">
@@ -145,30 +140,27 @@ export default function MarkdownRenderer({
           return <li className="leading-relaxed">{children}</li>;
         },
 
-        // Links
         a({ href, children }) {
           return (
             <a
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-ocean-400 hover:text-ocean-300 underline underline-offset-2"
+              className="text-accent underline underline-offset-2 hover:text-accent/80"
             >
               {children}
             </a>
           );
         },
 
-        // Blockquotes
         blockquote({ children }) {
           return (
-            <blockquote className="border-l-2 border-ocean-500/50 pl-4 my-3 text-white/70 italic">
+            <blockquote className="border-l-2 border-border pl-4 my-3 text-muted-foreground italic">
               {children}
             </blockquote>
           );
         },
 
-        // Tables
         table({ children }) {
           return (
             <div className="overflow-x-auto my-3">
@@ -179,35 +171,32 @@ export default function MarkdownRenderer({
           );
         },
         thead({ children }) {
-          return <thead className="bg-white/10">{children}</thead>;
+          return <thead className="bg-muted">{children}</thead>;
         },
         th({ children }) {
           return (
-            <th className="px-3 py-2 text-left border border-white/10 font-semibold">
+            <th className="px-3 py-2 text-left border border-border font-semibold">
               {children}
             </th>
           );
         },
         td({ children }) {
           return (
-            <td className="px-3 py-2 border border-white/10">{children}</td>
+            <td className="px-3 py-2 border border-border">{children}</td>
           );
         },
 
-        // Horizontal rule
         hr() {
-          return <hr className="my-4 border-white/10" />;
+          return <hr className="my-4 border-border" />;
         },
 
-        // Strong and emphasis
         strong({ children }) {
-          return <strong className="font-semibold text-white">{children}</strong>;
+          return <strong className="font-semibold text-foreground">{children}</strong>;
         },
         em({ children }) {
           return <em className="italic">{children}</em>;
         },
 
-        // Images
         img({ src, alt }) {
           return (
             <img

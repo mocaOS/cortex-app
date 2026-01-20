@@ -89,47 +89,44 @@ export default function CollectionSelector({
 
   return (
     <div ref={dropdownRef} className={cn("relative", className)}>
-      {/* Trigger button */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all w-full",
-          "bg-white/5 border border-white/10 hover:border-white/20",
-          "text-white/70 hover:text-white/90",
-          isOpen && "border-ocean-500/50 ring-1 ring-ocean-500/20"
+          "bg-card border border-border hover:border-ring",
+          "text-foreground hover:text-foreground",
+          isOpen && "border-foreground ring-1 ring-foreground/20"
         )}
       >
-        <FolderOpen className="w-4 h-4 text-ocean-400/70" />
+        <FolderOpen className="w-4 h-4 text-muted-foreground" />
         <span className="flex-1 text-left truncate">
           {isLoading ? (
             "Loading..."
           ) : selectedCollection ? (
             selectedCollection.name
           ) : (
-            <span className="text-white/40">Default Collection</span>
+            <span className="text-muted-foreground">Default Collection</span>
           )}
         </span>
         <ChevronDown
           className={cn(
-            "w-4 h-4 text-white/40 transition-transform",
+            "w-4 h-4 text-muted-foreground transition-transform",
             isOpen && "rotate-180"
           )}
         />
       </button>
 
-      {/* Dropdown */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="absolute z-50 top-full left-0 right-0 mt-1 glass rounded-lg border border-white/10 shadow-xl overflow-hidden"
+            className="absolute z-50 top-full left-0 right-0 mt-1 glass rounded-lg border border-border shadow-xl overflow-hidden"
           >
-            {/* Create new */}
             {allowCreate && (
-              <div className="p-2 border-b border-white/5">
+              <div className="p-2 border-b border-border">
                 {isCreating ? (
                   <div className="flex items-center gap-2">
                     <input
@@ -137,17 +134,17 @@ export default function CollectionSelector({
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                       placeholder="Collection name..."
-                      className="flex-1 px-2 py-1.5 bg-white/5 rounded text-sm text-white placeholder:text-white/30 border border-white/10 focus:border-ocean-500/50 focus:outline-none"
+                      className="flex-1 px-2 py-1.5 bg-card rounded text-sm text-foreground placeholder:text-muted-foreground border border-border focus:border-foreground focus:outline-none"
                       autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter") handleCreate();
                         if (e.key === "Escape") setIsCreating(false);
                       }}
                     />
-                    <button
+                      <button
                       onClick={handleCreate}
                       disabled={isSubmitting || !newName.trim()}
-                      className="p-1.5 rounded bg-ocean-500/20 text-ocean-400 hover:bg-ocean-500/30 disabled:opacity-50"
+                      className="p-1.5 rounded bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
                     >
                       {isSubmitting ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -160,7 +157,7 @@ export default function CollectionSelector({
                         setIsCreating(false);
                         setNewName("");
                       }}
-                      className="p-1.5 rounded text-white/40 hover:text-white/60 hover:bg-white/5"
+                      className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -168,7 +165,7 @@ export default function CollectionSelector({
                 ) : (
                   <button
                     onClick={() => setIsCreating(true)}
-                    className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm text-ocean-400 hover:bg-ocean-500/10 transition-colors"
+                    className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm text-accent hover:bg-accent/10 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
                     Create new collection
@@ -177,16 +174,14 @@ export default function CollectionSelector({
               </div>
             )}
 
-            {/* Collection list */}
             <div className="max-h-48 overflow-y-auto">
-              {/* Default option */}
               <button
                 onClick={() => handleSelect(undefined)}
                 className={cn(
                   "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
                   !value
-                    ? "bg-ocean-500/10 text-ocean-400"
-                    : "text-white/70 hover:bg-white/5"
+                    ? "bg-muted text-foreground"
+                    : "text-foreground hover:bg-muted"
                 )}
               >
                 <FolderOpen className="w-4 h-4" />
@@ -194,10 +189,9 @@ export default function CollectionSelector({
                 {!value && <Check className="w-4 h-4" />}
               </button>
 
-              {/* Collections */}
               {isLoading ? (
                 <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                  <Loader2 className="w-5 h-5 text-accent animate-spin" />
                 </div>
               ) : (
                 collections.map((collection) => (
@@ -207,13 +201,13 @@ export default function CollectionSelector({
                     className={cn(
                       "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
                       value === collection.id
-                        ? "bg-ocean-500/10 text-ocean-400"
-                        : "text-white/70 hover:bg-white/5"
+                        ? "bg-muted text-foreground"
+                        : "text-foreground hover:bg-muted"
                     )}
                   >
                     <FolderOpen className="w-4 h-4" />
                     <span className="flex-1 text-left truncate">{collection.name}</span>
-                    <span className="text-xs text-white/30">
+                    <span className="text-xs text-muted-foreground">
                       {collection.document_count} docs
                     </span>
                     {value === collection.id && <Check className="w-4 h-4" />}
@@ -222,7 +216,7 @@ export default function CollectionSelector({
               )}
 
               {!isLoading && collections.length === 0 && (
-                <div className="px-3 py-4 text-center text-sm text-white/40">
+                <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                   No collections yet
                 </div>
               )}

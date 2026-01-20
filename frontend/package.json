@@ -12,6 +12,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "clsx": "2.1.0",
     "framer-motion": "11.0.5",
+    "geist": "^1.5.1",
     "lucide-react": "0.323.0",
     "next": "^14.2.35",
     "react": "18.2.0",

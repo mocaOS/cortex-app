@@ -1,16 +1,16 @@
 import type { Metadata } from "next";
-import { Outfit, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const outfit = Outfit({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-outfit",
+  variable: "--font-geist-sans",
   display: "swap",
 });
 
-const jetbrains = JetBrains_Mono({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-jetbrains",
+  variable: "--font-geist-mono",
   display: "swap",
 });
 
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${outfit.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="font-sans antialiased">{children}</body>
     </html>
   );

@@ -33,7 +33,6 @@ interface UploadingFile {
   progressMessage?: string;
 }
 
-// Processing task state
 interface ProcessingTask {
   taskId: string;
   status: "pending" | "running" | "completed" | "failed";
@@ -51,13 +50,10 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const taskPollingRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Keep track of document IDs to poll in a ref (stable reference)
   const documentIdsToPolRef = useRef<Map<string, boolean>>(new Map());
 
   const allowedTypes = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
 
-  // Update the ref when uploadingFiles changes
   useEffect(() => {
     const newMap = new Map<string, boolean>();
     uploadingFiles.forEach((uf) => {
@@ -68,14 +64,11 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     documentIdsToPolRef.current = newMap;
   }, [uploadingFiles]);
 
-  // Single stable polling interval - runs every 3 seconds
   useEffect(() => {
     const poll = async () => {
       const docIds = Array.from(documentIdsToPolRef.current.keys());
-      
       if (docIds.length === 0) return;
 
-      // Poll all documents in parallel
       const results = await Promise.all(
         docIds.map(async (docId) => {
           try {
@@ -88,19 +81,15 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
         })
       );
 
-      // Update state based on results
       setUploadingFiles((prev) =>
         prev.map((f) => {
           if (!f.documentId) return f;
-          
           const docIndex = docIds.indexOf(f.documentId);
           if (docIndex === -1) return f;
-          
           const doc = results[docIndex];
           if (!doc) return f;
 
           if (doc.processing_status === "completed") {
-            // Remove from polling list
             documentIdsToPolRef.current.delete(f.documentId);
             return {
               ...f,
@@ -111,7 +100,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
               progressMessage: "Complete!",
             };
           } else if (doc.processing_status === "failed") {
-            // Remove from polling list
             documentIdsToPolRef.current.delete(f.documentId);
             return {
               ...f,
@@ -131,10 +119,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       );
     };
 
-    // Start polling interval (poll every 20 seconds)
     pollingRef.current = setInterval(poll, 20000);
-    
-    // Initial poll after a short delay
     const initialPollTimeout = setTimeout(poll, 500);
 
     return () => {
@@ -144,7 +129,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       }
       clearTimeout(initialPollTimeout);
     };
-  }, []); // Empty deps - only run once on mount
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -156,10 +141,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     setIsDragging(false);
   }, []);
 
-  // Upload file without starting processing (for bulk uploads)
   const uploadFile = async (file: File) => {
     try {
-      // Upload with start_processing=false for bulk uploads
       const data = await api.uploadFile(file, selectedCollection, false);
       return { success: true, data };
     } catch (error) {
@@ -170,13 +153,10 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     }
   };
 
-  // Start processing all pending documents
   const startProcessing = async () => {
     setIsStartingProcessing(true);
     try {
-      // Use backend's configured BATCH_PROCESSING_CONCURRENCY (default: 10)
       const result = await api.processPendingDocuments();
-      
       if (result.task_id) {
         setProcessingTask({
           taskId: result.task_id,
@@ -185,8 +165,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
           total: result.pending_count,
           message: result.message,
         });
-        
-        // Start polling for task progress
         pollTaskProgress(result.task_id);
       }
     } catch (error) {
@@ -197,7 +175,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     }
   };
 
-  // Poll for task progress
   const pollTaskProgress = (taskId: string) => {
     if (taskPollingRef.current) {
       clearInterval(taskPollingRef.current);
@@ -206,7 +183,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     const poll = async () => {
       try {
         const status = await api.getTaskStatus(taskId);
-        
         setProcessingTask({
           taskId,
           status: status.status,
@@ -215,9 +191,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
           message: status.message,
         });
 
-        // Update individual file statuses based on task progress
         if (status.status === "running") {
-          // Mark files as processing
           setUploadingFiles((prev) =>
             prev.map((uf) => {
               if (uf.status === "uploaded") {
@@ -233,11 +207,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
             clearInterval(taskPollingRef.current);
             taskPollingRef.current = null;
           }
-          
-          // Refresh document list to get final statuses
           onUpload();
-          
-          // Mark all uploaded files as needing status check
           setUploadingFiles((prev) =>
             prev.map((uf) => {
               if (uf.status === "processing" || uf.status === "uploaded") {
@@ -252,12 +222,10 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       }
     };
 
-    // Poll immediately, then every 2 seconds
     poll();
     taskPollingRef.current = setInterval(poll, 2000);
   };
 
-  // Cleanup task polling on unmount
   useEffect(() => {
     return () => {
       if (taskPollingRef.current) {
@@ -266,8 +234,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     };
   }, []);
 
-  // Upload files with concurrency limit for bulk uploads (100+ files)
-  // Files are uploaded but NOT processed until user clicks "Start Processing"
   const processFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
     const validFiles = fileArray.filter((file) => {
@@ -277,10 +243,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
 
     if (validFiles.length === 0) return;
 
-    // Reset processing task if there was one
     setProcessingTask(null);
 
-    // Add all files to state at once with "pending" status
     const newUploads: UploadingFile[] = validFiles.map((file) => ({
       file,
       status: "pending" as const,
@@ -288,26 +252,21 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
 
     setUploadingFiles((prev) => [...prev, ...newUploads]);
 
-    // Concurrent upload with limit (10 at a time for fast uploads)
     const CONCURRENCY_LIMIT = 10;
     const uploadQueue = [...validFiles];
     const activeUploads: Promise<void>[] = [];
-    let uploadedCount = 0;
 
     const uploadNext = async () => {
       if (uploadQueue.length === 0) return;
-      
       const file = uploadQueue.shift()!;
-      
-      // Mark as uploading
+
       setUploadingFiles((prev) =>
         prev.map((uf) =>
           uf.file === file ? { ...uf, status: "uploading" as const } : uf
         )
       );
-      
+
       const result = await uploadFile(file);
-      uploadedCount++;
 
       setUploadingFiles((prev) =>
         prev.map((uf) =>
@@ -328,19 +287,14 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
         )
       );
 
-      // Process next in queue
       await uploadNext();
     };
 
-    // Start concurrent uploads
     for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, validFiles.length); i++) {
       activeUploads.push(uploadNext());
     }
 
-    // Wait for all uploads to complete
     await Promise.all(activeUploads);
-
-    // Notify parent that files were uploaded (but not processed yet)
     onUpload();
   };
 
@@ -382,7 +336,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     (f) => f.status === "success" || f.status === "error"
   );
 
-  // Check if there are files waiting to be processed
   const uploadedButNotProcessed = uploadingFiles.filter(
     (f) => f.status === "uploaded"
   );
@@ -393,7 +346,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     <div className="space-y-6">
       {/* Collection Selector */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-white/50">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <FolderOpen className="w-4 h-4" />
           <span>Upload to:</span>
         </div>
@@ -408,11 +361,11 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       {/* Upload Zone */}
       <motion.div
         className={cn(
-          "relative rounded-2xl border-2 border-dashed transition-all duration-300",
+          "relative rounded-lg border-2 border-dashed transition-all duration-300",
           "p-12 text-center cursor-pointer group overflow-hidden",
           isDragging
-            ? "border-ocean-500 bg-ocean-500/10"
-            : "border-white/10 hover:border-white/20 hover:bg-white/[0.02]"
+            ? "border-foreground bg-muted"
+            : "border-border hover:border-muted-foreground hover:bg-muted/30"
         )}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -421,9 +374,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
         whileHover={{ scale: 1.005 }}
         whileTap={{ scale: 0.995 }}
       >
-        {/* Background decoration */}
-        <div className="absolute inset-0 bg-gradient-to-br from-ocean-500/5 via-transparent to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
         <input
           ref={inputRef}
           type="file"
@@ -436,31 +386,30 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
         <div className="relative z-10">
           <motion.div
             className={cn(
-              "w-20 h-20 mx-auto rounded-2xl flex items-center justify-center mb-6",
-              "bg-gradient-to-br from-ocean-500/20 to-cyan-500/20",
-              "border border-ocean-500/30"
+              "w-20 h-20 mx-auto rounded-lg flex items-center justify-center mb-6",
+              isDragging ? "bg-accent/20 border border-accent" : "bg-muted border border-border"
             )}
             animate={isDragging ? { scale: 1.1 } : { scale: 1 }}
           >
             <Upload
               className={cn(
                 "w-10 h-10 transition-colors duration-300",
-                isDragging ? "text-ocean-400" : "text-ocean-500/70"
+                isDragging ? "text-accent" : "text-muted-foreground"
               )}
             />
           </motion.div>
 
-          <h3 className="text-xl font-semibold text-white/90 mb-2">
+          <h3 className="text-xl font-semibold text-foreground mb-2">
             {isDragging ? "Drop files here" : "Upload Documents"}
           </h3>
-          <p className="text-white/50 mb-4">
+          <p className="text-muted-foreground mb-4">
             Drag and drop files or click to browse
           </p>
           <div className="flex items-center justify-center gap-2 flex-wrap">
             {allowedTypes.map((type) => (
               <span
                 key={type}
-                className="px-3 py-1 rounded-full bg-white/5 text-white/40 text-xs font-mono"
+                className="px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-mono"
               >
                 {type}
               </span>
@@ -476,65 +425,62 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="glass rounded-xl overflow-hidden"
+            className="glass rounded-lg overflow-hidden"
           >
-            {/* Summary for bulk uploads */}
             {uploadingFiles.length > 0 && (
-              <div className="p-4 bg-white/[0.02] border-b border-white/5">
+              <div className="p-4 bg-card border-b border-border">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-4 text-xs flex-wrap">
                     {uploadingFiles.filter(f => f.status === "pending" || f.status === "uploading").length > 0 && (
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-ocean-400 animate-pulse" />
-                        <span className="text-white/60">
+                        <div className="w-2 h-2 rounded-full bg-foreground animate-pulse" />
+                        <span className="text-muted-foreground">
                           Uploading: {uploadingFiles.filter(f => f.status === "pending" || f.status === "uploading").length}
                         </span>
                       </div>
                     )}
                     {uploadingFiles.filter(f => f.status === "uploaded").length > 0 && (
                       <div className="flex items-center gap-2">
-                        <Upload className="w-3 h-3 text-purple-400" />
-                        <span className="text-purple-400/80">
+                        <Upload className="w-3 h-3 text-foreground" />
+                        <span className="text-foreground">
                           Uploaded: {uploadingFiles.filter(f => f.status === "uploaded").length}
                         </span>
                       </div>
                     )}
                     {uploadingFiles.filter(f => f.status === "processing" || f.status === "extracting").length > 0 && (
                       <div className="flex items-center gap-2">
-                        <Loader2 className="w-3 h-3 text-ocean-400 animate-spin" />
-                        <span className="text-white/60">
+                        <Loader2 className="w-3 h-3 text-foreground animate-spin" />
+                        <span className="text-muted-foreground">
                           Processing: {uploadingFiles.filter(f => f.status === "processing" || f.status === "extracting").length}
                         </span>
                       </div>
                     )}
                     {uploadingFiles.filter(f => f.status === "success").length > 0 && (
                       <div className="flex items-center gap-2">
-                        <CheckCircle className="w-3 h-3 text-mint-400" />
-                        <span className="text-white/60">
+                        <CheckCircle className="w-3 h-3 text-foreground" />
+                        <span className="text-muted-foreground">
                           Completed: {uploadingFiles.filter(f => f.status === "success").length}
                         </span>
                       </div>
                     )}
                     {uploadingFiles.filter(f => f.status === "error").length > 0 && (
                       <div className="flex items-center gap-2">
-                        <AlertCircle className="w-3 h-3 text-coral-400" />
-                        <span className="text-coral-400/80">
+                        <AlertCircle className="w-3 h-3 text-destructive" />
+                        <span className="text-destructive">
                           Failed: {uploadingFiles.filter(f => f.status === "error").length}
                         </span>
                       </div>
                     )}
                   </div>
 
-                  {/* Start Processing button */}
                   {hasFilesToProcess && !isUploading && (
                     <button
                       onClick={startProcessing}
                       disabled={isStartingProcessing}
                       className={cn(
                         "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                        "bg-gradient-to-r from-ocean-500 to-cyan-500 text-white",
-                        "hover:from-ocean-400 hover:to-cyan-400",
-                        "shadow-lg shadow-ocean-500/25",
+                        "bg-accent text-accent-foreground",
+                        "hover:bg-accent/90",
                         isStartingProcessing && "opacity-50 cursor-not-allowed"
                       )}
                     >
@@ -548,28 +494,27 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                   )}
                 </div>
 
-                {/* Processing task progress */}
                 {processingTask && (
-                  <div className="mt-3 p-3 rounded-lg bg-ocean-500/10 border border-ocean-500/20">
+                  <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
                     <div className="flex items-center justify-between text-xs mb-2">
-                      <span className="text-ocean-400 font-medium">
+                      <span className="text-foreground font-medium">
                         {processingTask.status === "running" ? "Processing documents..." : 
                          processingTask.status === "completed" ? "Processing complete!" :
                          processingTask.status === "failed" ? "Processing failed" : "Starting..."}
                       </span>
-                      <span className="text-white/60">
+                      <span className="text-muted-foreground">
                         {processingTask.current}/{processingTask.total}
                       </span>
                     </div>
-                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-2 bg-border rounded-full overflow-hidden">
                       <motion.div
                         className={cn(
                           "h-full rounded-full",
                           processingTask.status === "completed" 
-                            ? "bg-gradient-to-r from-mint-500 to-green-400"
+                            ? "bg-accent"
                             : processingTask.status === "failed"
-                            ? "bg-gradient-to-r from-coral-500 to-red-400"
-                            : "bg-gradient-to-r from-ocean-500 to-cyan-400"
+                            ? "bg-destructive"
+                            : "bg-accent"
                         )}
                         initial={{ width: 0 }}
                         animate={{ 
@@ -580,16 +525,15 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                         transition={{ duration: 0.3 }}
                       />
                     </div>
-                    <p className="text-xs text-white/40 mt-1">{processingTask.message}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{processingTask.message}</p>
                   </div>
                 )}
 
-                {/* Upload progress bar (only during upload phase) */}
                 {isUploading && (
                   <div className="mt-3">
-                    <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-1 bg-border rounded-full overflow-hidden">
                       <motion.div
-                        className="h-full bg-gradient-to-r from-ocean-500 to-purple-400 rounded-full"
+                        className="h-full bg-foreground rounded-full"
                         initial={{ width: 0 }}
                         animate={{ 
                           width: `${Math.round(
@@ -604,8 +548,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                 )}
               </div>
             )}
-            <div className="flex items-center justify-between p-4 border-b border-white/5">
-              <h4 className="text-sm font-medium text-white/80">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h4 className="text-sm font-medium text-foreground">
                 {uploadingFiles.length > 3 
                   ? `Files (${uploadingFiles.length})` 
                   : "Upload Progress"
@@ -614,14 +558,14 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
               {hasCompletedFiles && (
                 <button
                   onClick={clearCompleted}
-                  className="text-xs text-white/40 hover:text-white/60 transition-colors"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Clear completed
                 </button>
               )}
             </div>
 
-            <div className="divide-y divide-white/5">
+            <div className="divide-y divide-border">
               {uploadingFiles.map((uf, index) => (
                 <motion.div
                   key={`${uf.file.name}-${index}`}
@@ -634,52 +578,40 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                     <div
                       className={cn(
                         "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
-                        uf.status === "pending" && "bg-white/10",
-                        uf.status === "uploading" && "bg-ocean-500/20",
-                        uf.status === "uploaded" && "bg-purple-500/20",
-                        uf.status === "processing" && "bg-ocean-500/20",
-                        uf.status === "extracting" && "bg-cyan-500/20",
-                        uf.status === "success" && "bg-mint-500/20",
-                        uf.status === "error" && "bg-coral-500/20"
+                        uf.status === "error" ? "bg-destructive/20" : "bg-muted"
                       )}
                     >
                       {uf.status === "pending" && (
-                        <FileText className="w-5 h-5 text-white/40" />
+                        <FileText className="w-5 h-5 text-muted-foreground" />
                       )}
                       {uf.status === "uploading" && (
-                        <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                        <Loader2 className="w-5 h-5 text-accent animate-spin" />
                       )}
                       {uf.status === "uploaded" && (
-                        <Upload className="w-5 h-5 text-purple-400" />
+                        <Upload className="w-5 h-5 text-accent" />
                       )}
                       {uf.status === "processing" && (
-                        <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                        <Loader2 className="w-5 h-5 text-accent animate-spin" />
                       )}
                       {uf.status === "extracting" && (
-                        <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
+                        <Sparkles className="w-5 h-5 text-accent animate-pulse" />
                       )}
                       {uf.status === "success" && (
-                        <CheckCircle className="w-5 h-5 text-mint-400" />
+                        <CheckCircle className="w-5 h-5 text-accent" />
                       )}
                       {uf.status === "error" && (
-                        <AlertCircle className="w-5 h-5 text-coral-400" />
+                        <AlertCircle className="w-5 h-5 text-destructive" />
                       )}
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white/80 truncate">
+                      <p className="text-sm font-medium text-foreground truncate">
                         {uf.file.name}
                       </p>
                       <p
                         className={cn(
                           "text-xs",
-                          uf.status === "pending" && "text-white/30",
-                          uf.status === "uploading" && "text-white/40",
-                          uf.status === "uploaded" && "text-purple-400/70",
-                          uf.status === "processing" && "text-ocean-400/70",
-                          uf.status === "extracting" && "text-cyan-400/70",
-                          uf.status === "success" && "text-mint-400/70",
-                          uf.status === "error" && "text-coral-400/70"
+                          uf.status === "error" ? "text-destructive" : "text-muted-foreground"
                         )}
                       >
                         {uf.status === "pending" && "Waiting..."}
@@ -693,30 +625,24 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
                     </div>
 
                     {(uf.status === "processing" || uf.status === "extracting") && (
-                      <span className="text-xs font-medium text-ocean-400 shrink-0">
+                      <span className="text-xs font-medium text-foreground shrink-0">
                         {getProgressPercent(uf)}%
                       </span>
                     )}
 
                     <button
                       onClick={() => removeFile(uf.file)}
-                      className="p-2 hover:bg-white/5 rounded-lg transition-colors shrink-0"
+                      className="p-2 hover:bg-muted rounded-lg transition-colors shrink-0"
                     >
-                      <X className="w-4 h-4 text-white/40" />
+                      <X className="w-4 h-4 text-muted-foreground" />
                     </button>
                   </div>
 
-                  {/* Progress bar for processing files */}
-                  {(uf.status === "processing" || uf.status === "extracting") && uf.progressTotal && uf.progressTotal > 0 && (
+                    {(uf.status === "processing" || uf.status === "extracting") && uf.progressTotal && uf.progressTotal > 0 && (
                     <div className="mt-3 ml-14">
-                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-border rounded-full overflow-hidden">
                         <motion.div
-                          className={cn(
-                            "h-full rounded-full",
-                            uf.status === "extracting"
-                              ? "bg-gradient-to-r from-cyan-500 to-teal-400"
-                              : "bg-gradient-to-r from-ocean-500 to-cyan-400"
-                          )}
+                          className="h-full bg-accent rounded-full"
                           initial={{ width: 0 }}
                           animate={{ width: `${getProgressPercent(uf)}%` }}
                           transition={{ duration: 0.3 }}

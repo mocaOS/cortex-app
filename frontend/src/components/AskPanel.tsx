@@ -6,7 +6,6 @@ import {
   MessageSquare,
   Send,
   Loader2,
-  Sparkles,
   FileText,
   Bot,
   User,
@@ -58,12 +57,10 @@ export default function AskPanel() {
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Convert messages to conversation history format
   const getConversationHistory = (): ConversationMessage[] => {
     return messages
       .filter((m) => !m.isStreaming)
@@ -85,7 +82,6 @@ export default function AskPanel() {
     const conversationHistory = getConversationHistory();
 
     if (useStreaming) {
-      // Streaming mode (supports both regular and agentic)
       const assistantMessage: Message = {
         role: "assistant",
         content: "",
@@ -108,16 +104,12 @@ export default function AskPanel() {
           useGraph: true,
           useAgentic,
         })) {
-          // Handle agentic-specific events
           if (event.thinking) {
             thinkingSteps = [...thinkingSteps, event.thinking as string];
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                thinkingSteps,
-              };
+              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
               return updated;
             });
           }
@@ -126,23 +118,16 @@ export default function AskPanel() {
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                subQuestions,
-              };
+              updated[lastIdx] = { ...updated[lastIdx], subQuestions };
               return updated;
             });
           }
           if (event.retrieval) {
-            // Add retrieval info as a thinking step
             thinkingSteps = [...thinkingSteps, event.retrieval as string];
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                thinkingSteps,
-              };
+              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
               return updated;
             });
           }
@@ -157,10 +142,7 @@ export default function AskPanel() {
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                content,
-              };
+              updated[lastIdx] = { ...updated[lastIdx], content };
               return updated;
             });
           }
@@ -207,7 +189,6 @@ export default function AskPanel() {
         });
       }
     } else {
-      // Non-streaming mode
       try {
         const data = await api.ask(question, {
           conversationHistory,
@@ -256,7 +237,7 @@ export default function AskPanel() {
   return (
     <div className="space-y-6">
       {/* Settings Bar */}
-      <div className="glass rounded-xl p-4">
+      <div className="glass rounded-lg p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
@@ -264,8 +245,8 @@ export default function AskPanel() {
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors",
                 showSettings
-                  ? "bg-ocean-500/20 text-ocean-400"
-                  : "text-white/50 hover:text-white/70 hover:bg-white/5"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
               )}
             >
               <Settings2 className="w-4 h-4" />
@@ -280,7 +261,7 @@ export default function AskPanel() {
             {messages.length > 0 && (
               <button
                 onClick={clearConversation}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/70 hover:bg-white/5 transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <RotateCcw className="w-4 h-4" />
                 Clear
@@ -289,8 +270,7 @@ export default function AskPanel() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Mode indicators */}
-            <div className="flex items-center gap-2 text-xs text-white/40">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Search className="w-3 h-3" />
                 Hybrid
@@ -300,7 +280,7 @@ export default function AskPanel() {
                 Reranking
               </span>
               {useAgentic && (
-                <span className="flex items-center gap-1 text-cyan-400">
+                <span className="flex items-center gap-1 text-foreground">
                   <Zap className="w-3 h-3" />
                   Agentic
                 </span>
@@ -309,7 +289,6 @@ export default function AskPanel() {
           </div>
         </div>
 
-        {/* Expanded Settings */}
         <AnimatePresence>
           {showSettings && (
             <motion.div
@@ -318,19 +297,19 @@ export default function AskPanel() {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="pt-4 mt-4 border-t border-white/5 grid grid-cols-2 gap-4">
+              <div className="pt-4 mt-4 border-t border-border grid grid-cols-2 gap-4">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={useStreaming}
                     onChange={(e) => setUseStreaming(e.target.checked)}
-                    className="w-4 h-4 rounded border-white/20 bg-white/5 text-ocean-500 focus:ring-ocean-500/50"
+                    className="w-4 h-4 rounded border-border bg-card text-foreground focus:ring-ring"
                   />
                   <div>
-                    <span className="text-sm text-white/80">
+                    <span className="text-sm text-foreground">
                       Streaming Responses
                     </span>
-                    <p className="text-xs text-white/40">
+                    <p className="text-xs text-muted-foreground">
                       See answers as they&apos;re generated
                     </p>
                   </div>
@@ -341,13 +320,13 @@ export default function AskPanel() {
                     type="checkbox"
                     checked={useAgentic}
                     onChange={(e) => setUseAgentic(e.target.checked)}
-                    className="w-4 h-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50"
+                    className="w-4 h-4 rounded border-border bg-card text-foreground focus:ring-ring"
                   />
                   <div>
-                    <span className="text-sm text-white/80">
+                    <span className="text-sm text-foreground">
                       Deep Research Mode
                     </span>
-                    <p className="text-xs text-white/40">
+                    <p className="text-xs text-muted-foreground">
                       Multi-step reasoning for complex questions
                     </p>
                   </div>
@@ -359,29 +338,29 @@ export default function AskPanel() {
       </div>
 
       {/* Chat History */}
-      <div className="glass rounded-2xl min-h-[400px] max-h-[600px] overflow-y-auto">
+      <div className="glass rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto">
         {messages.length === 0 ? (
           <div className="h-[400px] flex flex-col items-center justify-center p-8">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-coral-500/20 to-pink-500/20 flex items-center justify-center mb-6">
-              <Bot className="w-10 h-10 text-coral-400/60" />
+            <div className="w-20 h-20 rounded-lg bg-accent/20 flex items-center justify-center mb-6">
+              <Bot className="w-10 h-10 text-accent" />
             </div>
-            <h3 className="text-lg font-medium text-white/70 mb-2">
+            <h3 className="text-lg font-medium text-foreground mb-2">
               Ask Questions
             </h3>
-            <p className="text-white/40 text-center max-w-md mb-4">
+            <p className="text-muted-foreground text-center max-w-md mb-4">
               Ask questions about your documents. I&apos;ll use AI with hybrid
               search, knowledge graphs, and re-ranking to find the best answers.
             </p>
-            <div className="flex items-center gap-3 text-xs text-white/30">
-              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-muted">
                 <Search className="w-3 h-3" />
                 Hybrid Search
               </span>
-              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5">
+              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-muted">
                 <Network className="w-3 h-3" />
                 Knowledge Graph
               </span>
-              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5">
+              <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-muted">
                 <Layers className="w-3 h-3" />
                 Re-ranking
               </span>
@@ -402,16 +381,14 @@ export default function AskPanel() {
                 >
                   <div
                     className={cn(
-                      "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-                      msg.role === "user"
-                        ? "bg-ocean-500/20"
-                        : "bg-coral-500/20"
+                      "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
+                      msg.role === "user" ? "bg-primary" : "bg-accent/20"
                     )}
                   >
                     {msg.role === "user" ? (
-                      <User className="w-5 h-5 text-ocean-400" />
+                      <User className="w-5 h-5 text-primary-foreground" />
                     ) : (
-                      <Bot className="w-5 h-5 text-coral-400" />
+                      <Bot className="w-5 h-5 text-accent" />
                     )}
                   </div>
 
@@ -423,10 +400,10 @@ export default function AskPanel() {
                   >
                     <div
                       className={cn(
-                        "inline-block rounded-2xl p-4",
+                        "inline-block rounded-lg p-4",
                         msg.role === "user"
-                          ? "bg-ocean-500/20 text-white/90"
-                          : "bg-white/5 text-white/80"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground"
                       )}
                     >
                       {msg.role === "user" ? (
@@ -437,18 +414,18 @@ export default function AskPanel() {
                         <div className="text-sm text-left">
                           <MarkdownRenderer content={msg.content} />
                           {msg.isStreaming && (
-                            <span className="inline-block w-2 h-4 bg-coral-400 animate-pulse ml-1" />
+                            <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-1" />
                           )}
                         </div>
                       )}
                     </div>
 
-                    {/* Sub-Questions (for agentic streaming mode) */}
+                    {/* Sub-Questions */}
                     {msg.subQuestions && msg.subQuestions.length > 0 && (
-                      <div className="mt-3 p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                      <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
                         <div className="flex items-center gap-2 mb-2">
-                          <Search className="w-3 h-3 text-teal-400" />
-                          <span className="text-xs text-teal-400 font-medium">
+                          <Search className="w-3 h-3 text-foreground" />
+                          <span className="text-xs text-foreground font-medium">
                             Research Questions
                           </span>
                         </div>
@@ -456,9 +433,9 @@ export default function AskPanel() {
                           {msg.subQuestions.map((q, idx) => (
                             <div
                               key={idx}
-                              className="flex items-start gap-2 text-xs text-white/60"
+                              className="flex items-start gap-2 text-xs text-muted-foreground"
                             >
-                              <span className="w-4 h-4 rounded-full bg-teal-500/20 flex items-center justify-center text-[10px] text-teal-400 shrink-0 mt-0.5">
+                              <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
                                 {idx + 1}
                               </span>
                               <span>{q}</span>
@@ -468,16 +445,16 @@ export default function AskPanel() {
                       </div>
                     )}
 
-                    {/* Thinking Steps (for agentic streaming mode) */}
+                    {/* Thinking Steps */}
                     {msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
-                      <div className="mt-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                      <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
                         <div className="flex items-center gap-2 mb-2">
-                          <Zap className="w-3 h-3 text-cyan-400" />
-                          <span className="text-xs text-cyan-400 font-medium">
+                          <Zap className="w-3 h-3 text-foreground" />
+                          <span className="text-xs text-foreground font-medium">
                             {msg.isStreaming ? "Thinking..." : "Research Process"}
                           </span>
                           {msg.isStreaming && (
-                            <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
+                            <Loader2 className="w-3 h-3 text-foreground animate-spin" />
                           )}
                         </div>
                         <div className="space-y-1 max-h-32 overflow-y-auto">
@@ -487,11 +464,11 @@ export default function AskPanel() {
                               className={cn(
                                 "flex items-start gap-2 text-xs",
                                 idx === msg.thinkingSteps!.length - 1 && msg.isStreaming
-                                  ? "text-cyan-300"
-                                  : "text-white/50"
+                                  ? "text-foreground"
+                                  : "text-muted-foreground"
                               )}
                             >
-                              <span className="w-4 h-4 rounded-full bg-cyan-500/20 flex items-center justify-center text-[10px] text-cyan-400 shrink-0 mt-0.5">
+                              <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
                                 {idx + 1}
                               </span>
                               <span>{step}</span>
@@ -501,12 +478,12 @@ export default function AskPanel() {
                       </div>
                     )}
 
-                    {/* Reasoning Steps (for non-streaming agentic mode) */}
+                    {/* Reasoning Steps */}
                     {msg.reasoningSteps && msg.reasoningSteps.length > 0 && (
-                      <div className="mt-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                      <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
                         <div className="flex items-center gap-2 mb-2">
-                          <Zap className="w-3 h-3 text-cyan-400" />
-                          <span className="text-xs text-cyan-400 font-medium">
+                          <Zap className="w-3 h-3 text-foreground" />
+                          <span className="text-xs text-foreground font-medium">
                             Research Steps
                           </span>
                         </div>
@@ -514,9 +491,9 @@ export default function AskPanel() {
                           {msg.reasoningSteps.map((step, idx) => (
                             <div
                               key={idx}
-                              className="flex items-center gap-2 text-xs text-white/50"
+                              className="flex items-center gap-2 text-xs text-muted-foreground"
                             >
-                              <span className="w-4 h-4 rounded-full bg-cyan-500/20 flex items-center justify-center text-[10px] text-cyan-400">
+                              <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground">
                                 {idx + 1}
                               </span>
                               {step}
@@ -530,10 +507,10 @@ export default function AskPanel() {
                     {msg.graphContext &&
                       (msg.graphContext.entities.length > 0 ||
                         msg.graphContext.relationships.length > 0) && (
-                        <div className="mt-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                        <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
                           <div className="flex items-center gap-2 mb-2">
-                            <Network className="w-3 h-3 text-purple-400" />
-                            <span className="text-xs text-purple-400 font-medium">
+                            <Network className="w-3 h-3 text-foreground" />
+                            <span className="text-xs text-foreground font-medium">
                               Knowledge Graph Context
                             </span>
                           </div>
@@ -541,13 +518,13 @@ export default function AskPanel() {
                             {msg.graphContext.entities.slice(0, 5).map((entity, idx) => (
                               <span
                                 key={idx}
-                                className="px-2 py-0.5 rounded-full bg-purple-500/20 text-xs text-purple-300"
+                                className="px-2 py-0.5 rounded-full bg-border text-xs text-foreground"
                               >
                                 {entity.name}
                               </span>
                             ))}
                             {msg.graphContext.entities.length > 5 && (
-                              <span className="px-2 py-0.5 text-xs text-white/40">
+                              <span className="px-2 py-0.5 text-xs text-muted-foreground">
                                 +{msg.graphContext.entities.length - 5} more
                               </span>
                             )}
@@ -559,17 +536,15 @@ export default function AskPanel() {
                     {msg.sources && msg.sources.length > 0 && (
                       <div className="mt-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <p className="text-xs text-white/40">
+                          <p className="text-xs text-muted-foreground">
                             Sources ({msg.sources.length})
                             {msg.reranked && (
-                              <span className="ml-2 text-ocean-400">
-                                • Re-ranked
-                              </span>
+                              <span className="ml-2 text-foreground">• Re-ranked</span>
                             )}
                           </p>
                           <button
                             onClick={() => toggleSourceExpand(index)}
-                            className="text-xs text-white/40 hover:text-white/60"
+                            className="text-xs text-muted-foreground hover:text-foreground"
                           >
                             {expandedSources.has(index) ? "Collapse" : "Expand"}
                           </button>
@@ -579,31 +554,30 @@ export default function AskPanel() {
                           .map((source, idx) => (
                             <div
                               key={idx}
-                              className="text-left p-3 rounded-lg bg-white/[0.03] border border-white/5"
+                              className="text-left p-3 rounded-lg bg-card border border-border"
                             >
                               <div className="flex items-center gap-2 mb-1">
-                                <FileText className="w-3 h-3 text-ocean-400" />
-                                <span className="text-xs text-ocean-400">
+                                <FileText className="w-3 h-3 text-foreground" />
+                                <span className="text-xs text-foreground">
                                   {source.metadata.filename}
                                 </span>
-                                <span className="text-xs text-white/30">
+                                <span className="text-xs text-muted-foreground">
                                   ({(source.score * 100).toFixed(0)}% relevance)
                                 </span>
                               </div>
-                              <p className="text-xs text-white/40 line-clamp-2">
+                              <p className="text-xs text-muted-foreground line-clamp-2">
                                 {source.content}
                               </p>
                             </div>
                           ))}
-                        {!expandedSources.has(index) &&
-                          msg.sources.length > 3 && (
-                            <button
-                              onClick={() => toggleSourceExpand(index)}
-                              className="text-xs text-ocean-400 hover:text-ocean-300"
-                            >
-                              Show {msg.sources.length - 3} more sources
-                            </button>
-                          )}
+                        {!expandedSources.has(index) && msg.sources.length > 3 && (
+                          <button
+                            onClick={() => toggleSourceExpand(index)}
+                            className="text-xs text-foreground hover:text-muted-foreground"
+                          >
+                            Show {msg.sources.length - 3} more sources
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -617,24 +591,24 @@ export default function AskPanel() {
                 animate={{ opacity: 1, y: 0 }}
                 className="flex gap-4"
               >
-                <div className="w-10 h-10 rounded-xl bg-coral-500/20 flex items-center justify-center">
-                  <Loader2 className="w-5 h-5 text-coral-400 animate-spin" />
+                <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center">
+                  <Loader2 className="w-5 h-5 text-accent animate-spin" />
                 </div>
                 <div className="flex-1">
-                  <div className="inline-block rounded-2xl p-4 bg-white/5">
+                  <div className="inline-block rounded-lg p-4 bg-muted">
                     <div className="flex items-center gap-2">
                       {useAgentic ? (
                         <>
-                          <Zap className="w-4 h-4 text-cyan-400 animate-pulse" />
-                          <span className="text-sm text-white/60">
+                          <Zap className="w-4 h-4 text-foreground animate-pulse" />
+                          <span className="text-sm text-muted-foreground">
                             Deep research in progress...
                           </span>
                         </>
                       ) : (
                         <>
-                          <div className="w-2 h-2 rounded-full bg-coral-400 animate-pulse" />
-                          <div className="w-2 h-2 rounded-full bg-coral-400 animate-pulse delay-100" />
-                          <div className="w-2 h-2 rounded-full bg-coral-400 animate-pulse delay-200" />
+                          <div className="w-2 h-2 rounded-full bg-foreground animate-pulse" />
+                          <div className="w-2 h-2 rounded-full bg-foreground animate-pulse delay-100" />
+                          <div className="w-2 h-2 rounded-full bg-foreground animate-pulse delay-200" />
                         </>
                       )}
                     </div>
@@ -651,11 +625,9 @@ export default function AskPanel() {
       {/* Input */}
       <form onSubmit={handleAsk}>
         <div className="relative group">
-          <div className="absolute inset-0 bg-gradient-to-r from-coral-500/20 via-pink-500/20 to-rose-500/20 rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
-
-          <div className="relative glass rounded-2xl p-2 flex items-center gap-3">
+          <div className="relative glass rounded-lg p-2 flex items-center gap-3">
             <div className="pl-4">
-              <MessageSquare className="w-5 h-5 text-white/40" />
+              <MessageSquare className="w-5 h-5 text-muted-foreground" />
             </div>
 
             <input
@@ -667,17 +639,16 @@ export default function AskPanel() {
                   ? "Ask a complex question for deep research..."
                   : "Ask a question about your documents..."
               }
-              className="flex-1 bg-transparent border-none outline-none text-white/90 placeholder:text-white/30 py-3"
+              className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground py-3"
             />
 
             <button
               type="submit"
               disabled={isLoading || !question.trim()}
               className={cn(
-                "px-6 py-3 rounded-xl font-medium transition-all duration-300",
-                useAgentic
-                  ? "bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400"
-                  : "bg-gradient-to-r from-coral-500 to-pink-500 hover:from-coral-400 hover:to-pink-400",
+                "px-6 py-3 rounded-lg font-medium transition-all duration-300",
+                "bg-accent text-accent-foreground",
+                "hover:bg-accent/90",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
                 "flex items-center gap-2"
               )}

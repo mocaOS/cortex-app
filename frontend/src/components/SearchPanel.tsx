@@ -52,11 +52,9 @@ export default function SearchPanel() {
       {/* Search Input */}
       <form onSubmit={handleSearch}>
         <div className="relative group">
-          <div className="absolute inset-0 bg-gradient-to-r from-ocean-500/20 via-cyan-500/20 to-teal-500/20 rounded-2xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-500" />
-
-          <div className="relative glass rounded-2xl p-2 flex items-center gap-3">
+          <div className="relative glass rounded-lg p-2 flex items-center gap-3">
             <div className="pl-4">
-              <Search className="w-5 h-5 text-white/40" />
+              <Search className="w-5 h-5 text-muted-foreground" />
             </div>
 
             <input
@@ -64,16 +62,16 @@ export default function SearchPanel() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search the knowledge base..."
-              className="flex-1 bg-transparent border-none outline-none text-white/90 placeholder:text-white/30 py-3"
+              className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground py-3"
             />
 
             <button
               type="submit"
               disabled={isSearching || !query.trim()}
               className={cn(
-                "px-6 py-3 rounded-xl font-medium transition-all duration-300",
-                "bg-gradient-to-r from-ocean-500 to-cyan-500",
-                "hover:from-ocean-400 hover:to-cyan-400",
+                "px-6 py-3 rounded-lg font-medium transition-all duration-300",
+                "bg-accent text-accent-foreground",
+                "hover:bg-accent/90",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
                 "flex items-center gap-2"
               )}
@@ -99,14 +97,14 @@ export default function SearchPanel() {
             className="space-y-4"
           >
             {isSearching ? (
-              <div className="glass rounded-xl p-12 text-center">
-                <Loader2 className="w-8 h-8 text-ocean-400 animate-spin mx-auto mb-4" />
-                <p className="text-white/50">Searching...</p>
+              <div className="glass rounded-lg p-12 text-center">
+                <Loader2 className="w-8 h-8 text-accent animate-spin mx-auto mb-4" />
+                <p className="text-muted-foreground">Searching...</p>
               </div>
             ) : results.length > 0 ? (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-white/50">
+                  <p className="text-sm text-muted-foreground">
                     Found {results.length} results
                   </p>
                 </div>
@@ -118,27 +116,27 @@ export default function SearchPanel() {
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className="glass glass-hover rounded-xl p-5 group"
+                      className="glass glass-hover rounded-lg p-5 group"
                     >
                       <div className="flex items-start gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-ocean-500/20 flex items-center justify-center shrink-0">
-                          <FileText className="w-5 h-5 text-ocean-400" />
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5 text-foreground" />
                         </div>
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-2">
-                            <span className="text-sm font-medium text-white/80">
+                            <span className="text-sm font-medium text-foreground">
                               {result.metadata.filename}
                             </span>
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-ocean-500/20 text-ocean-400">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                               {(result.score * 100).toFixed(1)}% match
                             </span>
-                            <span className="text-xs text-white/30">
+                            <span className="text-xs text-muted-foreground">
                               Chunk #{result.metadata.chunk_index + 1}
                             </span>
                           </div>
 
-                          <p className="text-sm text-white/60 leading-relaxed line-clamp-3">
+                          <p className="text-sm text-muted-foreground leading-relaxed line-clamp-3">
                             {result.content}
                           </p>
                         </div>
@@ -148,10 +146,10 @@ export default function SearchPanel() {
                 </div>
               </>
             ) : (
-              <div className="glass rounded-xl p-12 text-center">
-                <Search className="w-12 h-12 text-white/20 mx-auto mb-4" />
-                <p className="text-white/50">No results found</p>
-                <p className="text-sm text-white/30 mt-2">
+              <div className="glass rounded-lg p-12 text-center">
+                <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">No results found</p>
+                <p className="text-sm text-muted-foreground/70 mt-2">
                   Try different keywords or upload more documents
                 </p>
               </div>
@@ -165,15 +163,15 @@ export default function SearchPanel() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="glass rounded-xl p-12 text-center"
+          className="glass rounded-lg p-12 text-center"
         >
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-ocean-500/20 to-cyan-500/20 flex items-center justify-center mb-6">
-            <Search className="w-8 h-8 text-ocean-400/60" />
+          <div className="w-16 h-16 mx-auto rounded-lg bg-muted flex items-center justify-center mb-6">
+            <Search className="w-8 h-8 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-medium text-white/70 mb-2">
+          <h3 className="text-lg font-medium text-foreground mb-2">
             Semantic Search
           </h3>
-          <p className="text-white/40 max-w-md mx-auto">
+          <p className="text-muted-foreground max-w-md mx-auto">
             Search through your knowledge base using natural language. Our AI
             understands meaning, not just keywords.
           </p>

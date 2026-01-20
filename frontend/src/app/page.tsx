@@ -8,17 +8,12 @@ import {
   MessageSquare,
   FileText,
   Database,
-  Trash2,
-  Loader2,
-  CheckCircle,
-  AlertCircle,
-  Sparkles,
-  BookOpen,
   Zap,
   Network,
   Link2,
   FolderOpen,
   Users,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FileUpload from "@/components/FileUpload";
@@ -74,23 +69,23 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-white/5 backdrop-blur-xl bg-black/20 sticky top-0 z-50">
+      <header className="border-b border-border backdrop-blur-xl bg-background/80 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-ocean-500 to-cyan-400 flex items-center justify-center glow">
-                  <Database className="w-5 h-5 text-white" />
+                <div className="w-10 h-10 rounded-xl bg-accent flex items-center justify-center">
+                  <Database className="w-5 h-5 text-accent-foreground" />
                 </div>
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-mint-500 border-2 border-[hsl(var(--background))] flex items-center justify-center">
-                  <Zap className="w-2 h-2 text-white" />
+                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-foreground border-2 border-background flex items-center justify-center">
+                  <Zap className="w-2 h-2 text-background" />
                 </div>
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gradient">MOCA</h1>
-                <p className="text-xs text-white/40">Knowledge Base</p>
+                <h1 className="text-xl font-bold text-foreground">MOCA</h1>
+                <p className="text-xs text-muted-foreground">Knowledge Base</p>
               </div>
             </div>
 
@@ -102,8 +97,8 @@ export default function Home() {
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
                     activeTab === tab.id
-                      ? "bg-ocean-500/20 text-ocean-400"
-                      : "text-white/60 hover:text-white/80 hover:bg-white/5"
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                 >
                   <tab.icon className="w-4 h-4" />
@@ -124,43 +119,36 @@ export default function Home() {
             label="Documents"
             value={stats?.document_count ?? 0}
             icon={FileText}
-            color="ocean"
           />
           <StatsCard
             label="Chunks"
             value={stats?.chunk_count ?? 0}
             icon={BookOpen}
-            color="cyan"
           />
           <StatsCard
             label="Entities"
             value={stats?.entity_count ?? 0}
             icon={Network}
-            color="purple"
           />
           <StatsCard
             label="Relations"
             value={stats?.relationship_count ?? 0}
             icon={Link2}
-            color="pink"
           />
           <StatsCard
             label="Communities"
             value={stats?.community_count ?? 0}
             icon={Users}
-            color="purple"
           />
           <StatsCard
             label="Collections"
             value={stats?.collection_count ?? 0}
             icon={FolderOpen}
-            color="cyan"
           />
           <StatsCard
             label="Storage"
             value={formatBytes(stats?.total_size ?? 0)}
             icon={Database}
-            color="teal"
             isText
           />
         </div>
@@ -190,11 +178,9 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 py-6 text-center">
-        <p className="text-white/30 text-sm">
-          Powered by{" "}
-          <span className="text-ocean-400">Neo4j</span> +{" "}
-          <span className="text-coral-400">Haystack</span>
+      <footer className="border-t border-border py-6 text-center">
+        <p className="text-muted-foreground text-sm">
+          Powered by Neo4j + Haystack
         </p>
       </footer>
     </div>

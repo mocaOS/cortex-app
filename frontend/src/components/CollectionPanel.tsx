@@ -13,7 +13,6 @@ import {
   ChevronDown,
   Users,
   Sparkles,
-  AlertCircle,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,7 +35,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   const [entities, setEntities] = useState<Record<string, CollectionEntity[]>>({});
   const [loadingEntities, setLoadingEntities] = useState<string | null>(null);
 
-  // Community detection state
   const [communities, setCommunities] = useState<Community[]>([]);
   const [isLoadingCommunities, setIsLoadingCommunities] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
@@ -46,7 +44,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
 
   const TASK_STORAGE_KEY = "moca_community_detection_task";
 
-  // Resume polling for an existing task on mount
   const resumeTaskPolling = async (taskId: string) => {
     setIsDetecting(true);
     setShowCommunities(true);
@@ -58,7 +55,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
         },
         1000
       );
-      
       setCommunities(result.communities);
       localStorage.removeItem(TASK_STORAGE_KEY);
     } catch (error) {
@@ -73,8 +69,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   useEffect(() => {
     fetchCollections();
     fetchCommunities();
-    
-    // Check for existing task in localStorage
     const savedTaskId = localStorage.getItem(TASK_STORAGE_KEY);
     if (savedTaskId) {
       resumeTaskPolling(savedTaskId);
@@ -170,29 +164,20 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     setIsDetecting(true);
     setDetectionProgress(null);
     try {
-      // Start the detection task
       const taskStart = await api.detectCommunities(3);
-      
-      // Save task ID to localStorage for resume on refresh
       localStorage.setItem(TASK_STORAGE_KEY, taskStart.task_id);
-      
-      // Poll for progress
       const result = await api.pollTask<{ communities: Community[]; total: number }>(
         taskStart.task_id,
         (progress) => {
           setDetectionProgress(progress);
         },
-        1000 // Poll every second
+        1000
       );
-      
       setCommunities(result.communities);
       setShowCommunities(true);
-      
-      // Clear task from localStorage on success
       localStorage.removeItem(TASK_STORAGE_KEY);
     } catch (error) {
       console.error("Failed to detect communities:", error);
-      // Clear task from localStorage on error
       localStorage.removeItem(TASK_STORAGE_KEY);
     } finally {
       setIsDetecting(false);
@@ -214,33 +199,31 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
 
   if (isLoading) {
     return (
-      <div className="glass rounded-xl p-12 text-center">
-        <Loader2 className="w-8 h-8 text-ocean-400 animate-spin mx-auto mb-4" />
-        <p className="text-white/50">Loading collections...</p>
+      <div className="glass rounded-lg p-12 text-center">
+        <Loader2 className="w-8 h-8 text-foreground animate-spin mx-auto mb-4" />
+        <p className="text-muted-foreground">Loading collections...</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white/90">Collections</h2>
-          <p className="text-sm text-white/40 mt-1">
+          <h2 className="text-lg font-semibold text-foreground">Collections</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Organize documents into collections with scoped knowledge graphs
           </p>
         </div>
         <button
           onClick={() => setIsCreating(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-ocean-500/20 text-ocean-400 hover:bg-ocean-500/30 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
         >
           <Plus className="w-4 h-4" />
           New Collection
         </button>
       </div>
 
-      {/* Create form */}
       <AnimatePresence>
         {isCreating && (
           <motion.div
@@ -249,16 +232,16 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden"
           >
-            <div className="glass rounded-xl p-4 space-y-4">
+            <div className="glass rounded-lg p-4 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-white/80">Create Collection</h3>
+                <h3 className="text-sm font-medium text-foreground">Create Collection</h3>
                 <button
                   onClick={() => {
                     setIsCreating(false);
                     setNewName("");
                     setNewDescription("");
                   }}
-                  className="p-1 rounded hover:bg-white/5 text-white/40"
+                  className="p-1 rounded hover:bg-muted text-muted-foreground"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -270,7 +253,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="Collection name"
-                  className="w-full px-3 py-2 bg-white/5 rounded-lg text-white placeholder:text-white/30 border border-white/10 focus:border-ocean-500/50 focus:outline-none"
+                  className="w-full px-3 py-2 bg-card rounded-lg text-foreground placeholder:text-muted-foreground border border-border focus:border-foreground focus:outline-none"
                   autoFocus
                 />
                 <textarea
@@ -278,7 +261,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                   onChange={(e) => setNewDescription(e.target.value)}
                   placeholder="Description (optional)"
                   rows={2}
-                  className="w-full px-3 py-2 bg-white/5 rounded-lg text-white placeholder:text-white/30 border border-white/10 focus:border-ocean-500/50 focus:outline-none resize-none"
+                  className="w-full px-3 py-2 bg-card rounded-lg text-foreground placeholder:text-muted-foreground border border-border focus:border-foreground focus:outline-none resize-none"
                 />
               </div>
 
@@ -289,14 +272,14 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                     setNewName("");
                     setNewDescription("");
                   }}
-                  className="px-4 py-2 rounded-lg text-white/50 hover:text-white/70 hover:bg-white/5 transition-colors"
+                  className="px-4 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCreate}
                   disabled={isSubmitting || !newName.trim()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-ocean-500 text-white hover:bg-ocean-600 disabled:opacity-50 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-50 transition-colors"
                 >
                   {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                   Create
@@ -307,15 +290,14 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
         )}
       </AnimatePresence>
 
-      {/* Collections list */}
       <div className="space-y-3">
         {collections.length === 0 ? (
-          <div className="glass rounded-xl p-8 text-center">
-            <div className="w-14 h-14 mx-auto rounded-xl bg-gradient-to-br from-ocean-500/20 to-cyan-500/20 flex items-center justify-center mb-4">
-              <FolderOpen className="w-7 h-7 text-ocean-400/60" />
+          <div className="glass rounded-lg p-8 text-center">
+            <div className="w-14 h-14 mx-auto rounded-lg bg-muted flex items-center justify-center mb-4">
+              <FolderOpen className="w-7 h-7 text-muted-foreground" />
             </div>
-            <h3 className="text-white/70 font-medium mb-2">No Collections Yet</h3>
-            <p className="text-white/40 text-sm max-w-md mx-auto">
+            <h3 className="text-foreground font-medium mb-2">No Collections Yet</h3>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto">
               Create collections to organize your documents and build focused knowledge graphs.
             </p>
           </div>
@@ -326,40 +308,39 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.05 }}
-              className="glass rounded-xl overflow-hidden"
+              className="glass rounded-lg overflow-hidden"
             >
-              {/* Collection header */}
               <div
-                className="p-4 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                className="p-4 cursor-pointer hover:bg-muted/30 transition-colors"
                 onClick={() => toggleExpand(collection.id)}
               >
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-ocean-500/20 to-cyan-500/20 flex items-center justify-center shrink-0">
-                    <FolderOpen className="w-5 h-5 text-ocean-400" />
+                  <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
+                    <FolderOpen className="w-5 h-5 text-accent" />
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-medium text-white/90 truncate">
+                      <h3 className="font-medium text-foreground truncate">
                         {collection.name}
                       </h3>
                       {expandedId === collection.id ? (
-                        <ChevronDown className="w-4 h-4 text-white/40" />
+                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
                       ) : (
-                        <ChevronRight className="w-4 h-4 text-white/40" />
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       )}
                     </div>
                     {collection.description && (
-                      <p className="text-sm text-white/40 mt-1 line-clamp-1">
+                      <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
                         {collection.description}
                       </p>
                     )}
                     <div className="flex items-center gap-4 mt-2">
-                      <span className="flex items-center gap-1.5 text-xs text-white/40">
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <FileText className="w-3.5 h-3.5" />
                         {collection.document_count} documents
                       </span>
-                      <span className="flex items-center gap-1.5 text-xs text-white/40">
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Network className="w-3.5 h-3.5" />
                         {collection.entity_count} entities
                       </span>
@@ -370,7 +351,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                     <button
                       onClick={() => handleDelete(collection.id, false)}
                       disabled={deletingId === collection.id}
-                      className="p-2 rounded-lg text-white/40 hover:text-coral-400 hover:bg-coral-500/10 transition-colors"
+                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                       title="Delete collection only"
                     >
                       {deletingId === collection.id ? (
@@ -383,56 +364,44 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                 </div>
               </div>
 
-              {/* Expanded content */}
               <AnimatePresence>
                 {expandedId === collection.id && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden border-t border-white/5"
+                    className="overflow-hidden border-t border-border"
                   >
-                    <div className="p-4 bg-white/[0.01]">
-                      <h4 className="text-xs font-medium text-white/50 uppercase tracking-wider mb-3">
+                    <div className="p-4 bg-card/30">
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                         Top Entities
                       </h4>
 
                       {loadingEntities === collection.id ? (
                         <div className="flex items-center justify-center py-4">
-                          <Loader2 className="w-5 h-5 text-ocean-400 animate-spin" />
+                          <Loader2 className="w-5 h-5 text-accent animate-spin" />
                         </div>
                       ) : entities[collection.id]?.length > 0 ? (
                         <div className="grid gap-2">
                           {entities[collection.id].slice(0, 10).map((entity) => (
                             <div
                               key={entity.name}
-                              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.02]"
+                              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card/50"
                             >
-                              <span
-                                className={cn(
-                                  "px-2 py-0.5 rounded text-xs font-medium",
-                                  entity.type === "Person" && "bg-purple-500/20 text-purple-400",
-                                  entity.type === "Organization" && "bg-blue-500/20 text-blue-400",
-                                  entity.type === "Technology" && "bg-cyan-500/20 text-cyan-400",
-                                  entity.type === "Concept" && "bg-pink-500/20 text-pink-400",
-                                  entity.type === "Location" && "bg-green-500/20 text-green-400",
-                                  !["Person", "Organization", "Technology", "Concept", "Location"].includes(entity.type) &&
-                                    "bg-white/10 text-white/60"
-                                )}
-                              >
+                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
                                 {entity.type}
                               </span>
-                              <span className="flex-1 text-sm text-white/80 truncate">
+                              <span className="flex-1 text-sm text-foreground truncate">
                                 {entity.name}
                               </span>
-                              <span className="text-xs text-white/30">
+                              <span className="text-xs text-muted-foreground">
                                 {entity.mention_count} mentions
                               </span>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-white/40 text-center py-4">
+                        <p className="text-sm text-muted-foreground text-center py-4">
                           No entities in this collection yet
                         </p>
                       )}
@@ -445,20 +414,19 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
         )}
       </div>
 
-      {/* Communities Section */}
-      <div className="pt-6 border-t border-white/5">
+      <div className="pt-6 border-t border-border">
         <div className="flex items-center justify-between mb-4">
           <div
             className="flex items-center gap-2 cursor-pointer"
             onClick={() => setShowCommunities(!showCommunities)}
           >
-            <Users className="w-5 h-5 text-purple-400" />
-            <h2 className="text-lg font-semibold text-white/90">Entity Communities</h2>
-            <span className="text-sm text-white/40">({communities.length})</span>
+            <Users className="w-5 h-5 text-foreground" />
+            <h2 className="text-lg font-semibold text-foreground">Entity Communities</h2>
+            <span className="text-sm text-muted-foreground">({communities.length})</span>
             {showCommunities ? (
-              <ChevronDown className="w-4 h-4 text-white/40" />
+              <ChevronDown className="w-4 h-4 text-muted-foreground" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-white/40" />
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
             )}
           </div>
 
@@ -466,7 +434,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
             <button
               onClick={handleDetectCommunities}
               disabled={isDetecting}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-muted text-foreground hover:bg-border disabled:opacity-50 transition-colors"
             >
               {isDetecting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -478,7 +446,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
             <button
               onClick={handleSummarizeCommunities}
               disabled={isSummarizing || communities.length === 0}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-muted text-foreground hover:bg-border disabled:opacity-50 transition-colors"
             >
               {isSummarizing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -490,7 +458,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
           </div>
         </div>
 
-        {/* Detection Progress Display */}
         <AnimatePresence>
           {isDetecting && detectionProgress && (
             <motion.div
@@ -499,24 +466,24 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
               exit={{ opacity: 0, height: 0 }}
               className="mb-4"
             >
-              <div className="glass rounded-xl p-4">
+              <div className="glass rounded-lg p-4">
                 <div className="flex items-center gap-3 mb-3">
-                  <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
+                  <Loader2 className="w-5 h-5 text-foreground animate-spin" />
                   <div className="flex-1">
-                    <p className="text-sm text-white/80">{detectionProgress.message}</p>
-                    <p className="text-xs text-white/40 mt-0.5">
+                    <p className="text-sm text-foreground">{detectionProgress.message}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       {detectionProgress.progress_current > 0 && detectionProgress.progress_total > 0
                         ? `Step ${detectionProgress.progress_current} of ${detectionProgress.progress_total}`
                         : "Initializing..."}
                     </p>
                   </div>
-                  <span className="text-sm font-medium text-purple-400">
+                  <span className="text-sm font-medium text-foreground">
                     {Math.round(detectionProgress.progress_percent)}%
                   </span>
                 </div>
-                <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                <div className="h-2 bg-border rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
+                    className="h-full bg-accent"
                     initial={{ width: 0 }}
                     animate={{ width: `${detectionProgress.progress_percent}%` }}
                     transition={{ duration: 0.3 }}
@@ -536,15 +503,15 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
               className="overflow-hidden"
             >
               {isLoadingCommunities ? (
-                <div className="glass rounded-xl p-8 text-center">
-                  <Loader2 className="w-6 h-6 text-purple-400 animate-spin mx-auto mb-2" />
-                  <p className="text-white/40 text-sm">Loading communities...</p>
+                <div className="glass rounded-lg p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-accent animate-spin mx-auto mb-2" />
+                  <p className="text-muted-foreground text-sm">Loading communities...</p>
                 </div>
               ) : communities.length === 0 ? (
-                <div className="glass rounded-xl p-8 text-center">
-                  <Users className="w-8 h-8 text-purple-400/50 mx-auto mb-3" />
-                  <h3 className="text-white/70 font-medium mb-2">No Communities Detected</h3>
-                  <p className="text-white/40 text-sm max-w-md mx-auto">
+                <div className="glass rounded-lg p-8 text-center">
+                  <Users className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+                  <h3 className="text-foreground font-medium mb-2">No Communities Detected</h3>
+                  <p className="text-muted-foreground text-sm max-w-md mx-auto">
                     Click &quot;Detect&quot; to find groups of related entities in your knowledge graph.
                   </p>
                 </div>
@@ -556,23 +523,23 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.03 }}
-                      className="glass rounded-xl p-4"
+                      className="glass rounded-lg p-4"
                     >
                       <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center shrink-0">
-                          <span className="text-sm font-medium text-purple-400">
+                        <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                          <span className="text-sm font-medium text-foreground">
                             {community.id}
                           </span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-white/90">
+                          <h4 className="font-medium text-foreground">
                             {community.name || `Community ${community.id}`}
                           </h4>
-                          <p className="text-xs text-white/40 mt-0.5">
+                          <p className="text-xs text-muted-foreground mt-0.5">
                             {community.entity_count} entities
                           </p>
                           {community.summary && (
-                            <p className="text-sm text-white/60 mt-2 line-clamp-2">
+                            <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
                               {community.summary}
                             </p>
                           )}
@@ -581,7 +548,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                               {community.sample_entities.slice(0, 5).map((name) => (
                                 <span
                                   key={name}
-                                  className="px-2 py-0.5 rounded-full bg-white/5 text-xs text-white/50"
+                                  className="px-2 py-0.5 rounded-full bg-muted text-xs text-muted-foreground"
                                 >
                                   {name}
                                 </span>
