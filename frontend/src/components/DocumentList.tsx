@@ -457,8 +457,8 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   if (documents.length === 0) {
     return (
       <div className="glass rounded-lg p-12 text-center">
-        <div className="w-16 h-16 mx-auto rounded-lg bg-muted flex items-center justify-center mb-6">
-          <FileText className="w-8 h-8 text-muted-foreground" />
+        <div className="w-16 h-16 mx-auto rounded-lg bg-accent/20 flex items-center justify-center mb-6">
+          <FileText className="w-8 h-8 text-accent" />
         </div>
         <h3 className="text-lg font-medium text-foreground mb-2">
           No Documents Yet

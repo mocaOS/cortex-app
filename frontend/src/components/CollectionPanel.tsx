@@ -293,8 +293,8 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       <div className="space-y-3">
         {collections.length === 0 ? (
           <div className="glass rounded-lg p-8 text-center">
-            <div className="w-14 h-14 mx-auto rounded-lg bg-muted flex items-center justify-center mb-4">
-              <FolderOpen className="w-7 h-7 text-muted-foreground" />
+            <div className="w-14 h-14 mx-auto rounded-lg bg-accent/20 flex items-center justify-center mb-4">
+              <FolderOpen className="w-7 h-7 text-accent" />
             </div>
             <h3 className="text-foreground font-medium mb-2">No Collections Yet</h3>
             <p className="text-muted-foreground text-sm max-w-md mx-auto">
@@ -509,7 +509,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                 </div>
               ) : communities.length === 0 ? (
                 <div className="glass rounded-lg p-8 text-center">
-                  <Users className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+                  <Users className="w-8 h-8 text-accent/50 mx-auto mb-3" />
                   <h3 className="text-foreground font-medium mb-2">No Communities Detected</h3>
                   <p className="text-muted-foreground text-sm max-w-md mx-auto">
                     Click &quot;Detect&quot; to find groups of related entities in your knowledge graph.

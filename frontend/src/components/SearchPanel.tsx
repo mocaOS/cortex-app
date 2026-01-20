@@ -147,7 +147,7 @@ export default function SearchPanel() {
               </>
             ) : (
               <div className="glass rounded-lg p-12 text-center">
-                <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <Search className="w-12 h-12 text-accent/50 mx-auto mb-4" />
                 <p className="text-muted-foreground">No results found</p>
                 <p className="text-sm text-muted-foreground/70 mt-2">
                   Try different keywords or upload more documents
@@ -165,8 +165,8 @@ export default function SearchPanel() {
           animate={{ opacity: 1 }}
           className="glass rounded-lg p-12 text-center"
         >
-          <div className="w-16 h-16 mx-auto rounded-lg bg-muted flex items-center justify-center mb-6">
-            <Search className="w-8 h-8 text-muted-foreground" />
+          <div className="w-16 h-16 mx-auto rounded-lg bg-accent/20 flex items-center justify-center mb-6">
+            <Search className="w-8 h-8 text-accent" />
           </div>
           <h3 className="text-lg font-medium text-foreground mb-2">
             Semantic Search
