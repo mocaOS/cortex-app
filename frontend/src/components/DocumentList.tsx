@@ -880,6 +880,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                           disabled={reprocessingIds.has(doc.id)}
                           className={cn(
                             "p-2 rounded-lg transition-all duration-200",
+                            "opacity-0 group-hover:opacity-100",
                             "hover:bg-muted text-muted-foreground hover:text-foreground",
                             reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
                           )}
@@ -896,6 +897,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                             disabled={reprocessingIds.has(doc.id)}
                             className={cn(
                               "p-2 rounded-lg transition-all duration-200",
+                              "opacity-0 group-hover:opacity-100",
                               "hover:bg-muted text-muted-foreground hover:text-foreground",
                               reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
                             )}
@@ -923,6 +925,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                               disabled={reprocessingIds.has(doc.id)}
                               className={cn(
                                 "p-2 rounded-lg transition-all duration-200",
+                                "opacity-0 group-hover:opacity-100",
                                 "hover:bg-muted text-muted-foreground hover:text-foreground",
                                 reprocessingIds.has(doc.id) && "opacity-50 cursor-not-allowed"
                               )}

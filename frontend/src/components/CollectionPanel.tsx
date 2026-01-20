@@ -120,17 +120,15 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     }
   };
 
-  const handleDelete = async (id: string, deleteDocuments: boolean) => {
+  const handleDelete = async (id: string) => {
     const collection = collections.find((c) => c.id === id);
-    const message = deleteDocuments
-      ? `Delete collection "${collection?.name}" and ALL its documents? This cannot be undone.`
-      : `Delete collection "${collection?.name}"? Documents will be kept.`;
+    const message = `Delete collection "${collection?.name}"? Documents will be moved to the default collection.`;
 
     if (!confirm(message)) return;
 
     setDeletingId(id);
     try {
-      await api.deleteCollection(id, deleteDocuments);
+      await api.deleteCollection(id);
       setCollections((prev) => prev.filter((c) => c.id !== id));
       if (expandedId === id) setExpandedId(null);
       onRefresh?.();
@@ -347,20 +345,22 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => handleDelete(collection.id, false)}
-                      disabled={deletingId === collection.id}
-                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      title="Delete collection only"
-                    >
-                      {deletingId === collection.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
+                  {collection.id !== "default" && (
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => handleDelete(collection.id)}
+                        disabled={deletingId === collection.id}
+                        className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                        title="Delete collection (documents move to default)"
+                      >
+                        {deletingId === collection.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

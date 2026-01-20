@@ -42,3 +42,8 @@ docker-compose.override.yml
 
 # SSL certs
 nginx/ssl/
+
+scripts/
+
+# Downloaded documents
+documents/

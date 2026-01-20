@@ -297,7 +297,8 @@ async def get_stats():
             relationship_count=stats.get("relationship_count", 0),
             total_size=stats["total_size"],
             community_count=stats.get("community_count", 0),
-            collection_count=stats.get("collection_count", 0)
+            collection_count=stats.get("collection_count", 0),
+            pending_count=stats.get("pending_count", 0)
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -1227,17 +1228,29 @@ async def get_collection(collection_id: str):
 
 
 @app.delete("/api/collections/{collection_id}")
-async def delete_collection(
-    collection_id: str,
-    delete_documents: bool = Query(default=False, description="Also delete documents in collection")
-):
-    """Delete a collection."""
+async def delete_collection(collection_id: str):
+    """
+    Delete a collection and move all its documents to the default collection.
+    
+    Documents are preserved in the default collection and can be deleted
+    individually from there if needed, which properly cleans up chunks and
+    orphaned entities.
+    """
     try:
+        # Prevent deletion of the default collection
+        if collection_id == "default":
+            raise HTTPException(status_code=400, detail="Cannot delete the default collection")
+        
         neo4j = get_neo4j_service()
-        result = neo4j.delete_collection(collection_id, delete_documents)
+        result = neo4j.delete_collection(collection_id)
         if not result.get("deleted"):
             raise HTTPException(status_code=404, detail="Collection not found")
-        return {"message": "Collection deleted", "documents_deleted": delete_documents}
+        
+        documents_moved = result.get("documents_moved", 0)
+        return {
+            "message": f"Collection deleted, {documents_moved} document(s) moved to default collection",
+            "documents_moved": documents_moved
+        }
     except HTTPException:
         raise
     except Exception as e:

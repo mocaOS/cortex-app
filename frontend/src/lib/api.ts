@@ -352,9 +352,9 @@ class ApiClient {
     });
   }
 
-  async deleteCollection(id: string, deleteDocuments = false): Promise<{ message: string }> {
-    return this.request<{ message: string }>(
-      `/api/collections/${id}?delete_documents=${deleteDocuments}`,
+  async deleteCollection(id: string): Promise<{ message: string; documents_moved: number }> {
+    return this.request<{ message: string; documents_moved: number }>(
+      `/api/collections/${id}`,
       { method: "DELETE" }
     );
   }

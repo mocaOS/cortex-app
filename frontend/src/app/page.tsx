@@ -14,6 +14,7 @@ import {
   FolderOpen,
   Users,
   BookOpen,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FileUpload from "@/components/FileUpload";
@@ -33,14 +34,19 @@ interface Stats {
   relationship_count?: number;
   community_count?: number;
   collection_count?: number;
+  pending_count?: number;
 }
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>("upload");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchStats = async () => {
+    const startTime = Date.now();
+    const minAnimationDuration = 2000; // Match shimmer animation duration
+    setStatsLoading(true);
     try {
       const res = await fetch("/api/stats");
       if (res.ok) {
@@ -49,6 +55,14 @@ export default function Home() {
       }
     } catch (error) {
       console.error("Failed to fetch stats:", error);
+    } finally {
+      const elapsed = Date.now() - startTime;
+      const remaining = minAnimationDuration - elapsed;
+      if (remaining > 0) {
+        setTimeout(() => setStatsLoading(false), remaining);
+      } else {
+        setStatsLoading(false);
+      }
     }
   };
 
@@ -119,37 +133,50 @@ export default function Home() {
             label="Documents"
             value={stats?.document_count ?? 0}
             icon={FileText}
+            loading={statsLoading}
           />
           <StatsCard
             label="Chunks"
             value={stats?.chunk_count ?? 0}
             icon={BookOpen}
+            loading={statsLoading}
           />
           <StatsCard
             label="Entities"
             value={stats?.entity_count ?? 0}
             icon={Network}
+            loading={statsLoading}
           />
           <StatsCard
             label="Relations"
             value={stats?.relationship_count ?? 0}
             icon={Link2}
+            loading={statsLoading}
           />
           <StatsCard
             label="Communities"
             value={stats?.community_count ?? 0}
             icon={Users}
+            loading={statsLoading}
           />
           <StatsCard
             label="Collections"
             value={stats?.collection_count ?? 0}
             icon={FolderOpen}
+            loading={statsLoading}
           />
           <StatsCard
             label="Storage"
             value={formatBytes(stats?.total_size ?? 0)}
             icon={Database}
             isText
+            loading={statsLoading}
+          />
+          <StatsCard
+            label="Pending"
+            value={stats?.pending_count ?? 0}
+            icon={Clock}
+            loading={statsLoading}
           />
         </div>
       </div>

@@ -1212,35 +1212,47 @@ class Neo4jService:
             """)
             return [dict(record) for record in result]
     
-    def delete_collection(self, collection_id: str, delete_documents: bool = False) -> dict:
-        """Delete a collection. Optionally delete its documents."""
+    def delete_collection(self, collection_id: str) -> dict:
+        """
+        Delete a collection and move all its documents to the default collection.
+        
+        Documents are preserved and can be deleted individually from the default
+        collection if needed, which properly cleans up chunks and orphaned entities.
+        
+        Returns:
+            Dict with 'deleted' (bool), 'documents_moved' (int)
+        """
         with self.driver.session() as session:
-            if delete_documents:
-                # Delete documents and their chunks/entities
-                result = session.run("""
-                    MATCH (col:Collection {id: $id})
-                    OPTIONAL MATCH (col)-[:CONTAINS]->(d:Document)
-                    OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                    WITH col, collect(DISTINCT d) as docs, collect(DISTINCT c) as chunks
-                    DETACH DELETE col
-                    WITH docs, chunks
-                    UNWIND docs as d
-                    DETACH DELETE d
-                    WITH chunks
-                    UNWIND chunks as c
-                    DETACH DELETE c
-                    RETURN count(*) as deleted
-                """, id=collection_id)
-            else:
-                # Just delete the collection, keep documents
-                result = session.run("""
-                    MATCH (col:Collection {id: $id})
-                    DETACH DELETE col
-                    RETURN 1 as deleted
-                """, id=collection_id)
+            # First, move all documents to the default collection
+            move_result = session.run("""
+                MATCH (col:Collection {id: $id})-[:CONTAINS]->(d:Document)
+                MATCH (default_col:Collection {id: 'default'})
+                // Remove from current collection
+                MATCH (col)-[r:CONTAINS]->(d)
+                DELETE r
+                // Add to default collection
+                MERGE (default_col)-[:CONTAINS]->(d)
+                SET d.collection_id = 'default'
+                RETURN count(d) as moved_count
+            """, id=collection_id)
             
-            record = result.single()
-            return {"deleted": record["deleted"] > 0 if record else False}
+            move_record = move_result.single()
+            documents_moved = move_record["moved_count"] if move_record else 0
+            
+            # Then delete the collection itself
+            delete_result = session.run("""
+                MATCH (col:Collection {id: $id})
+                DETACH DELETE col
+                RETURN 1 as deleted
+            """, id=collection_id)
+            
+            delete_record = delete_result.single()
+            deleted = delete_record is not None
+            
+            if deleted:
+                logger.info(f"Deleted collection {collection_id}, moved {documents_moved} documents to default collection")
+            
+            return {"deleted": deleted, "documents_moved": documents_moved}
     
     def add_document_to_collection(self, document_id: str, collection_id: str) -> bool:
         """Add a document to a collection."""
@@ -1721,13 +1733,17 @@ class Neo4jService:
                 WITH doc_count, chunk_count, total_size, entity_count, relationship_count, count(com) as community_count
                 
                 OPTIONAL MATCH (col:Collection)
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, count(col) as collection_count
+                
+                OPTIONAL MATCH (pending:Document {processing_status: 'pending'})
                 RETURN doc_count as document_count,
                        chunk_count,
                        total_size,
                        entity_count,
                        relationship_count,
                        community_count,
-                       count(col) as collection_count
+                       collection_count,
+                       count(pending) as pending_count
             """)
             
             record = result.single()
@@ -1738,7 +1754,8 @@ class Neo4jService:
                 "entity_count": record["entity_count"],
                 "relationship_count": record["relationship_count"],
                 "community_count": record["community_count"],
-                "collection_count": record["collection_count"]
+                "collection_count": record["collection_count"],
+                "pending_count": record["pending_count"]
             }
 
 

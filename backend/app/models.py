@@ -281,6 +281,7 @@ class GraphStatsResponse(BaseModel):
     # Enhanced stats
     community_count: int = Field(default=0, description="Number of detected communities")
     collection_count: int = Field(default=0, description="Number of collections")
+    pending_count: int = Field(default=0, description="Number of documents pending processing")
 
 
 class UploadResponse(BaseModel):
