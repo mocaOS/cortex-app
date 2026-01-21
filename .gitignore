@@ -46,4 +46,5 @@ nginx/ssl/
 scripts/
 
 # Downloaded documents
-documents/
+documents
+!frontend/**/documents
