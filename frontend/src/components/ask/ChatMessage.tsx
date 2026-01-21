@@ -1,6 +1,8 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText,
   Bot,
@@ -9,10 +11,12 @@ import {
   Loader2,
   Network,
   Search,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
-import type { GraphContext } from "@/types";
+import { api } from "@/lib/api";
+import type { GraphContext, DocumentContent } from "@/types";
 
 interface Source {
   document_id: string;
@@ -51,6 +55,59 @@ export default function ChatMessage({
   isSourceExpanded,
   onToggleSourceExpand,
 }: ChatMessageProps) {
+  const [selectedSource, setSelectedSource] = useState<Source | null>(null);
+  const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
+
+  // Fetch document content when a source is selected
+  const handleSourceClick = async (source: Source) => {
+    setSelectedSource(source);
+    setDocumentContent(null);
+    setContentError(null);
+    setIsLoadingContent(true);
+
+    try {
+      const content = await api.getDocumentContent(source.document_id);
+      setDocumentContent(content);
+    } catch (error) {
+      console.error("Failed to load document content:", error);
+      setContentError("Failed to load document content");
+    } finally {
+      setIsLoadingContent(false);
+    }
+  };
+
+  // Close modal and reset content state
+  const handleCloseModal = () => {
+    setSelectedSource(null);
+    setDocumentContent(null);
+    setContentError(null);
+  };
+
+  // Handle escape key to close modal
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Escape" && selectedSource) {
+      handleCloseModal();
+    }
+  }, [selectedSource]);
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (selectedSource) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [selectedSource]);
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -235,7 +292,16 @@ export default function ChatMessage({
               .map((source, idx) => (
                 <div
                   key={idx}
-                  className="text-left p-3 rounded-lg bg-card border border-border"
+                  className="text-left p-3 rounded-lg bg-card border border-border cursor-pointer hover:border-accent/50 hover:bg-card/80 transition-colors group"
+                  onClick={() => handleSourceClick(source)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleSourceClick(source);
+                    }
+                  }}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <FileText className="w-3 h-3 text-foreground" />
@@ -248,6 +314,9 @@ export default function ChatMessage({
                   </div>
                   <p className="text-xs text-muted-foreground line-clamp-2">
                     {source.content}
+                  </p>
+                  <p className="text-xs text-accent mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    Click to view full document
                   </p>
                 </div>
               ))}
@@ -262,6 +331,91 @@ export default function ChatMessage({
           </div>
         )}
       </div>
+
+      {/* Document Content Modal - Rendered via Portal to escape overflow container */}
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {selectedSource && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                onClick={handleCloseModal}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  className="relative w-full max-w-4xl max-h-[85vh] bg-card rounded-xl shadow-2xl border border-border overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between p-4 border-b border-border bg-muted/50">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
+                        <FileText className="w-5 h-5 text-accent" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="text-base font-medium text-foreground truncate">
+                          {selectedSource.metadata.filename}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          {documentContent && (
+                            <>
+                              <span>{documentContent.chunk_count} chunks</span>
+                              <span>•</span>
+                            </>
+                          )}
+                          <span className="px-1.5 py-0.5 rounded bg-accent/20 text-accent">
+                            {(selectedSource.score * 100).toFixed(1)}% relevance
+                            {selectedSource.metadata.chunk_index !== undefined && (
+                              <> on chunk #{selectedSource.metadata.chunk_index + 1}</>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCloseModal}
+                      className="p-2 rounded-lg hover:bg-muted transition-colors"
+                      aria-label="Close modal"
+                    >
+                      <X className="w-5 h-5 text-muted-foreground" />
+                    </button>
+                  </div>
+
+                  {/* Modal Content */}
+                  <div className="p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
+                    {isLoadingContent ? (
+                      <div className="flex flex-col items-center justify-center py-12">
+                        <Loader2 className="w-8 h-8 text-accent animate-spin mb-4" />
+                        <p className="text-muted-foreground">Loading document content...</p>
+                      </div>
+                    ) : contentError ? (
+                      <div className="flex flex-col items-center justify-center py-12">
+                        <p className="text-destructive mb-2">{contentError}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Showing matched chunk content instead:
+                        </p>
+                        <div className="mt-4 p-4 rounded-lg bg-muted/50 w-full">
+                          <MarkdownRenderer content={selectedSource.content} />
+                        </div>
+                      </div>
+                    ) : documentContent ? (
+                      <MarkdownRenderer content={documentContent.full_content} />
+                    ) : (
+                      <MarkdownRenderer content={selectedSource.content} />
+                    )}
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
     </motion.div>
   );
 }

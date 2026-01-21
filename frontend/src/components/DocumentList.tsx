@@ -125,7 +125,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const isInitialMount = useRef(true);
   const prevFilters = useRef({ filterCollectionId, filterStatus, searchQuery });
   
-  // Reset to page 1 when filters change (but not on initial mount)
+  // Reset to page 1 and clear selections when filters change (but not on initial mount)
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -139,8 +139,12 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       prevFilters.current.filterStatus !== filterStatus ||
       prevFilters.current.searchQuery !== searchQuery;
     
-    if (filtersChanged && currentPage !== 1) {
-      setCurrentPage(1);
+    if (filtersChanged) {
+      // Clear selections when filters change
+      setSelectedIds(new Set());
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+      }
     }
     
     prevFilters.current = { filterCollectionId, filterStatus, searchQuery };
@@ -457,51 +461,74 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const hasFilters = filterCollectionId !== null || filterStatus !== null || searchQuery.trim() !== "";
 
   return (
-    <div className="space-y-4">
-      {/* Filters */}
-      <DocumentFilters
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        filterCollectionId={filterCollectionId}
-        onCollectionFilterChange={setFilterCollectionId}
-        filterStatus={filterStatus}
-        onStatusFilterChange={setFilterStatus}
-        collections={collections}
-        documents={documents}
-        statusCounts={statusCounts}
-      />
+    <div className="space-y-3">
+      {/* Search bar */}
+      <div className="glass rounded-lg">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search documents by filename..."
+            className="w-full pl-11 pr-4 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+        </div>
+      </div>
 
-      {/* Bulk Actions */}
-      <DocumentBulkActions
-        selectedCount={selectedIds.size}
-        totalCount={documents.length}
-        filteredCount={filteredDocuments.length}
-        allFilteredSelected={allFilteredSelected}
-        failedCount={failedDocuments.length}
-        inProgressCount={inProgressDocuments.length}
-        selectedInProgressCount={selectedInProgressCount}
-        isReprocessing={isReprocessing}
-        isDeletingSelected={isDeletingSelected}
-        isMoving={isMoving}
-        availableTargetCollections={availableTargetCollections}
-        hasFilters={hasFilters}
-        onToggleSelectAll={toggleSelectAll}
-        onSelectFailed={selectAllFailed}
-        onSelectInProgress={selectInProgress}
-        onReprocessSelected={handleReprocessSelected}
-        onRestartSelected={handleRestartSelected}
-        onDeleteSelected={handleDeleteSelected}
-        onMoveToCollection={handleMoveToCollection}
-        onRefresh={fetchDocuments}
-      />
+      {/* Unified toolbar with filters and actions */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Document count with selection info */}
+        <span className="text-sm text-muted-foreground">
+          {filteredDocuments.length} document{filteredDocuments.length !== 1 ? "s" : ""}
+          {selectedIds.size > 0 && (
+            <span className="text-foreground font-medium"> ({selectedIds.size} selected)</span>
+          )}
+        </span>
+
+        {/* Filter dropdowns */}
+        <DocumentFilters
+          filterCollectionId={filterCollectionId}
+          onCollectionFilterChange={setFilterCollectionId}
+          filterStatus={filterStatus}
+          onStatusFilterChange={setFilterStatus}
+          collections={collections}
+          documents={documents}
+          statusCounts={statusCounts}
+        />
+
+        {/* Bulk Actions */}
+        <DocumentBulkActions
+          selectedCount={selectedIds.size}
+          totalCount={documents.length}
+          filteredCount={filteredDocuments.length}
+          allFilteredSelected={allFilteredSelected}
+          failedCount={failedDocuments.length}
+          inProgressCount={inProgressDocuments.length}
+          selectedInProgressCount={selectedInProgressCount}
+          isReprocessing={isReprocessing}
+          isDeletingSelected={isDeletingSelected}
+          isMoving={isMoving}
+          availableTargetCollections={availableTargetCollections}
+          hasFilters={hasFilters}
+          onToggleSelectAll={toggleSelectAll}
+          onSelectFailed={selectAllFailed}
+          onSelectInProgress={selectInProgress}
+          onReprocessSelected={handleReprocessSelected}
+          onRestartSelected={handleRestartSelected}
+          onDeleteSelected={handleDeleteSelected}
+          onMoveToCollection={handleMoveToCollection}
+          onRefresh={fetchDocuments}
+        />
+      </div>
 
       {/* Failed documents summary */}
       {failedDocuments.length > 0 && (
-        <div className="glass rounded-lg p-4 border border-destructive/20 bg-destructive/5">
+        <div className="glass rounded-lg p-4 border border-border">
           <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive shrink-0" />
+            <AlertCircle className="w-5 h-5 text-muted-foreground shrink-0" />
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-medium text-destructive">
+              <h4 className="text-sm font-medium text-foreground">
                 {failedDocuments.length} document{failedDocuments.length !== 1 ? "s" : ""} failed
               </h4>
               <p className="text-xs text-muted-foreground mt-0.5">
