@@ -6,34 +6,32 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@types/react-syntax-highlighter": "^15.5.13",
-    "clsx": "2.1.0",
-    "framer-motion": "11.0.5",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.15.0",
     "geist": "^1.5.1",
-    "lucide-react": "0.323.0",
-    "next": "^14.2.35",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "lucide-react": "^0.469.0",
+    "next": "^15.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "2.2.1"
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
-    "@types/node": "20.11.16",
-    "@types/react": "18.2.55",
-    "@types/react-dom": "18.2.19",
-    "autoprefixer": "10.4.17",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "^14.2.35",
-    "postcss": "8.4.35",
-    "tailwindcss": "3.4.1",
-    "typescript": "5.3.3"
-  },
-  "overrides": {
-    "glob": "^10.5.0"
+    "@eslint/eslintrc": "^3.2.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^15.1.4",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
   }
 }

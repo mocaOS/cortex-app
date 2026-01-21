@@ -870,7 +870,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 flex-1 overflow-hidden">
                       <h4 
-                        className="font-medium text-foreground truncate" 
+                        className="font-medium max-w-4xl text-foreground truncate" 
                         title={doc.filename}
                       >
                         {doc.filename}

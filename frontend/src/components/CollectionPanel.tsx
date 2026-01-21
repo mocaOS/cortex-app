@@ -73,7 +73,6 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     if (savedTaskId) {
       resumeTaskPolling(savedTaskId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchCollections = async () => {

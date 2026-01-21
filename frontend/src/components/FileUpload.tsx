@@ -41,6 +41,8 @@ interface ProcessingTask {
   message: string;
 }
 
+const ALLOWED_TYPES = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
+
 export default function FileUpload({ onUpload }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
@@ -51,8 +53,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const taskPollingRef = useRef<NodeJS.Timeout | null>(null);
   const documentIdsToPolRef = useRef<Map<string, boolean>>(new Map());
-
-  const allowedTypes = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
 
   useEffect(() => {
     const newMap = new Map<string, boolean>();
@@ -141,7 +141,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     setIsDragging(false);
   }, []);
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = useCallback(async (file: File) => {
     try {
       const data = await api.uploadFile(file, selectedCollection, false);
       return { success: true, data };
@@ -151,7 +151,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
         error: error instanceof Error ? error.message : "Upload failed",
       };
     }
-  };
+  }, [selectedCollection]);
 
   const startProcessing = async () => {
     setIsStartingProcessing(true);
@@ -234,11 +234,11 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     };
   }, []);
 
-  const processFiles = async (files: FileList | File[]) => {
+  const processFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
     const validFiles = fileArray.filter((file) => {
       const ext = "." + file.name.split(".").pop()?.toLowerCase();
-      return allowedTypes.includes(ext);
+      return ALLOWED_TYPES.includes(ext);
     });
 
     if (validFiles.length === 0) return;
@@ -296,7 +296,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
 
     await Promise.all(activeUploads);
     onUpload();
-  };
+  }, [uploadFile, onUpload]);
 
   const getProgressPercent = (uf: UploadingFile) => {
     if (!uf.progressTotal || uf.progressTotal === 0) return 0;
@@ -379,7 +379,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
           type="file"
           className="hidden"
           multiple
-          accept={allowedTypes.join(",")}
+          accept={ALLOWED_TYPES.join(",")}
           onChange={handleFileSelect}
         />
 
@@ -406,7 +406,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
             Drag and drop files or click to browse
           </p>
           <div className="flex items-center justify-center gap-2 flex-wrap">
-            {allowedTypes.map((type) => (
+            {ALLOWED_TYPES.map((type) => (
               <span
                 key={type}
                 className="px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-mono"
