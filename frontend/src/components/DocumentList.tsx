@@ -1,16 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { AnimatePresence } from "framer-motion";
 import {
   FileText,
   Loader2,
   AlertCircle,
   Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Collection } from "@/types";
 import { DocumentCard, DocumentFilters, DocumentBulkActions } from "./documents";
+import { cn } from "@/lib/utils";
 
 interface Document {
   id: string;
@@ -37,7 +43,13 @@ const isProcessing = (status: string) => {
   return status === "processing" || status === "extracting" || status === "pending";
 };
 
+const DOCUMENTS_PER_PAGE = 100;
+
 export default function DocumentList({ onDelete }: DocumentListProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  
   const [documents, setDocuments] = useState<Document[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,6 +62,22 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
+  
+  // Pagination - read from URL, default to 1
+  const currentPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  
+  // Update URL when page changes and scroll to top
+  const setCurrentPage = useCallback((page: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (page === 1) {
+      params.delete("page");
+    } else {
+      params.set("page", String(page));
+    }
+    const queryString = params.toString();
+    router.push(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [router, pathname, searchParams]);
 
   const fetchDocuments = async () => {
     try {
@@ -93,6 +121,32 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     });
   }, [documents]);
 
+  // Track if it's the initial mount to avoid resetting page on first render
+  const isInitialMount = useRef(true);
+  const prevFilters = useRef({ filterCollectionId, filterStatus, searchQuery });
+  
+  // Reset to page 1 when filters change (but not on initial mount)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      prevFilters.current = { filterCollectionId, filterStatus, searchQuery };
+      return;
+    }
+    
+    // Only reset if filters actually changed
+    const filtersChanged = 
+      prevFilters.current.filterCollectionId !== filterCollectionId ||
+      prevFilters.current.filterStatus !== filterStatus ||
+      prevFilters.current.searchQuery !== searchQuery;
+    
+    if (filtersChanged && currentPage !== 1) {
+      setCurrentPage(1);
+    }
+    
+    prevFilters.current = { filterCollectionId, filterStatus, searchQuery };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterCollectionId, filterStatus, searchQuery]);
+
   // Filter documents
   const filteredDocuments = documents.filter((doc) => {
     const matchesCollection =
@@ -113,6 +167,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     return matchesCollection && matchesStatus && matchesSearch;
   });
+  
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredDocuments.length / DOCUMENTS_PER_PAGE);
+  const validCurrentPage = Math.min(currentPage, Math.max(1, totalPages));
+  const startIndex = (validCurrentPage - 1) * DOCUMENTS_PER_PAGE;
+  const endIndex = startIndex + DOCUMENTS_PER_PAGE;
+  const paginatedDocuments = filteredDocuments.slice(startIndex, endIndex);
+  
+  // Redirect to valid page if current page is out of bounds
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage, setCurrentPage]);
 
   // Status counts
   const statusCounts = {
@@ -458,7 +526,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       {/* Document list */}
       <div className="grid gap-3">
         <AnimatePresence>
-          {filteredDocuments.map((doc, index) => (
+          {paginatedDocuments.map((doc, index) => (
             <DocumentCard
               key={doc.id}
               doc={doc}
@@ -475,6 +543,137 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           ))}
         </AnimatePresence>
       </div>
+      
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between glass rounded-lg px-4 py-3">
+          <div className="text-sm text-muted-foreground">
+            Showing {startIndex + 1}-{Math.min(endIndex, filteredDocuments.length)} of {filteredDocuments.length} documents
+          </div>
+          
+          <div className="flex items-center gap-1">
+            {/* First page */}
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={validCurrentPage === 1}
+              className={cn(
+                "p-1.5 rounded-lg transition-colors",
+                validCurrentPage === 1
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title="First page"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+            
+            {/* Previous page */}
+            <button
+              onClick={() => setCurrentPage(validCurrentPage - 1)}
+              disabled={validCurrentPage === 1}
+              className={cn(
+                "p-1.5 rounded-lg transition-colors",
+                validCurrentPage === 1
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title="Previous page"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            
+            {/* Page numbers */}
+            <div className="flex items-center gap-1 mx-2">
+              {(() => {
+                const pages: (number | "ellipsis")[] = [];
+                const maxVisible = 5;
+                
+                if (totalPages <= maxVisible + 2) {
+                  // Show all pages
+                  for (let i = 1; i <= totalPages; i++) pages.push(i);
+                } else {
+                  // Always show first page
+                  pages.push(1);
+                  
+                  // Calculate range around current page
+                  let start = Math.max(2, validCurrentPage - 1);
+                  let end = Math.min(totalPages - 1, validCurrentPage + 1);
+                  
+                  // Adjust range to always show 3 middle pages when possible
+                  if (validCurrentPage <= 3) {
+                    end = Math.min(4, totalPages - 1);
+                  } else if (validCurrentPage >= totalPages - 2) {
+                    start = Math.max(2, totalPages - 3);
+                  }
+                  
+                  // Add ellipsis before middle pages if needed
+                  if (start > 2) pages.push("ellipsis");
+                  
+                  // Add middle pages
+                  for (let i = start; i <= end; i++) pages.push(i);
+                  
+                  // Add ellipsis after middle pages if needed
+                  if (end < totalPages - 1) pages.push("ellipsis");
+                  
+                  // Always show last page
+                  pages.push(totalPages);
+                }
+                
+                return pages.map((page, idx) =>
+                  page === "ellipsis" ? (
+                    <span key={`ellipsis-${idx}`} className="px-2 text-muted-foreground">
+                      ...
+                    </span>
+                  ) : (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={cn(
+                        "min-w-[32px] h-8 px-2 rounded-lg text-sm font-medium transition-colors",
+                        page === validCurrentPage
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                      )}
+                    >
+                      {page}
+                    </button>
+                  )
+                );
+              })()}
+            </div>
+            
+            {/* Next page */}
+            <button
+              onClick={() => setCurrentPage(validCurrentPage + 1)}
+              disabled={validCurrentPage === totalPages}
+              className={cn(
+                "p-1.5 rounded-lg transition-colors",
+                validCurrentPage === totalPages
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title="Next page"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            
+            {/* Last page */}
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={validCurrentPage === totalPages}
+              className={cn(
+                "p-1.5 rounded-lg transition-colors",
+                validCurrentPage === totalPages
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title="Last page"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
