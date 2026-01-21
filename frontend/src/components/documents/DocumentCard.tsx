@@ -186,7 +186,7 @@ export function DocumentCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h4 className="text-sm font-medium text-foreground truncate max-w-[50vw]" title={doc.filename}>
+              <h4 className="text-sm font-medium text-foreground truncate max-w-[45vw]" title={doc.filename}>
                 {doc.filename}
               </h4>
               <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
