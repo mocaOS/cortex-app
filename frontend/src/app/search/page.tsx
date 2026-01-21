@@ -1,12 +1,12 @@
 "use client";
 
 import { PageTransition } from "@/components/layout";
-import FileUpload from "@/components/FileUpload";
+import SearchPanel from "@/components/SearchPanel";
 
-export default function UploadPage() {
+export default function SearchPage() {
   return (
     <PageTransition>
-      <FileUpload onUpload={() => {}} />
+      <SearchPanel />
     </PageTransition>
   );
 }

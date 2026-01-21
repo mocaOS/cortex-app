@@ -1,12 +1,12 @@
 "use client";
 
 import { PageTransition } from "@/components/layout";
-import FileUpload from "@/components/FileUpload";
+import AskPanel from "@/components/AskPanel";
 
-export default function UploadPage() {
+export default function AskPage() {
   return (
     <PageTransition>
-      <FileUpload onUpload={() => {}} />
+      <AskPanel />
     </PageTransition>
   );
 }
