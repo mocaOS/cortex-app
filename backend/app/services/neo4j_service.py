@@ -383,6 +383,58 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    def get_document_content(self, doc_id: str) -> Optional[dict]:
+        """
+        Get a document with all its chunk content, ordered by chunk index.
+        
+        Returns dict with document metadata and full_content (concatenated chunks).
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                WITH d, c
+                ORDER BY c.chunk_index
+                WITH d, collect({
+                    id: c.id,
+                    content: c.content,
+                    chunk_index: c.chunk_index
+                }) as chunks
+                RETURN d.id as id,
+                       d.filename as filename,
+                       d.file_type as file_type,
+                       d.file_size as file_size,
+                       d.upload_date as upload_date,
+                       d.chunk_count as chunk_count,
+                       chunks
+            """, id=doc_id)
+            
+            record = result.single()
+            if not record:
+                return None
+            
+            doc = dict(record)
+            chunks = doc.get("chunks", [])
+            
+            # Filter out null chunks (when document has no chunks yet)
+            valid_chunks = [c for c in chunks if c.get("id") is not None]
+            
+            # Concatenate all chunk content
+            full_content = "\n\n".join([
+                c.get("content", "") for c in valid_chunks
+            ])
+            
+            return {
+                "id": doc["id"],
+                "filename": doc["filename"],
+                "file_type": doc["file_type"],
+                "file_size": doc["file_size"],
+                "upload_date": doc["upload_date"],
+                "chunk_count": doc["chunk_count"],
+                "chunks": valid_chunks,
+                "full_content": full_content
+            }
+    
     def delete_document_chunks(self, doc_id: str) -> dict:
         """
         Delete only the chunks and orphaned entities of a document, keeping the document node.

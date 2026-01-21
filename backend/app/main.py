@@ -407,6 +407,28 @@ async def get_document(document_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/documents/{document_id}/content")
+async def get_document_content(document_id: str):
+    """
+    Get a document with its full content (all chunks concatenated).
+    
+    Returns document metadata plus:
+    - chunks: Array of chunk objects with id, content, chunk_index
+    - full_content: All chunks concatenated as a single string
+    """
+    try:
+        neo4j = get_neo4j_service()
+        content = neo4j.get_document_content(document_id)
+        if not content:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return content
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str):
     """Delete a document and clean up orphaned entities and communities from the knowledge base."""

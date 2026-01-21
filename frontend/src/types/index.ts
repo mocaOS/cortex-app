@@ -28,6 +28,21 @@ export interface DocumentChunk {
   metadata: Record<string, unknown>;
 }
 
+export interface DocumentContent {
+  id: string;
+  filename: string;
+  file_type: string;
+  file_size: number;
+  upload_date: string;
+  chunk_count: number;
+  chunks: Array<{
+    id: string;
+    content: string;
+    chunk_index: number;
+  }>;
+  full_content: string;
+}
+
 export interface SearchResult {
   document_id: string;
   chunk_id: string;

@@ -1,5 +1,6 @@
 import type {
   Document,
+  DocumentContent,
   SearchResponse,
   RAGResponse,
   RAGRequest,
@@ -107,6 +108,14 @@ class ApiClient {
 
   async getDocument(id: string): Promise<Document> {
     return this.request<Document>(`/api/documents/${id}`);
+  }
+
+  /**
+   * Get document content including all chunks.
+   * Returns the full document text concatenated from all chunks.
+   */
+  async getDocumentContent(id: string): Promise<DocumentContent> {
+    return this.request<DocumentContent>(`/api/documents/${id}/content`);
   }
 
   async deleteDocument(id: string): Promise<{ message: string }> {
