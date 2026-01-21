@@ -866,10 +866,15 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
                   {getFileTypeIcon(doc.file_type)}
                 </div>
 
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 overflow-hidden">
                   <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <h4 className="font-medium text-foreground truncate">{doc.filename}</h4>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <h4 
+                        className="font-medium text-foreground truncate" 
+                        title={doc.filename}
+                      >
+                        {doc.filename}
+                      </h4>
                       <p className="text-sm text-muted-foreground mt-1">{formatDate(doc.upload_date)}</p>
                     </div>
 

@@ -448,13 +448,15 @@ class Neo4jService:
     
     def delete_document(self, doc_id: str) -> dict:
         """
-        Delete a document, its chunks, and orphaned entities.
+        Delete a document, its chunks, orphaned entities, and orphaned communities.
         
         Entities are only deleted if they have no other connections to chunks
-        from other documents. This keeps the Neo4j database clean.
+        from other documents. Communities are deleted if they have no remaining
+        member entities. This keeps the Neo4j database clean.
         
         Returns:
-            Dict with 'deleted' (bool), 'orphaned_entities_removed' (int)
+            Dict with 'deleted' (bool), 'orphaned_entities_removed' (int), 
+            'orphaned_communities_removed' (int)
         """
         with self.driver.session() as session:
             # Step 1: Find entities that will become orphaned after deletion
@@ -477,17 +479,33 @@ class Neo4jService:
             orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
             
             # Step 2: Delete orphaned entities (DETACH DELETE removes their relationships too)
-            orphaned_count = 0
+            orphaned_entity_count = 0
             if orphaned_entities:
                 session.run("""
                     MATCH (e:Entity)
                     WHERE e.name IN $names
                     DETACH DELETE e
                 """, names=orphaned_entities)
-                orphaned_count = len(orphaned_entities)
-                logger.info(f"Deleted {orphaned_count} orphaned entities for document {doc_id}")
+                orphaned_entity_count = len(orphaned_entities)
+                logger.info(f"Deleted {orphaned_entity_count} orphaned entities for document {doc_id}")
             
-            # Step 3: Delete document and its chunks
+            # Step 3: Delete orphaned communities (communities with no remaining members)
+            orphaned_community_result = session.run("""
+                MATCH (com:Community)
+                WHERE NOT EXISTS { (com)-[:HAS_MEMBER]->(:Entity) }
+                WITH collect(com.id) as orphaned_ids
+                MATCH (com:Community)
+                WHERE com.id IN orphaned_ids
+                DETACH DELETE com
+                RETURN size(orphaned_ids) as removed_count
+            """)
+            orphaned_community_record = orphaned_community_result.single()
+            orphaned_community_count = orphaned_community_record["removed_count"] if orphaned_community_record else 0
+            
+            if orphaned_community_count > 0:
+                logger.info(f"Deleted {orphaned_community_count} orphaned communities for document {doc_id}")
+            
+            # Step 4: Delete document and its chunks
             result = session.run("""
                 MATCH (d:Document {id: $id})
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
@@ -498,47 +516,52 @@ class Neo4jService:
             deleted = result.single()["deleted"] > 0
             
             if deleted:
-                logger.info(f"Deleted document {doc_id} with orphaned entity cleanup")
+                logger.info(f"Deleted document {doc_id} with orphaned entity/community cleanup")
             
             return {
                 "deleted": deleted,
-                "orphaned_entities_removed": orphaned_count
+                "orphaned_entities_removed": orphaned_entity_count,
+                "orphaned_communities_removed": orphaned_community_count
             }
     
     def delete_documents(self, doc_ids: list[str]) -> dict:
         """
-        Delete multiple documents, their chunks, and orphaned entities.
+        Delete multiple documents, their chunks, orphaned entities, and orphaned communities.
         
         Args:
             doc_ids: List of document IDs to delete
             
         Returns:
-            Dict with 'deleted_count' (int), 'orphaned_entities_removed' (int)
+            Dict with 'deleted_count' (int), 'orphaned_entities_removed' (int),
+            'orphaned_communities_removed' (int)
         """
         total_deleted = 0
-        total_orphaned = 0
+        total_orphaned_entities = 0
+        total_orphaned_communities = 0
         
         for doc_id in doc_ids:
             result = self.delete_document(doc_id)
             if result["deleted"]:
                 total_deleted += 1
-                total_orphaned += result["orphaned_entities_removed"]
+                total_orphaned_entities += result["orphaned_entities_removed"]
+                total_orphaned_communities += result["orphaned_communities_removed"]
         
-        logger.info(f"Bulk deleted {total_deleted} documents, removed {total_orphaned} orphaned entities")
+        logger.info(f"Bulk deleted {total_deleted} documents, removed {total_orphaned_entities} orphaned entities, {total_orphaned_communities} orphaned communities")
         
         return {
             "deleted_count": total_deleted,
-            "orphaned_entities_removed": total_orphaned
+            "orphaned_entities_removed": total_orphaned_entities,
+            "orphaned_communities_removed": total_orphaned_communities
         }
     
     def delete_all_documents(self) -> dict:
         """
-        Delete all documents, chunks, and entities from the knowledge base.
+        Delete all documents, chunks, entities, and communities from the knowledge base.
         
         This is a destructive operation that clears the entire knowledge base.
         
         Returns:
-            Dict with 'deleted_count' (int), 'entities_removed' (int)
+            Dict with 'deleted_count' (int), 'entities_removed' (int), 'communities_removed' (int)
         """
         with self.driver.session() as session:
             # Get counts before deletion
@@ -554,6 +577,15 @@ class Neo4jService:
             """)
             entity_count = entity_result.single()["entity_count"]
             
+            community_result = session.run("""
+                MATCH (com:Community)
+                RETURN count(com) as community_count
+            """)
+            community_count = community_result.single()["community_count"]
+            
+            # Delete all communities
+            session.run("MATCH (com:Community) DETACH DELETE com")
+            
             # Delete all entities (they will all be orphaned)
             session.run("MATCH (e:Entity) DETACH DELETE e")
             
@@ -564,11 +596,12 @@ class Neo4jService:
                 DETACH DELETE d, c
             """)
             
-            logger.info(f"Deleted all documents: {doc_count} documents, {entity_count} entities")
+            logger.info(f"Deleted all documents: {doc_count} documents, {entity_count} entities, {community_count} communities")
             
             return {
                 "deleted_count": doc_count,
-                "entities_removed": entity_count
+                "entities_removed": entity_count,
+                "communities_removed": community_count
             }
     
     def cleanup_orphaned_entities(self) -> int:
@@ -596,6 +629,34 @@ class Neo4jService:
             
             if deleted_count > 0:
                 logger.info(f"Cleaned up {deleted_count} orphaned entities")
+            
+            return deleted_count
+    
+    def cleanup_orphaned_communities(self) -> int:
+        """
+        Find and delete all orphaned communities in the database.
+        
+        An orphaned community is one that has no member entities (via HAS_MEMBER relationship).
+        This is useful for cleaning up after entity deletions or data inconsistencies.
+        
+        Returns:
+            Number of orphaned communities deleted
+        """
+        with self.driver.session() as session:
+            # Find communities not connected to any entity
+            result = session.run("""
+                MATCH (com:Community)
+                WHERE NOT EXISTS { (com)-[:HAS_MEMBER]->(:Entity) }
+                WITH collect(com) as orphans
+                UNWIND orphans as orphan
+                DETACH DELETE orphan
+                RETURN count(*) as deleted
+            """)
+            
+            deleted_count = result.single()["deleted"]
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} orphaned communities")
             
             return deleted_count
     

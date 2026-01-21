@@ -409,7 +409,7 @@ async def get_document(document_id: str):
 
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str):
-    """Delete a document and clean up orphaned entities from the knowledge base."""
+    """Delete a document and clean up orphaned entities and communities from the knowledge base."""
     try:
         neo4j = get_neo4j_service()
         result = neo4j.delete_document(document_id)
@@ -418,7 +418,8 @@ async def delete_document(document_id: str):
         
         return {
             "message": "Document deleted successfully",
-            "orphaned_entities_removed": result["orphaned_entities_removed"]
+            "orphaned_entities_removed": result["orphaned_entities_removed"],
+            "orphaned_communities_removed": result["orphaned_communities_removed"]
         }
     except HTTPException:
         raise
@@ -432,7 +433,7 @@ async def delete_documents(request: DeleteRequest):
     """
     Delete multiple documents from the knowledge base.
     
-    This endpoint deletes the specified documents and cleans up any orphaned entities.
+    This endpoint deletes the specified documents and cleans up any orphaned entities and communities.
     """
     try:
         neo4j = get_neo4j_service()
@@ -441,7 +442,8 @@ async def delete_documents(request: DeleteRequest):
         return {
             "message": f"Successfully deleted {result['deleted_count']} document(s)",
             "deleted_count": result["deleted_count"],
-            "orphaned_entities_removed": result["orphaned_entities_removed"]
+            "orphaned_entities_removed": result["orphaned_entities_removed"],
+            "orphaned_communities_removed": result["orphaned_communities_removed"]
         }
     except Exception as e:
         logger.error(f"Error deleting documents: {e}")
@@ -453,7 +455,7 @@ async def delete_all_documents():
     """
     Delete all documents from the knowledge base.
     
-    WARNING: This is a destructive operation that removes all documents, chunks, and entities.
+    WARNING: This is a destructive operation that removes all documents, chunks, entities, and communities.
     """
     try:
         neo4j = get_neo4j_service()
@@ -462,7 +464,8 @@ async def delete_all_documents():
         return {
             "message": f"Successfully deleted all {result['deleted_count']} document(s)",
             "deleted_count": result["deleted_count"],
-            "entities_removed": result["entities_removed"]
+            "entities_removed": result["entities_removed"],
+            "communities_removed": result["communities_removed"]
         }
     except Exception as e:
         logger.error(f"Error deleting all documents: {e}")

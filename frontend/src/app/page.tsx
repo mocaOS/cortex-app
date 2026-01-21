@@ -8,7 +8,6 @@ import {
   MessageSquare,
   FileText,
   Database,
-  Zap,
   Network,
   Link2,
   FolderOpen,
@@ -89,18 +88,11 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="relative">
-                <div className="w-10 h-10 rounded-xl bg-foreground flex items-center justify-center">
-                  <Database className="w-5 h-5 text-background" />
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-muted border-2 border-background flex items-center justify-center">
-                  <Zap className="w-2 h-2 text-foreground" />
-                </div>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-foreground">MOCA</h1>
-                <p className="text-xs text-muted-foreground">Knowledge Base</p>
-              </div>
+              <img 
+                src="/logo.svg" 
+                alt="MOCA Logo" 
+                className="h-10 w-auto"
+              />
             </div>
 
             <nav className="flex items-center gap-1 glass rounded-full p-1">
