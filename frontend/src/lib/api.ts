@@ -16,6 +16,8 @@ import type {
   ThinkingStreamEvent,
   TaskProgress,
   TaskStartResponse,
+  GraphData,
+  EntityDetails,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -494,6 +496,51 @@ class ApiClient {
   // ===========================================================================
   // Extended Thinking Stream (R2R-style)
   // ===========================================================================
+
+  // ===========================================================================
+  // Knowledge Graph Visualization API
+  // ===========================================================================
+
+  /**
+   * Get graph data for visualization.
+   * Returns nodes (entities) and edges (relationships) for the knowledge graph.
+   */
+  async getGraphVisualization(limit = 100): Promise<GraphData> {
+    // If limit is 0 or negative, fetch all nodes (no limit)
+    const url = limit > 0 
+      ? `/api/graph/visualization?limit=${limit}`
+      : `/api/graph/visualization`;
+    return this.request<GraphData>(url);
+  }
+
+  /**
+   * Get details about a specific entity and its relationships.
+   */
+  async getEntityDetails(entityName: string, maxHops = 2): Promise<EntityDetails> {
+    return this.request<EntityDetails>(
+      `/api/graph/entity/${encodeURIComponent(entityName)}?max_hops=${maxHops}`
+    );
+  }
+
+  /**
+   * Search for entities by name.
+   */
+  async searchEntities(query: string): Promise<{ query: string; results: Array<{ name: string; type: string; description: string; score: number }> }> {
+    return this.request<{ query: string; results: Array<{ name: string; type: string; description: string; score: number }> }>(
+      `/api/graph/search?query=${encodeURIComponent(query)}`
+    );
+  }
+
+  /**
+   * List entities with optional type filter.
+   */
+  async getEntities(entityType?: string, limit = 50): Promise<{ entities: Array<{ name: string; type: string; description: string; mention_count: number }>; total: number }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (entityType) params.set("entity_type", entityType);
+    return this.request<{ entities: Array<{ name: string; type: string; description: string; mention_count: number }>; total: number }>(
+      `/api/graph/entities?${params}`
+    );
+  }
 
   async *askStreamWithThinking(
     question: string,

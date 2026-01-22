@@ -230,3 +230,58 @@ export interface TaskStartResponse {
   status: TaskStatus;
   message: string;
 }
+
+// =============================================================================
+// Knowledge Graph Visualization Types
+// =============================================================================
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  description?: string;
+  community_id?: number;
+  mention_count: number;
+  // Force graph properties
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  description?: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface EntityDetails {
+  name: string;
+  type: string;
+  description: string;
+  entities: Array<{
+    name: string;
+    type: string;
+    description: string;
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    type: string;
+    description?: string;
+  }>;
+  chunks: Array<{
+    chunk_id: string;
+    content: string;
+    document_id: string;
+    filename: string;
+  }>;
+}

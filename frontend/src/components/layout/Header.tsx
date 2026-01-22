@@ -9,6 +9,7 @@ import {
   MessageSquare,
   FileText,
   FolderOpen,
+  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const navItems = [
   { href: "/ask", label: "Ask AI", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/collections", label: "Collections", icon: FolderOpen },
+  { href: "/explore", label: "Explore", icon: Network },
 ];
 
 export default function Header() {
