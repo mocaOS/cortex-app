@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { X, ExternalLink, Loader2 } from "lucide-react";
 
-// Internal node type for force graph (extends library's expected type)
+// Internal node type for force graph
 interface ForceGraphNode {
   id: string;
   label: string;
@@ -40,29 +40,29 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ),
 }) as React.ComponentType<Record<string, unknown>>;
 
-// Entity type colors matching R2R style
+// Entity type colors matching Neo4j style
 const TYPE_COLORS: Record<string, string> = {
-  Person: "#e74c3c",
-  Organization: "#9b59b6",
-  Concept: "#3498db",
-  Technology: "#2ecc71",
-  Location: "#e67e22",
-  Event: "#f1c40f",
-  Product: "#1abc9c",
-  Process: "#e91e63",
-  Document: "#795548",
-  default: "#95a5a6",
+  Person: "#F79767",
+  Organization: "#57C7E3",
+  Concept: "#DA7194",
+  Technology: "#6DCE9E",
+  Location: "#FFC454",
+  Event: "#D9C8AE",
+  Product: "#8DCC93",
+  Process: "#C990C0",
+  Document: "#569480",
+  default: "#4C8EDA",
 };
 
 function getNodeColor(type: string): string {
   return TYPE_COLORS[type] || TYPE_COLORS.default;
 }
 
-// Calculate node size based on mention count
-function getNodeSize(mentionCount: number): number {
-  const base = 5;
+// Calculate base node size based on mention count
+function getBaseNodeSize(mentionCount: number): number {
+  const base = 3;
   const scale = Math.log2(mentionCount + 1);
-  return Math.min(base + scale * 2, 20);
+  return Math.min(base + scale * 1, 8);
 }
 
 interface EntityPanelProps {
@@ -94,7 +94,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
       </div>
 
       <div className="p-4 overflow-y-auto max-h-[500px] space-y-4">
-        {/* Type badge */}
         <div className="flex items-center gap-2">
           <span
             className="px-2 py-1 text-xs font-medium rounded-full text-white"
@@ -107,7 +106,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
           </span>
         </div>
 
-        {/* Description */}
         {entity.description && (
           <p className="text-sm text-muted-foreground leading-relaxed">
             {entity.description}
@@ -122,7 +120,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
 
         {details && !loading && (
           <>
-            {/* Related entities */}
             {details.entities.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Related Entities</h4>
@@ -145,7 +142,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
               </div>
             )}
 
-            {/* Key relationships */}
             {details.relationships.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Key Relationships</h4>
@@ -166,7 +162,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
               </div>
             )}
 
-            {/* Document mentions */}
             {details.chunks.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Mentioned In</h4>
@@ -186,7 +181,6 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
           </>
         )}
 
-        {/* Entity ID */}
         <div className="pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground font-mono truncate">
             ID: {entity.id.substring(0, 12)}...
@@ -261,12 +255,6 @@ export default function KnowledgeGraph({
       description: n.description,
       community_id: n.community_id,
       mention_count: n.mention_count,
-      x: n.x,
-      y: n.y,
-      vx: n.vx,
-      vy: n.vy,
-      fx: n.fx ?? undefined,
-      fy: n.fy ?? undefined,
     }));
     
     const forceLinks: ForceGraphLink[] = edges.map((e) => ({
@@ -325,10 +313,9 @@ export default function KnowledgeGraph({
   // Node click handler
   const handleNodeClick = useCallback((node: ForceGraphNode) => {
     setSelectedNode(node);
-    // Center view on clicked node
     if (fgRef.current && node.x !== undefined && node.y !== undefined) {
       fgRef.current.centerAt(node.x, node.y, 500);
-      fgRef.current.zoom(2, 500);
+      fgRef.current.zoom(2.5, 500);
     }
   }, []);
 
@@ -340,25 +327,34 @@ export default function KnowledgeGraph({
     }
   }, []);
 
-  // Custom node rendering - Neo4j style: nodes shrink when zooming in
+  // Fix node position after dragging so it stays where you put it
+  const handleNodeDragEnd = useCallback((node: ForceGraphNode) => {
+    node.fx = node.x;
+    node.fy = node.y;
+  }, []);
+
+  // Custom node rendering with semantic zoom (nodes shrink when zooming in)
   const nodeCanvasObject = useCallback(
     (node: ForceGraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label || String(node.id);
-      const baseNodeSize = getNodeSize(node.mention_count || 1);
+      const baseNodeSize = getBaseNodeSize(node.mention_count || 1);
       const color = getNodeColor(node.type || "default");
       const isHovered = hoveredNode?.id === node.id;
       const isSelected = selectedNode?.id === node.id;
       const x = node.x ?? 0;
       const y = node.y ?? 0;
 
-      // Neo4j-style scaling: nodes shrink relative to viewport when zooming in
-      // At zoom 1, show full size. Above zoom 1, shrink proportionally.
-      // This reveals the connections when zoomed in.
-      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.6) : 1;
+      // SEMANTIC ZOOM: Nodes shrink as you zoom in
+      // At zoom 1, show full size. As zoom increases, shrink nodes proportionally
+      // This reveals more of the graph structure and labels when zoomed in
+      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
       const nodeSize = baseNodeSize / zoomFactor;
       
-      // Scale font with zoom but keep it readable
-      const fontSize = Math.max(10 / globalScale, 2.5);
+      // Font size scales with zoom but stays readable
+      const baseFontSize = 12;
+      const fontSize = Math.max(baseFontSize / globalScale, 3);
+      
+      // Border width scales inversely with zoom
       const borderWidth = Math.max((isSelected ? 3 : 2) / globalScale, 0.5);
 
       // Draw node circle
@@ -367,32 +363,62 @@ export default function KnowledgeGraph({
       ctx.fillStyle = color;
       ctx.fill();
 
-      // Draw border for hovered/selected
+      // Draw border for hovered/selected nodes
       if (isHovered || isSelected) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = borderWidth;
         ctx.stroke();
+        
+        // Add glow effect
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10 / globalScale;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       }
 
-      // Draw label - always show when zoomed in enough or when hovered/selected
-      const showLabel = globalScale > 0.4 || isHovered || isSelected;
+      // Draw label - more visible when zoomed in
+      const showLabel = globalScale > 0.5 || isHovered || isSelected;
       if (showLabel) {
-        ctx.font = `${fontSize}px Inter, sans-serif`;
+        // Truncate long labels
+        let displayLabel = label;
+        if (displayLabel.length > 20 && globalScale < 2) {
+          displayLabel = displayLabel.substring(0, 18) + "...";
+        }
+        
+        ctx.font = `${isSelected ? "bold " : ""}${fontSize}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = "#ffffff";
         
-        // Draw text shadow for better readability
+        // Draw text shadow for readability
         ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
-        ctx.shadowBlur = 3 / globalScale;
-        ctx.fillText(label, x, y + nodeSize + fontSize + 1);
+        ctx.shadowBlur = 4 / globalScale;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(displayLabel, x, y + nodeSize + fontSize + 1);
         ctx.shadowBlur = 0;
       }
     },
     [hoveredNode, selectedNode]
   );
 
-  // Custom link rendering - more visible with arrows
+  // Define pointer area for click/drag detection
+  const nodePointerAreaPaint = useCallback(
+    (node: ForceGraphNode, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const baseNodeSize = getBaseNodeSize(node.mention_count || 1);
+      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
+      const nodeSize = baseNodeSize / zoomFactor;
+      const x = node.x ?? 0;
+      const y = node.y ?? 0;
+      
+      // Slightly larger area for easier clicking
+      ctx.beginPath();
+      ctx.arc(x, y, nodeSize + 4, 0, 2 * Math.PI, false);
+      ctx.fillStyle = color;
+      ctx.fill();
+    },
+    []
+  );
+
+  // Custom link rendering
   const linkCanvasObject = useCallback(
     (link: ForceGraphLink, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const start = link.source as ForceGraphNode;
@@ -407,8 +433,9 @@ export default function KnowledgeGraph({
       const endY = end.y;
 
       // Calculate node sizes for proper edge termination
-      const startNodeSize = getNodeSize(start.mention_count || 1) / (globalScale > 1 ? Math.pow(globalScale, 0.6) : 1);
-      const endNodeSize = getNodeSize(end.mention_count || 1) / (globalScale > 1 ? Math.pow(globalScale, 0.6) : 1);
+      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
+      const startNodeSize = getBaseNodeSize(start.mention_count || 1) / zoomFactor;
+      const endNodeSize = getBaseNodeSize(end.mention_count || 1) / zoomFactor;
 
       // Calculate direction
       const dx = endX - startX;
@@ -427,8 +454,8 @@ export default function KnowledgeGraph({
       const adjustedEndX = endX - nx * endNodeSize;
       const adjustedEndY = endY - ny * endNodeSize;
 
-      // Line opacity increases when zoomed in (to see connections better)
-      const opacity = Math.min(0.15 + (globalScale - 1) * 0.15, 0.5);
+      // Link opacity - more visible when zoomed in
+      const opacity = Math.min(0.2 + (globalScale - 1) * 0.1, 0.5);
       const lineWidth = Math.max(1.5 / globalScale, 0.3);
 
       // Draw the line
@@ -439,37 +466,38 @@ export default function KnowledgeGraph({
       ctx.lineWidth = lineWidth;
       ctx.stroke();
 
-      // Draw arrow at the end when zoomed in
+      // Draw arrow when zoomed in
       if (globalScale > 1.5) {
-        const arrowSize = Math.max(4 / globalScale, 1.5);
+        const arrowSize = Math.max(5 / globalScale, 2);
         const arrowAngle = Math.PI / 6;
+        const angle = Math.atan2(ny, nx);
         
         ctx.beginPath();
         ctx.moveTo(adjustedEndX, adjustedEndY);
         ctx.lineTo(
-          adjustedEndX - arrowSize * Math.cos(Math.atan2(ny, nx) - arrowAngle),
-          adjustedEndY - arrowSize * Math.sin(Math.atan2(ny, nx) - arrowAngle)
+          adjustedEndX - arrowSize * Math.cos(angle - arrowAngle),
+          adjustedEndY - arrowSize * Math.sin(angle - arrowAngle)
         );
         ctx.moveTo(adjustedEndX, adjustedEndY);
         ctx.lineTo(
-          adjustedEndX - arrowSize * Math.cos(Math.atan2(ny, nx) + arrowAngle),
-          adjustedEndY - arrowSize * Math.sin(Math.atan2(ny, nx) + arrowAngle)
+          adjustedEndX - arrowSize * Math.cos(angle + arrowAngle),
+          adjustedEndY - arrowSize * Math.sin(angle + arrowAngle)
         );
         ctx.strokeStyle = `rgba(255, 255, 255, ${opacity + 0.1})`;
         ctx.lineWidth = lineWidth;
         ctx.stroke();
       }
 
-      // Show relationship type label when very zoomed in
+      // Show relationship type when very zoomed in
       if (globalScale > 3 && link.type) {
         const midX = (adjustedStartX + adjustedEndX) / 2;
         const midY = (adjustedStartY + adjustedEndY) / 2;
-        const labelFontSize = Math.max(6 / globalScale, 1.5);
+        const labelFontSize = Math.max(8 / globalScale, 2);
         
         ctx.font = `${labelFontSize}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = `rgba(150, 150, 150, 0.8)`;
+        ctx.fillStyle = `rgba(180, 180, 180, 0.8)`;
         ctx.fillText(link.type, midX, midY);
       }
     },
@@ -489,9 +517,11 @@ export default function KnowledgeGraph({
         nodeId="id"
         nodeLabel=""
         nodeCanvasObject={nodeCanvasObject}
+        nodePointerAreaPaint={nodePointerAreaPaint}
         linkCanvasObject={linkCanvasObject}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
+        onNodeDragEnd={handleNodeDragEnd}
         onBackgroundClick={() => setSelectedNode(null)}
         cooldownTicks={100}
         warmupTicks={100}
@@ -502,7 +532,7 @@ export default function KnowledgeGraph({
         enableZoomInteraction={true}
         enablePanInteraction={true}
         minZoom={0.1}
-        maxZoom={8}
+        maxZoom={10}
       />
 
       <Legend types={entityTypes} />
@@ -529,9 +559,7 @@ export default function KnowledgeGraph({
           −
         </button>
         <button
-          onClick={() => {
-            fgRef.current?.zoomToFit(400, 50);
-          }}
+          onClick={() => fgRef.current?.zoomToFit(400, 50)}
           className="w-10 h-10 bg-card/90 backdrop-blur-sm border border-border rounded-lg flex items-center justify-center text-xs font-medium hover:bg-muted transition-colors"
           title="Fit to view"
         >
