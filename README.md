@@ -1,3 +1,5 @@
+![MOCA Knowledge Base](frontend/public/banner.jpg)
+
 # 🧠 MOCA Knowledge Base
 
 A powerful knowledge base system powered by **Neo4j** graph database and **Haystack** AI framework. Upload documents, build a semantic knowledge graph, and query your data using natural language.
