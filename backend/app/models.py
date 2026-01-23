@@ -254,6 +254,7 @@ class RAGRequest(BaseModel):
     )
     use_reranking: bool = Field(default=True, description="Whether to use cross-encoder reranking")
     use_agentic: bool = Field(default=False, description="Whether to use agentic multi-step RAG for complex questions")
+    use_fast_search: bool = Field(default=False, description="Use simple vector search for faster responses (disables hybrid/reranking)")
 
 
 class RAGResponse(BaseModel):

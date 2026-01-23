@@ -909,6 +909,10 @@ async def ask_question_stream(request: RAGRequest):
     - sub_questions: Decomposed research questions
     - retrieval: Source retrieval progress
     - retrieval_stats: Final retrieval statistics
+    
+    When use_fast_search=True:
+    - Uses simple vector search only (no hybrid/reranking)
+    - Fastest response time for quick queries
     """
     settings = get_settings()
     
@@ -918,8 +922,8 @@ async def ask_question_stream(request: RAGRequest):
             detail="OpenAI API key required for streaming"
         )
     
-    # Route to agentic streaming if deep research is enabled
-    if request.use_agentic and settings.enable_agentic_rag:
+    # Route to agentic streaming if deep research is enabled (not available with fast search)
+    if request.use_agentic and settings.enable_agentic_rag and not request.use_fast_search:
         async def generate_agentic():
             try:
                 processor = get_query_processor()
@@ -945,7 +949,82 @@ async def ask_question_stream(request: RAGRequest):
             }
         )
     
-    # Standard streaming RAG
+    # Fast vector search mode - optimized for speed, no sources shown
+    if request.use_fast_search:
+        async def generate_fast():
+            try:
+                from openai import AsyncOpenAI
+                
+                processor = get_query_processor()
+                
+                # Check if this is a follow-up question (has conversation history)
+                has_history = request.conversation_history and len(request.conversation_history) > 0
+                
+                system_prompt = """You are a helpful assistant. Be direct and concise. Do not mention sources or citations.
+When there is conversation history, prioritize continuing that conversation naturally."""
+                
+                messages = [{"role": "system", "content": system_prompt}]
+                
+                # Include conversation history for continuity
+                if has_history:
+                    max_history = settings.max_conversation_history
+                    for msg in request.conversation_history[-max_history:]:
+                        messages.append({
+                            "role": msg.role,
+                            "content": msg.content
+                        })
+                    # For follow-up questions, just pass the question directly
+                    # This allows natural conversation flow
+                    messages.append({"role": "user", "content": request.question})
+                else:
+                    # First message - do vector search and include context
+                    results = processor.search(request.question, top_k=request.top_k)
+                    context = "\n\n".join([r['content'][:600] for r in results[:3]])
+                    
+                    if context:
+                        prompt = f"""Reference information:
+{context}
+
+Question: {request.question}"""
+                    else:
+                        prompt = request.question
+                    
+                    messages.append({"role": "user", "content": prompt})
+                
+                client = AsyncOpenAI(
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_api_base,
+                )
+                
+                stream = await client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=messages,
+                    temperature=0.2,  # Lower temperature for faster, more deterministic responses
+                    max_tokens=600,   # Reduced for faster completion
+                    stream=True
+                )
+                
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        yield f"data: {json.dumps({'content': content})}\n\n"
+                
+                yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in fast streaming RAG: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        
+        return StreamingResponse(
+            generate_fast(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
+        )
+    
+    # Standard streaming RAG (hybrid + reranking)
     async def generate():
         try:
             from openai import AsyncOpenAI

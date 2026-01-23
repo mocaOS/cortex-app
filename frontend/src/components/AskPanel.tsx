@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2, Zap, Gauge } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConversationMessage, GraphContext } from "@/types";
 import { ChatMessage, AskSettings, AskInput, EmptyChat } from "./ask";
@@ -37,9 +37,18 @@ export default function AskPanel() {
   const [isLoading, setIsLoading] = useState(false);
   const [useStreaming, setUseStreaming] = useState(true);
   const [useAgentic, setUseAgentic] = useState(false);
+  const [useFastSearch, setUseFastSearch] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // When fast search is enabled, disable agentic mode
+  const handleFastSearchChange = (value: boolean) => {
+    setUseFastSearch(value);
+    if (value) {
+      setUseAgentic(false);
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -70,8 +79,8 @@ export default function AskPanel() {
         role: "assistant",
         content: "",
         isStreaming: true,
-        thinkingSteps: useAgentic ? [] : undefined,
-        subQuestions: useAgentic ? [] : undefined,
+        thinkingSteps: useAgentic && !useFastSearch ? [] : undefined,
+        subQuestions: useAgentic && !useFastSearch ? [] : undefined,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -84,9 +93,10 @@ export default function AskPanel() {
 
         for await (const event of api.askStream(question, {
           conversationHistory,
-          useReranking: true,
-          useGraph: true,
-          useAgentic,
+          useReranking: !useFastSearch,
+          useGraph: !useFastSearch,
+          useAgentic: useAgentic && !useFastSearch,
+          useFastSearch,
         })) {
           if (event.thinking) {
             thinkingSteps = [...thinkingSteps, event.thinking as string];
@@ -176,9 +186,10 @@ export default function AskPanel() {
       try {
         const data = await api.ask(question, {
           conversationHistory,
-          useReranking: true,
-          useAgentic,
-          useGraph: true,
+          useReranking: !useFastSearch,
+          useAgentic: useAgentic && !useFastSearch,
+          useGraph: !useFastSearch,
+          useFastSearch,
         });
 
         const assistantMessage: Message = {
@@ -230,6 +241,8 @@ export default function AskPanel() {
         onStreamingChange={setUseStreaming}
         useAgentic={useAgentic}
         onAgenticChange={setUseAgentic}
+        useFastSearch={useFastSearch}
+        onFastSearchChange={handleFastSearchChange}
       />
 
       {/* Chat History */}
@@ -262,7 +275,14 @@ export default function AskPanel() {
                 <div className="flex-1">
                   <div className="inline-block rounded-lg p-4 bg-muted">
                     <div className="flex items-center gap-2">
-                      {useAgentic ? (
+                      {useFastSearch ? (
+                        <>
+                          <Gauge className="w-4 h-4 text-amber-500 animate-pulse" />
+                          <span className="text-sm text-muted-foreground">
+                            Fast search...
+                          </span>
+                        </>
+                      ) : useAgentic ? (
                         <>
                           <Zap className="w-4 h-4 text-foreground animate-pulse" />
                           <span className="text-sm text-muted-foreground">

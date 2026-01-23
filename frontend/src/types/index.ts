@@ -93,6 +93,7 @@ export interface RAGRequest {
   conversation_history?: ConversationMessage[];
   use_reranking?: boolean;
   use_agentic?: boolean;
+  use_fast_search?: boolean;
 }
 
 export interface RAGResponse {
@@ -110,6 +111,8 @@ export interface StreamEvent {
   graph_context?: GraphContext;
   done?: boolean;
   error?: string;
+  // Fast mode indicator
+  fast_mode?: boolean;
   // Agentic mode events
   thinking?: string;
   sub_questions?: string[];

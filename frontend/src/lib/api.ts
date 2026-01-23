@@ -243,6 +243,7 @@ class ApiClient {
       useReranking?: boolean;
       useAgentic?: boolean;
       useGraph?: boolean;
+      useFastSearch?: boolean;
     } = {}
   ): Promise<RAGResponse> {
     const {
@@ -251,6 +252,7 @@ class ApiClient {
       useReranking = true,
       useAgentic = false,
       useGraph = true,
+      useFastSearch = false,
     } = options;
 
     return this.request<RAGResponse>("/api/ask", {
@@ -262,6 +264,7 @@ class ApiClient {
         use_reranking: useReranking,
         use_agentic: useAgentic,
         use_graph: useGraph,
+        use_fast_search: useFastSearch,
       }),
     });
   }
@@ -275,6 +278,10 @@ class ApiClient {
    * - sub_questions: Decomposed research questions
    * - retrieval: Source retrieval progress
    * - retrieval_stats: Final retrieval statistics
+   * 
+   * When useFastSearch is true:
+   * - Uses simple vector search only (no hybrid/reranking)
+   * - Fastest response time for quick queries
    */
   async *askStream(
     question: string,
@@ -284,6 +291,7 @@ class ApiClient {
       useReranking?: boolean;
       useGraph?: boolean;
       useAgentic?: boolean;
+      useFastSearch?: boolean;
     } = {}
   ): AsyncGenerator<StreamEvent, void, unknown> {
     const {
@@ -292,6 +300,7 @@ class ApiClient {
       useReranking = true,
       useGraph = true,
       useAgentic = false,
+      useFastSearch = false,
     } = options;
 
     const res = await fetch(`${API_BASE}/api/ask/stream`, {
@@ -306,6 +315,7 @@ class ApiClient {
         use_reranking: useReranking,
         use_graph: useGraph,
         use_agentic: useAgentic,
+        use_fast_search: useFastSearch,
       }),
     });
 
