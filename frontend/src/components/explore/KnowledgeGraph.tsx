@@ -2,7 +2,7 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import type { GraphNode, GraphEdge, EntityDetails } from "@/types";
+import type { GraphNode, GraphEdge, EntityDetails, GraphStats } from "@/types";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { X, ExternalLink, Loader2 } from "lucide-react";
@@ -28,6 +28,7 @@ interface ForceGraphLink {
   source: string | ForceGraphNode;
   target: string | ForceGraphNode;
   type: string;
+  weight?: number;  // R2R-style relationship weight (0-10)
 }
 
 // Dynamically import ForceGraph2D to avoid SSR issues
@@ -223,6 +224,7 @@ function Legend({ types }: LegendProps) {
 interface KnowledgeGraphProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  stats?: GraphStats;
   className?: string;
 }
 
@@ -236,6 +238,7 @@ interface ForceGraphMethods {
 export default function KnowledgeGraph({
   nodes,
   edges,
+  stats,
   className,
 }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -261,6 +264,7 @@ export default function KnowledgeGraph({
       source: e.source,
       target: e.target,
       type: e.type,
+      weight: e.weight ?? 5.0,  // Default weight if not provided
     }));
     
     return { nodes: forceNodes, links: forceLinks };
@@ -454,9 +458,12 @@ export default function KnowledgeGraph({
       const adjustedEndX = endX - nx * endNodeSize;
       const adjustedEndY = endY - ny * endNodeSize;
 
-      // Link opacity - more visible when zoomed in
-      const opacity = Math.min(0.2 + (globalScale - 1) * 0.1, 0.5);
-      const lineWidth = Math.max(1.5 / globalScale, 0.3);
+      // Link opacity and width - weight affects thickness (R2R-style)
+      const weight = (link as ForceGraphLink).weight ?? 5.0;
+      const baseOpacity = 0.15 + (weight / 10) * 0.25;  // Higher weight = more visible
+      const opacity = Math.min(baseOpacity + (globalScale - 1) * 0.1, 0.6);
+      const baseLineWidth = 0.8 + (weight / 10) * 1.5;  // Weight affects line thickness
+      const lineWidth = Math.max(baseLineWidth / globalScale, 0.3);
 
       // Draw the line
       ctx.beginPath();
@@ -507,7 +514,7 @@ export default function KnowledgeGraph({
   return (
     <div
       ref={containerRef}
-      className={cn("relative w-full h-full bg-[#0a0a0f] rounded-xl overflow-hidden", className)}
+      className={cn("relative w-full h-full bg-[#0a0a0f] rounded-b-xl overflow-hidden", className)}
     >
       <ForceGraph2D
         ref={(el: unknown) => { fgRef.current = el as ForceGraphMethods | null; }}
@@ -567,11 +574,28 @@ export default function KnowledgeGraph({
         </button>
       </div>
 
-      {/* Node count */}
+      {/* Graph stats */}
       <div className="absolute top-4 left-4 bg-card/90 backdrop-blur-sm border border-border rounded-lg px-3 py-2 z-10">
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{nodes.length}</span> entities • <span className="font-medium text-foreground">{edges.length}</span> relationships
-        </p>
+        {stats ? (
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            <p>
+              <span className="font-medium text-foreground">{stats.displayed_entities}</span> of{" "}
+              <span className="font-medium text-foreground">{stats.total_entities}</span> entities
+              {stats.neighbor_entities_included !== undefined && stats.neighbor_entities_included > 0 && (
+                <span className="text-accent"> (+{stats.neighbor_entities_included} neighbors)</span>
+              )}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">{stats.displayed_relationships}</span> of{" "}
+              <span className="font-medium text-foreground">{stats.total_relationships}</span> relationships
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{nodes.length}</span> entities •{" "}
+            <span className="font-medium text-foreground">{edges.length}</span> relationships
+          </p>
+        )}
       </div>
     </div>
   );

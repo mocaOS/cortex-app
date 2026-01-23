@@ -18,6 +18,7 @@ import type {
   TaskStartResponse,
   GraphData,
   EntityDetails,
+  EntityRelationshipsResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -498,18 +499,23 @@ class ApiClient {
   // ===========================================================================
 
   // ===========================================================================
-  // Knowledge Graph Visualization API
+  // Knowledge Graph Visualization API (R2R-style enhanced)
   // ===========================================================================
 
   /**
-   * Get graph data for visualization.
-   * Returns nodes (entities) and edges (relationships) for the knowledge graph.
+   * Get graph data for visualization (R2R-style enhanced).
+   * Returns nodes (entities), edges (relationships), and stats for the knowledge graph.
+   * 
+   * @param limit - Maximum number of core entities to fetch (0 = all entities)
+   * @param includeNeighbors - If true, expands entity set to include 1-hop neighbors for more relationships
    */
-  async getGraphVisualization(limit = 100): Promise<GraphData> {
-    // If limit is 0 or negative, fetch all nodes (no limit)
-    const url = limit > 0 
-      ? `/api/graph/visualization?limit=${limit}`
-      : `/api/graph/visualization`;
+  async getGraphVisualization(limit = 100, includeNeighbors = true): Promise<GraphData> {
+    const params = new URLSearchParams();
+    // Always send limit - 0 means "fetch all"
+    params.set("limit", String(limit));
+    params.set("include_neighbors", String(includeNeighbors));
+    
+    const url = `/api/graph/visualization?${params}`;
     return this.request<GraphData>(url);
   }
 
@@ -519,6 +525,41 @@ class ApiClient {
   async getEntityDetails(entityName: string, maxHops = 2): Promise<EntityDetails> {
     return this.request<EntityDetails>(
       `/api/graph/entity/${encodeURIComponent(entityName)}?max_hops=${maxHops}`
+    );
+  }
+
+  /**
+   * Get an entity and all its relationships up to maxDepth hops (R2R-style).
+   * Enables focused graph exploration from a specific entity.
+   */
+  async getEntityRelationships(
+    entityName: string,
+    maxDepth = 2,
+    limit = 50
+  ): Promise<EntityRelationshipsResponse> {
+    const params = new URLSearchParams({
+      max_depth: String(maxDepth),
+      limit: String(limit),
+    });
+    return this.request<EntityRelationshipsResponse>(
+      `/api/graph/entity/${encodeURIComponent(entityName)}/relationships?${params}`
+    );
+  }
+
+  /**
+   * Get a subgraph containing specified entities and their interconnections.
+   * R2R-style method for focused graph visualization of specific entities.
+   */
+  async getGraphSubgraph(
+    entityNames: string[],
+    includeConnections = true
+  ): Promise<GraphData> {
+    return this.request<GraphData>(
+      `/api/graph/subgraph?include_connections=${includeConnections}`,
+      {
+        method: "POST",
+        body: JSON.stringify(entityNames),
+      }
     );
   }
 

@@ -256,11 +256,44 @@ export interface GraphEdge {
   target: string;
   type: string;
   description?: string;
+  weight?: number;  // R2R-style relationship weight (0-10)
+}
+
+export interface GraphStats {
+  displayed_entities: number;
+  displayed_relationships: number;
+  total_entities: number;
+  total_relationships: number;
+  neighbor_entities_included?: number;
 }
 
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  stats?: GraphStats;  // R2R-style metadata about graph data
+}
+
+export interface EntityRelationshipsResponse {
+  entity: {
+    name: string;
+    type: string;
+    description: string;
+    community_id?: number;
+    mention_count: number;
+  } | null;
+  related_entities: Array<{
+    name: string;
+    type: string;
+    description?: string;
+    community_id?: number;
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    type: string;
+    description?: string;
+    weight?: number;
+  }>;
 }
 
 export interface EntityDetails {

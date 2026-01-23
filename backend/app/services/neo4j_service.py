@@ -1218,51 +1218,332 @@ class Neo4jService:
                 "relationship_count": record["relationship_count"]
             }
     
-    def get_graph_visualization_data(self, limit: int = 100) -> dict:
+    def get_graph_visualization_data(self, limit: int = 100, include_neighbors: bool = True) -> dict:
         """
-        Get data for visualizing the knowledge graph.
+        Get data for visualizing the knowledge graph (R2R-style enhanced).
         
+        This method fetches entities and ALL their relationships in both directions,
+        optionally expanding to include neighbor entities to show more graph structure.
+        
+        Args:
+            limit: Maximum number of core entities to fetch (based on mention count).
+                   Use 0 or negative to fetch ALL entities.
+            include_neighbors: If True, expands entity set to include 1-hop neighbors
+            
         Returns:
-            Dict with 'nodes' and 'edges' for visualization
+            Dict with 'nodes', 'edges', and metadata for visualization
         """
         with self.driver.session() as session:
-            # Get entities as nodes
-            result = session.run("""
-                MATCH (e:Entity)
+            # Step 1: Get top entities by mention count (core entities)
+            # If limit <= 0, fetch all entities (no limit)
+            fetch_all = limit <= 0
+            
+            if fetch_all:
+                # No LIMIT clause - fetch all entities
+                result = session.run("""
+                    MATCH (e:Entity)
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    RETURN e.name as id,
+                           e.name as label,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                    ORDER BY mention_count DESC
+                """)
+            else:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    RETURN e.name as id,
+                           e.name as label,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                    ORDER BY mention_count DESC
+                    LIMIT $limit
+                """, limit=limit)
+            
+            core_nodes = [dict(record) for record in result]
+            core_node_ids = {n["id"] for n in core_nodes}
+            
+            if not core_nodes:
+                return {"nodes": [], "edges": [], "stats": {"total_entities": 0, "total_relationships": 0}}
+            
+            # Step 2: Get ALL relationships involving core entities (both directions)
+            # This is the key R2R-style improvement - fetch relationships where
+            # either source OR target is in our entity set
+            edge_limit = None if fetch_all else limit * 5
+            
+            if fetch_all:
+                # No edge limit - fetch all relationships
+                rel_result = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE s.name IN $node_ids OR t.name IN $node_ids
+                    RETURN s.name as source,
+                           t.name as target,
+                           type(r) as rel_type,
+                           r.type as sub_type,
+                           r.description as description,
+                           coalesce(r.weight, 5.0) as weight
+                    ORDER BY weight DESC
+                """, node_ids=list(core_node_ids))
+            else:
+                rel_result = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE s.name IN $node_ids OR t.name IN $node_ids
+                    RETURN s.name as source,
+                           t.name as target,
+                           type(r) as rel_type,
+                           r.type as sub_type,
+                           r.description as description,
+                           coalesce(r.weight, 5.0) as weight
+                    ORDER BY weight DESC
+                    LIMIT $edge_limit
+                """, node_ids=list(core_node_ids), edge_limit=edge_limit)
+            
+            edges = []
+            neighbor_ids = set()
+            
+            for record in rel_result:
+                source = record["source"]
+                target = record["target"]
+                
+                # Track neighbors (entities connected but not in core set)
+                if source not in core_node_ids:
+                    neighbor_ids.add(source)
+                if target not in core_node_ids:
+                    neighbor_ids.add(target)
+                
+                edges.append({
+                    "source": source,
+                    "target": target,
+                    "type": record["sub_type"] or record["rel_type"],
+                    "description": record["description"],
+                    "weight": record["weight"]
+                })
+            
+            # Step 3: Optionally fetch neighbor entity details for complete graph
+            all_nodes = list(core_nodes)
+            
+            if include_neighbors and neighbor_ids:
+                # For fetch_all mode, include all neighbors; otherwise limit to prevent explosion
+                if fetch_all:
+                    neighbor_list = list(neighbor_ids)
+                else:
+                    neighbor_limit = min(len(neighbor_ids), max(limit // 2, 50))
+                    neighbor_list = list(neighbor_ids)[:neighbor_limit]
+                
+                neighbor_result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    RETURN e.name as id,
+                           e.name as label,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                """, names=neighbor_list)
+                
+                for record in neighbor_result:
+                    all_nodes.append(dict(record))
+            
+            # Step 4: Filter edges to only include those between final node set
+            all_node_ids = {n["id"] for n in all_nodes}
+            filtered_edges = [
+                e for e in edges 
+                if e["source"] in all_node_ids and e["target"] in all_node_ids
+            ]
+            
+            # Get total counts for stats
+            stats_result = session.run("""
+                MATCH (e:Entity) 
+                WITH count(e) as entity_count
+                OPTIONAL MATCH ()-[r:RELATED_TO]->()
+                RETURN entity_count, count(r) as rel_count
+            """)
+            stats_record = stats_result.single()
+            
+            return {
+                "nodes": all_nodes,
+                "edges": filtered_edges,
+                "stats": {
+                    "displayed_entities": len(all_nodes),
+                    "displayed_relationships": len(filtered_edges),
+                    "total_entities": stats_record["entity_count"] if stats_record else 0,
+                    "total_relationships": stats_record["rel_count"] if stats_record else 0,
+                    "neighbor_entities_included": len(neighbor_ids) if include_neighbors else 0
+                }
+            }
+    
+    def get_entity_relationships(self, entity_name: str, max_depth: int = 2, limit: int = 50) -> dict:
+        """
+        Get an entity and all its relationships up to max_depth hops (R2R-style).
+        
+        This enables focused graph exploration from a specific entity.
+        
+        Args:
+            entity_name: The entity to start from
+            max_depth: Maximum relationship hops to traverse (1-3)
+            limit: Maximum number of relationships to return
+            
+        Returns:
+            Dict with 'entity', 'related_entities', 'relationships'
+        """
+        max_depth = min(max(1, max_depth), 3)  # Clamp between 1-3
+        
+        with self.driver.session() as session:
+            # Get the central entity
+            entity_result = session.run("""
+                MATCH (e:Entity {name: $name})
                 OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
                 WITH e, count(c) as mention_count
-                RETURN e.name as id,
-                       e.name as label,
+                RETURN e.name as name,
                        e.type as type,
                        e.description as description,
                        e.community_id as community_id,
                        mention_count
-                ORDER BY mention_count DESC
-                LIMIT $limit
-            """, limit=limit)
+            """, name=entity_name)
+            
+            entity_record = entity_result.single()
+            if not entity_record:
+                return {"entity": None, "related_entities": [], "relationships": []}
+            
+            entity = dict(entity_record)
+            
+            # Traverse relationships up to max_depth
+            # Using a parameterized depth requires string interpolation (safe since we clamp the value)
+            traverse_result = session.run(f"""
+                MATCH (start:Entity {{name: $name}})
+                CALL {{
+                    WITH start
+                    MATCH path = (start)-[r*1..{max_depth}]-(related:Entity)
+                    RETURN DISTINCT related,
+                           [rel IN relationships(path) | {{
+                               source: startNode(rel).name,
+                               target: endNode(rel).name,
+                               type: coalesce(rel.type, type(rel)),
+                               description: rel.description,
+                               weight: coalesce(rel.weight, 5.0)
+                           }}] as path_rels
+                    LIMIT $limit
+                }}
+                RETURN related.name as name,
+                       related.type as type,
+                       related.description as description,
+                       related.community_id as community_id,
+                       path_rels
+            """, name=entity_name, limit=limit)
+            
+            related_entities = []
+            all_relationships = []
+            seen_rels = set()
+            
+            for record in traverse_result:
+                related_entities.append({
+                    "name": record["name"],
+                    "type": record["type"],
+                    "description": record["description"],
+                    "community_id": record["community_id"]
+                })
+                
+                # Collect unique relationships
+                for rel in record["path_rels"]:
+                    rel_key = (rel["source"], rel["target"], rel["type"])
+                    if rel_key not in seen_rels:
+                        seen_rels.add(rel_key)
+                        all_relationships.append(rel)
+            
+            return {
+                "entity": entity,
+                "related_entities": related_entities,
+                "relationships": all_relationships
+            }
+    
+    def get_graph_subgraph(self, entity_names: List[str], include_connections: bool = True) -> dict:
+        """
+        Get a subgraph containing specified entities and their interconnections.
+        
+        R2R-style method for focused graph visualization of specific entities.
+        
+        Args:
+            entity_names: List of entity names to include
+            include_connections: If True, also include entities that connect the given entities
+            
+        Returns:
+            Dict with 'nodes' and 'edges' for the subgraph
+        """
+        if not entity_names:
+            return {"nodes": [], "edges": []}
+        
+        with self.driver.session() as session:
+            if include_connections:
+                # Find paths between specified entities (up to 2 hops)
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    WITH collect(e) as entities
+                    UNWIND entities as e1
+                    UNWIND entities as e2
+                    WHERE e1 <> e2
+                    OPTIONAL MATCH path = shortestPath((e1)-[*1..2]-(e2))
+                    WITH entities, collect(path) as paths
+                    UNWIND paths as p
+                    UNWIND nodes(p) as n
+                    WITH DISTINCT n
+                    WHERE n:Entity
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(n)
+                    WITH n, count(c) as mention_count
+                    RETURN n.name as id,
+                           n.name as label,
+                           n.type as type,
+                           n.description as description,
+                           n.community_id as community_id,
+                           mention_count
+                """, names=entity_names)
+            else:
+                # Just get the specified entities
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    RETURN e.name as id,
+                           e.name as label,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                """, names=entity_names)
             
             nodes = [dict(record) for record in result]
             node_ids = {n["id"] for n in nodes}
             
-            # Get relationships as edges
-            result = session.run("""
+            # Get relationships between nodes in the subgraph
+            edge_result = session.run("""
                 MATCH (s:Entity)-[r]->(t:Entity)
                 WHERE s.name IN $node_ids AND t.name IN $node_ids
                 RETURN s.name as source,
                        t.name as target,
-                       type(r) as type,
+                       type(r) as rel_type,
                        r.type as sub_type,
-                       r.description as description
-                LIMIT $limit
-            """, node_ids=list(node_ids), limit=limit * 2)
+                       r.description as description,
+                       coalesce(r.weight, 5.0) as weight
+            """, node_ids=list(node_ids))
             
             edges = []
-            for record in result:
+            for record in edge_result:
                 edges.append({
                     "source": record["source"],
                     "target": record["target"],
-                    "type": record["sub_type"] or record["type"],
-                    "description": record["description"]
+                    "type": record["sub_type"] or record["rel_type"],
+                    "description": record["description"],
+                    "weight": record["weight"]
                 })
             
             return {"nodes": nodes, "edges": edges}

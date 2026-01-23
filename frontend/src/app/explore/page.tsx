@@ -402,19 +402,20 @@ export default function ExplorePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>("graph");
   const [nodeLimit, setNodeLimit] = useState(100);
+  const [includeNeighbors, setIncludeNeighbors] = useState(true);
 
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getGraphVisualization(nodeLimit);
+      const data = await api.getGraphVisualization(nodeLimit, includeNeighbors);
       setGraphData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load graph data");
     } finally {
       setLoading(false);
     }
-  }, [nodeLimit]);
+  }, [nodeLimit, includeNeighbors]);
 
   useEffect(() => {
     fetchGraphData();
@@ -440,17 +441,25 @@ export default function ExplorePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeNeighbors}
+              onChange={(e) => setIncludeNeighbors(e.target.checked)}
+              className="w-4 h-4 rounded border-border bg-muted accent-accent"
+            />
+            Include neighbors
+          </label>
           <Dropdown
             value={nodeLimit}
             onChange={setNodeLimit}
             icon={Network}
             options={[
-              { value: 50, label: "50 nodes" },
               { value: 100, label: "100 nodes" },
-              { value: 200, label: "200 nodes" },
-              { value: 300, label: "300 nodes" },
               { value: 500, label: "500 nodes" },
-              { value: 0, label: "All nodes" },
+              { value: 2000, label: "2,000 nodes" },
+              { value: 5000, label: "5,000 nodes" },
+              { value: 10000, label: "10,000 nodes" },
             ]}
           />
           <button
@@ -500,7 +509,7 @@ export default function ExplorePage() {
           <>
             {activeTab === "graph" && (
               <div className="h-[600px]">
-                <KnowledgeGraph nodes={nodes} edges={edges} />
+                <KnowledgeGraph nodes={nodes} edges={edges} stats={graphData?.stats} />
               </div>
             )}
             {activeTab === "entities" && <EntitiesPanel />}

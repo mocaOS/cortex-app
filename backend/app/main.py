@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -1100,14 +1100,75 @@ Response Style:
 # =============================================================================
 
 @app.get("/api/graph/visualization")
-async def get_graph_visualization(limit: int = Query(default=100, ge=10, le=500)):
-    """Get knowledge graph data for visualization."""
+async def get_graph_visualization(
+    limit: int = Query(default=100, ge=0, le=10000, description="Max entities (0 = all)"),
+    include_neighbors: bool = Query(default=True, description="Include 1-hop neighbor entities for more relationships")
+):
+    """
+    Get knowledge graph data for visualization (R2R-style enhanced).
+    
+    This endpoint returns entities and ALL their relationships in both directions,
+    optionally expanding to include neighbor entities to show more graph structure.
+    
+    The response includes:
+    - nodes: Entity data for visualization
+    - edges: Relationship data between entities
+    - stats: Metadata about what's displayed vs total graph size
+    
+    Set limit=0 to fetch ALL entities (use with caution for large graphs).
+    """
     try:
         neo4j = get_neo4j_service()
-        data = neo4j.get_graph_visualization_data(limit=limit)
+        data = neo4j.get_graph_visualization_data(limit=limit, include_neighbors=include_neighbors)
         return data
     except Exception as e:
         logger.error(f"Error getting graph visualization: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/entity/{entity_name}/relationships")
+async def get_entity_relationships(
+    entity_name: str,
+    max_depth: int = Query(default=2, ge=1, le=3, description="Maximum relationship hops to traverse"),
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum relationships to return")
+):
+    """
+    Get an entity and all its relationships up to max_depth hops (R2R-style).
+    
+    This enables focused graph exploration from a specific entity,
+    showing all connected entities and the relationships between them.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        data = neo4j.get_entity_relationships(entity_name, max_depth=max_depth, limit=limit)
+        if not data.get("entity"):
+            raise HTTPException(status_code=404, detail=f"Entity '{entity_name}' not found")
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting entity relationships: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/graph/subgraph")
+async def get_graph_subgraph(
+    entity_names: List[str],
+    include_connections: bool = Query(default=True, description="Include entities that connect the specified entities")
+):
+    """
+    Get a subgraph containing specified entities and their interconnections.
+    
+    R2R-style endpoint for focused graph visualization of specific entities.
+    If include_connections is True, also includes bridging entities that
+    connect the specified entities (up to 2 hops apart).
+    """
+    try:
+        neo4j = get_neo4j_service()
+        data = neo4j.get_graph_subgraph(entity_names, include_connections=include_connections)
+        return data
+    except Exception as e:
+        logger.error(f"Error getting graph subgraph: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
