@@ -25,12 +25,18 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 - **🚀 Streaming Responses**: Real-time answer generation with SSE
 - **🔬 Deep Research Mode**: Agentic multi-step RAG for complex questions
 
-### R2R-Inspired Advanced Features (NEW)
+### R2R-Inspired Advanced Features
 - **🌐 Community Detection**: Automatic grouping of related entities using graph algorithms
 - **📝 Graph Summarization**: LLM-generated summaries for entity communities
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Embedding-based entity deduplication for cleaner graphs
+
+### Security & Performance Features
+- **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
+- **⚡ Fast Search Mode**: Optimized vector-only search for quick responses
+- **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
+- **📊 Background Tasks**: Long-running operations with real-time progress polling
 
 ## 🏗️ Architecture
 
@@ -47,10 +53,10 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Frontend | Next.js 14 + TypeScript | File upload, search, Q&A interface |
-| Backend | FastAPI + Haystack | Document processing, embeddings, RAG |
+| Frontend | Next.js 15 + React 19 + TypeScript | File upload, search, Q&A interface |
+| Backend | FastAPI + Haystack 2.0 | Document processing, embeddings, RAG |
 | Database | Neo4j 5.x | Graph storage + vector similarity search |
-| Embeddings | sentence-transformers | Convert text to semantic vectors |
+| Embeddings | OpenAI / sentence-transformers | Convert text to semantic vectors |
 
 ## 🚀 Quick Start
 
@@ -140,25 +146,51 @@ npm run dev
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts) |
-| POST | `/api/upload` | Upload a document (triggers GraphRAG extraction) |
+| POST | `/api/upload` | Upload a document (supports `start_processing` and `collection_id` params) |
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
-| DELETE | `/api/documents/{id}` | Delete a document |
+| GET | `/api/documents/{id}/content` | Get document with full chunk content |
+| DELETE | `/api/documents/{id}` | Delete a document (cleans up orphaned entities) |
+| POST | `/api/documents/delete` | Bulk delete multiple documents |
+| DELETE | `/api/documents` | Delete ALL documents (destructive!) |
 | POST | `/api/search` | Semantic search |
 | POST | `/api/ask` | Enhanced GraphRAG Q&A (hybrid search, reranking, agentic mode) |
 | POST | `/api/ask/stream` | Streaming GraphRAG Q&A with SSE |
+
+### Bulk Upload & Batch Processing Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/documents/pending` | List documents waiting to be processed |
+| POST | `/api/documents/process-pending` | Start batch processing of pending documents |
+| POST | `/api/documents/{id}/reprocess` | Reprocess a single document |
+| POST | `/api/documents/reprocess` | Bulk reprocess multiple documents |
+| POST | `/api/documents/move` | Move documents to a different collection |
+| POST | `/api/cleanup/orphaned-entities` | Clean up orphaned entities from graph |
+
+### Background Task Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks` | List all background tasks |
+| GET | `/api/tasks/{id}` | Get task status and progress |
+| GET | `/api/tasks/{id}/result` | Get completed task results |
+| DELETE | `/api/tasks/{id}` | Cancel/remove a task |
+| POST | `/api/tasks/cleanup` | Remove old completed tasks |
 
 ### GraphRAG Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/graph/status` | GraphRAG system status |
-| GET | `/api/graph/visualization` | Get graph data for visualization |
+| GET | `/api/graph/visualization` | Get graph data for visualization (supports `limit`, `include_neighbors`) |
 | GET | `/api/graph/entities` | List entities in the knowledge graph |
 | GET | `/api/graph/entity/{name}` | Get entity details and relationships |
+| GET | `/api/graph/entity/{name}/relationships` | Get entity relationships up to N hops |
+| POST | `/api/graph/subgraph` | Get subgraph for specific entities |
 | GET | `/api/graph/search` | Search entities by name |
 
-### Collection Endpoints (NEW)
+### Collection Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -169,7 +201,7 @@ npm run dev
 | POST | `/api/collections/{id}/documents/{doc_id}` | Add document to collection |
 | GET | `/api/collections/{id}/entities` | Get entities in collection's graph |
 
-### Community Detection Endpoints (NEW)
+### Community Detection Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -179,7 +211,7 @@ npm run dev
 | POST | `/api/graph/communities/summarize` | Generate community summaries |
 | GET | `/api/graph/communities/search` | Search communities by content |
 
-### Extended Thinking Endpoints (NEW)
+### Extended Thinking Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -230,7 +262,20 @@ curl -X POST http://localhost:8000/api/ask/stream \
   -d '{"question": "Summarize the key points"}'
 ```
 
-### Example: Extended Thinking Stream (NEW)
+### Example: Fast Search Mode
+
+Optimized for speed with simple vector search (no hybrid/reranking):
+
+```bash
+curl -X POST http://localhost:8000/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What is the main topic?",
+    "use_fast_search": true
+  }'
+```
+
+### Example: Extended Thinking Stream
 
 Stream the agent's reasoning process in real-time:
 
@@ -257,7 +302,7 @@ Response events:
 {"done": true, "communities_used": [1, 3]}
 ```
 
-### Example: Create and Use Collections (NEW)
+### Example: Create and Use Collections
 
 ```bash
 # Create a collection
@@ -273,7 +318,7 @@ curl -X POST "http://localhost:8000/api/upload?collection_id=<collection-id>" \
 curl http://localhost:8000/api/collections/<collection-id>/entities
 ```
 
-### Example: Community Detection (NEW)
+### Example: Community Detection
 
 ```bash
 # Detect communities in the knowledge graph
@@ -286,6 +331,24 @@ curl -X POST http://localhost:8000/api/graph/communities/summarize \
 
 # Search communities
 curl "http://localhost:8000/api/graph/communities/search?query=machine+learning"
+```
+
+### Example: Bulk Upload (100+ files)
+
+For large uploads, disable immediate processing and batch process later:
+
+```bash
+# Upload files without processing
+for file in ./documents/*.pdf; do
+  curl -X POST "http://localhost:8000/api/upload?start_processing=false" \
+    -F "file=@$file"
+done
+
+# Start batch processing with concurrency control
+curl -X POST "http://localhost:8000/api/documents/process-pending?concurrency=5"
+
+# Poll for progress
+curl http://localhost:8000/api/tasks/{task_id}
 ```
 
 ### Example: Get Graph Visualization
@@ -331,12 +394,19 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `NEO4J_USER` | Neo4j username | Yes | `neo4j` |
 | `NEO4J_PASSWORD` | Neo4j password | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
-| `OPENAI_API_BASE` | OpenAI API base URL (for proxies) | No | `https://api.openai.com/v1` |
+| `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | LLM model for generation | No | `openai/minimax-m21` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
+| `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
+| `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
+| `USE_OPENAI_EMBEDDINGS` | Use OpenAI API for embeddings | No | `true` |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
+| `GRAPH_EXTRACTION_MODEL` | Model for extraction (defaults to `OPENAI_MODEL`) | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
+| `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for extraction | No | `20` |
+| `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
+| `CHUNK_OVERLAP` | Overlap between chunks | No | `50` |
 | `CHUNK_BY` | Chunking strategy: `word` or `sentence` | No | `sentence` |
 | `SENTENCES_PER_CHUNK` | Sentences per chunk (if sentence mode) | No | `5` |
 | `ENABLE_RERANKING` | Enable cross-encoder re-ranking | No | `true` |
@@ -349,7 +419,14 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `ENABLE_AGENTIC_RAG` | Enable multi-step agentic RAG | No | `true` |
 | `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG | No | `3` |
 
-#### Community Detection & Graph Summarization (NEW)
+#### Batch Processing
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `10` |
+| `PROCESSING_THREAD_WORKERS` | Thread pool workers for CPU operations | No | `4` |
+
+#### Community Detection & Graph Summarization
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
@@ -358,26 +435,32 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `MAX_COMMUNITIES` | Maximum number of communities to track | No | `50` |
 | `ENABLE_GRAPH_SUMMARIZATION` | Generate LLM summaries of communities | No | `true` |
 
-#### Semantic Entity Resolution (NEW)
+#### Semantic Entity Resolution
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | Use embeddings for entity matching | No | `true` |
 | `ENTITY_SIMILARITY_THRESHOLD` | Threshold for entity deduplication | No | `0.85` |
 
-#### Collection-Level Graphs (NEW)
+#### Collection-Level Graphs
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `ENABLE_COLLECTIONS` | Enable collection-based organization | No | `true` |
 | `DEFAULT_COLLECTION` | Default collection name for documents | No | `default` |
 
-#### Extended Thinking (NEW)
+#### Extended Thinking
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `STREAM_REASONING_STEPS` | Stream reasoning steps in agentic mode | No | `true` |
 | `SHOW_RETRIEVAL_STATS` | Show retrieval statistics in responses | No | `true` |
+
+#### Prompt Security
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `PROMPT_SECURITY` | Enable prompt injection detection and protection | No | `true` |
 
 ## 🔧 Configuration
 
@@ -509,7 +592,7 @@ For complex questions, enable Deep Research mode with visible reasoning:
 4. **Result Aggregation** - Merge and deduplicate findings
 5. **Comprehensive Synthesis** - Generate detailed answer with community insights
 
-### Community Detection Pipeline (NEW)
+### Community Detection Pipeline
 
 The system can automatically detect communities of related entities:
 
@@ -518,24 +601,42 @@ The system can automatically detect communities of related entities:
 3. **Summary Generation** - LLM generates descriptive names and summaries for each community
 4. **Context Enhancement** - Community summaries are used to enrich RAG answers
 
+## 🛡️ Prompt Security
+
+The system includes protection against prompt injection attacks that attempt to:
+- Extract or leak system prompts
+- Bypass safety instructions
+- Manipulate model behavior through encoded instructions
+
+**Features:**
+- Pattern-based detection of common injection techniques
+- Input sanitization to neutralize malicious content
+- Output filtering to prevent system prompt leakage
+- Configurable strict mode (block) vs soft mode (sanitize)
+
+Disable with `PROMPT_SECURITY=false` if not needed.
+
 ## 🛠️ Tech Stack
 
 ### Frontend
-- **Next.js 14** - React framework with App Router
-- **TypeScript** - Type safety
-- **Tailwind CSS** - Styling
+- **Next.js 15** - React framework with App Router
+- **React 19** - Latest React with improved performance
+- **TypeScript 5** - Type safety
+- **Tailwind CSS 3** - Styling
 - **Framer Motion** - Animations
 - **Lucide Icons** - Icon library
+- **react-force-graph-2d** - Knowledge graph visualization
 
 ### Backend
 - **FastAPI** - High-performance Python web framework
 - **Haystack 2.0** - AI/NLP pipeline framework
-- **sentence-transformers** - Text embedding models
-- **neo4j-driver** - Official Neo4j Python driver
-- **OpenAI** - GPT integration for RAG answers
+- **sentence-transformers** - Text embedding models (fallback)
+- **OpenAI** - Embeddings and LLM generation
+- **neo4j-driver 5.x** - Official Neo4j Python driver
+- **cross-encoder** - Re-ranking for improved precision
 
 ### Database
-- **Neo4j 5.x Enterprise** - Graph database with vector search
+- **Neo4j 5.15** - Graph database with vector search (Community or Enterprise)
 - **APOC** - Neo4j procedures library
 
 ## 📝 License
