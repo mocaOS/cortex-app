@@ -115,7 +115,7 @@ export default function AskSettings({
                   type="checkbox"
                   checked={useStreaming}
                   onChange={(e) => onStreamingChange(e.target.checked)}
-                  className="w-4 h-4 rounded border-border bg-card text-foreground focus:ring-ring"
+                  className="w-4 h-4 rounded border-border bg-muted accent-accent"
                 />
                 <div>
                   <span className="text-sm text-foreground flex items-center gap-1.5">
@@ -137,7 +137,7 @@ export default function AskSettings({
                   checked={useAgentic}
                   onChange={(e) => onAgenticChange(e.target.checked)}
                   disabled={useFastSearch}
-                  className="w-4 h-4 rounded border-border bg-card text-foreground focus:ring-ring disabled:opacity-50"
+                  className="w-4 h-4 rounded border-border bg-muted accent-accent disabled:opacity-50"
                 />
                 <div>
                   <span className="text-sm text-foreground flex items-center gap-1.5">
@@ -155,7 +155,7 @@ export default function AskSettings({
                   type="checkbox"
                   checked={useFastSearch}
                   onChange={(e) => onFastSearchChange(e.target.checked)}
-                  className="w-4 h-4 rounded border-border bg-card text-foreground focus:ring-ring"
+                  className="w-4 h-4 rounded border-border bg-muted accent-accent"
                 />
                 <div>
                   <span className="text-sm text-foreground flex items-center gap-1.5">
