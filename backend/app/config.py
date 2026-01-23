@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     stream_reasoning_steps: bool = Field(default=True)  # Stream reasoning steps in agentic mode
     show_retrieval_stats: bool = Field(default=True)  # Show retrieval statistics in responses
     
+    # ==========================================================================
+    # Prompt Security (protection against prompt injection attacks)
+    # ==========================================================================
+    prompt_security: bool = Field(default=True)  # Enable prompt injection detection and protection
+    
     @property
     def extraction_model(self) -> str:
         """Get the model to use for graph extraction."""

@@ -42,6 +42,11 @@ from app.models import (
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.graph_extractor import get_graph_extractor
+from app.services.prompt_security import (
+    validate_and_process_input,
+    get_anti_injection_instruction,
+    get_safe_refusal_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -968,7 +973,7 @@ class QueryProcessor:
                 base_url=self.settings.openai_api_base,
             )
             
-            # Enhanced R2R-style system prompt
+            # Enhanced R2R-style system prompt with anti-injection protection
             system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
@@ -983,7 +988,7 @@ Response Style:
 - Never mention "context", "documents provided", "knowledge base", or similar phrases
 - Prefer specific facts over vague generalizations
 - Connect related concepts naturally
-- If sources conflict, acknowledge the discrepancy objectively"""
+- If sources conflict, acknowledge the discrepancy objectively""" + get_anti_injection_instruction(enabled=self.settings.prompt_security)
             
             # Format sources with reference IDs
             formatted_sources = ""
@@ -1312,7 +1317,7 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
             ])
             graph_context_str += f"\n\n=== Relevant Knowledge Communities ===\n{community_info}"
         
-        # Enhanced system prompt with community awareness
+        # Enhanced system prompt with community awareness and anti-injection protection
         system_prompt = """You are an expert research assistant that provides comprehensive, well-structured answers.
 
 Guidelines:
@@ -1328,7 +1333,7 @@ Response Style:
 - Write naturally as if you're an expert directly answering the question
 - Never mention "context", "provided documents", "knowledge graph", or similar phrases
 - Never say things like "Based on the provided context" or "According to the documents"
-- Present information confidently as expert knowledge"""
+- Present information confidently as expert knowledge""" + get_anti_injection_instruction(enabled=self.settings.prompt_security)
         
         # Build messages with conversation history
         messages = [{"role": "system", "content": system_prompt}]
@@ -1416,6 +1421,17 @@ Response Style:
         """
         from openai import AsyncOpenAI
         import re
+        
+        # Validate user input for prompt injection (if enabled)
+        processed_question, was_blocked, reason = validate_and_process_input(
+            question, strict_mode=True, enabled=self.settings.prompt_security
+        )
+        
+        if was_blocked:
+            logger.warning(f"Blocked potential prompt injection in agentic RAG: {reason}")
+            yield {"content": get_safe_refusal_message()}
+            yield {"done": True}
+            return
         
         if not self.settings.openai_api_key:
             yield {"error": "OpenAI API key required for streaming"}
@@ -1585,10 +1601,12 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions."""},
             ])
             graph_context_str += f"\n\n=== Knowledge Communities ===\n{community_info}"
         
-        messages = [
-            {"role": "system", "content": """You are an expert research assistant providing comprehensive, accurate answers.
+        agentic_system_prompt = """You are an expert research assistant providing comprehensive, accurate answers.
 Cite sources as [src_1], [src_2], etc. Structure complex answers clearly.
-Never mention "context", "provided documents", "knowledge graph", or similar phrases - answer naturally as an expert."""},
+Never mention "context", "provided documents", "knowledge graph", or similar phrases - answer naturally as an expert.""" + get_anti_injection_instruction(enabled=self.settings.prompt_security)
+        
+        messages = [
+            {"role": "system", "content": agentic_system_prompt},
         ]
         
         if conversation_history:

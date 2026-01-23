@@ -45,6 +45,12 @@ from app.models import (
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
 from app.services.graph_extractor import get_graph_extractor
+from app.services.prompt_security import (
+    validate_and_process_input,
+    get_anti_injection_instruction,
+    filter_output,
+    get_safe_refusal_message,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -955,6 +961,17 @@ async def ask_question_stream(request: RAGRequest):
             try:
                 from openai import AsyncOpenAI
                 
+                # Validate user input for prompt injection (if enabled)
+                processed_question, was_blocked, reason = validate_and_process_input(
+                    request.question, strict_mode=True, enabled=settings.prompt_security
+                )
+                
+                if was_blocked:
+                    logger.warning(f"Blocked potential prompt injection: {reason}")
+                    yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                    return
+                
                 processor = get_query_processor()
                 
                 # Check if this is a follow-up question (has conversation history)
@@ -962,7 +979,7 @@ async def ask_question_stream(request: RAGRequest):
                 
                 system_prompt = """You are a helpful assistant. Be direct and concise. Do not mention sources or citations.
 When there is conversation history, prioritize continuing that conversation naturally.
-Important: You do not have access to any tools. Never output tool calls, function calls, or any special syntax. Just provide plain text answers."""
+Important: You do not have access to any tools. Never output tool calls, function calls, or any special syntax. Just provide plain text answers.""" + get_anti_injection_instruction(enabled=settings.prompt_security)
                 
                 messages = [{"role": "system", "content": system_prompt}]
                 
@@ -1029,6 +1046,17 @@ Question: {request.question}"""
     async def generate():
         try:
             from openai import AsyncOpenAI
+            
+            # Validate user input for prompt injection (if enabled)
+            processed_question, was_blocked, reason = validate_and_process_input(
+                request.question, strict_mode=True, enabled=settings.prompt_security
+            )
+            
+            if was_blocked:
+                logger.warning(f"Blocked potential prompt injection: {reason}")
+                yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
             
             processor = get_query_processor()
             
@@ -1119,7 +1147,7 @@ Response Style:
 - Never mention "context", "provided documents", or similar phrases
 - Never say "Based on the context" or "According to the documents provided"
 - Present information confidently as expert knowledge
-- Never output tool calls, function calls, or any special syntax - just provide plain text answers"""
+- Never output tool calls, function calls, or any special syntax - just provide plain text answers""" + get_anti_injection_instruction(enabled=settings.prompt_security)
             
             # Build messages with conversation history
             messages = [{"role": "system", "content": system_prompt}]
