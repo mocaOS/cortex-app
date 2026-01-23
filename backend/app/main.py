@@ -961,7 +961,8 @@ async def ask_question_stream(request: RAGRequest):
                 has_history = request.conversation_history and len(request.conversation_history) > 0
                 
                 system_prompt = """You are a helpful assistant. Be direct and concise. Do not mention sources or citations.
-When there is conversation history, prioritize continuing that conversation naturally."""
+When there is conversation history, prioritize continuing that conversation naturally.
+Important: You do not have access to any tools. Never output tool calls, function calls, or any special syntax. Just provide plain text answers."""
                 
                 messages = [{"role": "system", "content": system_prompt}]
                 
@@ -1101,6 +1102,9 @@ Question: {request.question}"""
                 ])
                 graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
             
+            # Check if this is a follow-up question
+            has_history = conversation_history and len(conversation_history) > 0
+            
             system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
@@ -1108,14 +1112,38 @@ Guidelines:
 2. Cite sources inline using [src_1], [src_2] notation when referencing specific information
 3. Be precise and factual - avoid speculation
 4. If you cannot fully answer, explain what aspects you can address
+5. When there is conversation history, prioritize continuing that conversation naturally
 
 Response Style:
 - Write naturally as if you're an expert directly answering the question
 - Never mention "context", "provided documents", or similar phrases
 - Never say "Based on the context" or "According to the documents provided"
-- Present information confidently as expert knowledge"""
+- Present information confidently as expert knowledge
+- Never output tool calls, function calls, or any special syntax - just provide plain text answers"""
             
-            prompt = f"""Answer the following question. Use [src_1], [src_2], etc. to cite specific information.
+            # Build messages with conversation history
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            if has_history:
+                max_history = settings.max_conversation_history
+                for msg in conversation_history[-max_history:]:
+                    messages.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+                
+                # For follow-up questions, include sources as additional context but keep question simple
+                if formatted_sources or graph_context_str:
+                    prompt = f"""{request.question}
+
+(Additional reference material if needed:
+{formatted_sources if formatted_sources else ""}
+{graph_context_str})"""
+                else:
+                    prompt = request.question
+            else:
+                # First message - full context with sources
+                prompt = f"""Answer the following question. Use [src_1], [src_2], etc. to cite specific information.
 
 === Reference Material ===
 {formatted_sources if formatted_sources else "No references available."}
@@ -1125,17 +1153,6 @@ Response Style:
 {request.question}
 
 ### Answer:"""
-            
-            # Build messages with conversation history
-            messages = [{"role": "system", "content": system_prompt}]
-            
-            if conversation_history:
-                max_history = settings.max_conversation_history
-                for msg in conversation_history[-max_history:]:
-                    messages.append({
-                        "role": msg.role,
-                        "content": msg.content
-                    })
             
             messages.append({"role": "user", "content": prompt})
             
