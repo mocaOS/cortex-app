@@ -1,3 +1,5 @@
+<div align="center">
+
 ![MOCA Knowledge Base](frontend/public/banner.jpg)
 
 # 🧠 MOCA Knowledge Base
@@ -8,6 +10,8 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Neo4j](https://img.shields.io/badge/Neo4j-008CC1?style=flat&logo=neo4j&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)
+
+</div>
 
 ## ✨ Features
 
