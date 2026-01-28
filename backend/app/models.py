@@ -67,7 +67,7 @@ class GraphContext(BaseModel):
 
 
 # =============================================================================
-# Collection-Level Knowledge Graphs (R2R-style)
+# Collection-Level Knowledge Graphs
 # =============================================================================
 
 class Collection(BaseModel):
@@ -104,7 +104,7 @@ class CollectionUpdate(BaseModel):
 
 
 # =============================================================================
-# Community Detection & Summarization (R2R-style)
+# Community Detection & Summarization
 # =============================================================================
 
 class Community(BaseModel):
@@ -148,7 +148,7 @@ class EntityWithEmbedding(Entity):
 
 
 # =============================================================================
-# Extended Thinking / Reasoning Visibility (R2R-style)
+# Extended Thinking / Reasoning Visibility
 # =============================================================================
 
 class ReasoningStep(BaseModel):

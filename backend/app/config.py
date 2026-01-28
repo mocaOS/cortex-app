@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     sentences_per_chunk: int = Field(default=5)  # Sentences per chunk when using sentence splitting
     
     # ==========================================================================
-    # Community Detection & Graph Summarization (R2R-style)
+    # Community Detection & Graph Summarization
     # ==========================================================================
     enable_community_detection: bool = Field(default=True)  # Enable entity community detection
     min_community_size: int = Field(default=3)  # Minimum entities for a valid community
@@ -93,13 +93,13 @@ class Settings(BaseSettings):
     entity_embedding_model: str = Field(default="")  # Model for entity embeddings (defaults to embedding_model)
     
     # ==========================================================================
-    # Collection-Level Graphs (R2R-style)
+    # Collection-Level Graphs
     # ==========================================================================
     enable_collections: bool = Field(default=True)  # Enable collection-based organization
     default_collection: str = Field(default="default")  # Default collection name for documents
     
     # ==========================================================================
-    # Extended Thinking / Reasoning Visibility (R2R-style)
+    # Extended Thinking / Reasoning Visibility
     # ==========================================================================
     stream_reasoning_steps: bool = Field(default=True)  # Stream reasoning steps in agentic mode
     show_retrieval_stats: bool = Field(default=True)  # Show retrieval statistics in responses
@@ -108,6 +108,22 @@ class Settings(BaseSettings):
     # Prompt Security (protection against prompt injection attacks)
     # ==========================================================================
     prompt_security: bool = Field(default=True)  # Enable prompt injection detection and protection
+    
+    # ==========================================================================
+    # Compute3 Turbo Mode Configuration
+    # ==========================================================================
+    compute3_api_key: str = Field(default="")  # Compute3 API key for turbo mode
+    compute3_api_base: str = Field(default="https://api.compute3.ai")  # Compute3 API base URL
+    compute3_gpu_type: str = Field(default="h100")  # GPU type for turbo mode jobs
+    compute3_gpu_count: int = Field(default=4)  # Number of GPUs for turbo mode
+    compute3_model: str = Field(default="MiniMaxAI/MiniMax-M2.1")  # Model to run on Compute3 (HuggingFace model ID)
+    compute3_docker_image: str = Field(default="vllm/vllm-openai:nightly")  # Docker image for vLLM (nightly required for MiniMax-M2.1)
+    compute3_default_runtime: int = Field(default=3600)  # Default job runtime in seconds (1 hour)
+    
+    @property
+    def turbo_mode_available(self) -> bool:
+        """Check if turbo mode is available (Compute3 API key is set)."""
+        return bool(self.compute3_api_key)
     
     @property
     def extraction_model(self) -> str:

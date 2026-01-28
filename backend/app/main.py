@@ -31,7 +31,7 @@ from app.models import (
     ReprocessRequest,
     DeleteRequest,
     MoveDocumentsRequest,
-    # New R2R-style models
+    # Extended models
     Collection,
     CollectionCreate,
     CollectionUpdate,
@@ -51,6 +51,8 @@ from app.services.prompt_security import (
     filter_output,
     get_safe_refusal_message,
 )
+from app.services.compute3_service import get_compute3_service
+from app.services.llm_config import get_llm_config, is_turbo_mode_active
 
 # Configure logging
 logging.basicConfig(
@@ -1009,13 +1011,15 @@ Question: {request.question}"""
                     
                     messages.append({"role": "user", "content": prompt})
                 
+                # Use turbo mode config if active, otherwise default settings
+                llm_config = get_llm_config()
                 client = AsyncOpenAI(
-                    api_key=settings.openai_api_key,
-                    base_url=settings.openai_api_base,
+                    api_key=llm_config.api_key,
+                    base_url=llm_config.base_url,
                 )
                 
                 stream = await client.chat.completions.create(
-                    model=settings.openai_model,
+                    model=llm_config.model,
                     messages=messages,
                     temperature=0.2,  # Lower temperature for faster, more deterministic responses
                     max_tokens=600,   # Reduced for faster completion
@@ -1185,13 +1189,15 @@ Response Style:
             messages.append({"role": "user", "content": prompt})
             
             # Stream the response using async client
+            # Use turbo mode config if active, otherwise default settings
+            llm_config = get_llm_config()
             client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
             )
             
             stream = await client.chat.completions.create(
-                model=settings.openai_model,
+                model=llm_config.model,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1200,
@@ -1229,7 +1235,7 @@ async def get_graph_visualization(
     include_neighbors: bool = Query(default=True, description="Include 1-hop neighbor entities for more relationships")
 ):
     """
-    Get knowledge graph data for visualization (R2R-style enhanced).
+    Get knowledge graph data for visualization.
     
     This endpoint returns entities and ALL their relationships in both directions,
     optionally expanding to include neighbor entities to show more graph structure.
@@ -1257,7 +1263,7 @@ async def get_entity_relationships(
     limit: int = Query(default=50, ge=1, le=200, description="Maximum relationships to return")
 ):
     """
-    Get an entity and all its relationships up to max_depth hops (R2R-style).
+    Get an entity and all its relationships up to max_depth hops.
     
     This enables focused graph exploration from a specific entity,
     showing all connected entities and the relationships between them.
@@ -1283,7 +1289,7 @@ async def get_graph_subgraph(
     """
     Get a subgraph containing specified entities and their interconnections.
     
-    R2R-style endpoint for focused graph visualization of specific entities.
+    Endpoint for focused graph visualization of specific entities.
     If include_connections is True, also includes bridging entities that
     connect the specified entities (up to 2 hops apart).
     """
@@ -1378,7 +1384,7 @@ async def get_graph_status():
             "relationship_count": stats.get("relationship_count", 0),
             "community_count": stats.get("community_count", 0),
             "collection_count": stats.get("collection_count", 0),
-            # New R2R-style features
+            # Advanced features
             "community_detection_enabled": settings.enable_community_detection,
             "graph_summarization_enabled": settings.enable_graph_summarization,
             "semantic_entity_resolution_enabled": settings.enable_semantic_entity_resolution,
@@ -1390,7 +1396,7 @@ async def get_graph_status():
 
 
 # =============================================================================
-# Collection Endpoints (R2R-style)
+# Collection Endpoints
 # =============================================================================
 
 @app.get("/api/collections")
@@ -1518,7 +1524,7 @@ async def get_collection_entities(
 
 
 # =============================================================================
-# Community Detection Endpoints (R2R-style)
+# Community Detection Endpoints
 # =============================================================================
 
 @app.get("/api/graph/communities")
@@ -1752,7 +1758,7 @@ async def search_communities(
 
 
 # =============================================================================
-# Extended Thinking / Streaming Agentic RAG (R2R-style)
+# Extended Thinking / Streaming Agentic RAG
 # =============================================================================
 
 @app.post("/api/ask/stream/thinking")
@@ -1770,7 +1776,7 @@ async def ask_with_thinking_stream(request: RAGRequest):
     - content: Streamed answer tokens
     - done: Completion signal with final stats
     
-    This provides R2R-style extended thinking where users can see
+    This provides extended thinking where users can see
     the agent's reasoning process in real-time.
     """
     settings = get_settings()
@@ -1802,6 +1808,294 @@ async def ask_with_thinking_stream(request: RAGRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+# =============================================================================
+# Turbo Mode Endpoints (Compute3 GPU Acceleration)
+# =============================================================================
+
+@app.get("/api/turbo/status")
+async def get_turbo_status():
+    """
+    Get Turbo Mode status.
+    
+    Returns whether Turbo Mode is available (API key configured),
+    currently active (GPU job running), ready (vLLM server responding),
+    and job details if active.
+    
+    IMPORTANT: This endpoint never exposes the actual API key.
+    
+    Fields:
+    - available: True if COMPUTE3_API_KEY is configured
+    - active: True if a GPU job is running
+    - ready: True if the vLLM inference server is ready for requests
+    - job: Details of the active job (if any)
+    - config: GPU configuration settings
+    """
+    try:
+        settings = get_settings()
+        c3 = get_compute3_service()
+        
+        # Check for active job (this also checks vLLM readiness)
+        active_job = await c3.get_active_turbo_job()
+        
+        is_running = active_job is not None and active_job.is_running
+        is_ready = active_job is not None and active_job.is_ready
+        
+        return {
+            "available": c3.is_available,
+            "active": is_running,  # GPU job is running
+            "ready": is_ready,     # vLLM server is ready for inference
+            "job": active_job.to_dict() if active_job else None,
+            "config": {
+                "gpu_type": settings.compute3_gpu_type,
+                "gpu_count": settings.compute3_gpu_count,
+                "model": settings.compute3_model,
+                "default_runtime": settings.compute3_default_runtime,
+            } if c3.is_available else None,
+        }
+    except Exception as e:
+        logger.error(f"Error getting turbo status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/turbo/balance")
+async def get_turbo_balance():
+    """Get Compute3 account balance."""
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        balance = await c3.get_balance()
+        
+        # Check for error in response
+        if "error" in balance:
+            return {"error": balance["error"]}
+        
+        # Transform Compute3 API response to frontend-expected format
+        # Compute3 returns string values, convert to floats
+        try:
+            total = float(balance.get("total_balance", 0))
+            available = float(balance.get("available_balance", 0))
+            reserved = float(balance.get("pending_reservations", 0))
+        except (ValueError, TypeError):
+            total = 0.0
+            available = 0.0
+            reserved = 0.0
+        
+        return {
+            "total": total,
+            "available": available,
+            "reserved": reserved,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting turbo balance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/turbo/start")
+async def start_turbo_mode(
+    runtime: Optional[int] = Query(default=None, ge=60, le=86400, description="Runtime in seconds (1 min to 24 hours)"),
+    gpu_type: Optional[str] = Query(default=None, description="GPU type (h100, a100, l40s, etc.)"),
+    gpu_count: Optional[int] = Query(default=None, ge=1, le=8, description="Number of GPUs (1-8)"),
+):
+    """
+    Start Turbo Mode by launching a GPU job on Compute3.
+    
+    This creates a high-performance vLLM inference server on dedicated GPUs
+    for faster document processing and LLM queries.
+    
+    Default configuration:
+    - Model: minimax-m21
+    - GPUs: 4 x H100
+    - Runtime: 1 hour
+    """
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        # Check if already running
+        active_job = await c3.get_active_turbo_job()
+        if active_job and active_job.is_running:
+            return {
+                "message": "Turbo Mode already active",
+                "job": active_job.to_dict(),
+            }
+        
+        # Create new turbo job
+        job = await c3.create_turbo_job(
+            runtime=runtime,
+            gpu_type=gpu_type,
+            gpu_count=gpu_count,
+        )
+        
+        if not job:
+            raise HTTPException(status_code=500, detail="Failed to create Turbo Mode job")
+        
+        return {
+            "message": "Turbo Mode starting",
+            "job": job.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting turbo mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/turbo/stop")
+async def stop_turbo_mode(
+    job_id: Optional[str] = Query(default=None, description="Specific job ID to stop (optional)")
+):
+    """
+    Stop Turbo Mode by cancelling the active GPU job.
+    
+    If job_id is not specified, stops the currently active turbo mode job.
+    """
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        # Get job to cancel
+        if job_id:
+            target_job_id = job_id
+        else:
+            active_job = await c3.get_active_turbo_job()
+            if not active_job:
+                return {"message": "No active Turbo Mode job to stop"}
+            target_job_id = active_job.job_id
+        
+        success = await c3.cancel_job(target_job_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to cancel job {target_job_id}")
+        
+        return {
+            "message": "Turbo Mode stopped",
+            "job_id": target_job_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error stopping turbo mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/turbo/extend")
+async def extend_turbo_mode(
+    additional_seconds: int = Query(..., ge=60, le=86400, description="Additional runtime in seconds"),
+    job_id: Optional[str] = Query(default=None, description="Specific job ID to extend (optional)")
+):
+    """
+    Extend the runtime of an active Turbo Mode job.
+    """
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        # Get job to extend
+        if job_id:
+            target_job_id = job_id
+        else:
+            active_job = await c3.get_active_turbo_job()
+            if not active_job:
+                raise HTTPException(status_code=404, detail="No active Turbo Mode job to extend")
+            target_job_id = active_job.job_id
+        
+        job = await c3.extend_job(target_job_id, additional_seconds)
+        
+        if not job:
+            raise HTTPException(status_code=500, detail=f"Failed to extend job {target_job_id}")
+        
+        return {
+            "message": f"Extended Turbo Mode by {additional_seconds} seconds",
+            "job": job.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extending turbo mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/turbo/jobs")
+async def list_turbo_jobs(
+    state: Optional[str] = Query(default=None, description="Filter by state (running, pending, succeeded, failed, canceled)")
+):
+    """
+    List all Turbo Mode jobs (current and historical).
+    """
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        jobs = await c3.list_jobs(state=state)
+        
+        # Filter to only vLLM jobs (turbo mode jobs)
+        turbo_jobs = [j for j in jobs if "vllm" in j.docker_image.lower()]
+        
+        return {
+            "jobs": [j.to_dict() for j in turbo_jobs],
+            "total": len(turbo_jobs),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing turbo jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/turbo/jobs/{job_id}")
+async def get_turbo_job(job_id: str):
+    """Get details of a specific Turbo Mode job."""
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        job = await c3.get_job(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        
+        return job.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting turbo job: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/turbo/jobs/{job_id}/logs")
+async def get_turbo_job_logs(job_id: str):
+    """Get logs from a Turbo Mode job."""
+    try:
+        c3 = get_compute3_service()
+        
+        if not c3.is_available:
+            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
+        
+        logs = await c3.get_job_logs(job_id)
+        
+        return {"job_id": job_id, "logs": logs}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting turbo job logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

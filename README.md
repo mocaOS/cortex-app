@@ -31,7 +31,7 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 - **🚀 Streaming Responses**: Real-time answer generation with SSE
 - **🔬 Deep Research Mode**: Agentic multi-step RAG for complex questions
 
-### R2R-Inspired Advanced Features
+### Advanced Features
 - **🌐 Community Detection**: Automatic grouping of related entities using graph algorithms
 - **📝 Graph Summarization**: LLM-generated summaries for entity communities
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)

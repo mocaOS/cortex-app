@@ -1,6 +1,6 @@
 """Document processing service using Haystack with GraphRAG support.
 
-Enhanced with R2R-style features:
+Features:
 - Hybrid search with RRF
 - Conversation memory
 - Re-ranking with cross-encoder
@@ -42,6 +42,7 @@ from app.models import (
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.graph_extractor import get_graph_extractor
+from app.services.llm_config import get_llm_config
 from app.services.prompt_security import (
     validate_and_process_input,
     get_anti_injection_instruction,
@@ -515,7 +516,7 @@ class DocumentProcessor:
             
             # =================================================================
             # GraphRAG: Extract entities and relationships from chunks
-            # Uses R2R-style extraction with document summary for context
+            # Uses extraction with document summary for context
             # Processes multiple chunks concurrently based on concurrent_extractions setting
             # =================================================================
             if self.graph_extractor.is_available and self.settings.enable_graph_extraction:
@@ -536,7 +537,7 @@ class DocumentProcessor:
                 # Yield control before graph extraction
                 await asyncio.sleep(0)
                 
-                # Generate document summary for context (R2R-style)
+                # Generate document summary for context
                 # Combine all chunk content for summary (limited to first ~5000 chars)
                 full_text = " ".join([c.content for c in embedded_chunks])[:5000]
                 document_summary = await self.graph_extractor.generate_document_summary_async(full_text)
@@ -682,7 +683,7 @@ class DocumentProcessor:
 
 
 class QueryProcessor:
-    """Process queries for semantic search and GraphRAG with R2R-style enhancements."""
+    """Process queries for semantic search and GraphRAG enhancements."""
     
     def __init__(self):
         self.settings = get_settings()
@@ -864,7 +865,7 @@ class QueryProcessor:
         use_agentic: bool = False
     ) -> dict:
         """
-        Answer a question using enhanced GraphRAG with R2R-style features.
+        Answer a question using enhanced GraphRAG features.
         
         Features:
         - Hybrid search with RRF (vector + keyword + graph)
@@ -968,12 +969,14 @@ class QueryProcessor:
         try:
             from openai import OpenAI
             
+            # Use turbo mode config if active, otherwise default settings
+            llm_config = get_llm_config()
             client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_api_base,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
             )
             
-            # Enhanced R2R-style system prompt with anti-injection protection
+            # Enhanced system prompt with anti-injection protection
             system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
@@ -1025,7 +1028,7 @@ Response Style:
             messages.append({"role": "user", "content": prompt})
             
             response = client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=llm_config.model,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1200  # Increased for more complete answers
@@ -1070,7 +1073,7 @@ Response Style:
         """
         Agentic multi-step RAG for complex questions with extended thinking.
         
-        R2R-style Deep Research with visible reasoning:
+        Deep Research with visible reasoning:
         1. Break down complex questions into sub-questions
         2. Iteratively retrieve information with community context
         3. Synthesize and identify gaps
@@ -1106,9 +1109,11 @@ Response Style:
                 use_agentic=False
             )
         
+        # Use turbo mode config if active, otherwise default settings
+        llm_config = get_llm_config()
         client = OpenAI(
-            api_key=self.settings.openai_api_key,
-            base_url=self.settings.openai_api_base,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
         )
         
         # Extended thinking: detailed reasoning steps
@@ -1130,7 +1135,7 @@ Response Style:
         ))
         
         decompose_response = client.chat.completions.create(
-            model=self.settings.openai_model,
+            model=llm_config.model,
             messages=[
                 {"role": "system", "content": """You help break down complex questions into simpler sub-questions.
 Output a JSON array of sub-questions that together would answer the main question.
@@ -1309,7 +1314,7 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
             ])
             graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
         
-        # Add community context (R2R-style)
+        # Add community context
         if graph_context and graph_context.communities:
             community_info = "\n".join([
                 f"- {c.get('name') or 'Community ' + str(c.get('id', ''))}: {c.get('summary', '')}"
@@ -1360,7 +1365,7 @@ Response Style:
         messages.append({"role": "user", "content": prompt})
         
         response = client.chat.completions.create(
-            model=self.settings.openai_model,
+            model=llm_config.model,
             messages=messages,
             temperature=0.3,
             max_tokens=2000
@@ -1433,13 +1438,16 @@ Response Style:
             yield {"done": True}
             return
         
-        if not self.settings.openai_api_key:
+        # Use turbo mode config if active, otherwise default settings
+        llm_config = get_llm_config()
+        
+        if not llm_config.api_key:
             yield {"error": "OpenAI API key required for streaming"}
             return
         
         client = AsyncOpenAI(
-            api_key=self.settings.openai_api_key,
-            base_url=self.settings.openai_api_base,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
         )
         
         reasoning_steps = []
@@ -1451,7 +1459,7 @@ Response Style:
         yield {"thinking": "Analyzing question complexity..."}
         
         decompose_response = await client.chat.completions.create(
-            model=self.settings.openai_model,
+            model=llm_config.model,
             messages=[
                 {"role": "system", "content": """Break down complex questions into sub-questions.
 Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions."""},
@@ -1626,7 +1634,7 @@ Comprehensive Answer:"""
         
         # Stream the response
         stream = await client.chat.completions.create(
-            model=self.settings.openai_model,
+            model=llm_config.model,
             messages=messages,
             temperature=0.3,
             max_tokens=2000,

@@ -1,6 +1,6 @@
 """GraphRAG entity and relationship extraction service using LLM.
 
-Prompts inspired by R2R (https://github.com/SciPhi-AI/R2R) for high-quality knowledge graph extraction.
+High-quality knowledge graph extraction using XML-formatted prompts.
 """
 
 import logging
@@ -14,6 +14,7 @@ from openai import OpenAI, AsyncOpenAI
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
+from app.services.llm_config import get_llm_config, is_turbo_mode_active
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ DEFAULT_RELATION_TYPES = [
 
 
 # =============================================================================
-# R2R-Style Graph Extraction Prompts (XML Format for Better Parsing)
+# Graph Extraction Prompts (XML Format for Better Parsing)
 # =============================================================================
 
 EXTRACTION_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract entities and their relationships from text to build a comprehensive knowledge graph.
@@ -122,7 +123,7 @@ Example Output (for reference):
 Now extract entities and relationships from the text above:"""
 
 
-# Document summary prompt for context generation (R2R style)
+# Document summary prompt for context generation
 SUMMARY_PROMPT = """Generate a descriptive summary of the following document. The summary should:
 - Be roughly 10% of the input document size
 - Retain key points, entities, and relationships mentioned
@@ -134,7 +135,7 @@ Document:
 Summary:"""
 
 
-# Entity description enrichment prompt (R2R style)
+# Entity description enrichment prompt
 ENTITY_DESCRIPTION_PROMPT = """Given the following information about an entity, generate a comprehensive description.
 
 Document Context:
@@ -175,37 +176,74 @@ Output ONLY the XML format:
 
 
 class GraphExtractor:
-    """Extract entities and relationships from text using LLM with R2R-style prompts."""
+    """Extract entities and relationships from text using LLM prompts."""
     
     def __init__(self):
         self.settings = get_settings()
         self._client: Optional[OpenAI] = None
         self._async_client: Optional[AsyncOpenAI] = None
+        self._last_config_hash: Optional[str] = None  # Track config changes for turbo mode
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
         
         if not self.settings.openai_api_key:
             logger.warning("OpenAI API key not configured - graph extraction will be disabled")
     
+    def _get_config_hash(self) -> str:
+        """Get a hash of current LLM config to detect changes (e.g., turbo mode toggle)."""
+        config = get_llm_config()
+        return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
+    
+    def _reset_clients_if_config_changed(self):
+        """Reset clients if the LLM configuration has changed (e.g., turbo mode toggled)."""
+        current_hash = self._get_config_hash()
+        if self._last_config_hash and self._last_config_hash != current_hash:
+            logger.info("LLM configuration changed (turbo mode toggle), recreating clients")
+            self._client = None
+            self._async_client = None
+        self._last_config_hash = current_hash
+    
     @property
     def client(self) -> Optional[OpenAI]:
-        """Lazy initialization of synchronous OpenAI client."""
-        if self._client is None and self.settings.openai_api_key:
+        """
+        Lazy initialization of synchronous OpenAI client.
+        Uses turbo mode URL when active, otherwise falls back to default settings.
+        """
+        self._reset_clients_if_config_changed()
+        
+        config = get_llm_config()
+        if self._client is None and config.api_key:
             self._client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_api_base,
+                api_key=config.api_key,
+                base_url=config.base_url,
             )
+            if config.is_turbo:
+                logger.info(f"Graph extractor using Turbo Mode: {config.base_url}")
         return self._client
     
     @property
     def async_client(self) -> Optional[AsyncOpenAI]:
-        """Lazy initialization of async OpenAI client for concurrent processing."""
-        if self._async_client is None and self.settings.openai_api_key:
+        """
+        Lazy initialization of async OpenAI client for concurrent processing.
+        Uses turbo mode URL when active, otherwise falls back to default settings.
+        """
+        self._reset_clients_if_config_changed()
+        
+        config = get_llm_config()
+        if self._async_client is None and config.api_key:
             self._async_client = AsyncOpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_api_base,
+                api_key=config.api_key,
+                base_url=config.base_url,
             )
+            if config.is_turbo:
+                logger.info(f"Async graph extractor using Turbo Mode: {config.base_url}")
         return self._async_client
+    
+    @property
+    def current_model(self) -> str:
+        """Get the current model to use (turbo model if active, otherwise default)."""
+        config = get_llm_config()
+        return config.model
     
     @property
     def is_available(self) -> bool:
@@ -346,7 +384,7 @@ class GraphExtractor:
         relation_types: Optional[List[str]] = None
     ) -> ExtractionResult:
         """
-        Extract entities and relationships from text using LLM with R2R-style prompts.
+        Extract entities and relationships from text using LLM prompts.
         
         Args:
             text: The text to extract from
@@ -381,7 +419,7 @@ class GraphExtractor:
         try:
             # Make API call
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
@@ -392,7 +430,7 @@ class GraphExtractor:
             
             content = response.choices[0].message.content
             
-            # Try XML parsing first (R2R format)
+            # Try XML parsing first
             xml_entities = self._extract_xml_entities(content)
             xml_relationships = self._extract_xml_relationships(content)
             
@@ -571,7 +609,7 @@ class GraphExtractor:
         try:
             # Make async API call - this is the key for true concurrency
             response = await self.async_client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
@@ -687,7 +725,7 @@ class GraphExtractor:
         
         try:
             response = await self.async_client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
                     {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
@@ -722,7 +760,7 @@ class GraphExtractor:
         
         try:
             response = await self.async_client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
                     {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
@@ -754,7 +792,7 @@ class GraphExtractor:
         
         try:
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
                     {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
@@ -783,7 +821,7 @@ class GraphExtractor:
     def generate_document_summary(self, document: str) -> str:
         """
         Generate a document summary for context in extraction.
-        Uses R2R-style summary prompt.
+        Uses summary prompt.
         
         Args:
             document: The full document text
@@ -796,7 +834,7 @@ class GraphExtractor:
         
         try:
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
                     {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}  # Limit input
@@ -822,7 +860,7 @@ class GraphExtractor:
         relationships: List[dict]
     ) -> str:
         """
-        Enrich an entity description using R2R-style prompt.
+        Enrich an entity description using prompt.
         
         Args:
             entity_name: Name of the entity
@@ -845,7 +883,7 @@ class GraphExtractor:
         
         try:
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You are an entity description enrichment assistant."},
                     {"role": "user", "content": ENTITY_DESCRIPTION_PROMPT.format(
@@ -869,7 +907,7 @@ class GraphExtractor:
             return entity_description
     
     # =========================================================================
-    # Community Summarization (R2R-style)
+    # Community Summarization
     # =========================================================================
     
     def generate_community_summary(
@@ -880,7 +918,7 @@ class GraphExtractor:
         """
         Generate a summary and name for a community of related entities.
         
-        R2R-style community summarization for improved RAG context.
+        Community summarization for improved RAG context.
         
         Args:
             entities: List of entity dicts with name, type, description
@@ -921,7 +959,7 @@ Respond with ONLY the JSON object, no other text:
         
         try:
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
                     {"role": "user", "content": prompt}
@@ -1025,7 +1063,7 @@ Respond with ONLY the JSON object, no other text:
         
         try:
             response = await self.async_client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
                     {"role": "user", "content": prompt}
@@ -1083,7 +1121,7 @@ Respond with ONLY the community name, nothing else."""
         
         try:
             response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
+                model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You name knowledge graph communities. Respond with only the name."},
                     {"role": "user", "content": prompt}

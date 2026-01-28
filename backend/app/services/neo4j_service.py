@@ -1,6 +1,6 @@
 """Neo4j service for document, vector, and knowledge graph storage.
 
-Enhanced with R2R-style features:
+Features:
 - Community detection using graph algorithms
 - Collection-level knowledge graphs
 - Semantic entity resolution with embeddings
@@ -70,7 +70,7 @@ class Neo4jService:
             """)
             
             # =================================================================
-            # Collection constraints (R2R-style)
+            # Collection constraints
             # =================================================================
             try:
                 session.run("""
@@ -119,7 +119,7 @@ class Neo4jService:
                 logger.warning(f"Entity community index may already exist: {e}")
             
             # =================================================================
-            # Community constraints (R2R-style)
+            # Community constraints
             # =================================================================
             try:
                 session.run("""
@@ -1038,7 +1038,7 @@ class Neo4jService:
         graph_weight: float = 0.2
     ) -> dict:
         """
-        Perform hybrid search with Reciprocal Rank Fusion (R2R-style).
+        Perform hybrid search with Reciprocal Rank Fusion.
         Combines: vector similarity + full-text keyword + graph traversal
         
         Returns:
@@ -1220,7 +1220,7 @@ class Neo4jService:
     
     def get_graph_visualization_data(self, limit: int = 100, include_neighbors: bool = True) -> dict:
         """
-        Get data for visualizing the knowledge graph (R2R-style enhanced).
+        Get data for visualizing the knowledge graph.
         
         This method fetches entities and ALL their relationships in both directions,
         optionally expanding to include neighbor entities to show more graph structure.
@@ -1274,7 +1274,7 @@ class Neo4jService:
                 return {"nodes": [], "edges": [], "stats": {"total_entities": 0, "total_relationships": 0}}
             
             # Step 2: Get ALL relationships involving core entities (both directions)
-            # This is the key R2R-style improvement - fetch relationships where
+            # Key improvement - fetch relationships where
             # either source OR target is in our entity set
             edge_limit = None if fetch_all else limit * 5
             
@@ -1383,7 +1383,7 @@ class Neo4jService:
     
     def get_entity_relationships(self, entity_name: str, max_depth: int = 2, limit: int = 50) -> dict:
         """
-        Get an entity and all its relationships up to max_depth hops (R2R-style).
+        Get an entity and all its relationships up to max_depth hops.
         
         This enables focused graph exploration from a specific entity.
         
@@ -1469,7 +1469,7 @@ class Neo4jService:
         """
         Get a subgraph containing specified entities and their interconnections.
         
-        R2R-style method for focused graph visualization of specific entities.
+        Method for focused graph visualization of specific entities.
         
         Args:
             entity_names: List of entity names to include
@@ -1549,7 +1549,7 @@ class Neo4jService:
             return {"nodes": nodes, "edges": edges}
     
     # =========================================================================
-    # Collection Management (R2R-style)
+    # Collection Management
     # =========================================================================
     
     def create_collection(self, name: str, description: Optional[str] = None) -> dict:
@@ -1737,7 +1737,7 @@ class Neo4jService:
             return [dict(record) for record in result]
     
     # =========================================================================
-    # Community Detection (R2R-style)
+    # Community Detection
     # =========================================================================
     
     def detect_communities(self, min_size: int = 3, collection_id: Optional[str] = None) -> List[dict]:
@@ -2012,7 +2012,7 @@ class Neo4jService:
                 return []
     
     # =========================================================================
-    # Semantic Entity Resolution (R2R-style)
+    # Semantic Entity Resolution
     # =========================================================================
     
     def find_similar_entities_by_embedding(

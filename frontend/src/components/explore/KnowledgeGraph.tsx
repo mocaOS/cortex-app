@@ -28,7 +28,7 @@ interface ForceGraphLink {
   source: string | ForceGraphNode;
   target: string | ForceGraphNode;
   type: string;
-  weight?: number;  // R2R-style relationship weight (0-10)
+  weight?: number;  // Relationship weight (0-10)
 }
 
 // Dynamically import ForceGraph2D to avoid SSR issues
@@ -458,7 +458,7 @@ export default function KnowledgeGraph({
       const adjustedEndX = endX - nx * endNodeSize;
       const adjustedEndY = endY - ny * endNodeSize;
 
-      // Link opacity and width - weight affects thickness (R2R-style)
+      // Link opacity and width - weight affects thickness
       const weight = (link as ForceGraphLink).weight ?? 5.0;
       const baseOpacity = 0.15 + (weight / 10) * 0.25;  // Higher weight = more visible
       const opacity = Math.min(baseOpacity + (globalScale - 1) * 0.1, 0.6);

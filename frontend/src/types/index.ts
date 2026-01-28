@@ -149,7 +149,7 @@ export interface HealthResponse {
 }
 
 // =============================================================================
-// Collection Types (R2R-style)
+// Collection Types
 // =============================================================================
 
 export interface Collection {
@@ -175,7 +175,7 @@ export interface CollectionEntity {
 }
 
 // =============================================================================
-// Community Types (R2R-style)
+// Community Types
 // =============================================================================
 
 export interface Community {
@@ -259,7 +259,7 @@ export interface GraphEdge {
   target: string;
   type: string;
   description?: string;
-  weight?: number;  // R2R-style relationship weight (0-10)
+  weight?: number;  // Relationship weight (0-10)
 }
 
 export interface GraphStats {
@@ -273,7 +273,7 @@ export interface GraphStats {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  stats?: GraphStats;  // R2R-style metadata about graph data
+  stats?: GraphStats;  // Metadata about graph data
 }
 
 export interface EntityRelationshipsResponse {
@@ -320,4 +320,46 @@ export interface EntityDetails {
     document_id: string;
     filename: string;
   }>;
+}
+
+// =============================================================================
+// Turbo Mode Types (Compute3 GPU Acceleration)
+// =============================================================================
+
+export interface TurboJob {
+  job_id: string;
+  state: string;
+  gpu_type: string;
+  gpu_count: number;
+  region: string;
+  price_per_hour: number;
+  runtime: number;
+  hostname?: string;
+  base_url?: string;
+  is_running: boolean;
+  is_ready: boolean;  // vLLM server is ready for requests
+  created_at?: number;
+  started_at?: number;
+  completed_at?: number;
+  completed?: boolean;
+}
+
+export interface TurboStatus {
+  available: boolean;
+  active: boolean;   // GPU job is running
+  ready: boolean;    // vLLM server is ready for requests
+  job?: TurboJob;
+  config?: {
+    gpu_type: string;
+    gpu_count: number;
+    model: string;
+    default_runtime: number;
+  };
+}
+
+export interface TurboBalance {
+  total?: number;
+  available?: number;
+  reserved?: number;
+  error?: string;
 }
