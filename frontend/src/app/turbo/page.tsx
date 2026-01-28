@@ -618,7 +618,7 @@ export default function TurboModePage() {
           <div className="space-y-3 text-sm text-muted-foreground">
             <p>
               <strong className="text-foreground">What is Turbo Mode?</strong>{" "}
-              Turbo Mode uses Compute3's GPU infrastructure to run a dedicated vLLM inference server,
+              Turbo Mode uses Compute3&apos;s GPU infrastructure to run a dedicated vLLM inference server,
               enabling faster document processing and LLM queries.
             </p>
             <p>
@@ -628,7 +628,7 @@ export default function TurboModePage() {
             </p>
             <p>
               <strong className="text-foreground">Pricing:</strong>{" "}
-              You're billed per second of GPU usage. Unused time is refunded when you stop the job early.
+              You&apos;re billed per second of GPU usage. Unused time is refunded when you stop the job early.
               Check your balance at{" "}
               <a
                 href="https://console.compute3.ai"
