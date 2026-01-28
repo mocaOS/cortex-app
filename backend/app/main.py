@@ -981,7 +981,8 @@ async def ask_question_stream(request: RAGRequest):
                 
                 system_prompt = """You are a helpful assistant. Be direct and concise. Do not mention sources or citations.
 When there is conversation history, prioritize continuing that conversation naturally.
-Important: You do not have access to any tools. Never output tool calls, function calls, or any special syntax. Just provide plain text answers.""" + get_anti_injection_instruction(enabled=settings.prompt_security)
+Important: You do not have access to any tools. Never output tool calls, function calls, or any special syntax. Just provide plain text answers.
+Important: Do NOT include any thinking, reasoning, or internal monologue in your response. Do NOT use <think> tags or similar. Respond directly with the answer only.""" + get_anti_injection_instruction(enabled=settings.prompt_security)
                 
                 messages = [{"role": "system", "content": system_prompt}]
                 
@@ -1018,12 +1019,20 @@ Question: {request.question}"""
                     base_url=llm_config.base_url,
                 )
                 
+                # Extra body params to disable thinking for models that support it
+                # (e.g., DeepSeek with enable_thinking, or reasoning_effort)
+                extra_body = {
+                    "enable_thinking": False,  # DeepSeek-R1 style
+                    "reasoning_effort": "none",  # Some providers use this
+                }
+                
                 stream = await client.chat.completions.create(
                     model=llm_config.model,
                     messages=messages,
                     temperature=0.2,  # Lower temperature for faster, more deterministic responses
                     max_tokens=600,   # Reduced for faster completion
-                    stream=True
+                    stream=True,
+                    extra_body=extra_body
                 )
                 
                 async for chunk in stream:

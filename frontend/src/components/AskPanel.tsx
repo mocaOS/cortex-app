@@ -31,6 +31,12 @@ interface Message {
   reranked?: boolean;
 }
 
+// Strip <think>...</think> tags from content (used in fast mode)
+function stripThinkingTags(content: string): string {
+  // Remove complete <think>...</think> blocks (including multiline)
+  return content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+}
+
 export default function AskPanel() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -133,20 +139,24 @@ export default function AskPanel() {
           }
           if (event.content) {
             content += event.content;
+            // In fast mode, strip <think>...</think> tags from the response
+            const displayContent = useFastSearch ? stripThinkingTags(content) : content;
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], content };
+              updated[lastIdx] = { ...updated[lastIdx], content: displayContent };
               return updated;
             });
           }
           if (event.done) {
+            // In fast mode, strip <think>...</think> tags from the final response
+            const finalContent = useFastSearch ? stripThinkingTags(content) : content;
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                content,
+                content: finalContent,
                 sources,
                 graphContext,
                 thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
@@ -192,9 +202,12 @@ export default function AskPanel() {
           useFastSearch,
         });
 
+        // In fast mode, strip <think>...</think> tags from the response
+        const answerContent = useFastSearch ? stripThinkingTags(data.answer) : data.answer;
+
         const assistantMessage: Message = {
           role: "assistant",
-          content: data.answer,
+          content: answerContent,
           sources: data.sources as Source[],
           graphContext: data.graph_context,
           reasoningSteps: data.reasoning_steps,
