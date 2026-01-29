@@ -323,6 +323,47 @@ class MoveDocumentsRequest(BaseModel):
 
 
 # =============================================================================
+# Custom Input (Manual Q&A, Text, Markdown)
+# =============================================================================
+
+class CustomInputType(str, Enum):
+    """Type of custom input."""
+    QA = "qa"          # Question and answer pair
+    TEXT = "text"      # Plain text
+    MARKDOWN = "markdown"  # Markdown formatted text
+
+
+class CustomInputCreate(BaseModel):
+    """Request model for creating a custom knowledge input."""
+    input_type: CustomInputType = Field(..., description="Type of input: qa, text, or markdown")
+    content: str = Field(..., min_length=10, description="Main content (or question for Q&A)")
+    answer: Optional[str] = Field(default=None, description="Answer (only for Q&A type)")
+    title: Optional[str] = Field(default=None, max_length=200, description="Optional title/topic hint for filename generation")
+    collection_id: Optional[str] = Field(default=None, description="Collection to add this input to")
+    start_processing: bool = Field(default=True, description="Start processing immediately after saving")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "input_type": "qa",
+                "content": "What is GraphRAG?",
+                "answer": "GraphRAG combines knowledge graphs with RAG for better retrieval and reasoning.",
+                "title": "GraphRAG explanation",
+                "collection_id": "default"
+            }
+        }
+
+
+class CustomInputResponse(BaseModel):
+    """Response model for custom input creation."""
+    document_id: str
+    filename: str
+    status: ProcessingStatus
+    message: str
+    input_type: CustomInputType
+
+
+# =============================================================================
 # Background Task Tracking
 # =============================================================================
 

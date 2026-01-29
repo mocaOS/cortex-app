@@ -15,8 +15,9 @@ import os
 import uuid
 import logging
 import functools
+import re
 from pathlib import Path
-from typing import Optional, List, AsyncGenerator, Callable
+from typing import Optional, List, AsyncGenerator, Callable, Tuple
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -50,6 +51,69 @@ from app.services.prompt_security import (
 )
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# URL Protection for Chunking
+# =============================================================================
+# URLs contain word boundaries (/, ., -, etc.) that can cause them to be split
+# when using word-based or sentence-based chunking. To prevent this, we:
+# 1. Replace URLs with unique placeholders before splitting
+# 2. Perform the split operation
+# 3. Restore URLs from placeholders after splitting
+
+# Regex pattern to match URLs (http, https, ftp, mailto, etc.)
+# This pattern captures most common URL formats including:
+# - http://example.com, https://example.com
+# - ftp://files.example.com
+# - mailto:user@example.com
+# - URLs with paths, query params, fragments
+URL_PATTERN = re.compile(
+    r'(?:https?://|ftp://|mailto:)'  # Protocol
+    r'[^\s<>\[\](){}\"\'`]+',  # URL body (no whitespace or brackets)
+    re.IGNORECASE
+)
+
+# Placeholder format that's unlikely to appear in real text and won't be split
+URL_PLACEHOLDER_PREFIX = "§§URL_PLACEHOLDER_"
+URL_PLACEHOLDER_SUFFIX = "§§"
+
+
+def _protect_urls(text: str) -> Tuple[str, dict]:
+    """
+    Replace URLs in text with placeholders to prevent splitting.
+    
+    Returns:
+        Tuple of (modified text, mapping of placeholder -> original URL)
+    """
+    url_map = {}
+    
+    def replace_url(match):
+        url = match.group(0)
+        placeholder_id = len(url_map)
+        placeholder = f"{URL_PLACEHOLDER_PREFIX}{placeholder_id}{URL_PLACEHOLDER_SUFFIX}"
+        url_map[placeholder] = url
+        return placeholder
+    
+    protected_text = URL_PATTERN.sub(replace_url, text)
+    return protected_text, url_map
+
+
+def _restore_urls(text: str, url_map: dict) -> str:
+    """
+    Restore URLs from placeholders.
+    
+    Args:
+        text: Text with placeholders
+        url_map: Mapping of placeholder -> original URL
+        
+    Returns:
+        Text with original URLs restored
+    """
+    result = text
+    for placeholder, url in url_map.items():
+        result = result.replace(placeholder, url)
+    return result
+
 
 # Thread pool for re-ranking (cross-encoder can be slow)
 _rerank_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reranker")
@@ -450,12 +514,44 @@ class DocumentProcessor:
             # Yield control
             await asyncio.sleep(0)
             
+            # =================================================================
+            # URL Protection: Prevent URLs from being split across chunks
+            # =================================================================
+            # Replace URLs with placeholders before splitting, then restore after
+            url_maps = []  # Store URL map for each document
+            protected_documents = []
+            
+            for doc in documents:
+                protected_content, url_map = _protect_urls(doc.content)
+                url_maps.append(url_map)
+                # Create a new document with protected content
+                protected_doc = HaystackDocument(
+                    content=protected_content,
+                    meta=doc.meta
+                )
+                protected_documents.append(protected_doc)
+                
+                if url_map:
+                    logger.debug(f"Protected {len(url_map)} URLs from chunking")
+            
             # Split documents into chunks (run in thread pool)
             split_result = await loop.run_in_executor(
                 _get_processing_executor(),
-                functools.partial(self.splitter.run, documents=documents)
+                functools.partial(self.splitter.run, documents=protected_documents)
             )
             chunks = split_result.get("documents", [])
+            
+            # Restore URLs in each chunk
+            # Note: We need to restore URLs from all URL maps since chunks may
+            # come from any of the original documents
+            combined_url_map = {}
+            for url_map in url_maps:
+                combined_url_map.update(url_map)
+            
+            if combined_url_map:
+                for chunk in chunks:
+                    chunk.content = _restore_urls(chunk.content, combined_url_map)
+                logger.debug(f"Restored URLs in {len(chunks)} chunks")
             
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -794,6 +890,37 @@ class QueryProcessor:
             query_embedding=query_embedding,
             top_k=top_k,
             filters=filters
+        )
+        
+        return results
+    
+    def hybrid_search(
+        self,
+        query: str,
+        top_k: int = 10,
+        vector_weight: float = 0.5,
+        keyword_weight: float = 0.3,
+        metadata_weight: float = 0.2
+    ) -> list[dict]:
+        """
+        Perform hybrid search combining:
+        - Vector similarity (semantic search)
+        - Full-text keyword search (content matching)
+        - Metadata search (filename, topic hint for custom inputs)
+        
+        Uses Reciprocal Rank Fusion (RRF) to merge results.
+        """
+        # Generate query embedding
+        query_embedding = self.embed_query(query)
+        
+        # Use simple hybrid search in Neo4j
+        results = self.neo4j.simple_hybrid_search(
+            query_embedding=query_embedding,
+            query_text=query,
+            top_k=top_k,
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight,
+            metadata_weight=metadata_weight
         )
         
         return results

@@ -22,6 +22,9 @@ import type {
   TurboStatus,
   TurboJob,
   TurboBalance,
+  CustomInputCreate,
+  CustomInputResponse,
+  CustomInputItem,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -84,6 +87,63 @@ class ApiClient {
     }
 
     return res.json();
+  }
+
+  /**
+   * Create a custom knowledge input (Q&A, text, or markdown).
+   * 
+   * This allows users to manually add knowledge to the knowledge base without uploading files.
+   * The content is saved as a markdown file and processed like any uploaded document.
+   * The filename is automatically generated using an LLM.
+   * 
+   * @param input - The custom input data
+   */
+  async createCustomInput(input: CustomInputCreate): Promise<CustomInputResponse> {
+    return this.request<CustomInputResponse>("/api/custom-input", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  /**
+   * Generate a topic hint for custom content using AI.
+   * Also returns similar existing topics from the knowledge base.
+   */
+  async generateTopicHint(
+    content: string,
+    inputType: string,
+    answer?: string
+  ): Promise<{ topic_hint: string; existing_similar: string[] }> {
+    return this.request<{ topic_hint: string; existing_similar: string[] }>(
+      "/api/custom-input/generate-topic",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          input_type: inputType,
+          answer,
+        }),
+      }
+    );
+  }
+
+  /**
+   * List all custom inputs with optional search.
+   */
+  async getCustomInputs(search?: string, limit = 50): Promise<{ custom_inputs: CustomInputItem[]; total: number }> {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    params.set("limit", String(limit));
+    return this.request<{ custom_inputs: CustomInputItem[]; total: number }>(
+      `/api/custom-inputs?${params}`
+    );
+  }
+
+  /**
+   * Get a single custom input for editing.
+   */
+  async getCustomInput(documentId: string): Promise<CustomInputItem> {
+    return this.request<CustomInputItem>(`/api/custom-inputs/${documentId}`);
   }
 
   /**

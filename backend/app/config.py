@@ -36,9 +36,11 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="")
     openai_api_base: str = Field(default="https://api.openai.com/v1")
     openai_model: str = Field(default="openai/minimax-m21")
+    openai_model_fast_mode: str = Field(default="")  # Model for "Fast Mode" in Ask AI (defaults to openai_model)
     
     # Upload Configuration
     upload_dir: str = Field(default="./uploads")
+    custom_inputs_dir: str = Field(default="./custom_inputs")  # Separate folder for manually entered content
     max_file_size_mb: int = Field(default=50)
     allowed_extensions: list[str] = Field(default=[".pdf", ".txt", ".md", ".docx", ".xlsx"])
     
@@ -124,6 +126,11 @@ class Settings(BaseSettings):
     def turbo_mode_available(self) -> bool:
         """Check if turbo mode is available (Compute3 API key is set)."""
         return bool(self.compute3_api_key)
+    
+    @property
+    def fast_mode_model(self) -> str:
+        """Get the model to use for Fast Mode in Ask AI."""
+        return self.openai_model_fast_mode or self.openai_model
     
     @property
     def extraction_model(self) -> str:

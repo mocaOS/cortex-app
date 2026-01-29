@@ -301,6 +301,110 @@ class Neo4jService:
                 message=message
             )
     
+    # =========================================================================
+    # Custom Input Methods (for manually added Q&A, text, markdown)
+    # =========================================================================
+    
+    def set_custom_input_metadata(
+        self,
+        doc_id: str,
+        input_type: str,
+        raw_content: str,
+        raw_answer: Optional[str] = None,
+        topic_hint: Optional[str] = None
+    ):
+        """Store custom input metadata for later editing."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.is_custom_input = true,
+                    d.custom_input_type = $input_type,
+                    d.custom_raw_content = $raw_content,
+                    d.custom_raw_answer = $raw_answer,
+                    d.custom_topic_hint = $topic_hint
+            """,
+                id=doc_id,
+                input_type=input_type,
+                raw_content=raw_content,
+                raw_answer=raw_answer,
+                topic_hint=topic_hint
+            )
+    
+    def get_custom_inputs(
+        self,
+        search: Optional[str] = None,
+        limit: int = 50
+    ) -> List[dict]:
+        """Get all custom inputs with optional search."""
+        with self.driver.session() as session:
+            if search:
+                # Search in filename, raw content, topic hint
+                result = session.run("""
+                    MATCH (d:Document)
+                    WHERE d.is_custom_input = true
+                    AND (
+                        toLower(d.filename) CONTAINS toLower($search)
+                        OR toLower(d.custom_raw_content) CONTAINS toLower($search)
+                        OR toLower(d.custom_topic_hint) CONTAINS toLower($search)
+                        OR toLower(d.custom_raw_answer) CONTAINS toLower($search)
+                    )
+                    OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
+                    RETURN d.id as id,
+                           d.filename as filename,
+                           d.custom_input_type as input_type,
+                           d.custom_raw_content as content,
+                           d.custom_raw_answer as answer,
+                           d.custom_topic_hint as topic_hint,
+                           d.upload_date as created_at,
+                           d.processing_status as status,
+                           c.id as collection_id,
+                           c.name as collection_name
+                    ORDER BY d.upload_date DESC
+                    LIMIT $limit
+                """, search=search, limit=limit)
+            else:
+                result = session.run("""
+                    MATCH (d:Document)
+                    WHERE d.is_custom_input = true
+                    OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
+                    RETURN d.id as id,
+                           d.filename as filename,
+                           d.custom_input_type as input_type,
+                           d.custom_raw_content as content,
+                           d.custom_raw_answer as answer,
+                           d.custom_topic_hint as topic_hint,
+                           d.upload_date as created_at,
+                           d.processing_status as status,
+                           c.id as collection_id,
+                           c.name as collection_name
+                    ORDER BY d.upload_date DESC
+                    LIMIT $limit
+                """, limit=limit)
+            
+            return [dict(record) for record in result]
+    
+    def get_custom_input(self, doc_id: str) -> Optional[dict]:
+        """Get a single custom input with full data for editing."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})
+                WHERE d.is_custom_input = true
+                OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
+                RETURN d.id as id,
+                       d.filename as filename,
+                       d.custom_input_type as input_type,
+                       d.custom_raw_content as content,
+                       d.custom_raw_answer as answer,
+                       d.custom_topic_hint as topic_hint,
+                       d.upload_date as created_at,
+                       d.processing_status as status,
+                       c.id as collection_id,
+                       c.name as collection_name
+            """, id=doc_id)
+            
+            record = result.single()
+            return dict(record) if record else None
+    
     def vector_search(
         self, 
         query_embedding: list[float], 
@@ -354,7 +458,10 @@ class Neo4jService:
                        coalesce(d.progress_total, 0) as progress_total,
                        coalesce(d.progress_message, '') as progress_message,
                        col.id as collection_id,
-                       col.name as collection_name
+                       col.name as collection_name,
+                       coalesce(d.is_custom_input, false) as is_custom_input,
+                       d.custom_input_type as custom_input_type,
+                       d.custom_topic_hint as custom_topic_hint
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -983,6 +1090,79 @@ class Neo4jService:
             except Exception as e:
                 logger.warning(f"Fulltext search failed: {e}")
                 return []
+    
+    def metadata_search(
+        self,
+        query_text: str,
+        top_k: int = 10
+    ) -> List[dict]:
+        """
+        Search documents by filename, topic hint, or raw content (for custom inputs).
+        Returns chunks from matching documents with high relevance score.
+        """
+        with self.driver.session() as session:
+            try:
+                search_lower = query_text.lower().strip()
+                
+                # Search in document metadata
+                result = session.run("""
+                    MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk)
+                    WHERE d.processing_status = 'completed'
+                    AND (
+                        toLower(d.filename) CONTAINS $search_term
+                        OR toLower(d.custom_topic_hint) CONTAINS $search_term
+                        OR (d.is_custom_input = true AND toLower(d.custom_raw_content) CONTAINS $search_term)
+                    )
+                    WITH d, c, 
+                         CASE 
+                             WHEN toLower(d.filename) CONTAINS $search_term THEN 3.0
+                             WHEN toLower(d.custom_topic_hint) CONTAINS $search_term THEN 2.5
+                             ELSE 2.0
+                         END as relevance_score
+                    RETURN d.id as document_id,
+                           d.filename as filename,
+                           c.id as chunk_id,
+                           c.content as content,
+                           c.chunk_index as chunk_index,
+                           relevance_score as score
+                    ORDER BY relevance_score DESC, c.chunk_index ASC
+                    LIMIT $top_k
+                """, search_term=search_lower, top_k=top_k)
+                
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.warning(f"Metadata search failed: {e}")
+                return []
+    
+    def simple_hybrid_search(
+        self,
+        query_embedding: List[float],
+        query_text: str,
+        top_k: int = 10,
+        vector_weight: float = 0.5,
+        keyword_weight: float = 0.3,
+        metadata_weight: float = 0.2
+    ) -> List[dict]:
+        """
+        Simple hybrid search combining vector + keyword + metadata search.
+        Uses RRF to merge results from all three sources.
+        """
+        # 1. Vector search (semantic similarity)
+        vector_results = self.vector_search(query_embedding, top_k * 2)
+        
+        # 2. Keyword/full-text search (content matching)
+        keyword_results = self.fulltext_search(query_text, top_k * 2)
+        
+        # 3. Metadata search (filename, topic hint)
+        metadata_results = self.metadata_search(query_text, top_k * 2)
+        
+        # 4. Combine using RRF
+        combined = self._reciprocal_rank_fusion(
+            [vector_results, keyword_results, metadata_results],
+            [vector_weight, keyword_weight, metadata_weight]
+        )
+        
+        return combined[:top_k]
     
     def _reciprocal_rank_fusion(
         self,

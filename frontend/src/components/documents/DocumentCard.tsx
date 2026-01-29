@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Upload,
   Play,
+  PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +34,9 @@ interface Document {
   progress_message?: string;
   collection_id?: string | null;
   collection_name?: string | null;
+  is_custom_input?: boolean;
+  custom_input_type?: string | null;
+  custom_topic_hint?: string | null;
 }
 
 interface DocumentCardProps {
@@ -52,7 +56,8 @@ const isProcessing = (status: string) => {
   return status === "processing" || status === "extracting" || status === "pending";
 };
 
-const getFileIcon = (fileType: string) => {
+const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
+  if (isCustomInput) return PenLine;
   if (fileType.includes("pdf")) return FileText;
   if (fileType.includes("spreadsheet") || fileType.includes("excel") || fileType.includes("csv"))
     return FileSpreadsheet;
@@ -133,9 +138,10 @@ export function DocumentCard({
   isReprocessing,
 }: DocumentCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const FileIcon = getFileIcon(doc.file_type);
+  const FileIcon = getFileIcon(doc.file_type, doc.is_custom_input);
   const status = getStatusConfig(doc.processing_status);
   const StatusIcon = status.icon;
+  const isCustomInput = doc.is_custom_input === true;
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -178,17 +184,29 @@ export function DocumentCard({
         </button>
 
         {/* File icon */}
-        <div className={cn("p-2 rounded-lg shrink-0", "bg-muted")}>
-          <FileIcon className="w-5 h-5 text-muted-foreground" />
+        <div className={cn("p-2 rounded-lg shrink-0", isCustomInput ? "bg-accent/10" : "bg-muted")}>
+          <FileIcon className={cn("w-5 h-5", isCustomInput ? "text-accent" : "text-muted-foreground")} />
         </div>
 
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h4 className="text-sm font-medium text-foreground truncate max-w-[45vw]" title={doc.filename}>
-                {doc.filename}
-              </h4>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-medium text-foreground truncate max-w-[40vw]" title={doc.filename}>
+                  {doc.filename}
+                </h4>
+                {isCustomInput && (
+                  <span className="text-[10px] uppercase font-medium px-1.5 py-0.5 rounded bg-accent/20 text-accent shrink-0">
+                    {doc.custom_input_type || "custom"}
+                  </span>
+                )}
+              </div>
+              {isCustomInput && doc.custom_topic_hint && (
+                <p className="text-xs text-muted-foreground truncate mt-0.5" title={doc.custom_topic_hint}>
+                  {doc.custom_topic_hint}
+                </p>
+              )}
               <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
                 <span>{formatFileSize(doc.file_size)}</span>
                 <span>•</span>

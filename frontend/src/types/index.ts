@@ -363,3 +363,39 @@ export interface TurboBalance {
   reserved?: number;
   error?: string;
 }
+
+// =============================================================================
+// Custom Input Types (Manual Q&A, Text, Markdown)
+// =============================================================================
+
+export type CustomInputType = "qa" | "text" | "markdown";
+
+export interface CustomInputCreate {
+  input_type: CustomInputType;
+  content: string;
+  answer?: string;  // Only for Q&A type
+  title?: string;   // Optional hint for filename generation
+  collection_id?: string;
+  start_processing?: boolean;
+}
+
+export interface CustomInputResponse {
+  document_id: string;
+  filename: string;
+  status: ProcessingStatus;
+  message: string;
+  input_type: CustomInputType;
+}
+
+export interface CustomInputItem {
+  id: string;
+  filename: string;
+  input_type: CustomInputType;
+  content: string;
+  answer?: string | null;
+  topic_hint?: string | null;
+  created_at: string;
+  status: ProcessingStatus;
+  collection_id?: string | null;
+  collection_name?: string | null;
+}

@@ -12,12 +12,14 @@ import {
   FolderOpen,
   Network,
   Zap,
+  PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 
 const baseNavItems = [
   { href: "/", label: "Upload", icon: Upload },
+  { href: "/add", label: "Add", icon: PenLine },
   { href: "/search", label: "Search", icon: Search },
   { href: "/ask", label: "Ask AI", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },

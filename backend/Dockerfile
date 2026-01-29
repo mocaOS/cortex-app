@@ -20,8 +20,8 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Copy application code
 COPY . .
 
-# Create uploads directory
-RUN mkdir -p /app/uploads
+# Create uploads and custom_inputs directories
+RUN mkdir -p /app/uploads /app/custom_inputs
 
 # Expose port
 EXPOSE 8000

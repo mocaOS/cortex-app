@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,11 +12,150 @@ import {
   Network,
   Search,
   X,
+  ChevronDown,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import { api } from "@/lib/api";
 import type { GraphContext, DocumentContent } from "@/types";
+
+// Helper to parse <think>...</think> blocks from content
+// Handles both complete and incomplete (streaming) thinking blocks
+function parseThinkingContent(content: string, isStreaming: boolean = false): { 
+  thinking: string | null; 
+  mainContent: string;
+  isThinkingComplete: boolean;
+} {
+  // Check for complete <think>...</think> block at the start
+  const completeThinkRegex = /^<think>([\s\S]*?)<\/think>\s*/;
+  const completeMatch = content.match(completeThinkRegex);
+  
+  if (completeMatch) {
+    return {
+      thinking: completeMatch[1].trim(),
+      mainContent: content.slice(completeMatch[0].length).trim(),
+      isThinkingComplete: true,
+    };
+  }
+  
+  // Check for incomplete <think> block (still streaming thinking content)
+  const incompleteThinkRegex = /^<think>([\s\S]*)$/;
+  const incompleteMatch = content.match(incompleteThinkRegex);
+  
+  if (incompleteMatch && isStreaming) {
+    return {
+      thinking: incompleteMatch[1].trim(),
+      mainContent: "",
+      isThinkingComplete: false,
+    };
+  }
+  
+  return {
+    thinking: null,
+    mainContent: content,
+    isThinkingComplete: true,
+  };
+}
+
+// Collapsible Thinking Block component
+function ThinkingBlock({ 
+  content, 
+  isStreaming = false 
+}: { 
+  content: string; 
+  isStreaming?: boolean;
+}) {
+  const [userCollapsed, setUserCollapsed] = useState(false);
+  const [manualExpanded, setManualExpanded] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  
+  // Reset userCollapsed when streaming starts
+  useEffect(() => {
+    if (isStreaming) {
+      setUserCollapsed(false);
+    }
+  }, [isStreaming]);
+  
+  // Auto-scroll to bottom while streaming
+  useEffect(() => {
+    if (isStreaming && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight;
+    }
+  }, [content, isStreaming]);
+  
+  // Determine if expanded: auto-expand during streaming, otherwise follow manual state
+  const showExpanded = isStreaming ? !userCollapsed : manualExpanded;
+
+  const handleToggle = () => {
+    if (isStreaming) {
+      setUserCollapsed(!userCollapsed);
+    } else {
+      setManualExpanded(!manualExpanded);
+    }
+  };
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={handleToggle}
+        className={cn(
+          "flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors w-full",
+          "bg-muted/50 hover:bg-muted border border-border/50",
+          showExpanded ? "rounded-b-none border-b-0" : ""
+        )}
+      >
+        <Brain className={cn(
+          "w-4 h-4",
+          isStreaming ? "text-accent animate-pulse" : "text-muted-foreground"
+        )} />
+        <span className={cn(
+          "font-medium",
+          isStreaming ? "text-foreground" : "text-muted-foreground"
+        )}>
+          {isStreaming ? "Thinking..." : "Thought process"}
+        </span>
+        {isStreaming && (
+          <Loader2 className="w-3 h-3 text-accent animate-spin" />
+        )}
+        <ChevronDown 
+          className={cn(
+            "w-4 h-4 ml-auto text-muted-foreground transition-transform duration-200",
+            showExpanded ? "rotate-180" : ""
+          )} 
+        />
+      </button>
+      
+      <AnimatePresence initial={false}>
+        {showExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div 
+              ref={contentRef}
+              className={cn(
+                "px-3 py-3 rounded-b-lg border border-t-0 border-border/50 bg-muted/30",
+                "text-xs text-muted-foreground leading-relaxed",
+                "max-h-64 overflow-y-auto"
+              )}
+            >
+              <div className="whitespace-pre-wrap">
+                {content}
+                {isStreaming && (
+                  <span className="inline-block w-1.5 h-3 bg-accent animate-pulse ml-0.5" />
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 interface Source {
   document_id: string;
@@ -59,6 +198,12 @@ export default function ChatMessage({
   const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+  
+  // Parse thinking content from message (pass isStreaming to handle incomplete blocks)
+  const { thinking, mainContent, isThinkingComplete } = useMemo(
+    () => parseThinkingContent(message.content, message.isStreaming),
+    [message.content, message.isStreaming]
+  );
 
   // Fetch document content when a source is selected
   const handleSourceClick = async (source: Source) => {
@@ -132,15 +277,15 @@ export default function ChatMessage({
 
       <div
         className={cn(
-          "flex-1 max-w-[80%]",
-          message.role === "user" ? "text-right" : ""
+          "flex-1",
+          message.role === "user" ? "max-w-[80%] text-right" : ""
         )}
       >
         <div
           className={cn(
-            "inline-block rounded-lg p-4",
+            "rounded-lg p-4",
             message.role === "user"
-              ? "bg-primary text-primary-foreground"
+              ? "inline-block bg-primary text-primary-foreground"
               : "bg-muted text-foreground"
           )}
         >
@@ -150,9 +295,83 @@ export default function ChatMessage({
             </p>
           ) : (
             <div className="text-sm text-left">
-              <MarkdownRenderer content={message.content} />
-              {message.isStreaming && (
-                <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-1" />
+              {/* Initial Loading State - before any content arrives */}
+              {message.isStreaming && !thinking && !mainContent && (
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <motion.div
+                      className="w-2 h-2 rounded-full bg-accent"
+                      animate={{ 
+                        scale: [1, 1.2, 1],
+                        opacity: [0.5, 1, 0.5]
+                      }}
+                      transition={{ 
+                        duration: 1,
+                        repeat: Infinity,
+                        delay: 0
+                      }}
+                    />
+                    <motion.div
+                      className="w-2 h-2 rounded-full bg-accent"
+                      animate={{ 
+                        scale: [1, 1.2, 1],
+                        opacity: [0.5, 1, 0.5]
+                      }}
+                      transition={{ 
+                        duration: 1,
+                        repeat: Infinity,
+                        delay: 0.2
+                      }}
+                    />
+                    <motion.div
+                      className="w-2 h-2 rounded-full bg-accent"
+                      animate={{ 
+                        scale: [1, 1.2, 1],
+                        opacity: [0.5, 1, 0.5]
+                      }}
+                      transition={{ 
+                        duration: 1,
+                        repeat: Infinity,
+                        delay: 0.4
+                      }}
+                    />
+                  </div>
+                  <motion.span 
+                    className="text-sm text-muted-foreground"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    Thinking...
+                  </motion.span>
+                </div>
+              )}
+              
+              {/* Collapsible Thinking Block - streams content while thinking is in progress */}
+              {thinking && (
+                <ThinkingBlock 
+                  content={thinking} 
+                  isStreaming={message.isStreaming && !isThinkingComplete} 
+                />
+              )}
+              
+              {/* Main Response Content - only shown after thinking is complete */}
+              {mainContent && (
+                <>
+                  <MarkdownRenderer content={mainContent} />
+                  {/* Streaming cursor for main content */}
+                  {message.isStreaming && (
+                    <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-1" />
+                  )}
+                </>
+              )}
+              
+              {/* Show when thinking is done but waiting for main content to start */}
+              {message.isStreaming && isThinkingComplete && !mainContent && thinking && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Generating response...</span>
+                </div>
               )}
             </div>
           )}

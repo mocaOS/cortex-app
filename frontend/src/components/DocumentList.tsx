@@ -33,6 +33,9 @@ interface Document {
   progress_message?: string;
   collection_id?: string | null;
   collection_name?: string | null;
+  is_custom_input?: boolean;
+  custom_input_type?: string | null;
+  custom_topic_hint?: string | null;
 }
 
 interface DocumentListProps {
@@ -165,9 +168,11 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       return doc.processing_status === filterStatus;
     })();
 
+    const searchLower = searchQuery.toLowerCase().trim();
     const matchesSearch =
       searchQuery.trim() === "" ||
-      doc.filename.toLowerCase().includes(searchQuery.toLowerCase().trim());
+      doc.filename.toLowerCase().includes(searchLower) ||
+      (doc.custom_topic_hint && doc.custom_topic_hint.toLowerCase().includes(searchLower));
 
     return matchesCollection && matchesStatus && matchesSearch;
   });
@@ -470,7 +475,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search documents by filename..."
+            placeholder="Search by filename or topic..."
             className="w-full pl-11 pr-4 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
         </div>

@@ -12,6 +12,7 @@ from typing import Optional, Dict, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 import aiofiles
 import json
 
@@ -41,6 +42,10 @@ from app.models import (
     TaskStatus,
     TaskProgress,
     CommunityDetectionTaskRequest,
+    # Custom input models
+    CustomInputCreate,
+    CustomInputResponse,
+    CustomInputType,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -69,6 +74,9 @@ async def lifespan(app: FastAPI):
     
     # Create upload directory
     os.makedirs(settings.upload_dir, exist_ok=True)
+    
+    # Create custom inputs directory (for manually entered Q&A, text, markdown)
+    os.makedirs(settings.custom_inputs_dir, exist_ok=True)
     
     # Initialize Neo4j
     neo4j = get_neo4j_service()
@@ -384,6 +392,386 @@ async def upload_file(
             os.remove(file_path)
         except Exception:
             pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def generate_filename_with_llm(content: str, input_type: str, title: Optional[str] = None) -> str:
+    """
+    Generate a meaningful filename using an LLM based on the content.
+    
+    Returns a sanitized filename without extension.
+    """
+    import re
+    import hashlib
+    
+    settings = get_settings()
+    
+    if not settings.openai_api_key:
+        # Fallback to simple filename generation
+        content_hash = hashlib.md5(content[:100].encode()).hexdigest()[:8]
+        return f"custom_{input_type}_{content_hash}"
+    
+    try:
+        from openai import AsyncOpenAI
+        
+        # Use fast mode config which has thinking disabled
+        llm_config = get_llm_config(fast_mode=True)
+        client = AsyncOpenAI(
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+        )
+        
+        # Build prompt for filename generation - very direct
+        hint = f" Topic: {title}." if title else ""
+        prompt = f"""Filename for {input_type}:{hint}
+
+{content[:400]}
+
+Output only lowercase_words (3-5 words, underscores, no extension):"""
+
+        # Build request kwargs - disable thinking
+        request_kwargs = {
+            "model": llm_config.model,
+            "messages": [
+                {"role": "system", "content": "Output only a filename. Use lowercase_words format. No thinking, no explanation."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 20,
+        }
+        
+        # Disable thinking for DeepSeek, R1, and MiniMax models
+        model_lower = llm_config.model.lower()
+        if "deepseek" in model_lower or "r1" in model_lower or "minimax" in model_lower:
+            request_kwargs["extra_body"] = {
+                "enable_thinking": False,
+                "reasoning_effort": "none",
+            }
+        
+        response = await client.chat.completions.create(**request_kwargs)
+        
+        raw_filename = response.choices[0].message.content or ""
+        raw_filename = raw_filename.strip()
+        
+        # Strip any thinking tags (complete or incomplete)
+        raw_filename = re.sub(r'<think>.*?</think>', '', raw_filename, flags=re.DOTALL)
+        raw_filename = re.sub(r'<thinking>.*?</thinking>', '', raw_filename, flags=re.DOTALL)
+        raw_filename = re.sub(r'<think>.*$', '', raw_filename, flags=re.DOTALL)
+        raw_filename = re.sub(r'<thinking>.*$', '', raw_filename, flags=re.DOTALL)
+        
+        # If starts with think tag, use fallback
+        if raw_filename.startswith('<think') or raw_filename.startswith('<thinking'):
+            content_hash = hashlib.md5(content[:100].encode()).hexdigest()[:8]
+            return f"custom_{input_type}_{content_hash}"
+        
+        raw_filename = raw_filename.strip()
+        
+        # Remove any extension if LLM added one
+        raw_filename = re.sub(r'\.[a-zA-Z]+$', '', raw_filename)
+        # Replace spaces and invalid chars with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', raw_filename)
+        # Remove multiple underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_').lower()
+        # Limit length
+        sanitized = sanitized[:50]
+        
+        if not sanitized:
+            content_hash = hashlib.md5(content[:100].encode()).hexdigest()[:8]
+            return f"custom_{input_type}_{content_hash}"
+        
+        return sanitized
+        
+    except Exception as e:
+        logger.warning(f"LLM filename generation failed: {e}")
+        content_hash = hashlib.md5(content[:100].encode()).hexdigest()[:8]
+        return f"custom_{input_type}_{content_hash}"
+
+
+class TopicHintRequest(BaseModel):
+    """Request model for generating a topic hint."""
+    content: str = Field(..., min_length=10, description="Main content to analyze")
+    answer: Optional[str] = Field(default=None, description="Answer (for Q&A type)")
+    input_type: str = Field(default="text", description="Type of input: qa, text, or markdown")
+
+
+class TopicHintResponse(BaseModel):
+    """Response model for topic hint generation."""
+    topic_hint: str
+    existing_similar: List[str] = Field(default_factory=list, description="Similar existing topics found")
+
+
+@app.post("/api/custom-input/generate-topic", response_model=TopicHintResponse)
+async def generate_topic_hint(request: TopicHintRequest):
+    """
+    Generate a topic hint for custom content using LLM.
+    
+    Also checks for existing similar topics in the knowledge base.
+    """
+    settings = get_settings()
+    neo4j = get_neo4j_service()
+    
+    # Build the full content for analysis
+    if request.input_type == "qa" and request.answer:
+        full_content = f"Question: {request.content}\n\nAnswer: {request.answer}"
+    else:
+        full_content = request.content
+    
+    # Check for existing similar documents/topics
+    existing_similar = []
+    try:
+        # Search for similar content in existing documents
+        processor = get_query_processor()
+        similar_docs = processor.search(full_content[:500], top_k=5)
+        
+        # Extract unique filenames as potential similar topics
+        seen_files = set()
+        for doc in similar_docs:
+            filename = doc.get("filename", "")
+            if filename and filename not in seen_files:
+                # Clean up filename to get topic hint
+                topic = filename.rsplit(".", 1)[0]  # Remove extension
+                topic = topic.replace("_", " ").replace("-", " ")
+                # Remove timestamp suffix if present (format: _YYYYMMDD_HHMMSS)
+                import re
+                topic = re.sub(r'\s*\d{8}\s*\d{6}$', '', topic)
+                if topic and len(topic) > 3:
+                    existing_similar.append(topic.strip())
+                    seen_files.add(filename)
+        
+        existing_similar = existing_similar[:3]  # Limit to top 3
+    except Exception as e:
+        logger.warning(f"Error checking for similar topics: {e}")
+    
+    # Generate topic hint using LLM
+    if not settings.openai_api_key:
+        # Fallback: extract keywords from content
+        words = full_content.split()[:10]
+        topic_hint = " ".join(words[:5]) if words else "custom content"
+        return TopicHintResponse(topic_hint=topic_hint, existing_similar=existing_similar)
+    
+    try:
+        from openai import AsyncOpenAI
+        
+        # Use fast mode config which has thinking disabled
+        llm_config = get_llm_config(fast_mode=True)
+        client = AsyncOpenAI(
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+        )
+        
+        # Build prompt for topic generation - very direct to avoid thinking
+        existing_context = ""
+        if existing_similar:
+            existing_context = f" Similar topics: {', '.join(existing_similar)}."
+        
+        prompt = f"""Topic for: {full_content[:500]}{existing_context}
+
+Output 3-7 words only:"""
+
+        # Build request kwargs - disable thinking for models that support it
+        request_kwargs = {
+            "model": llm_config.model,
+            "messages": [
+                {"role": "system", "content": "You output short topic labels. Output only 3-7 words. Never explain or think out loud."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 20,
+        }
+        
+        # Disable thinking for DeepSeek and similar models
+        model_lower = llm_config.model.lower()
+        if "deepseek" in model_lower or "r1" in model_lower or "minimax" in model_lower:
+            request_kwargs["extra_body"] = {
+                "enable_thinking": False,
+                "reasoning_effort": "none",
+            }
+        
+        response = await client.chat.completions.create(**request_kwargs)
+        
+        topic_hint = response.choices[0].message.content or ""
+        topic_hint = topic_hint.strip()
+        
+        # Strip any thinking tags that might have leaked through (with or without closing tags)
+        import re
+        # Remove complete think blocks
+        topic_hint = re.sub(r'<think>.*?</think>', '', topic_hint, flags=re.DOTALL)
+        topic_hint = re.sub(r'<thinking>.*?</thinking>', '', topic_hint, flags=re.DOTALL)
+        # Remove incomplete think blocks (no closing tag - remove everything from <think> onwards)
+        topic_hint = re.sub(r'<think>.*$', '', topic_hint, flags=re.DOTALL)
+        topic_hint = re.sub(r'<thinking>.*$', '', topic_hint, flags=re.DOTALL)
+        # Also catch if it starts with the tag
+        if topic_hint.startswith('<think>') or topic_hint.startswith('<thinking>'):
+            topic_hint = ""
+        
+        topic_hint = topic_hint.strip()
+        
+        # If we ended up with empty string, try to extract from a different approach
+        if not topic_hint:
+            # Fallback: just use first few words of content as topic
+            words = full_content.split()[:7]
+            topic_hint = ' '.join(words) if words else "custom content"
+        
+        # Remove quotes, asterisks, and other formatting
+        topic_hint = topic_hint.strip('"\'*`')
+        topic_hint = re.sub(r'^(Topic hint:?|Topic:?)\s*', '', topic_hint, flags=re.IGNORECASE)
+        topic_hint = topic_hint.strip()
+        
+        # If still too long or contains newlines, take first line
+        if '\n' in topic_hint:
+            topic_hint = topic_hint.split('\n')[0].strip()
+        
+        # Limit length
+        if len(topic_hint) > 100:
+            topic_hint = ' '.join(topic_hint.split()[:7])
+        
+        return TopicHintResponse(topic_hint=topic_hint, existing_similar=existing_similar)
+        
+    except Exception as e:
+        logger.error(f"Error generating topic hint: {e}")
+        # Fallback
+        words = full_content.split()[:5]
+        topic_hint = " ".join(words) if words else "custom content"
+        return TopicHintResponse(topic_hint=topic_hint, existing_similar=existing_similar)
+
+
+@app.post("/api/custom-input", response_model=CustomInputResponse)
+async def create_custom_input(request: CustomInputCreate):
+    """
+    Create a custom knowledge input (Q&A, text, or markdown).
+    
+    This allows users to manually add knowledge to the knowledge base without uploading files.
+    The content is saved as a markdown file and processed like any uploaded document.
+    
+    - For Q&A type: content is the question, answer is the answer
+    - For text/markdown type: content is the full text
+    
+    The filename is automatically generated using an LLM to create a meaningful name.
+    """
+    settings = get_settings()
+    neo4j = get_neo4j_service()
+    
+    # Validate Q&A has an answer
+    if request.input_type == CustomInputType.QA and not request.answer:
+        raise HTTPException(
+            status_code=400,
+            detail="Answer is required for Q&A type input"
+        )
+    
+    try:
+        # Generate meaningful filename using LLM
+        filename_base = await generate_filename_with_llm(
+            content=request.content,
+            input_type=request.input_type.value,
+            title=request.title
+        )
+        
+        # Format content based on type
+        if request.input_type == CustomInputType.QA:
+            file_content = f"""# Question
+
+{request.content}
+
+# Answer
+
+{request.answer}
+"""
+        elif request.input_type == CustomInputType.MARKDOWN:
+            file_content = request.content
+        else:  # TEXT
+            file_content = request.content
+        
+        # Generate unique filename
+        doc_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{filename_base}_{timestamp}.md"
+        file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
+        
+        # Save the file
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(file_content)
+        
+        file_size = len(file_content.encode('utf-8'))
+        
+        # Process like a regular file upload
+        processor = get_document_processor()
+        
+        # Use default collection if enabled and none specified
+        collection_id = request.collection_id
+        if collection_id is None and settings.enable_collections:
+            collection_id = settings.default_collection
+        
+        if request.start_processing:
+            # Start processing immediately
+            doc_id = await processor.process_file(file_path, filename, file_size, collection_id)
+            status = ProcessingStatus.PROCESSING
+            message = "Custom input saved and processing started"
+        else:
+            # Just store, process later
+            doc_id = await processor.store_file_only(file_path, filename, file_size, collection_id)
+            status = ProcessingStatus.PENDING
+            message = "Custom input saved. Call /api/documents/process-pending to start processing."
+        
+        # Store custom input metadata for later editing
+        neo4j.set_custom_input_metadata(
+            doc_id=doc_id,
+            input_type=request.input_type.value,
+            raw_content=request.content,
+            raw_answer=request.answer,
+            topic_hint=request.title
+        )
+        
+        return CustomInputResponse(
+            document_id=doc_id,
+            filename=filename,
+            status=status,
+            message=message,
+            input_type=request.input_type
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating custom input: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/custom-inputs")
+async def list_custom_inputs(
+    search: Optional[str] = Query(default=None, description="Search in filename, content, or topic"),
+    limit: int = Query(default=50, ge=1, le=200)
+):
+    """
+    List all custom inputs with optional search.
+    
+    Returns custom inputs (manually added Q&A, text, markdown) that can be edited.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        custom_inputs = neo4j.get_custom_inputs(search=search, limit=limit)
+        return {"custom_inputs": custom_inputs, "total": len(custom_inputs)}
+    except Exception as e:
+        logger.error(f"Error listing custom inputs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/custom-inputs/{document_id}")
+async def get_custom_input(document_id: str):
+    """
+    Get a custom input's full data for editing.
+    
+    Returns the original content, answer (for Q&A), input type, and metadata.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        custom_input = neo4j.get_custom_input(document_id)
+        if not custom_input:
+            raise HTTPException(status_code=404, detail="Custom input not found")
+        return custom_input
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting custom input: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -809,13 +1197,23 @@ async def cleanup_orphaned_entities():
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
-    """Perform semantic search on the knowledge base."""
+    """
+    Perform hybrid search on the knowledge base.
+    
+    Combines:
+    - Semantic/vector search (finds similar meaning)
+    - Keyword search (finds exact text matches in content)
+    - Metadata search (finds matches in filename, topic hints)
+    
+    Uses Reciprocal Rank Fusion (RRF) to merge results from all sources.
+    """
     try:
         processor = get_query_processor()
-        results = processor.search(
+        
+        # Use hybrid search to combine vector + keyword + metadata
+        results = processor.hybrid_search(
             query=request.query,
-            top_k=request.top_k,
-            filters=request.filters
+            top_k=request.top_k
         )
         
         search_results = [
@@ -1013,27 +1411,31 @@ Question: {request.question}"""
                     messages.append({"role": "user", "content": prompt})
                 
                 # Use turbo mode config if active, otherwise default settings
-                llm_config = get_llm_config()
+                # For fast mode, use the fast mode model (OPENAI_MODEL_FAST_MODE)
+                llm_config = get_llm_config(fast_mode=True)
                 client = AsyncOpenAI(
                     api_key=llm_config.api_key,
                     base_url=llm_config.base_url,
                 )
                 
-                # Extra body params to disable thinking for models that support it
-                # (e.g., DeepSeek with enable_thinking, or reasoning_effort)
-                extra_body = {
-                    "enable_thinking": False,  # DeepSeek-R1 style
-                    "reasoning_effort": "none",  # Some providers use this
+                # Build request kwargs
+                request_kwargs = {
+                    "model": llm_config.model,
+                    "messages": messages,
+                    "temperature": 0.2,  # Lower temperature for faster, more deterministic responses
+                    "max_tokens": 600,   # Reduced for faster completion
+                    "stream": True,
                 }
                 
-                stream = await client.chat.completions.create(
-                    model=llm_config.model,
-                    messages=messages,
-                    temperature=0.2,  # Lower temperature for faster, more deterministic responses
-                    max_tokens=600,   # Reduced for faster completion
-                    stream=True,
-                    extra_body=extra_body
-                )
+                # Only add thinking-related params for models that support them
+                model_lower = llm_config.model.lower()
+                if "deepseek" in model_lower or "r1" in model_lower:
+                    request_kwargs["extra_body"] = {
+                        "enable_thinking": False,  # DeepSeek-R1 style
+                        "reasoning_effort": "none",
+                    }
+                
+                stream = await client.chat.completions.create(**request_kwargs)
                 
                 async for chunk in stream:
                     if chunk.choices[0].delta.content:

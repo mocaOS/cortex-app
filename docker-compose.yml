@@ -31,11 +31,13 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password123
       - UPLOAD_DIR=/app/uploads
+      - CUSTOM_INPUTS_DIR=/app/custom_inputs
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads
+      - custom_inputs_data:/app/custom_inputs
     depends_on:
       neo4j:
         condition: service_healthy
@@ -61,3 +63,4 @@ volumes:
   neo4j_data:
   neo4j_logs:
   uploads_data:
+  custom_inputs_data:

@@ -65,7 +65,7 @@ def is_turbo_mode_active() -> bool:
     return _turbo_state["active"] and _turbo_state["base_url"] is not None
 
 
-def get_llm_config() -> LLMConfig:
+def get_llm_config(fast_mode: bool = False) -> LLMConfig:
     """
     Get the appropriate LLM configuration based on turbo mode status.
     
@@ -75,6 +75,10 @@ def get_llm_config() -> LLMConfig:
     
     When Turbo Mode is inactive:
     - Uses the default OpenAI settings from configuration
+    
+    Args:
+        fast_mode: If True, uses the fast mode model (OPENAI_MODEL_FAST_MODE)
+                   for quicker/cheaper responses. Only applies when not in turbo mode.
     
     Returns:
         LLMConfig with api_key, base_url, model, and is_turbo flag
@@ -93,11 +97,13 @@ def get_llm_config() -> LLMConfig:
             is_turbo=True,
         )
     
-    # Use default OpenAI settings
+    # Use default OpenAI settings, with optional fast mode model
+    model = settings.fast_mode_model if fast_mode else settings.openai_model
+    
     return LLMConfig(
         api_key=settings.openai_api_key,
         base_url=settings.openai_api_base,
-        model=settings.openai_model,
+        model=model,
         is_turbo=False,
     )
 
