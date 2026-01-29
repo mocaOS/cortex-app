@@ -17,6 +17,7 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 
 ### Core Features
 - **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files
+- **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
@@ -41,6 +42,7 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
 - **⚡ Fast Search Mode**: Optimized vector-only search for quick responses
+- **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
 
@@ -163,6 +165,15 @@ npm run dev
 | POST | `/api/ask` | Enhanced GraphRAG Q&A (hybrid search, reranking, agentic mode) |
 | POST | `/api/ask/stream` | Streaming GraphRAG Q&A with SSE |
 
+### Custom Input Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/custom-input` | Create a custom input (Q&A, text, or markdown) |
+| POST | `/api/custom-input/generate-topic` | Generate a topic/title hint from content using LLM |
+| GET | `/api/custom-inputs` | List all custom inputs |
+| GET | `/api/custom-inputs/{id}` | Get custom input details |
+
 ### Bulk Upload & Batch Processing Endpoints
 
 | Method | Endpoint | Description |
@@ -222,6 +233,19 @@ npm run dev
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/ask/stream/thinking` | Streaming RAG with visible reasoning |
+
+### Turbo Mode Endpoints (Compute3)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/turbo/status` | Get Turbo Mode availability and GPU job status |
+| GET | `/api/turbo/balance` | Get Compute3 account balance |
+| POST | `/api/turbo/start` | Start a GPU job for accelerated inference |
+| POST | `/api/turbo/stop` | Stop an active GPU job |
+| POST | `/api/turbo/extend` | Extend runtime of an active GPU job |
+| GET | `/api/turbo/jobs` | List all GPU jobs |
+| GET | `/api/turbo/jobs/{id}` | Get details of a specific job |
+| GET | `/api/turbo/jobs/{id}/logs` | Get logs from a GPU job |
 
 ### Example: Search
 
@@ -357,6 +381,46 @@ curl -X POST "http://localhost:8000/api/documents/process-pending?concurrency=5"
 curl http://localhost:8000/api/tasks/{task_id}
 ```
 
+### Example: Create Custom Input
+
+Add knowledge manually without uploading a file:
+
+```bash
+# Add a Q&A pair
+curl -X POST http://localhost:8000/api/custom-input \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_type": "qa",
+    "content": "What is the capital of France?",
+    "answer": "Paris is the capital of France.",
+    "collection_id": "<collection-id>"
+  }'
+
+# Add freeform text or markdown
+curl -X POST http://localhost:8000/api/custom-input \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_type": "text",
+    "content": "# Project Overview\n\nThis is a markdown document explaining...",
+    "collection_id": "<collection-id>"
+  }'
+```
+
+### Example: Turbo Mode (GPU-Accelerated Inference)
+
+```bash
+# Check Turbo Mode status
+curl http://localhost:8000/api/turbo/status
+
+# Start a GPU job
+curl -X POST http://localhost:8000/api/turbo/start \
+  -H "Content-Type: application/json" \
+  -d '{"runtime_seconds": 3600}'
+
+# Check balance
+curl http://localhost:8000/api/turbo/balance
+```
+
 ### Example: Get Graph Visualization
 
 ```bash
@@ -403,6 +467,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | LLM model for generation | No | `openai/minimax-m21` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
+| `CUSTOM_INPUTS_DIR` | Directory for custom input files | No | `./custom_inputs` |
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
@@ -468,6 +533,18 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 |----------|-------------|----------|---------|
 | `PROMPT_SECURITY` | Enable prompt injection detection and protection | No | `true` |
 
+#### Compute3 Turbo Mode
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `COMPUTE3_API_KEY` | Compute3 API key for GPU inference | No | - |
+| `COMPUTE3_API_BASE` | Compute3 API base URL | No | `https://api.compute3.ai` |
+| `COMPUTE3_GPU_TYPE` | GPU type to use (e.g., `h100`, `a100`) | No | `h100` |
+| `COMPUTE3_GPU_COUNT` | Number of GPUs to allocate | No | `4` |
+| `COMPUTE3_MODEL` | Model to run on GPU | No | `MiniMaxAI/MiniMax-M2.1` |
+| `COMPUTE3_DOCKER_IMAGE` | vLLM Docker image for inference | No | `vllm/vllm-openai:latest` |
+| `COMPUTE3_DEFAULT_RUNTIME` | Default GPU job runtime in seconds | No | `3600` |
+
 ## 🔧 Configuration
 
 ### Document Processing
@@ -497,6 +574,18 @@ allowed_extensions: list[str] = [".pdf", ".txt", ".md", ".docx", ".xlsx"]
 | Markdown | `.md`, `.markdown` | MarkdownToDocument |
 | Word | `.docx` | python-docx |
 | Excel | `.xlsx` | openpyxl |
+
+### Custom Input Types
+
+In addition to file uploads, you can manually add knowledge:
+
+| Type | Description |
+|------|-------------|
+| Q&A | Question-answer pairs that become searchable knowledge |
+| Text | Freeform text content |
+| Markdown | Formatted markdown documents |
+
+Custom inputs are processed through the same GraphRAG pipeline as uploaded documents, including entity extraction and graph building.
 
 ## 🧪 Testing
 
@@ -561,16 +650,17 @@ FOR (e:Entity) ON EACH [e.name, e.description]
 
 ## 🧠 GraphRAG Pipeline
 
-When a document is uploaded, the following pipeline executes:
+When a document is uploaded (or custom input is added), the following pipeline executes:
 
-1. **Document Conversion** - Extract text from PDF/TXT/MD files
-2. **Chunking** - Split into manageable chunks (default: 500 words)
+1. **Document Conversion** - Extract text from PDF/TXT/MD files (or use custom input content directly)
+2. **Chunking** - Split into manageable chunks (default: 500 words). URLs are protected from splitting.
 3. **Embedding Generation** - Create vector embeddings for each chunk
 4. **Entity Extraction** - LLM extracts entities (Person, Organization, Concept, etc.)
 5. **Semantic Entity Resolution** - Match entities with similar embeddings to avoid duplicates
 6. **Relationship Extraction** - LLM identifies relationships between entities
 7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
 8. **Collection Assignment** - Optionally add document to a collection scope
+9. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
 
 ### Query Pipeline (Enhanced)
 
@@ -621,6 +711,27 @@ The system includes protection against prompt injection attacks that attempt to:
 - Configurable strict mode (block) vs soft mode (sanitize)
 
 Disable with `PROMPT_SECURITY=false` if not needed.
+
+## 🚀 Turbo Mode (Compute3)
+
+Turbo Mode enables GPU-accelerated inference using [Compute3](https://compute3.ai), providing faster response times for complex queries.
+
+**How it works:**
+1. Configure your Compute3 API key in `.env`
+2. Start a GPU job from the Turbo page or via API
+3. The system spins up a vLLM instance on dedicated GPUs
+4. All LLM requests are routed through the GPU-accelerated endpoint
+5. Stop the job when done to save costs
+
+**Requirements:**
+- Compute3 account with API key
+- Sufficient balance for GPU rental
+
+**Supported GPUs:**
+- H100 (recommended for larger models)
+- A100
+
+The navigation bar shows Turbo Mode status when configured, allowing quick access to start/stop GPU jobs.
 
 ## 🛠️ Tech Stack
 
