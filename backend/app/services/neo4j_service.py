@@ -1663,20 +1663,23 @@ class Neo4jService:
         
         with self.driver.session() as session:
             if include_connections:
-                # Find paths between specified entities (up to 2 hops)
+                # Get selected entities and all their direct neighbors (1 hop)
+                # This gives a focused subgraph centered on the selected entities
                 result = session.run("""
+                    // Get selected entities
                     MATCH (e:Entity)
                     WHERE e.name IN $names
-                    WITH collect(e) as entities
-                    UNWIND entities as e1
-                    UNWIND entities as e2
-                    WHERE e1 <> e2
-                    OPTIONAL MATCH path = shortestPath((e1)-[*1..2]-(e2))
-                    WITH entities, collect(path) as paths
-                    UNWIND paths as p
-                    UNWIND nodes(p) as n
+                    
+                    // Get their direct neighbors
+                    OPTIONAL MATCH (e)-[]-(neighbor:Entity)
+                    
+                    // Combine into a single set of nodes
+                    WITH collect(DISTINCT e) + collect(DISTINCT neighbor) as all_nodes
+                    UNWIND all_nodes as n
                     WITH DISTINCT n
-                    WHERE n:Entity
+                    WHERE n IS NOT NULL
+                    
+                    // Get mention counts
                     OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(n)
                     WITH n, count(c) as mention_count
                     RETURN n.name as id,

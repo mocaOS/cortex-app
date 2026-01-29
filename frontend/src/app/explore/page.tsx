@@ -4,10 +4,18 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "@/lib/api";
 import type { GraphData, GraphNode, GraphEdge } from "@/types";
 import { KnowledgeGraph } from "@/components/explore";
-import { Loader2, RefreshCw, Search, Filter, Share2, Users, Network, Layers, ChevronDown, Check } from "lucide-react";
+import { Loader2, RefreshCw, Search, Filter, Share2, Users, Network, Layers, ChevronDown, Check, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type TabType = "graph" | "entities" | "relationships" | "communities";
+
+// Search result from entity search
+interface EntitySearchResult {
+  name: string;
+  type: string;
+  description: string;
+  score: number;
+}
 
 // Custom dropdown component matching project style
 function Dropdown<T extends string | number>({
@@ -135,7 +143,12 @@ interface Community {
   sample_entities?: string[];
 }
 
-function EntitiesPanel() {
+interface EntitiesPanelProps {
+  onExploreEntity: (entityName: string) => void;
+  selectedEntities: string[];
+}
+
+function EntitiesPanel({ onExploreEntity, selectedEntities }: EntitiesPanelProps) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -202,32 +215,58 @@ function EntitiesPanel() {
       </div>
 
       <div className="grid gap-3">
-        {filteredEntities.map((entity, idx) => (
-          <div
-            key={idx}
-            className="p-4 bg-card border border-border rounded-lg hover:border-accent/50 transition-colors"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-medium truncate">{entity.name}</h3>
-                  <span className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground">
-                    {entity.type}
-                  </span>
+        {filteredEntities.map((entity, idx) => {
+          const isSelected = selectedEntities.includes(entity.name);
+          return (
+            <div
+              key={idx}
+              className={cn(
+                "p-4 bg-card border rounded-lg transition-colors",
+                isSelected ? "border-accent" : "border-border hover:border-accent/50"
+              )}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-medium truncate">{entity.name}</h3>
+                    <span className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground">
+                      {entity.type}
+                    </span>
+                    {isSelected && (
+                      <span className="px-2 py-0.5 text-xs bg-accent/20 text-accent rounded-full flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        Selected
+                      </span>
+                    )}
+                  </div>
+                  {entity.description && (
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {entity.description}
+                    </p>
+                  )}
                 </div>
-                {entity.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2">
-                    {entity.description}
-                  </p>
-                )}
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-medium">{entity.mention_count}</p>
-                <p className="text-xs text-muted-foreground">mentions</p>
+                <div className="flex flex-col items-end gap-2">
+                  <div className="text-right">
+                    <p className="text-sm font-medium">{entity.mention_count}</p>
+                    <p className="text-xs text-muted-foreground">mentions</p>
+                  </div>
+                  <button
+                    onClick={() => onExploreEntity(entity.name)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                      isSelected
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-muted hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    <Network className="w-4 h-4" />
+                    {isSelected ? "View Graph" : "Explore"}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {filteredEntities.length === 0 && (
@@ -404,6 +443,125 @@ export default function ExplorePage() {
   const [nodeLimit, setNodeLimit] = useState(100);
   const [includeNeighbors, setIncludeNeighbors] = useState(true);
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<EntitySearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [selectedEntities, setSelectedEntities] = useState<string[]>([]);
+  const [searchGraphData, setSearchGraphData] = useState<GraphData | null>(null);
+  const [isLoadingSubgraph, setIsLoadingSubgraph] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Close search results when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setShowSearchResults(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced entity search
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (searchQuery.trim().length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await api.searchEntities(searchQuery.trim());
+        setSearchResults(response.results);
+        setShowSearchResults(true);
+      } catch (err) {
+        console.error("Search failed:", err);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchQuery]);
+
+  // Fetch subgraph when entities are selected
+  const fetchSubgraph = useCallback(async (entityNames: string[]) => {
+    if (entityNames.length === 0) {
+      setSearchGraphData(null);
+      return;
+    }
+
+    setIsLoadingSubgraph(true);
+    setError(null);
+    try {
+      const data = await api.getGraphSubgraph(entityNames, true);
+      setSearchGraphData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load subgraph");
+    } finally {
+      setIsLoadingSubgraph(false);
+    }
+  }, []);
+
+  // Handle selecting an entity from search results
+  const handleSelectEntity = useCallback((entity: EntitySearchResult) => {
+    setSelectedEntities((prev) => {
+      // Toggle selection
+      if (prev.includes(entity.name)) {
+        const newSelection = prev.filter((n) => n !== entity.name);
+        fetchSubgraph(newSelection);
+        return newSelection;
+      } else {
+        const newSelection = [...prev, entity.name];
+        fetchSubgraph(newSelection);
+        return newSelection;
+      }
+    });
+    setShowSearchResults(false);
+    setSearchQuery("");
+  }, [fetchSubgraph]);
+
+  // Clear search and show full graph
+  const clearSearch = useCallback(() => {
+    setSelectedEntities([]);
+    setSearchGraphData(null);
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowSearchResults(false);
+  }, []);
+
+  // Handle exploring an entity from the Entities panel
+  const handleExploreEntity = useCallback((entityName: string) => {
+    // Add to selected entities if not already there
+    setSelectedEntities((prev) => {
+      if (!prev.includes(entityName)) {
+        const newSelection = [...prev, entityName];
+        fetchSubgraph(newSelection);
+        return newSelection;
+      }
+      // If already selected, just fetch the subgraph again
+      fetchSubgraph(prev);
+      return prev;
+    });
+    // Switch to the Knowledge Graph tab
+    setActiveTab("graph");
+  }, [fetchSubgraph]);
+
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -421,19 +579,25 @@ export default function ExplorePage() {
     fetchGraphData();
   }, [fetchGraphData]);
 
+  // Use search graph data when entities are selected, otherwise use full graph
+  const activeGraphData = selectedEntities.length > 0 ? searchGraphData : graphData;
+
   const nodes: GraphNode[] = useMemo(() => {
-    if (!graphData?.nodes) return [];
-    return graphData.nodes;
-  }, [graphData]);
+    if (!activeGraphData?.nodes) return [];
+    return activeGraphData.nodes;
+  }, [activeGraphData]);
 
   const edges: GraphEdge[] = useMemo(() => {
-    if (!graphData?.edges) return [];
-    return graphData.edges;
-  }, [graphData]);
+    if (!activeGraphData?.edges) return [];
+    return activeGraphData.edges;
+  }, [activeGraphData]);
+
+  const isGraphLoading = loading || isLoadingSubgraph;
 
   return (
     <div className="py-6">
-      <div className="flex items-center justify-between mb-6">
+      {/* Header Row */}
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-3xl font-bold">Explore Knowledge Graph</h1>
           <p className="text-muted-foreground mt-1">
@@ -463,24 +627,145 @@ export default function ExplorePage() {
             ]}
           />
           <button
-            onClick={fetchGraphData}
-            disabled={loading}
+            onClick={() => {
+              if (selectedEntities.length > 0) {
+                fetchSubgraph(selectedEntities);
+              } else {
+                fetchGraphData();
+              }
+            }}
+            disabled={isGraphLoading}
             className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+            <RefreshCw className={cn("w-4 h-4", isGraphLoading && "animate-spin")} />
             Refresh
           </button>
         </div>
       </div>
 
+      {/* Search Row */}
+      <div className="flex items-center gap-3 mb-6">
+        {/* Entity Search */}
+        <div className="relative" ref={searchContainerRef}>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search entities to explore..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => searchResults.length > 0 && setShowSearchResults(true)}
+              className={cn(
+                "w-80 pl-10 pr-4 py-2 bg-muted border border-border rounded-lg text-sm",
+                "focus:outline-none focus:ring-2 focus:ring-accent transition-all",
+                isSearching && "pr-10"
+              )}
+            />
+            {isSearching && (
+              <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+            )}
+          </div>
+
+          {/* Search Results Dropdown */}
+          {showSearchResults && searchResults.length > 0 && (
+            <div className="absolute top-full left-0 w-96 mt-1 bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+              <div className="p-2 border-b border-border">
+                <p className="text-xs text-muted-foreground">
+                  {searchResults.length} entities found - Click to view connections
+                </p>
+              </div>
+              {searchResults.map((result, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSelectEntity(result)}
+                  className={cn(
+                    "w-full flex items-start gap-3 p-3 hover:bg-muted transition-colors text-left",
+                    selectedEntities.includes(result.name) && "bg-accent/10"
+                  )}
+                >
+                  <div
+                    className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                    style={{
+                      backgroundColor:
+                        result.type === "Person" ? "#F79767" :
+                        result.type === "Organization" ? "#57C7E3" :
+                        result.type === "Concept" ? "#DA7194" :
+                        result.type === "Technology" ? "#6DCE9E" :
+                        result.type === "Location" ? "#FFC454" :
+                        "#4C8EDA"
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium truncate">{result.name}</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-muted rounded text-muted-foreground">
+                        {result.type}
+                      </span>
+                      {selectedEntities.includes(result.name) && (
+                        <Check className="w-3 h-3 text-accent" />
+                      )}
+                    </div>
+                    {result.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                        {result.description}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {(result.score * 100).toFixed(0)}%
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Selected Entities Pills */}
+        {selectedEntities.length > 0 && (
+          <>
+            <div className="h-6 w-px bg-border" />
+            <div className="flex items-center gap-2 flex-wrap">
+              {selectedEntities.map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent/20 text-accent text-sm rounded-full"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span className="truncate max-w-[150px]">{name}</span>
+                  <button
+                    onClick={() => {
+                      const newSelection = selectedEntities.filter((n) => n !== name);
+                      setSelectedEntities(newSelection);
+                      fetchSubgraph(newSelection);
+                    }}
+                    className="hover:text-accent-foreground transition-colors ml-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              ))}
+              <button
+                onClick={clearSearch}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1 hover:bg-muted rounded-lg"
+              >
+                Clear all
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <TabNav active={activeTab} onChange={setActiveTab} />
 
-        {loading && activeTab === "graph" ? (
+        {isGraphLoading && activeTab === "graph" ? (
           <div className="flex items-center justify-center h-[600px]">
             <div className="text-center">
               <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">Loading knowledge graph...</p>
+              <p className="text-muted-foreground">
+                {isLoadingSubgraph ? "Loading entity connections..." : "Loading knowledge graph..."}
+              </p>
             </div>
           </div>
         ) : error ? (
@@ -488,7 +773,13 @@ export default function ExplorePage() {
             <div className="text-center">
               <p className="text-red-400 mb-4">{error}</p>
               <button
-                onClick={fetchGraphData}
+                onClick={() => {
+                  if (selectedEntities.length > 0) {
+                    fetchSubgraph(selectedEntities);
+                  } else {
+                    fetchGraphData();
+                  }
+                }}
                 className="px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
               >
                 Try Again
@@ -499,20 +790,50 @@ export default function ExplorePage() {
           <div className="flex items-center justify-center h-[600px]">
             <div className="text-center">
               <Network className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-xl font-medium mb-2">No Entities Found</h3>
+              <h3 className="text-xl font-medium mb-2">
+                {selectedEntities.length > 0 ? "No Connections Found" : "No Entities Found"}
+              </h3>
               <p className="text-muted-foreground max-w-md">
-                Upload and process documents to extract entities and build your knowledge graph.
+                {selectedEntities.length > 0 
+                  ? "The selected entities have no connections in the knowledge graph."
+                  : "Upload and process documents to extract entities and build your knowledge graph."}
               </p>
+              {selectedEntities.length > 0 && (
+                <button
+                  onClick={clearSearch}
+                  className="mt-4 px-4 py-2 bg-muted text-foreground rounded-lg text-sm font-medium hover:bg-muted/80 transition-colors"
+                >
+                  Show Full Graph
+                </button>
+              )}
             </div>
           </div>
         ) : (
           <>
             {activeTab === "graph" && (
-              <div className="h-[600px]">
-                <KnowledgeGraph nodes={nodes} edges={edges} stats={graphData?.stats} />
+              <div className="h-[600px] relative">
+                {/* Search mode indicator */}
+                {selectedEntities.length > 0 && (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-accent/90 text-accent-foreground px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    Showing connections for {selectedEntities.length} {selectedEntities.length === 1 ? "entity" : "entities"}
+                    <button
+                      onClick={clearSearch}
+                      className="ml-2 p-1 hover:bg-white/20 rounded-full transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <KnowledgeGraph nodes={nodes} edges={edges} stats={activeGraphData?.stats} />
               </div>
             )}
-            {activeTab === "entities" && <EntitiesPanel />}
+            {activeTab === "entities" && (
+              <EntitiesPanel 
+                onExploreEntity={handleExploreEntity}
+                selectedEntities={selectedEntities}
+              />
+            )}
             {activeTab === "relationships" && <RelationshipsPanel edges={edges} />}
             {activeTab === "communities" && <CommunitiesPanel />}
           </>
