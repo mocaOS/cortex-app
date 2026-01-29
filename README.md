@@ -32,8 +32,6 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 > **💡 Pro Tip:** Use our lightweight scraper kit [**mdharvest**](https://github.com/mocaOS/mdharvest) (built on Crawlee) to turn any URL into beautifully formatted Markdown files ready for ingestion.
 
----
-
 ## ✨ Features
 
 ### Core Features
