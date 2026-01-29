@@ -1,10 +1,10 @@
 <div align="center">
 
-![MOCA Knowledge Base](frontend/public/banner.jpg)
+![MOCA Library](frontend/public/banner.jpg)
 
-# 🧠 MOCA Knowledge Base
+# 🧠 MOCA Library
 
-A powerful knowledge base system powered by **Neo4j** graph database and **Haystack** AI framework. Upload documents, build a semantic knowledge graph, and query your data using natural language.
+**The Agentic Knowledge Base for the AI Era**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
@@ -12,6 +12,27 @@ A powerful knowledge base system powered by **Neo4j** graph database and **Hayst
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)
 
 </div>
+
+## 🚀 What is MOCA Library?
+
+In a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight, your knowledge shouldn't be locked into any single system. **MOCA Library** is an agentic knowledge base that ingests your documents and analyzes their contents via LLM-assisted workflows, enabling bleeding-edge understanding of any content you throw at it.
+
+The LLM-driven system automatically extracts entities and builds relationships between them, creating a **scalable knowledge graph** that grows smarter with every document. This graph is exposed via API, ready to be integrated into Q+A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
+
+### 💡 Why MOCA Library?
+
+Think of the memory hierarchy in your AI systems:
+- **Context** = Short-term memory
+- **Agent Memory Stack** = Mid-term memory
+- **MOCA Library** = Long-term memory (survives crashes, redeployments, and even framework migrations)
+
+MOCA Library sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph nightly to propagate updated knowledge across all your agents and apps. Every agent—whether prompted or autonomously executing—can selectively pull knowledge from available buckets to better serve itself and your users.
+
+The beauty? Your data isn't trapped. When a hot new agent framework drops next month, just wait for an official plugin OR write a migration script and connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
+
+> **💡 Pro Tip:** Use our lightweight scraper kit [**mdharvest**](https://github.com/mocaOS/mdharvest) (built on Crawlee) to turn any URL into beautifully formatted Markdown files ready for ingestion.
+
+---
 
 ## ✨ Features
 
