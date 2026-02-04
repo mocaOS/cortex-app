@@ -33,26 +33,51 @@ COPY . .
 RUN npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 3: Production Runner
+# Stage 3: Production Runner (nginx)
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-# Set production environment
-ENV NODE_ENV=production
-
-# Install serve for static file serving (as root, before switching users)
-RUN npm install -g serve@14
-
-# Create non-root user for security
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 zudoku
+FROM nginx:alpine AS runner
 
 # Copy built files from builder stage
-COPY --from=builder --chown=zudoku:nodejs /app/dist ./dist
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Switch to non-root user
-USER zudoku
+# Create nginx configuration for SPA routing
+RUN cat > /etc/nginx/conf.d/default.conf << 'EOF'
+server {
+    listen 3000;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Enable gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied expired no-cache no-store private auth;
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml application/javascript application/json;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # Handle SPA routing - serve index.html for all routes
+    location / {
+        try_files $uri $uri/ $uri.html /index.html;
+    }
+
+    # Handle API docs and other HTML pages
+    location ~ ^/[^.]*$ {
+        try_files $uri $uri.html $uri/index.html /index.html;
+    }
+}
+EOF
 
 # Expose port 3000
 EXPOSE 3000
@@ -61,5 +86,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
 
-# Serve the static files
-CMD ["serve", "-s", "dist", "-l", "3000"]
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
