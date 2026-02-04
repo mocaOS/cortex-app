@@ -194,7 +194,18 @@ class Neo4jService:
             except Exception as e:
                 logger.warning(f"Community fulltext index may already exist: {e}")
             
-            logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes)")
+            # =================================================================
+            # API Key constraints
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE CONSTRAINT api_key_id IF NOT EXISTS
+                    FOR (k:APIKey) REQUIRE k.id IS UNIQUE
+                """)
+            except Exception as e:
+                logger.warning(f"APIKey constraint may already exist: {e}")
+            
+            logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes, APIKeys)")
     
     def store_document(self, doc_id: str, metadata: DocumentMetadata) -> str:
         """Store a document node in Neo4j."""
@@ -2334,6 +2345,180 @@ class Neo4jService:
                 "collection_count": record["collection_count"],
                 "pending_count": record["pending_count"]
             }
+    
+    # =========================================================================
+    # API Key Management
+    # =========================================================================
+    
+    def create_api_key(
+        self,
+        key_id: str,
+        name: str,
+        key_prefix: str,
+        key_hash: str,
+        permissions: List[str],
+        created_by: str = "admin"
+    ) -> Optional[dict]:
+        """Create a new API key in the database."""
+        with self.driver.session() as session:
+            result = session.run("""
+                CREATE (k:APIKey {
+                    id: $id,
+                    name: $name,
+                    key_prefix: $key_prefix,
+                    key_hash: $key_hash,
+                    permissions: $permissions,
+                    is_active: true,
+                    created_at: datetime(),
+                    created_by: $created_by
+                })
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.created_by as created_by
+            """,
+                id=key_id,
+                name=name,
+                key_prefix=key_prefix,
+                key_hash=key_hash,
+                permissions=permissions,
+                created_by=created_by
+            )
+            
+            record = result.single()
+            if record:
+                logger.info(f"Created API key: {name} ({key_id})")
+                return dict(record)
+            return None
+    
+    def get_api_key_by_id(self, key_id: str) -> Optional[dict]:
+        """Get an API key by its ID."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey {id: $id})
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.key_hash as key_hash,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.last_used_at as last_used_at,
+                       k.created_by as created_by
+            """, id=key_id)
+            
+            record = result.single()
+            return dict(record) if record else None
+    
+    def get_api_key_by_prefix(self, key_prefix: str) -> List[dict]:
+        """Get API keys by their prefix (for validation lookup)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey)
+                WHERE k.key_prefix = $prefix AND k.is_active = true
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.key_hash as key_hash,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.last_used_at as last_used_at,
+                       k.created_by as created_by
+            """, prefix=key_prefix)
+            
+            return [dict(record) for record in result]
+    
+    def list_api_keys(self) -> List[dict]:
+        """List all API keys (without the hash)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey)
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.last_used_at as last_used_at,
+                       k.created_by as created_by
+                ORDER BY k.created_at DESC
+            """)
+            
+            return [dict(record) for record in result]
+    
+    def update_api_key(
+        self,
+        key_id: str,
+        name: Optional[str] = None,
+        permissions: Optional[List[str]] = None,
+        is_active: Optional[bool] = None
+    ) -> Optional[dict]:
+        """Update an API key's properties."""
+        with self.driver.session() as session:
+            # Build dynamic SET clause
+            set_clauses = []
+            params = {"id": key_id}
+            
+            if name is not None:
+                set_clauses.append("k.name = $name")
+                params["name"] = name
+            if permissions is not None:
+                set_clauses.append("k.permissions = $permissions")
+                params["permissions"] = permissions
+            if is_active is not None:
+                set_clauses.append("k.is_active = $is_active")
+                params["is_active"] = is_active
+            
+            if not set_clauses:
+                return self.get_api_key_by_id(key_id)
+            
+            set_clause = ", ".join(set_clauses)
+            
+            result = session.run(f"""
+                MATCH (k:APIKey {{id: $id}})
+                SET {set_clause}
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.last_used_at as last_used_at,
+                       k.created_by as created_by
+            """, **params)
+            
+            record = result.single()
+            if record:
+                logger.info(f"Updated API key: {key_id}")
+                return dict(record)
+            return None
+    
+    def delete_api_key(self, key_id: str) -> bool:
+        """Delete an API key."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey {id: $id})
+                DELETE k
+                RETURN 1 as deleted
+            """, id=key_id)
+            
+            record = result.single()
+            if record:
+                logger.info(f"Deleted API key: {key_id}")
+                return True
+            return False
+    
+    def update_api_key_last_used(self, key_id: str) -> None:
+        """Update the last_used_at timestamp for an API key."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (k:APIKey {id: $id})
+                SET k.last_used_at = datetime()
+            """, id=key_id)
 
 
 # Singleton instance

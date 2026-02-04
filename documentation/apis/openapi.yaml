@@ -1,0 +1,1772 @@
+openapi: 3.0.3
+info:
+  title: MOCA Library API
+  description: |
+    The MOCA Library API provides endpoints for document management, semantic search, 
+    AI-powered Q&A, knowledge graph operations, and more.
+
+    ## Authentication
+    All endpoints (except `/health`) require an API key in the `X-API-Key` header.
+
+    ## Rate Limits
+    - Standard API endpoints: 10 requests/second
+    - Upload endpoints: 1 request/second
+
+  version: 1.0.0
+  contact:
+    name: MOCA Library
+    url: https://github.com/mocaOS/library
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.your-domain.com
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check and statistics
+  - name: Documents
+    description: Document upload and management
+  - name: Custom Inputs
+    description: Manual knowledge input (Q&A, text, markdown)
+  - name: Search
+    description: Semantic and hybrid search
+  - name: Ask AI
+    description: AI-powered question answering
+  - name: Knowledge Graph
+    description: Entity and relationship operations
+  - name: Collections
+    description: Document collection management
+  - name: Communities
+    description: Community detection and summarization
+  - name: Tasks
+    description: Background task management
+  - name: Admin
+    description: API key management
+  - name: Turbo Mode
+    description: GPU-accelerated inference
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Check if the API is healthy and connected to Neo4j
+      security: []
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/stats:
+    get:
+      tags: [Health]
+      summary: Get knowledge base statistics
+      description: Returns counts of documents, chunks, entities, and relationships
+      responses:
+        '200':
+          description: Statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+
+  /api/upload:
+    post:
+      tags: [Documents]
+      summary: Upload a document
+      description: Upload a file for processing into the knowledge base
+      parameters:
+        - name: start_processing
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: Start processing immediately
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+          description: Assign to a collection
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload (PDF, TXT, MD, DOCX, XLSX)
+              required:
+                - file
+      responses:
+        '200':
+          description: Document uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          description: Invalid file type or size
+        '413':
+          description: File too large
+
+  /api/documents:
+    get:
+      tags: [Documents]
+      summary: List documents
+      description: List all documents with optional pagination and filtering
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Documents retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentList'
+    delete:
+      tags: [Documents]
+      summary: Delete ALL documents
+      description: |
+        **Warning:** This permanently deletes all documents, chunks, and associated entities.
+      responses:
+        '200':
+          description: All documents deleted
+
+  /api/documents/{document_id}:
+    get:
+      tags: [Documents]
+      summary: Get document details
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          description: Document not found
+    delete:
+      tags: [Documents]
+      summary: Delete a document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document deleted
+        '404':
+          description: Document not found
+
+  /api/documents/{document_id}/content:
+    get:
+      tags: [Documents]
+      summary: Get document with chunk content
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document content retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentContent'
+
+  /api/documents/{document_id}/reprocess:
+    post:
+      tags: [Documents]
+      summary: Reprocess a document
+      description: Re-run processing pipeline on existing document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reprocessing started
+
+  /api/documents/delete:
+    post:
+      tags: [Documents]
+      summary: Bulk delete documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                document_ids:
+                  type: array
+                  items:
+                    type: string
+              required:
+                - document_ids
+      responses:
+        '200':
+          description: Documents deleted
+
+  /api/documents/reprocess:
+    post:
+      tags: [Documents]
+      summary: Bulk reprocess documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                document_ids:
+                  type: array
+                  items:
+                    type: string
+              required:
+                - document_ids
+      responses:
+        '200':
+          description: Reprocessing started
+
+  /api/documents/move:
+    post:
+      tags: [Documents]
+      summary: Move documents to collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                document_ids:
+                  type: array
+                  items:
+                    type: string
+                collection_id:
+                  type: string
+              required:
+                - document_ids
+                - collection_id
+      responses:
+        '200':
+          description: Documents moved
+
+  /api/documents/pending:
+    get:
+      tags: [Documents]
+      summary: List pending documents
+      description: List documents waiting to be processed
+      responses:
+        '200':
+          description: Pending documents retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentList'
+
+  /api/documents/process-pending:
+    post:
+      tags: [Documents]
+      summary: Process pending documents
+      description: Start batch processing of all pending documents
+      parameters:
+        - name: concurrency
+          in: query
+          schema:
+            type: integer
+            default: 5
+          description: Number of documents to process concurrently
+      responses:
+        '200':
+          description: Processing started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskStartResponse'
+
+  /api/custom-input:
+    post:
+      tags: [Custom Inputs]
+      summary: Create custom input
+      description: Add Q&A pair, text, or markdown content manually
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomInputCreate'
+      responses:
+        '200':
+          description: Custom input created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomInputResponse'
+
+  /api/custom-input/generate-topic:
+    post:
+      tags: [Custom Inputs]
+      summary: Generate topic hint
+      description: Use LLM to suggest a title for content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+              required:
+                - content
+      responses:
+        '200':
+          description: Topic generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  topic:
+                    type: string
+
+  /api/custom-inputs:
+    get:
+      tags: [Custom Inputs]
+      summary: List custom inputs
+      responses:
+        '200':
+          description: Custom inputs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  custom_inputs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CustomInputItem'
+
+  /api/custom-inputs/{input_id}:
+    get:
+      tags: [Custom Inputs]
+      summary: Get custom input details
+      parameters:
+        - name: input_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Custom input retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomInputItem'
+
+  /api/search:
+    post:
+      tags: [Search]
+      summary: Semantic search
+      description: Search documents using semantic similarity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /api/ask:
+    post:
+      tags: [Ask AI]
+      summary: Ask a question
+      description: Get an AI-generated answer with sources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+      responses:
+        '200':
+          description: Answer generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AskResponse'
+
+  /api/ask/stream:
+    post:
+      tags: [Ask AI]
+      summary: Streaming answer
+      description: Get a streaming answer using Server-Sent Events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/ask/stream/thinking:
+    post:
+      tags: [Ask AI]
+      summary: Streaming with extended thinking
+      description: Stream answer with visible reasoning steps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+      responses:
+        '200':
+          description: Streaming response with thinking
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/graph/status:
+    get:
+      tags: [Knowledge Graph]
+      summary: GraphRAG status
+      description: Get knowledge graph statistics
+      responses:
+        '200':
+          description: Status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphStatus'
+
+  /api/graph/visualization:
+    get:
+      tags: [Knowledge Graph]
+      summary: Get graph visualization data
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: include_neighbors
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Graph data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphVisualization'
+
+  /api/graph/entities:
+    get:
+      tags: [Knowledge Graph]
+      summary: List entities
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Entities retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityList'
+
+  /api/graph/entity/{name}:
+    get:
+      tags: [Knowledge Graph]
+      summary: Get entity details
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Entity details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDetails'
+
+  /api/graph/entity/{name}/relationships:
+    get:
+      tags: [Knowledge Graph]
+      summary: Get entity relationships
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: max_hops
+          in: query
+          schema:
+            type: integer
+            default: 2
+      responses:
+        '200':
+          description: Relationships retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityRelationships'
+
+  /api/graph/subgraph:
+    post:
+      tags: [Knowledge Graph]
+      summary: Get subgraph
+      description: Get a focused subgraph for specific entities
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entity_names:
+                  type: array
+                  items:
+                    type: string
+                max_hops:
+                  type: integer
+                  default: 2
+                limit:
+                  type: integer
+                  default: 50
+              required:
+                - entity_names
+      responses:
+        '200':
+          description: Subgraph retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphVisualization'
+
+  /api/graph/search:
+    get:
+      tags: [Knowledge Graph]
+      summary: Search entities
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Entities found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityList'
+
+  /api/collections:
+    get:
+      tags: [Collections]
+      summary: List collections
+      responses:
+        '200':
+          description: Collections retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionList'
+    post:
+      tags: [Collections]
+      summary: Create collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionCreate'
+      responses:
+        '200':
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collection'
+
+  /api/collections/{collection_id}:
+    get:
+      tags: [Collections]
+      summary: Get collection details
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Collection retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetails'
+    delete:
+      tags: [Collections]
+      summary: Delete collection
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Collection deleted
+
+  /api/collections/{collection_id}/documents/{document_id}:
+    post:
+      tags: [Collections]
+      summary: Add document to collection
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document added
+
+  /api/collections/{collection_id}/entities:
+    get:
+      tags: [Collections]
+      summary: Get collection entities
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Entities retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityList'
+
+  /api/graph/communities:
+    get:
+      tags: [Communities]
+      summary: List communities
+      parameters:
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Communities retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityList'
+
+  /api/graph/communities/detect:
+    post:
+      tags: [Communities]
+      summary: Detect communities
+      description: Run community detection algorithm
+      parameters:
+        - name: min_size
+          in: query
+          schema:
+            type: integer
+            default: 3
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detection completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  communities_detected:
+                    type: integer
+                  entities_clustered:
+                    type: integer
+
+  /api/graph/communities/{community_id}:
+    get:
+      tags: [Communities]
+      summary: Get community details
+      parameters:
+        - name: community_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Community retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityDetails'
+
+  /api/graph/communities/summarize:
+    post:
+      tags: [Communities]
+      summary: Generate community summaries
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_regenerate:
+                  type: boolean
+                  default: false
+                collection_id:
+                  type: string
+      responses:
+        '200':
+          description: Summaries generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summaries_generated:
+                    type: integer
+                  summaries_skipped:
+                    type: integer
+
+  /api/graph/communities/search:
+    get:
+      tags: [Communities]
+      summary: Search communities
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Communities found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityList'
+
+  /api/cleanup/orphaned-entities:
+    post:
+      tags: [Knowledge Graph]
+      summary: Clean up orphaned entities
+      description: Remove entities not connected to any documents
+      responses:
+        '200':
+          description: Cleanup completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities_removed:
+                    type: integer
+
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      summary: List background tasks
+      responses:
+        '200':
+          description: Tasks retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskProgress'
+
+  /api/tasks/{task_id}:
+    get:
+      tags: [Tasks]
+      summary: Get task status
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskProgress'
+    delete:
+      tags: [Tasks]
+      summary: Cancel task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task cancelled
+
+  /api/tasks/{task_id}/result:
+    get:
+      tags: [Tasks]
+      summary: Get task result
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task result retrieved
+
+  /api/tasks/cleanup:
+    post:
+      tags: [Tasks]
+      summary: Clean up old tasks
+      description: Remove completed tasks older than specified age
+      responses:
+        '200':
+          description: Cleanup completed
+
+  /api/admin/api-keys:
+    get:
+      tags: [Admin]
+      summary: List API keys
+      responses:
+        '200':
+          description: API keys retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyList'
+    post:
+      tags: [Admin]
+      summary: Create API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreate'
+      responses:
+        '200':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+
+  /api/admin/api-keys/{key_id}:
+    get:
+      tags: [Admin]
+      summary: Get API key details
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API key retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKey'
+    patch:
+      tags: [Admin]
+      summary: Update API key
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyUpdate'
+      responses:
+        '200':
+          description: API key updated
+    delete:
+      tags: [Admin]
+      summary: Delete API key
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API key deleted
+
+  /api/admin/api-keys/{key_id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Revoke API key
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API key revoked
+
+  /api/admin/api-keys/{key_id}/activate:
+    post:
+      tags: [Admin]
+      summary: Activate API key
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API key activated
+
+  /api/turbo/status:
+    get:
+      tags: [Turbo Mode]
+      summary: Get Turbo Mode status
+      responses:
+        '200':
+          description: Status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurboStatus'
+
+  /api/turbo/balance:
+    get:
+      tags: [Turbo Mode]
+      summary: Get Compute3 balance
+      responses:
+        '200':
+          description: Balance retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurboBalance'
+
+  /api/turbo/start:
+    post:
+      tags: [Turbo Mode]
+      summary: Start GPU job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurboStartRequest'
+      responses:
+        '200':
+          description: Job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurboJobStarted'
+
+  /api/turbo/stop:
+    post:
+      tags: [Turbo Mode]
+      summary: Stop GPU job
+      responses:
+        '200':
+          description: Job stopped
+
+  /api/turbo/extend:
+    post:
+      tags: [Turbo Mode]
+      summary: Extend GPU job runtime
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                additional_seconds:
+                  type: integer
+              required:
+                - additional_seconds
+      responses:
+        '200':
+          description: Runtime extended
+
+  /api/turbo/jobs:
+    get:
+      tags: [Turbo Mode]
+      summary: List GPU jobs
+      responses:
+        '200':
+          description: Jobs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TurboJob'
+
+  /api/turbo/jobs/{job_id}:
+    get:
+      tags: [Turbo Mode]
+      summary: Get GPU job details
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurboJob'
+
+  /api/turbo/jobs/{job_id}/logs:
+    get:
+      tags: [Turbo Mode]
+      summary: Get GPU job logs
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Logs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: string
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        neo4j:
+          type: string
+          example: connected
+        version:
+          type: string
+          example: 1.0.0
+
+    StatsResponse:
+      type: object
+      properties:
+        document_count:
+          type: integer
+        chunk_count:
+          type: integer
+        entity_count:
+          type: integer
+        relationship_count:
+          type: integer
+        collection_count:
+          type: integer
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        file_type:
+          type: string
+        file_size:
+          type: integer
+        upload_date:
+          type: string
+          format: date-time
+        processing_status:
+          type: string
+          enum: [pending, processing, extracting_entities, completed, failed]
+        chunk_count:
+          type: integer
+        collection_id:
+          type: string
+
+    DocumentList:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        total:
+          type: integer
+
+    DocumentContent:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        chunks:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              content:
+                type: string
+              chunk_index:
+                type: integer
+
+    CustomInputCreate:
+      type: object
+      properties:
+        input_type:
+          type: string
+          enum: [qa, text, markdown]
+        content:
+          type: string
+        answer:
+          type: string
+          description: Required for Q&A type
+        collection_id:
+          type: string
+      required:
+        - input_type
+        - content
+
+    CustomInputResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        input_type:
+          type: string
+        filename:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CustomInputItem:
+      type: object
+      properties:
+        id:
+          type: string
+        input_type:
+          type: string
+        content:
+          type: string
+        answer:
+          type: string
+        filename:
+          type: string
+        collection_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+        top_k:
+          type: integer
+          default: 10
+        collection_id:
+          type: string
+        use_hybrid:
+          type: boolean
+          default: true
+        use_reranking:
+          type: boolean
+          default: true
+      required:
+        - query
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              content:
+                type: string
+              score:
+                type: number
+              document_id:
+                type: string
+              chunk_id:
+                type: string
+              metadata:
+                type: object
+        total:
+          type: integer
+        query:
+          type: string
+        search_time_ms:
+          type: integer
+
+    AskRequest:
+      type: object
+      properties:
+        question:
+          type: string
+        use_graph:
+          type: boolean
+          default: true
+        max_hops:
+          type: integer
+          default: 2
+        use_reranking:
+          type: boolean
+          default: true
+        use_agentic:
+          type: boolean
+          default: false
+        use_fast_search:
+          type: boolean
+          default: false
+        collection_id:
+          type: string
+        conversation_history:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                type: string
+      required:
+        - question
+
+    AskResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              content:
+                type: string
+              document_id:
+                type: string
+              filename:
+                type: string
+              score:
+                type: number
+        graph_context:
+          type: object
+          properties:
+            entities:
+              type: array
+              items:
+                type: string
+            relationships:
+              type: array
+              items:
+                type: object
+            communities:
+              type: array
+              items:
+                type: object
+        retrieval_stats:
+          type: object
+
+    GraphStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        entity_count:
+          type: integer
+        relationship_count:
+          type: integer
+        community_count:
+          type: integer
+        last_extraction:
+          type: string
+          format: date-time
+
+    GraphVisualization:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              type:
+                type: string
+              description:
+                type: string
+              mention_count:
+                type: integer
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              type:
+                type: string
+              description:
+                type: string
+
+    EntityList:
+      type: object
+      properties:
+        entities:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+              description:
+                type: string
+              mention_count:
+                type: integer
+        total:
+          type: integer
+
+    EntityDetails:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        mention_count:
+          type: integer
+        documents:
+          type: array
+          items:
+            type: string
+        first_seen:
+          type: string
+          format: date-time
+
+    EntityRelationships:
+      type: object
+      properties:
+        entity:
+          type: string
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              target:
+                type: string
+              type:
+                type: string
+              description:
+                type: string
+              hop:
+                type: integer
+
+    CollectionCreate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      required:
+        - name
+
+    Collection:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CollectionDetails:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        document_count:
+          type: integer
+        entity_count:
+          type: integer
+        relationship_count:
+          type: integer
+        community_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CollectionList:
+      type: object
+      properties:
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Collection'
+
+    CommunityList:
+      type: object
+      properties:
+        communities:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+              summary:
+                type: string
+              entity_count:
+                type: integer
+        total:
+          type: integer
+
+    CommunityDetails:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        summary:
+          type: string
+        entities:
+          type: array
+          items:
+            type: object
+        relationships:
+          type: array
+          items:
+            type: object
+
+    TaskProgress:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        progress:
+          type: integer
+        message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    TaskStartResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+
+    ApiKeyCreate:
+      type: object
+      properties:
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [read, manage, admin]
+      required:
+        - name
+        - permissions
+
+    ApiKeyUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [read, manage, admin]
+
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, revoked]
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+    ApiKeyCreated:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        key:
+          type: string
+          description: Full API key (only shown once)
+        permissions:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ApiKeyList:
+      type: object
+      properties:
+        api_keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKey'
+
+    TurboStatus:
+      type: object
+      properties:
+        available:
+          type: boolean
+        configured:
+          type: boolean
+        active_job:
+          $ref: '#/components/schemas/TurboJob'
+        balance:
+          type: number
+
+    TurboBalance:
+      type: object
+      properties:
+        balance:
+          type: number
+        currency:
+          type: string
+
+    TurboStartRequest:
+      type: object
+      properties:
+        runtime_seconds:
+          type: integer
+          default: 3600
+        gpu_type:
+          type: string
+          default: h100
+        gpu_count:
+          type: integer
+          default: 4
+        model:
+          type: string
+
+    TurboJobStarted:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+        estimated_start:
+          type: string
+          format: date-time
+        runtime_seconds:
+          type: integer
+
+    TurboJob:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [starting, running, stopping, stopped, failed]
+        gpu_type:
+          type: string
+        gpu_count:
+          type: integer
+        model:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        runtime_remaining:
+          type: integer

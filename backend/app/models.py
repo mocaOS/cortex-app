@@ -407,3 +407,93 @@ class CommunityDetectionTaskRequest(BaseModel):
     """Request to start a community detection task."""
     min_size: int = Field(default=3, ge=2, le=20, description="Minimum community size")
     collection_id: Optional[str] = Field(default=None, description="Scope to collection")
+
+
+# =============================================================================
+# API Key Management
+# =============================================================================
+
+class APIKeyPermission(str, Enum):
+    """Permission levels for API keys."""
+    READ = "read"      # Can use Ask AI, search, view graphs
+    MANAGE = "manage"  # Can upload, edit, delete documents and collections
+
+
+class APIKey(BaseModel):
+    """An API key for accessing the backend."""
+    id: str = Field(..., description="Unique API key identifier")
+    name: str = Field(..., description="Human-readable name for the key")
+    key_prefix: str = Field(..., description="First 8 characters of the key for identification")
+    key_hash: str = Field(..., description="Hashed API key (bcrypt)")
+    permissions: List[APIKeyPermission] = Field(default_factory=list, description="List of permissions")
+    is_active: bool = Field(default=True, description="Whether the key is active")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="When the key was created")
+    last_used_at: Optional[datetime] = Field(default=None, description="When the key was last used")
+    created_by: str = Field(default="admin", description="Who created this key")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "key_abc123",
+                "name": "Production Read-Only",
+                "key_prefix": "moca_ro_",
+                "permissions": ["read"],
+                "is_active": True,
+                "created_by": "admin"
+            }
+        }
+
+
+class CreateAPIKeyRequest(BaseModel):
+    """Request model for creating a new API key."""
+    name: str = Field(..., min_length=1, max_length=100, description="Name for the API key")
+    permissions: List[APIKeyPermission] = Field(..., min_length=1, description="Permissions to grant")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "Frontend Read-Only Key",
+                "permissions": ["read"]
+            }
+        }
+
+
+class CreateAPIKeyResponse(BaseModel):
+    """Response model for API key creation - includes the actual key (shown only once)."""
+    id: str = Field(..., description="API key ID")
+    name: str = Field(..., description="API key name")
+    key: str = Field(..., description="The actual API key - save this, it won't be shown again!")
+    key_prefix: str = Field(..., description="Key prefix for identification")
+    permissions: List[APIKeyPermission] = Field(..., description="Granted permissions")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "key_abc123",
+                "name": "Frontend Read-Only Key",
+                "key": "moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "key_prefix": "moca_ro_",
+                "permissions": ["read"],
+                "created_at": "2024-01-01T00:00:00Z"
+            }
+        }
+
+
+class APIKeyListItem(BaseModel):
+    """API key information for listing (without the actual key)."""
+    id: str = Field(..., description="API key ID")
+    name: str = Field(..., description="API key name")
+    key_prefix: str = Field(..., description="Key prefix for identification")
+    permissions: List[APIKeyPermission] = Field(..., description="Granted permissions")
+    is_active: bool = Field(..., description="Whether the key is active")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    last_used_at: Optional[datetime] = Field(default=None, description="Last usage timestamp")
+    created_by: str = Field(..., description="Who created this key")
+
+
+class UpdateAPIKeyRequest(BaseModel):
+    """Request model for updating an API key."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="New name")
+    permissions: Optional[List[APIKeyPermission]] = Field(default=None, description="New permissions")
+    is_active: Optional[bool] = Field(default=None, description="Activate or deactivate the key")

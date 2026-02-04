@@ -1,0 +1,129 @@
+---
+title: Introduction
+description: Welcome to the MOCA Library documentation - an agentic knowledge base powered by AI and GraphRAG
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# MOCA Library
+
+**MOCA Library** is an **agentic knowledge base** that transforms your documents into a searchable, AI-powered knowledge graph. Upload documents, ask questions, and get intelligent answers with full source citations.
+
+Built with **FastAPI**, **Haystack 2.0**, **Neo4j**, and **Next.js**, MOCA combines the power of large language models with graph-based retrieval for superior question answering.
+
+## Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Document Processing** | Upload PDFs, text files, markdown, and Word documents with automatic chunking |
+| **Knowledge Graph** | AI-powered entity and relationship extraction using GraphRAG |
+| **Hybrid Search** | Combines vector similarity, keyword search, and graph traversal with RRF fusion |
+| **Ask AI** | RAG-powered Q&A with streaming, agentic reasoning, and source citations |
+| **Collections** | Organize documents into collections with scoped graphs |
+| **Communities** | Automatic detection of document clusters and theme summarization |
+| **Turbo Mode** | GPU-accelerated inference via Compute3 integration |
+| **Custom Inputs** | Add knowledge manually via Q&A pairs, text, or markdown |
+| **Prompt Security** | Built-in protection against prompt injection attacks |
+
+## Architecture
+
+<Mermaid chart={`
+flowchart LR
+    subgraph Frontend["Frontend"]
+        UI["Next.js 15<br/>React 19<br/>TypeScript"]
+    end
+    subgraph Backend["Backend"]
+        API["FastAPI<br/>Haystack 2.0<br/>Python"]
+    end
+    subgraph Database["Database"]
+        Neo4j[("Neo4j 5<br/>Graph + Vector")]
+    end
+    subgraph AI["AI Services"]
+        LLM["OpenAI / LLM"]
+        Embed["Embeddings"]
+        Rerank["Cross-Encoder"]
+    end
+    
+    UI --> API
+    API --> Neo4j
+    API --> LLM
+    API --> Embed
+    API --> Rerank
+`} />
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS, Framer Motion |
+| **Backend** | FastAPI, Haystack 2.0, Python 3.11+, Pydantic |
+| **Database** | Neo4j 5.x (Graph storage + Vector similarity search) |
+| **AI/LLM** | OpenAI GPT-4o, Anthropic Claude, or local models via LiteLLM |
+| **Embeddings** | OpenAI text-embedding-3-small (1536 dimensions) |
+| **Re-ranking** | Cross-encoder (ms-marco-MiniLM-L-6-v2) |
+| **GPU Compute** | Compute3 for accelerated inference (optional) |
+
+## Document Ingestion Pipeline
+
+<Mermaid chart={`
+flowchart TD
+    A[Document Upload] --> B[Text Extraction]
+    B --> C[Chunking]
+    C --> D[Embedding Generation]
+    D --> E[Entity Extraction]
+    E --> F[Semantic Resolution]
+    F --> G[Neo4j Storage]
+    G --> H[Ready for Search]
+    
+    B -.-> B1["PDF, DOCX, TXT, MD"]
+    C -.-> C1["Sentence-based splitting"]
+    D -.-> D1["text-embedding-3-small"]
+    E -.-> E1["LLM extracts entities"]
+    F -.-> F1["Deduplicate similar entities"]
+`} />
+
+## Query Pipeline (Hybrid Search + RAG)
+
+<Mermaid chart={`
+flowchart TD
+    Q[User Question] --> S1[Vector Search]
+    Q --> S2[Keyword Search]
+    Q --> S3[Graph Traversal]
+    
+    S1 --> RRF[Reciprocal Rank Fusion]
+    S2 --> RRF
+    S3 --> RRF
+    
+    RRF --> RERANK[Cross-Encoder Re-ranking]
+    RERANK --> LLM[LLM Generation]
+    LLM --> ANS[Answer + Sources]
+    
+    S1 -.-> W1["Weight: 0.5"]
+    S2 -.-> W2["Weight: 0.3"]
+    S3 -.-> W3["Weight: 0.2"]
+`} />
+
+## API Overview
+
+MOCA exposes **60+ REST API endpoints** across these categories:
+
+| Category | Endpoints | Description |
+|----------|-----------|-------------|
+| Health | 2 | Health check and statistics |
+| Documents | 8 | Upload, list, delete, reprocess, bulk operations |
+| Custom Inputs | 4 | Add Q&A pairs, text, markdown manually |
+| Search | 3 | Semantic, hybrid, and filtered search |
+| Ask AI | 4 | RAG Q&A, streaming, agentic mode |
+| Knowledge Graph | 6 | Entities, relationships, subgraphs, visualization |
+| Collections | 6 | CRUD, document assignment |
+| Communities | 5 | Detection, summarization, search |
+| Tasks | 5 | Background task tracking |
+| Admin | 5 | API key management |
+| Turbo Mode | 3 | GPU-accelerated inference |
+
+## Quick Links
+
+- [Quick Start](/quickstart) - Get running in 5 minutes with Docker
+- [Configuration](/configuration) - All 50+ environment variables
+- [API Reference](/api) - Complete OpenAPI documentation
+- [GitHub](https://github.com/mocaOS/library) - Source code and issues

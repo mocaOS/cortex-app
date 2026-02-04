@@ -112,7 +112,13 @@ Edit `.env` with your settings:
 ```env
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password123
-OPENAI_API_KEY=sk-your-key-here  # Optional, for AI answers
+OPENAI_API_KEY=sk-your-key-here  # Required for AI answers
+
+# Admin Authentication
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=your-secure-password
+ADMIN_API_KEY=moca_admin_your-secret-key
+SESSION_SECRET=at-least-32-characters-secret
 ```
 
 3. **Start with Docker Compose**
@@ -266,11 +272,26 @@ npm run dev
 | GET | `/api/turbo/jobs/{id}` | Get details of a specific job |
 | GET | `/api/turbo/jobs/{id}/logs` | Get logs from a GPU job |
 
+### Admin Endpoints (API Key Management)
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/api/admin/api-keys` | List all API keys | Admin |
+| POST | `/api/admin/api-keys` | Create new API key | Admin |
+| GET | `/api/admin/api-keys/{id}` | Get API key details | Admin |
+| PATCH | `/api/admin/api-keys/{id}` | Update API key | Admin |
+| DELETE | `/api/admin/api-keys/{id}` | Delete API key | Admin |
+| POST | `/api/admin/api-keys/{id}/revoke` | Revoke API key | Admin |
+| POST | `/api/admin/api-keys/{id}/activate` | Reactivate API key | Admin |
+
+> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search) or `manage` (upload, delete) permissions.
+
 ### Example: Search
 
 ```bash
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
   -d '{"query": "What is machine learning?", "top_k": 5}'
 ```
 
@@ -468,10 +489,9 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 2. Point to your git repository
 3. Set compose file: `coolify/docker-compose.coolify.yml`
 4. Add environment variables:
-   - `NEO4J_USER`
-   - `NEO4J_PASSWORD`
-   - `OPENAI_API_KEY` (optional)
-   - `NEXT_PUBLIC_API_URL` (your domain)
+   - `OPENAI_API_KEY`
+   - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET`
+   - `BACKEND_URL`, `FRONTEND_URL` (your domains)
 5. Configure domain and SSL
 6. Deploy!
 
@@ -551,6 +571,15 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `PROMPT_SECURITY` | Enable prompt injection detection and protection | No | `true` |
+
+#### Admin Authentication
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ADMIN_EMAIL` | Admin login email for frontend | Yes | `admin@example.com` |
+| `ADMIN_PASSWORD` | Admin login password | Yes | - |
+| `ADMIN_API_KEY` | Admin API key for full backend access | Yes | - |
+| `SESSION_SECRET` | JWT session encryption secret (min 32 chars) | Yes | - |
 
 #### Compute3 Turbo Mode
 

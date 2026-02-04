@@ -1,0 +1,8 @@
+# Pagefind configuration
+# This file configures how pagefind indexes and generates URLs
+site: ./dist
+output_subdir: pagefind
+
+# Note: Pagefind doesn't have a direct option to strip .html from URLs
+# The URLs are generated based on the actual file paths in the dist folder.
+# We handle URL transformation via the plugin/frontend code instead.

@@ -60,9 +60,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       const results = await Promise.all(
         docIds.map(async (docId) => {
           try {
-            const res = await fetch(`/api/documents/${docId}`);
-            if (!res.ok) return null;
-            return await res.json();
+            return await api.getDocument(docId);
           } catch {
             return null;
           }

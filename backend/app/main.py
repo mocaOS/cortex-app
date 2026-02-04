@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, Dict, List
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -46,6 +46,12 @@ from app.models import (
     CustomInputCreate,
     CustomInputResponse,
     CustomInputType,
+    # API Key models
+    APIKeyPermission,
+    CreateAPIKeyRequest,
+    CreateAPIKeyResponse,
+    APIKeyListItem,
+    UpdateAPIKeyRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -58,6 +64,14 @@ from app.services.prompt_security import (
 )
 from app.services.compute3_service import get_compute3_service
 from app.services.llm_config import get_llm_config, is_turbo_mode_active
+from app.services.auth_service import (
+    require_api_key,
+    require_read_permission,
+    require_manage_permission,
+    require_admin,
+    AuthResult,
+)
+from app.services.api_key_service import get_api_key_service
 
 # Configure logging
 logging.basicConfig(
@@ -301,7 +315,7 @@ async def health_check():
 
 
 @app.get("/api/stats", response_model=GraphStatsResponse)
-async def get_stats():
+async def get_stats(auth: AuthResult = Depends(require_read_permission)):
     """Get knowledge base and knowledge graph statistics."""
     try:
         neo4j = get_neo4j_service()
@@ -325,7 +339,8 @@ async def get_stats():
 async def upload_file(
     file: UploadFile = File(...),
     collection_id: Optional[str] = Query(default=None, description="Collection to add document to"),
-    start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)")
+    start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)"),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """
     Upload a file to the knowledge base.
@@ -638,7 +653,7 @@ Output 3-7 words only:"""
 
 
 @app.post("/api/custom-input", response_model=CustomInputResponse)
-async def create_custom_input(request: CustomInputCreate):
+async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Depends(require_manage_permission)):
     """
     Create a custom knowledge input (Q&A, text, or markdown).
     
@@ -776,7 +791,7 @@ async def get_custom_input(document_id: str):
 
 
 @app.get("/api/documents")
-async def list_documents():
+async def list_documents(auth: AuthResult = Depends(require_read_permission)):
     """List all documents in the knowledge base."""
     try:
         neo4j = get_neo4j_service()
@@ -788,7 +803,7 @@ async def list_documents():
 
 
 @app.get("/api/documents/{document_id}")
-async def get_document(document_id: str):
+async def get_document(document_id: str, auth: AuthResult = Depends(require_read_permission)):
     """Get a specific document."""
     try:
         neo4j = get_neo4j_service()
@@ -826,7 +841,7 @@ async def get_document_content(document_id: str):
 
 
 @app.delete("/api/documents/{document_id}")
-async def delete_document(document_id: str):
+async def delete_document(document_id: str, auth: AuthResult = Depends(require_manage_permission)):
     """Delete a document and clean up orphaned entities and communities from the knowledge base."""
     try:
         neo4j = get_neo4j_service()
@@ -847,7 +862,7 @@ async def delete_document(document_id: str):
 
 
 @app.post("/api/documents/delete")
-async def delete_documents(request: DeleteRequest):
+async def delete_documents(request: DeleteRequest, auth: AuthResult = Depends(require_manage_permission)):
     """
     Delete multiple documents from the knowledge base.
     
@@ -869,7 +884,7 @@ async def delete_documents(request: DeleteRequest):
 
 
 @app.delete("/api/documents")
-async def delete_all_documents():
+async def delete_all_documents(auth: AuthResult = Depends(require_manage_permission)):
     """
     Delete all documents from the knowledge base.
     
@@ -1196,7 +1211,7 @@ async def cleanup_orphaned_entities():
 
 
 @app.post("/api/search", response_model=SearchResponse)
-async def search(request: SearchRequest):
+async def search(request: SearchRequest, auth: AuthResult = Depends(require_read_permission)):
     """
     Perform hybrid search on the knowledge base.
     
@@ -1238,7 +1253,7 @@ async def search(request: SearchRequest):
 
 
 @app.post("/api/ask", response_model=RAGResponse)
-async def ask_question(request: RAGRequest):
+async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
     """
     Ask a question using enhanced GraphRAG.
     
@@ -1300,7 +1315,7 @@ async def ask_question(request: RAGRequest):
 
 
 @app.post("/api/ask/stream")
-async def ask_question_stream(request: RAGRequest):
+async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
     """
     Stream the RAG response for better UX.
     
@@ -1823,7 +1838,7 @@ async def list_collections():
 
 
 @app.post("/api/collections")
-async def create_collection(request: CollectionCreate):
+async def create_collection(request: CollectionCreate, auth: AuthResult = Depends(require_manage_permission)):
     """Create a new collection."""
     try:
         neo4j = get_neo4j_service()
@@ -1855,7 +1870,7 @@ async def get_collection(collection_id: str):
 
 
 @app.delete("/api/collections/{collection_id}")
-async def delete_collection(collection_id: str):
+async def delete_collection(collection_id: str, auth: AuthResult = Depends(require_manage_permission)):
     """
     Delete a collection and move all its documents to the default collection.
     
@@ -2506,6 +2521,167 @@ async def get_turbo_job_logs(job_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting turbo job logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Admin API Key Management Endpoints
+# =============================================================================
+
+@app.get("/api/admin/api-keys", response_model=List[APIKeyListItem])
+async def list_api_keys(auth: AuthResult = Depends(require_admin)):
+    """
+    List all API keys.
+    
+    Admin-only endpoint. Returns API key information without the actual keys.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        keys = api_key_service.list_api_keys()
+        return keys
+    except Exception as e:
+        logger.error(f"Error listing API keys: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/api-keys", response_model=CreateAPIKeyResponse)
+async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depends(require_admin)):
+    """
+    Create a new API key.
+    
+    Admin-only endpoint. The actual API key is returned only once in this response.
+    Make sure to save it securely as it cannot be retrieved again.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        result = api_key_service.create_api_key(
+            name=request.name,
+            permissions=request.permissions,
+            created_by="admin"
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to create API key")
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/api-keys/{key_id}", response_model=APIKeyListItem)
+async def get_api_key(key_id: str, auth: AuthResult = Depends(require_admin)):
+    """
+    Get a specific API key by ID.
+    
+    Admin-only endpoint. Returns API key information without the actual key.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        key = api_key_service.get_api_key(key_id)
+        
+        if not key:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return key
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/admin/api-keys/{key_id}", response_model=APIKeyListItem)
+async def update_api_key(
+    key_id: str,
+    request: UpdateAPIKeyRequest,
+    auth: AuthResult = Depends(require_admin)
+):
+    """
+    Update an API key's name, permissions, or active status.
+    
+    Admin-only endpoint.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        result = api_key_service.update_api_key(key_id, request)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/admin/api-keys/{key_id}")
+async def delete_api_key(key_id: str, auth: AuthResult = Depends(require_admin)):
+    """
+    Delete an API key permanently.
+    
+    Admin-only endpoint.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        success = api_key_service.delete_api_key(key_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return {"message": "API key deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/api-keys/{key_id}/revoke", response_model=APIKeyListItem)
+async def revoke_api_key(key_id: str, auth: AuthResult = Depends(require_admin)):
+    """
+    Revoke an API key (deactivate without deleting).
+    
+    Admin-only endpoint. The key can be reactivated later.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        result = api_key_service.revoke_api_key(key_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error revoking API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/api-keys/{key_id}/activate", response_model=APIKeyListItem)
+async def activate_api_key(key_id: str, auth: AuthResult = Depends(require_admin)):
+    """
+    Reactivate a revoked API key.
+    
+    Admin-only endpoint.
+    """
+    try:
+        api_key_service = get_api_key_service()
+        result = api_key_service.activate_api_key(key_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error activating API key: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1,0 +1,507 @@
+---
+title: cURL Examples
+description: Command-line examples using cURL for all MOCA Library API operations
+---
+
+# cURL Examples
+
+Complete cURL examples for all major MOCA Library API operations. These examples are ready to copy and paste.
+
+## Setup
+
+Set your API configuration as environment variables:
+
+```bash
+export MOCA_URL="http://localhost:8000"
+export MOCA_API_KEY="your-api-key"
+```
+
+## Health & Statistics
+
+### Health Check
+
+```bash
+curl "$MOCA_URL/health"
+```
+
+### Get Statistics
+
+```bash
+curl "$MOCA_URL/api/stats" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+---
+
+## Documents
+
+### Upload a Document
+
+```bash
+curl -X POST "$MOCA_URL/api/upload" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -F "file=@document.pdf" \
+  -F "collection_id=default" \
+  -F "start_processing=true"
+```
+
+### Upload Without Processing (for bulk)
+
+```bash
+curl -X POST "$MOCA_URL/api/upload" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -F "file=@document.pdf" \
+  -F "start_processing=false"
+```
+
+### Process Pending Documents
+
+```bash
+curl -X POST "$MOCA_URL/api/documents/process-pending" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### List Documents
+
+```bash
+curl "$MOCA_URL/api/documents" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### List Documents in a Collection
+
+```bash
+curl "$MOCA_URL/api/documents?collection_id=research" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Get Document Details
+
+```bash
+curl "$MOCA_URL/api/documents/doc_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Delete a Document
+
+```bash
+curl -X DELETE "$MOCA_URL/api/documents/doc_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Reprocess a Document
+
+```bash
+curl -X POST "$MOCA_URL/api/documents/doc_abc123/reprocess" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Bulk Delete
+
+```bash
+curl -X POST "$MOCA_URL/api/documents/bulk-delete" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"document_ids": ["doc_1", "doc_2", "doc_3"]}'
+```
+
+---
+
+## Custom Inputs
+
+### Add Q&A Pair
+
+```bash
+curl -X POST "$MOCA_URL/api/custom-input" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "qa",
+    "title": "FAQ Entry",
+    "question": "What is MOCA?",
+    "answer": "MOCA is an agentic knowledge base."
+  }'
+```
+
+### Add Plain Text
+
+```bash
+curl -X POST "$MOCA_URL/api/custom-input" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "text",
+    "title": "Company Info",
+    "content": "MOCA Library is a powerful knowledge management system..."
+  }'
+```
+
+### Add Markdown
+
+```bash
+curl -X POST "$MOCA_URL/api/custom-input" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "markdown",
+    "title": "Technical Notes",
+    "content": "# Overview\n\n## Features\n\n- Feature 1\n- Feature 2"
+  }'
+```
+
+---
+
+## Search
+
+### Basic Search
+
+```bash
+curl -X POST "$MOCA_URL/api/search" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning", "limit": 10}'
+```
+
+### Hybrid Search
+
+```bash
+curl -X POST "$MOCA_URL/api/search" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "neural networks",
+    "limit": 20,
+    "search_type": "hybrid"
+  }'
+```
+
+### Search in Collection
+
+```bash
+curl -X POST "$MOCA_URL/api/search" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "transformer architecture",
+    "collection_id": "research",
+    "limit": 10
+  }'
+```
+
+### Vector-Only Search
+
+```bash
+curl -X POST "$MOCA_URL/api/search" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "semantic similarity concepts",
+    "search_type": "vector"
+  }'
+```
+
+---
+
+## Ask AI (RAG)
+
+### Ask a Question
+
+```bash
+curl -X POST "$MOCA_URL/api/rag" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the main findings?"}'
+```
+
+### Ask About a Collection
+
+```bash
+curl -X POST "$MOCA_URL/api/rag" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Summarize the key points",
+    "collection_id": "research"
+  }'
+```
+
+### Fast Mode
+
+```bash
+curl -X POST "$MOCA_URL/api/rag" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the company mission?",
+    "fast_mode": true
+  }'
+```
+
+### Streaming Response
+
+```bash
+curl -X POST "$MOCA_URL/api/rag/stream" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Explain GraphRAG in detail"}' \
+  --no-buffer
+```
+
+### Agentic Mode
+
+```bash
+curl -X POST "$MOCA_URL/api/rag/agentic" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Compare the methodologies in papers A and B",
+    "enable_reasoning": true
+  }'
+```
+
+### With Conversation History
+
+```bash
+curl -X POST "$MOCA_URL/api/rag" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Can you elaborate on the third point?",
+    "conversation_history": [
+      {"role": "user", "content": "What are the benefits?"},
+      {"role": "assistant", "content": "The main benefits are: 1) ..."}
+    ]
+  }'
+```
+
+---
+
+## Collections
+
+### Create Collection
+
+```bash
+curl -X POST "$MOCA_URL/api/collections" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Research Papers",
+    "description": "Academic papers on AI and ML"
+  }'
+```
+
+### List Collections
+
+```bash
+curl "$MOCA_URL/api/collections" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Get Collection Details
+
+```bash
+curl "$MOCA_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Update Collection
+
+```bash
+curl -X PUT "$MOCA_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Name",
+    "description": "Updated description"
+  }'
+```
+
+### Delete Collection
+
+```bash
+curl -X DELETE "$MOCA_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Move Documents
+
+```bash
+curl -X POST "$MOCA_URL/api/documents/move" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_ids": ["doc_1", "doc_2"],
+    "target_collection_id": "coll_def456"
+  }'
+```
+
+---
+
+## Knowledge Graph
+
+### Get Graph Visualization
+
+```bash
+curl "$MOCA_URL/api/graph/visualization" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Search Entities
+
+```bash
+curl "$MOCA_URL/api/graph/entities?search=neural&limit=20" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Get Entity Details
+
+```bash
+curl "$MOCA_URL/api/graph/entities/ent_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Get Subgraph
+
+```bash
+curl -X POST "$MOCA_URL/api/graph/subgraph" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_name": "Machine Learning",
+    "max_depth": 2,
+    "limit": 50
+  }'
+```
+
+---
+
+## Communities
+
+### Detect Communities
+
+```bash
+curl -X POST "$MOCA_URL/api/communities/detect" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"min_community_size": 3}'
+```
+
+### List Communities
+
+```bash
+curl "$MOCA_URL/api/communities" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Get Community Details
+
+```bash
+curl "$MOCA_URL/api/communities/comm_1" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Summarize Community
+
+```bash
+curl -X POST "$MOCA_URL/api/communities/comm_1/summarize" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+---
+
+## Background Tasks
+
+### Get Task Status
+
+```bash
+curl "$MOCA_URL/api/tasks/task_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### List Tasks
+
+```bash
+curl "$MOCA_URL/api/tasks" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Cancel Task
+
+```bash
+curl -X DELETE "$MOCA_URL/api/tasks/task_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+---
+
+## Admin - API Keys
+
+### Create API Key
+
+```bash
+curl -X POST "$MOCA_URL/api/admin/api-keys" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production App",
+    "permissions": ["read", "write"],
+    "expires_at": "2025-12-31T23:59:59Z"
+  }'
+```
+
+### List API Keys
+
+```bash
+curl "$MOCA_URL/api/admin/api-keys" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Revoke API Key
+
+```bash
+curl -X POST "$MOCA_URL/api/admin/api-keys/key_abc123/revoke" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Delete API Key
+
+```bash
+curl -X DELETE "$MOCA_URL/api/admin/api-keys/key_abc123" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+---
+
+## Turbo Mode
+
+### Check Turbo Status
+
+```bash
+curl "$MOCA_URL/api/turbo/status" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Start Turbo Job
+
+```bash
+curl -X POST "$MOCA_URL/api/turbo/start" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"runtime_seconds": 3600}'
+```
+
+### Stop Turbo Job
+
+```bash
+curl -X POST "$MOCA_URL/api/turbo/stop" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Ask with Turbo
+
+```bash
+curl -X POST "$MOCA_URL/api/turbo/ask" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Summarize the findings"}'
+```

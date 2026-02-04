@@ -399,3 +399,40 @@ export interface CustomInputItem {
   collection_id?: string | null;
   collection_name?: string | null;
 }
+
+// =============================================================================
+// Admin / API Key Types
+// =============================================================================
+
+export type APIKeyPermission = "read" | "manage";
+
+export interface APIKeyListItem {
+  id: string;
+  name: string;
+  key_prefix: string;
+  permissions: APIKeyPermission[];
+  is_active: boolean;
+  created_at: string;
+  last_used_at?: string | null;
+  created_by: string;
+}
+
+export interface CreateAPIKeyRequest {
+  name: string;
+  permissions: APIKeyPermission[];
+}
+
+export interface CreateAPIKeyResponse {
+  id: string;
+  name: string;
+  key: string;  // The actual key - only shown once!
+  key_prefix: string;
+  permissions: APIKeyPermission[];
+  created_at: string;
+}
+
+export interface UpdateAPIKeyRequest {
+  name?: string;
+  permissions?: APIKeyPermission[];
+  is_active?: boolean;
+}

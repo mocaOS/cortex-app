@@ -1,0 +1,242 @@
+---
+title: Knowledge Graph
+description: AI-powered entity extraction, relationships, and graph visualization
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# Knowledge Graph
+
+MOCA automatically builds a knowledge graph from your documents using GraphRAG (Graph Retrieval-Augmented Generation). This enables semantic understanding, relationship discovery, and enhanced search capabilities.
+
+## What is GraphRAG?
+
+GraphRAG uses Large Language Models to:
+
+1. **Extract Entities** - Identify people, organizations, concepts, technologies, locations
+2. **Find Relationships** - Discover how entities relate to each other
+3. **Resolve Semantics** - Merge duplicate entities with different names
+4. **Build Structure** - Create a traversable graph stored in Neo4j
+
+## Entity Extraction Pipeline
+
+<Mermaid chart={`
+flowchart TD
+    A["📄 Document Chunk"] --> B["🤖 LLM Extraction"]
+    B --> C["📦 Entities Found"]
+    C --> D["🔗 Relationships Found"]
+    D --> E["🔍 Semantic Resolution"]
+    E --> F["💾 Neo4j Storage"]
+    
+    B -.-> B1["'Extract entities and<br/>relationships from this text'"]
+    C -.-> C1["OpenAI, GPT-4, Technology"]
+    D -.-> D1["OpenAI CREATED GPT-4"]
+    E -.-> E1["Merge 'OpenAI' with 'Open AI'"]
+`} />
+
+## Entity Types
+
+MOCA extracts various entity types:
+
+| Type | Examples |
+|------|----------|
+| `Person` | Names, authors, researchers |
+| `Organization` | Companies, institutions, teams |
+| `Concept` | Ideas, theories, methodologies |
+| `Technology` | Software, tools, frameworks |
+| `Location` | Places, regions, countries |
+| `Event` | Conferences, releases, meetings |
+| `Product` | Products, services, offerings |
+
+## Relationship Types
+
+Common relationship types discovered:
+
+| Relationship | Description |
+|--------------|-------------|
+| `RELATED_TO` | Generic relationship |
+| `CREATED` | Creator/creation relationship |
+| `WORKS_FOR` | Employment relationship |
+| `PART_OF` | Containment/membership |
+| `USES` | Utilization relationship |
+| `LOCATED_IN` | Geographic relationship |
+| `MENTIONS` | Reference relationship |
+
+## Graph Visualization
+
+<Mermaid chart={`
+graph LR
+    subgraph Knowledge Graph
+        A[OpenAI] -->|CREATED| B[GPT-4]
+        A -->|CREATED| C[ChatGPT]
+        A -->|LED_BY| D[Sam Altman]
+        B -->|USES| E[Transformer]
+        C -->|USES| E
+        E -->|INVENTED_BY| F[Google]
+    end
+`} />
+
+## API Usage
+
+### Get Graph Statistics
+
+```bash
+curl "http://localhost:8000/api/stats" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "document_count": 156,
+  "chunk_count": 4280,
+  "entity_count": 1542,
+  "relationship_count": 3891,
+  "community_count": 23,
+  "collection_count": 5
+}
+```
+
+### Get Graph Visualization Data
+
+```bash
+curl "http://localhost:8000/api/graph/visualization" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "nodes": [
+    {"id": "ent_1", "label": "OpenAI", "type": "Organization"},
+    {"id": "ent_2", "label": "GPT-4", "type": "Technology"}
+  ],
+  "edges": [
+    {"source": "ent_1", "target": "ent_2", "type": "CREATED"}
+  ]
+}
+```
+
+### Get Entity Details
+
+```bash
+curl "http://localhost:8000/api/graph/entities/ent_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "id": "ent_abc123",
+  "name": "OpenAI",
+  "type": "Organization",
+  "description": "AI research company",
+  "mention_count": 45,
+  "related_documents": ["doc_1", "doc_2", "doc_3"],
+  "relationships": [
+    {"target": "GPT-4", "type": "CREATED"},
+    {"target": "ChatGPT", "type": "CREATED"},
+    {"target": "Sam Altman", "type": "LED_BY"}
+  ]
+}
+```
+
+### Get Entity Relationships
+
+```bash
+curl "http://localhost:8000/api/graph/entities/ent_abc123/relationships" \
+  -H "X-API-Key: your-api-key"
+```
+
+### Query Subgraph
+
+Get a subgraph starting from a specific entity:
+
+```bash
+curl -X POST "http://localhost:8000/api/graph/subgraph" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_name": "Machine Learning",
+    "max_depth": 2,
+    "limit": 50
+  }'
+```
+
+### Search Entities
+
+```bash
+curl "http://localhost:8000/api/graph/entities?search=neural&type=Concept&limit=20" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Semantic Entity Resolution
+
+MOCA automatically merges entities that refer to the same thing:
+
+<Mermaid chart={`
+flowchart LR
+    A["'OpenAI'"] --> D["Merged Entity:<br/><b>OpenAI</b>"]
+    B["'Open AI'"] --> D
+    C["'openai'"] --> D
+    
+    D --> E["Used in search"]
+    D --> F["Displayed in graph"]
+`} />
+
+Configuration:
+
+```bash
+ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
+ENTITY_SIMILARITY_THRESHOLD=0.85
+```
+
+## Graph in Search
+
+During search, MOCA uses the knowledge graph to:
+
+1. **Expand queries** - Find related entities
+2. **Traverse relationships** - Discover connected information
+3. **Add context** - Include entity descriptions in prompts
+
+Configure graph usage:
+
+```bash
+MAX_GRAPH_HOPS=2
+GRAPH_WEIGHT=0.2
+```
+
+## Visualization
+
+The Explore page provides an interactive graph visualization:
+
+- **Node Colors** - Different colors for entity types
+- **Node Size** - Based on mention frequency
+- **Edge Labels** - Relationship types
+- **Clustering** - Related entities grouped together
+- **Filtering** - Filter by entity type or relationship
+- **Search** - Find specific entities
+
+## Configuration
+
+```bash
+# Enable/disable graph extraction
+ENABLE_GRAPH_EXTRACTION=true
+
+# Model for extraction (defaults to OPENAI_MODEL)
+# GRAPH_EXTRACTION_MODEL=gpt-4o-mini
+
+# Concurrent extraction operations
+CONCURRENT_EXTRACTIONS=20
+
+# Graph traversal depth
+MAX_GRAPH_HOPS=2
+
+# Entity resolution
+ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
+ENTITY_SIMILARITY_THRESHOLD=0.85
+```
+
+## Best Practices
+
+1. **Quality Documents** - Better source documents = better entities
+2. **Review Entities** - Periodically review extracted entities for accuracy
+3. **Tune Threshold** - Adjust `ENTITY_SIMILARITY_THRESHOLD` based on your domain
+4. **Use Communities** - Enable community detection for large graphs

@@ -86,16 +86,8 @@ export default function SearchPanel() {
     setHasSearched(true);
 
     try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, top_k: 10 }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data.results);
-      }
+      const data = await api.search(query, 10);
+      setResults(data.results);
     } catch (error) {
       console.error("Search failed:", error);
     } finally {

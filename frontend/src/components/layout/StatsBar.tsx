@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   FileText,
   BookOpen,
@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import StatsCard from "@/components/StatsCard";
 import { formatBytes } from "@/lib/utils";
+import { api } from "@/lib/api";
+import { useAuth } from "./AuthProvider";
 
 interface Stats {
   document_count: number;
@@ -26,19 +28,17 @@ interface Stats {
 }
 
 export default function StatsBar() {
+  const { isAuthReady } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     const startTime = Date.now();
     const minAnimationDuration = 2000;
     setStatsLoading(true);
     try {
-      const res = await fetch("/api/stats");
-      if (res.ok) {
-        const data = await res.json();
-        setStats(data);
-      }
+      const data = await api.getStats();
+      setStats(data);
     } catch (error) {
       console.error("Failed to fetch stats:", error);
     } finally {
@@ -50,13 +50,16 @@ export default function StatsBar() {
         setStatsLoading(false);
       }
     }
-  };
+  }, []);
 
+  // Only fetch stats when auth is ready
   useEffect(() => {
+    if (!isAuthReady) return;
+
     fetchStats();
     const interval = setInterval(fetchStats, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthReady, fetchStats]);
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-6 w-full">

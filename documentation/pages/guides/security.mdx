@@ -1,0 +1,272 @@
+---
+title: Security
+description: Security features and best practices for MOCA Library
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# Security
+
+MOCA Library includes several security features to protect your data and prevent abuse. This guide covers security configuration and best practices.
+
+## Prompt Security
+
+MOCA includes built-in protection against **prompt injection attacks** - attempts to manipulate the AI through malicious input.
+
+### How It Works
+
+<Mermaid chart={`
+flowchart TD
+    A["👤 User Input"] --> B["🔍 Input Validation"]
+    B --> C["📏 Length Limits"]
+    C --> D["🛡️ Anti-Injection"]
+    D --> E["🤖 LLM Processing"]
+    E --> F["🧹 Output Filtering"]
+    F --> G["✅ Safe Response"]
+    
+    B -.-> B1["Check for malicious patterns"]
+    C -.-> C1["Enforce max length"]
+    D -.-> D1["Add defensive prompts"]
+    F -.-> F1["Remove harmful content"]
+`} />
+
+### Configuration
+
+```bash
+# Enable prompt security (recommended)
+PROMPT_SECURITY=true
+```
+
+### What It Protects Against
+
+- **Jailbreak attempts** - Trying to bypass AI safety guidelines
+- **Instruction injection** - Inserting malicious instructions
+- **Data exfiltration** - Attempting to extract training data
+- **System prompt extraction** - Trying to reveal system prompts
+- **Role manipulation** - Pretending to be a different entity
+
+### Safe Refusal
+
+When an attack is detected, MOCA returns a safe refusal:
+
+```json
+{
+  "answer": "I can't process that request. Please rephrase your question about the documents.",
+  "security_flag": true
+}
+```
+
+## API Key Security
+
+### Strong Keys
+
+Use cryptographically secure API keys:
+
+```bash
+# Generate a secure key
+openssl rand -base64 32
+
+# Example format
+ADMIN_API_KEY=moca_admin_Kj8nP2mQ9xL5vR7wY3hT
+```
+
+### Key Permissions
+
+Apply the principle of least privilege:
+
+| Use Case | Recommended Permissions |
+|----------|-------------------------|
+| Search/Q&A only | `read` |
+| Document management | `read`, `write` |
+| Full automation | `read`, `write`, `delete` |
+| Admin operations | `admin` |
+
+### Key Expiration
+
+Set expiration dates for temporary access:
+
+```json
+{
+  "name": "Contractor Access",
+  "permissions": ["read"],
+  "expires_at": "2024-03-31T23:59:59Z"
+}
+```
+
+## Session Security
+
+### JWT Configuration
+
+```bash
+# Strong session secret (32+ characters)
+SESSION_SECRET=a-very-long-random-string-at-least-32-chars
+
+# Generate with:
+openssl rand -base64 32
+```
+
+### Session Best Practices
+
+- Use HTTPS in production
+- Set appropriate session timeouts
+- Rotate session secrets periodically
+
+## Input Validation
+
+All user inputs are validated:
+
+### File Uploads
+
+```bash
+# Maximum file size
+MAX_FILE_SIZE_MB=50
+```
+
+Validation includes:
+- File size limits
+- Allowed file types (PDF, TXT, MD, DOCX)
+- Malware scanning (if configured)
+
+### Query Limits
+
+- Maximum query length enforced
+- Request body size limits
+- Rate limiting per API key
+
+## Rate Limiting
+
+Protect against abuse with rate limiting:
+
+```bash
+# Configure rate limits
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_WINDOW=60  # seconds
+```
+
+Response headers include rate limit info:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1705329600
+```
+
+## CORS Configuration
+
+Restrict which origins can access your API:
+
+```bash
+# Development (allow all)
+CORS_ORIGINS=*
+
+# Production (restrict to your domains)
+CORS_ORIGINS=https://moca.yourdomain.com,https://app.yourdomain.com
+```
+
+## Network Security
+
+### Firewall Rules
+
+Block direct access to internal services:
+
+```bash
+# Only expose frontend (3000) and API (8000)
+# Block direct Neo4j access (7474, 7687)
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw deny 7474/tcp
+ufw deny 7687/tcp
+```
+
+### HTTPS
+
+Always use HTTPS in production:
+
+```nginx
+server {
+    listen 80;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    
+    # Modern SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_prefer_server_ciphers off;
+}
+```
+
+## Data Protection
+
+### At Rest
+
+- Neo4j Enterprise Edition supports encryption at rest
+- Use encrypted volumes for Docker data
+
+### In Transit
+
+- All API communication should use HTTPS
+- Internal service communication uses Docker network isolation
+
+### Secrets Management
+
+Never commit secrets to version control:
+
+```bash
+# Use .env files (in .gitignore)
+cp .env.example .env
+
+# Or use a secrets manager
+docker run -e OPENAI_API_KEY=$(vault read -field=key secret/openai) ...
+```
+
+## Audit Logging
+
+Enable audit logs for compliance:
+
+```bash
+ENABLE_AUDIT_LOG=true
+AUDIT_LOG_PATH=/var/log/moca/audit.log
+```
+
+Logged events:
+- API key usage
+- Document uploads/deletions
+- Search queries
+- Configuration changes
+- Authentication events
+
+## Security Checklist
+
+### Before Production
+
+- [ ] Change all default passwords
+- [ ] Set strong `ADMIN_API_KEY` (not the example key)
+- [ ] Set strong `SESSION_SECRET` (32+ characters)
+- [ ] Enable `PROMPT_SECURITY=true`
+- [ ] Configure HTTPS with valid certificates
+- [ ] Restrict `CORS_ORIGINS` to your domains
+- [ ] Block direct access to Neo4j ports
+- [ ] Review API key permissions
+
+### Ongoing
+
+- [ ] Rotate API keys regularly
+- [ ] Monitor audit logs for suspicious activity
+- [ ] Keep dependencies updated
+- [ ] Regular security reviews
+- [ ] Backup encryption keys securely
+- [ ] Test disaster recovery procedures
+
+## Reporting Security Issues
+
+If you discover a security vulnerability:
+
+1. **Do not** open a public GitHub issue
+2. Email security concerns to the maintainers
+3. Include details to reproduce the issue
+4. Allow time for a fix before disclosure

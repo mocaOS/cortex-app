@@ -1,0 +1,213 @@
+---
+title: Document Upload
+description: Upload and process documents into the MOCA knowledge base
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# Document Upload
+
+MOCA Library supports various document formats and provides flexible upload options for both single files and bulk operations.
+
+## Supported Formats
+
+| Format | Extension | Notes |
+|--------|-----------|-------|
+| PDF | `.pdf` | Text extraction with layout preservation |
+| Plain Text | `.txt` | Direct text ingestion |
+| Markdown | `.md` | Preserves formatting, headers, code blocks |
+| Word | `.docx` | Text and basic formatting extracted |
+
+## Upload Methods
+
+### Single File Upload
+
+Upload one file at a time with immediate processing:
+
+```bash
+curl -X POST "http://localhost:8000/api/upload" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@document.pdf" \
+  -F "collection_id=default" \
+  -F "start_processing=true"
+```
+
+**Response:**
+
+```json
+{
+  "filename": "document.pdf",
+  "doc_id": "doc_abc123",
+  "status": "processing",
+  "message": "Document uploaded and processing started",
+  "collection_id": "default"
+}
+```
+
+### Bulk Upload
+
+For uploading many files (100+), disable immediate processing and batch process later:
+
+```bash
+# Step 1: Upload files without processing
+for file in *.pdf; do
+  curl -X POST "http://localhost:8000/api/upload" \
+    -H "X-API-Key: your-api-key" \
+    -F "file=@$file" \
+    -F "start_processing=false"
+done
+
+# Step 2: Start batch processing
+curl -X POST "http://localhost:8000/api/documents/process-pending" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Processing Pipeline
+
+When a document is uploaded, it goes through these stages:
+
+<Mermaid chart={`
+flowchart TD
+    A["📤 Upload"] --> B["📄 Text Extraction"]
+    B --> C["✂️ Chunking"]
+    C --> D["🔢 Embedding"]
+    D --> E["🔍 Entity Extraction"]
+    E --> F["🔗 Semantic Resolution"]
+    F --> G["💾 Neo4j Storage"]
+    G --> H["✅ Complete"]
+    
+    B -.-> B1["PDF/DOCX parser"]
+    C -.-> C1["Sentence-based splits"]
+    D -.-> D1["Vector embeddings"]
+    E -.-> E1["LLM extraction"]
+`} />
+
+## Tracking Progress
+
+### Get Document Status
+
+```bash
+curl "http://localhost:8000/api/documents/doc_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+**Response:**
+
+```json
+{
+  "id": "doc_abc123",
+  "filename": "document.pdf",
+  "status": "completed",
+  "chunk_count": 42,
+  "entity_count": 18,
+  "created_at": "2024-01-15T10:30:00Z",
+  "processed_at": "2024-01-15T10:32:15Z",
+  "collection_id": "default"
+}
+```
+
+### Processing Status Values
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Uploaded, waiting for processing |
+| `processing` | Currently being processed |
+| `completed` | Successfully processed |
+| `failed` | Processing failed (check logs) |
+
+## Custom Inputs
+
+In addition to file uploads, you can add knowledge manually:
+
+### Q&A Pairs
+
+```bash
+curl -X POST "http://localhost:8000/api/custom-input" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "qa",
+    "title": "Company FAQ",
+    "question": "What is MOCA?",
+    "answer": "MOCA is an agentic knowledge base..."
+  }'
+```
+
+### Plain Text
+
+```bash
+curl -X POST "http://localhost:8000/api/custom-input" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "text",
+    "title": "Product Description",
+    "content": "MOCA Library is a powerful..."
+  }'
+```
+
+### Markdown
+
+```bash
+curl -X POST "http://localhost:8000/api/custom-input" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "markdown",
+    "title": "Technical Documentation",
+    "content": "# Overview\n\nMOCA provides..."
+  }'
+```
+
+## Document Management
+
+### List All Documents
+
+```bash
+curl "http://localhost:8000/api/documents" \
+  -H "X-API-Key: your-api-key"
+```
+
+### Delete a Document
+
+```bash
+curl -X DELETE "http://localhost:8000/api/documents/doc_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+### Reprocess a Document
+
+Useful after updating extraction settings:
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/doc_abc123/reprocess" \
+  -H "X-API-Key: your-api-key"
+```
+
+### Bulk Delete
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/bulk-delete" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"document_ids": ["doc_abc123", "doc_def456"]}'
+```
+
+## Configuration
+
+Control document processing behavior via environment variables:
+
+```bash
+# Maximum file size
+MAX_FILE_SIZE_MB=50
+
+# Chunking settings
+CHUNK_SIZE=500
+CHUNK_OVERLAP=50
+CHUNK_BY=sentence
+SENTENCES_PER_CHUNK=5
+
+# Processing concurrency
+BATCH_PROCESSING_CONCURRENCY=10
+CONCURRENT_EXTRACTIONS=20
+```

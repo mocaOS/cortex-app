@@ -1,0 +1,233 @@
+---
+title: Ask AI
+description: AI-powered question answering with RAG, streaming, and agentic reasoning
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# Ask AI
+
+Ask questions about your documents and get intelligent answers with source citations. MOCA's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries.
+
+## How It Works
+
+<Mermaid chart={`
+flowchart TD
+    Q["❓ User Question"] --> SEARCH["🔍 Hybrid Search"]
+    SEARCH --> RERANK["📊 Cross-Encoder Re-ranking"]
+    RERANK --> GRAPH["🕸️ Graph Context"]
+    GRAPH --> LLM["🤖 LLM Generation"]
+    LLM --> ANS["✅ Answer + Sources"]
+    
+    SEARCH -.-> S1["Vector + Keyword + Graph"]
+    RERANK -.-> R1["Top candidates ranked"]
+    GRAPH -.-> G1["Entity relationships added"]
+    LLM -.-> L1["Generate with context"]
+`} />
+
+## Basic Usage
+
+### Ask a Question
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the main benefits of knowledge graphs?"
+  }'
+```
+
+### Response
+
+```json
+{
+  "answer": "Knowledge graphs provide several key benefits:\n\n1. **Structured Relationships** - They capture explicit connections between entities, enabling complex queries about how concepts relate.\n\n2. **Semantic Understanding** - Unlike simple keyword search, graphs understand meaning and context.\n\n3. **Discovery** - Graph traversal reveals hidden connections not apparent from individual documents.",
+  "sources": [
+    {
+      "document_id": "doc_abc123",
+      "document_title": "Knowledge Graph Overview.pdf",
+      "chunk_id": "chunk_456",
+      "content": "Knowledge graphs excel at representing...",
+      "relevance_score": 0.94
+    }
+  ],
+  "graph_context": {
+    "entities": ["Knowledge Graph", "Entity", "Relationship"],
+    "relationships_used": 3
+  },
+  "stats": {
+    "chunks_retrieved": 10,
+    "chunks_used": 5,
+    "tokens_used": 1247,
+    "response_time_ms": 2341
+  }
+}
+```
+
+## Streaming Responses
+
+For real-time responses, use the streaming endpoint:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag/stream" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Explain GraphRAG in detail"
+  }' \
+  --no-buffer
+```
+
+The response streams as Server-Sent Events (SSE):
+
+```
+data: {"type": "chunk", "content": "GraphRAG "}
+data: {"type": "chunk", "content": "combines "}
+data: {"type": "chunk", "content": "knowledge graphs "}
+...
+data: {"type": "sources", "sources": [...]}
+data: {"type": "done"}
+```
+
+## Agentic Mode
+
+For complex questions requiring multi-step reasoning:
+
+<Mermaid chart={`
+flowchart TD
+    Q["Complex Question"] --> THINK["🧠 Analyze Question"]
+    THINK --> STEP1["Step 1: Search for A"]
+    STEP1 --> STEP2["Step 2: Search for B"]
+    STEP2 --> STEP3["Step 3: Compare A & B"]
+    STEP3 --> SYNTH["Synthesize Answer"]
+    SYNTH --> ANS["Final Answer"]
+    
+    THINK -.-> T1["Break down into sub-questions"]
+    STEP1 -.-> S1["Retrieve relevant context"]
+    STEP2 -.-> S2["Retrieve more context"]
+`} />
+
+```bash
+curl -X POST "http://localhost:8000/api/rag/agentic" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Compare the methodologies used in papers A and B",
+    "enable_reasoning": true
+  }'
+```
+
+Agentic mode:
+- Breaks down complex queries into sub-questions
+- Performs multiple search iterations
+- Synthesizes information across documents
+- Shows reasoning steps (when `STREAM_REASONING_STEPS=true`)
+
+### Reasoning Steps Example
+
+```json
+{
+  "reasoning_steps": [
+    {
+      "step": 1,
+      "thought": "First, I need to find the methodology section of Paper A",
+      "action": "search",
+      "result": "Found 3 relevant chunks about Paper A's methodology"
+    },
+    {
+      "step": 2,
+      "thought": "Now I need to find Paper B's methodology for comparison",
+      "action": "search",
+      "result": "Found 4 relevant chunks about Paper B's methodology"
+    },
+    {
+      "step": 3,
+      "thought": "I can now compare both methodologies",
+      "action": "synthesize",
+      "result": "Generating comparative analysis..."
+    }
+  ],
+  "answer": "Both papers approach the problem differently..."
+}
+```
+
+## Conversation History
+
+Maintain context across multiple questions:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Can you elaborate on the third point?",
+    "conversation_history": [
+      {"role": "user", "content": "What are the benefits of knowledge graphs?"},
+      {"role": "assistant", "content": "Knowledge graphs provide: 1) Structured relationships..."}
+    ]
+  }'
+```
+
+## Collection-Scoped Questions
+
+Ask about specific document collections:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What were the Q4 results?",
+    "collection_id": "financial-reports"
+  }'
+```
+
+## Fast Mode
+
+Use a faster (potentially cheaper) model for simpler questions:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the company mission?",
+    "fast_mode": true
+  }'
+```
+
+Configure the fast mode model:
+
+```bash
+OPENAI_MODEL_FAST_MODE=gpt-4o-mini
+```
+
+## Configuration
+
+```bash
+# Agentic RAG settings
+ENABLE_AGENTIC_RAG=true
+MAX_AGENTIC_STEPS=3
+
+# Conversation settings
+MAX_CONVERSATION_HISTORY=6
+
+# Visibility settings
+STREAM_REASONING_STEPS=true
+SHOW_RETRIEVAL_STATS=true
+```
+
+## Prompt Security
+
+MOCA includes built-in protection against prompt injection attacks:
+
+```bash
+PROMPT_SECURITY=true
+```
+
+This:
+- Validates and sanitizes user input
+- Injects anti-manipulation instructions
+- Filters potentially harmful outputs
+- Returns safe refusal messages when attacks are detected

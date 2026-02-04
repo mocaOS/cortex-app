@@ -1,0 +1,179 @@
+---
+title: Quick Start
+description: Get MOCA Library running in 5 minutes with Docker
+---
+
+# Quick Start
+
+Get MOCA Library running locally in just a few minutes using Docker Compose.
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose installed
+- [Git](https://git-scm.com/) for cloning the repository
+- An **OpenAI API key** (or Anthropic/local LLM)
+
+## Installation
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/mocaOS/library.git
+cd library
+```
+
+### Step 2: Configure Environment
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in your editor and set the required values:
+
+```bash
+# Required: Neo4j password
+NEO4J_PASSWORD=your-secure-password-here
+
+# Required: OpenAI API key for LLM features
+OPENAI_API_KEY=sk-your-openai-api-key-here
+
+# Required: Admin credentials for the frontend
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=your-admin-password
+ADMIN_API_KEY=moca_admin_your-secure-key-here
+SESSION_SECRET=a-random-string-at-least-32-characters-long
+```
+
+> **Tip:** Generate a secure session secret with: `openssl rand -base64 32`
+
+### Step 3: Start Services
+
+```bash
+docker compose up -d
+```
+
+This starts all services:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Frontend | http://localhost:3000 | Next.js web interface |
+| Backend API | http://localhost:8000 | FastAPI REST API |
+| Neo4j Browser | http://localhost:7474 | Database admin UI |
+| Neo4j Bolt | bolt://localhost:7687 | Database connection |
+
+### Step 4: Verify Installation
+
+Check that all containers are running:
+
+```bash
+docker compose ps
+```
+
+Test the API health endpoint:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "healthy",
+  "neo4j_connected": true,
+  "version": "1.0.0"
+}
+```
+
+### Step 5: Access the Web Interface
+
+Open http://localhost:3000 in your browser and log in with your admin credentials.
+
+## First Steps
+
+### 1. Upload Your First Document
+
+1. Navigate to the **Add** page
+2. Drag and drop a PDF, TXT, MD, or DOCX file
+3. Click **Upload**
+4. Wait for processing to complete (watch the progress bar)
+
+### 2. Search Your Knowledge Base
+
+1. Go to the **Search** page
+2. Enter a search query
+3. View results with relevance scores
+
+### 3. Ask Questions
+
+1. Navigate to the **Ask** page
+2. Type a question about your documents
+3. Get an AI-generated answer with source citations
+
+### 4. Explore the Knowledge Graph
+
+1. Open the **Explore** page
+2. View the interactive graph visualization
+3. Click on entities to see their relationships
+
+## Common Commands
+
+```bash
+# Start all services
+docker compose up -d
+
+# Stop all services
+docker compose down
+
+# View logs
+docker compose logs -f
+
+# View logs for specific service
+docker compose logs -f backend
+
+# Restart a service
+docker compose restart backend
+
+# Rebuild after code changes
+docker compose up -d --build
+```
+
+## Troubleshooting
+
+### Container won't start
+
+Check if ports are already in use:
+
+```bash
+lsof -i :3000  # Frontend
+lsof -i :8000  # Backend
+lsof -i :7687  # Neo4j
+```
+
+### Neo4j connection failed
+
+Wait 30-60 seconds for Neo4j to fully initialize, then restart the backend:
+
+```bash
+docker compose restart backend
+```
+
+### OpenAI API errors
+
+Verify your API key is valid:
+
+```bash
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY"
+```
+
+## Next Steps
+
+- [Configuration Reference](/configuration) - All 50+ environment variables
+- [Document Upload Guide](/features/document-upload) - Supported formats and options
+- [Deployment Guide](/guides/deployment) - Production deployment with Coolify
+- [API Reference](/api) - Full API documentation

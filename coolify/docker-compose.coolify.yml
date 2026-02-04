@@ -39,12 +39,17 @@ services:
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
       - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       - UPLOAD_DIR=/app/uploads
+      - CUSTOM_INPUTS_DIR=/app/custom_inputs
       - PYTHONUNBUFFERED=1
       # Number of uvicorn workers (default 1, increase if you have RAM - each uses ~1-2GB)
       - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
       # Expose backend at api-kg subdomain on port 8000
       # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.moca.qwellco.de)
       - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
+      # Admin authentication - set ADMIN_API_KEY in Coolify env vars
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
       # Compute3 Turbo Mode (optional - set COMPUTE3_API_KEY in Coolify env vars)
       - COMPUTE3_API_KEY=${COMPUTE3_API_KEY:-}
       - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
@@ -52,6 +57,7 @@ services:
       - COMPUTE3_MODEL=${COMPUTE3_MODEL:-minimax-m21}
     volumes:
       - uploads_data:/app/uploads
+      - custom_inputs_data:/app/custom_inputs
     depends_on:
       neo4j:
         condition: service_healthy
@@ -77,6 +83,11 @@ services:
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
+      # Admin authentication - set these in Coolify env vars
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET}
     depends_on:
       - backend
     restart: unless-stopped
@@ -85,3 +96,4 @@ volumes:
   neo4j_data:
   neo4j_logs:
   uploads_data:
+  custom_inputs_data:

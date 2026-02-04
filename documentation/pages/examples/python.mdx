@@ -1,0 +1,410 @@
+---
+title: Python Examples
+description: Complete Python code examples for the MOCA Library API
+---
+
+# Python Examples
+
+Complete Python examples for interacting with the MOCA Library API, including a reusable client class and common operations.
+
+## Setup
+
+Install the required library:
+
+```bash
+pip install requests
+```
+
+## MOCA Client Class
+
+A reusable client wrapper for all API operations:
+
+```python
+"""MOCA Library Python Client"""
+
+import requests
+from typing import Optional, Dict, Any, List, Iterator
+from pathlib import Path
+
+
+class MOCAClient:
+    """Client for the MOCA Library API."""
+    
+    def __init__(self, base_url: str, api_key: str):
+        """
+        Initialize the MOCA client.
+        
+        Args:
+            base_url: The API base URL (e.g., "http://localhost:8000")
+            api_key: Your MOCA API key
+        """
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'X-API-Key': api_key,
+            'Content-Type': 'application/json'
+        })
+    
+    def _request(
+        self, 
+        method: str, 
+        path: str, 
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Make an API request."""
+        url = f"{self.base_url}{path}"
+        response = self.session.request(method, url, **kwargs)
+        response.raise_for_status()
+        return response.json()
+    
+    # =========================================================================
+    # Health & Stats
+    # =========================================================================
+    
+    def health(self) -> Dict[str, Any]:
+        """Check API health."""
+        return self._request('GET', '/health')
+    
+    def stats(self) -> Dict[str, Any]:
+        """Get knowledge base statistics."""
+        return self._request('GET', '/api/stats')
+    
+    # =========================================================================
+    # Documents
+    # =========================================================================
+    
+    def upload_document(
+        self, 
+        file_path: str, 
+        collection_id: Optional[str] = None,
+        start_processing: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Upload a document to the knowledge base.
+        
+        Args:
+            file_path: Path to the file to upload
+            collection_id: Optional collection to add the document to
+            start_processing: Whether to start processing immediately
+        """
+        path = Path(file_path)
+        with open(path, 'rb') as f:
+            files = {'file': (path.name, f, 'application/octet-stream')}
+            data = {'start_processing': str(start_processing).lower()}
+            if collection_id:
+                data['collection_id'] = collection_id
+            
+            # Remove Content-Type for multipart
+            headers = {'X-API-Key': self.session.headers['X-API-Key']}
+            response = requests.post(
+                f"{self.base_url}/api/upload",
+                files=files,
+                data=data,
+                headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    def list_documents(
+        self, 
+        collection_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """List documents in the knowledge base."""
+        params = {'limit': limit}
+        if collection_id:
+            params['collection_id'] = collection_id
+        if status:
+            params['status'] = status
+        return self._request('GET', '/api/documents', params=params)
+    
+    def get_document(self, doc_id: str) -> Dict[str, Any]:
+        """Get document details."""
+        return self._request('GET', f'/api/documents/{doc_id}')
+    
+    def delete_document(self, doc_id: str) -> Dict[str, Any]:
+        """Delete a document."""
+        return self._request('DELETE', f'/api/documents/{doc_id}')
+    
+    def reprocess_document(self, doc_id: str) -> Dict[str, Any]:
+        """Reprocess a document."""
+        return self._request('POST', f'/api/documents/{doc_id}/reprocess')
+    
+    # =========================================================================
+    # Search
+    # =========================================================================
+    
+    def search(
+        self, 
+        query: str, 
+        limit: int = 10,
+        collection_id: Optional[str] = None,
+        search_type: str = "hybrid"
+    ) -> Dict[str, Any]:
+        """
+        Search the knowledge base.
+        
+        Args:
+            query: Search query
+            limit: Maximum results to return
+            collection_id: Optional collection to search within
+            search_type: "hybrid", "vector", "keyword", or "graph"
+        """
+        payload = {
+            'query': query,
+            'limit': limit,
+            'search_type': search_type
+        }
+        if collection_id:
+            payload['collection_id'] = collection_id
+        return self._request('POST', '/api/search', json=payload)
+    
+    # =========================================================================
+    # Ask AI (RAG)
+    # =========================================================================
+    
+    def ask(
+        self, 
+        question: str,
+        collection_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict]] = None,
+        fast_mode: bool = False,
+        turbo_mode: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Ask a question using RAG.
+        
+        Args:
+            question: The question to ask
+            collection_id: Optional collection to query
+            conversation_history: Previous messages for context
+            fast_mode: Use faster/cheaper model
+            turbo_mode: Use Compute3 GPU acceleration
+        """
+        payload = {'query': question}
+        if collection_id:
+            payload['collection_id'] = collection_id
+        if conversation_history:
+            payload['conversation_history'] = conversation_history
+        if fast_mode:
+            payload['fast_mode'] = True
+        if turbo_mode:
+            payload['turbo_mode'] = True
+        return self._request('POST', '/api/rag', json=payload)
+    
+    def ask_streaming(
+        self, 
+        question: str,
+        collection_id: Optional[str] = None
+    ) -> Iterator[str]:
+        """
+        Ask a question with streaming response.
+        
+        Yields chunks of the response as they arrive.
+        """
+        payload = {'query': question}
+        if collection_id:
+            payload['collection_id'] = collection_id
+        
+        response = self.session.post(
+            f"{self.base_url}/api/rag/stream",
+            json=payload,
+            stream=True
+        )
+        response.raise_for_status()
+        
+        for line in response.iter_lines():
+            if line:
+                yield line.decode('utf-8')
+    
+    # =========================================================================
+    # Collections
+    # =========================================================================
+    
+    def create_collection(
+        self, 
+        name: str, 
+        description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a new collection."""
+        payload = {'name': name}
+        if description:
+            payload['description'] = description
+        return self._request('POST', '/api/collections', json=payload)
+    
+    def list_collections(self) -> List[Dict[str, Any]]:
+        """List all collections."""
+        return self._request('GET', '/api/collections')
+    
+    def delete_collection(self, collection_id: str) -> Dict[str, Any]:
+        """Delete a collection."""
+        return self._request('DELETE', f'/api/collections/{collection_id}')
+    
+    # =========================================================================
+    # Knowledge Graph
+    # =========================================================================
+    
+    def get_graph_visualization(
+        self, 
+        collection_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get graph visualization data."""
+        params = {}
+        if collection_id:
+            params['collection_id'] = collection_id
+        return self._request('GET', '/api/graph/visualization', params=params)
+    
+    def search_entities(
+        self, 
+        search: str, 
+        entity_type: Optional[str] = None,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Search for entities in the knowledge graph."""
+        params = {'search': search, 'limit': limit}
+        if entity_type:
+            params['type'] = entity_type
+        return self._request('GET', '/api/graph/entities', params=params)
+```
+
+## Usage Examples
+
+### Basic Setup
+
+```python
+# Initialize the client
+client = MOCAClient(
+    base_url="http://localhost:8000",
+    api_key="your-api-key"
+)
+
+# Check health
+health = client.health()
+print(f"Status: {health['status']}")
+```
+
+### Upload Documents
+
+```python
+# Upload a single document
+result = client.upload_document(
+    "research_paper.pdf",
+    collection_id="research"
+)
+print(f"Uploaded: {result['doc_id']}")
+
+# Upload multiple documents
+import glob
+
+for file_path in glob.glob("documents/*.pdf"):
+    result = client.upload_document(file_path)
+    print(f"Uploaded: {result['filename']}")
+```
+
+### Search
+
+```python
+# Basic search
+results = client.search("machine learning")
+for r in results['results']:
+    print(f"- {r['document_title']}: {r['content'][:100]}...")
+
+# Search in a specific collection
+results = client.search(
+    query="neural networks",
+    collection_id="research",
+    limit=5
+)
+```
+
+### Ask Questions
+
+```python
+# Simple question
+response = client.ask("What are the main findings?")
+print(response['answer'])
+
+# Print sources
+for source in response.get('sources', []):
+    print(f"  Source: {source['document_title']}")
+
+# Multi-turn conversation
+history = []
+question = "What is GraphRAG?"
+response = client.ask(question, conversation_history=history)
+history.append({"role": "user", "content": question})
+history.append({"role": "assistant", "content": response['answer']})
+
+# Follow-up question
+response = client.ask(
+    "How does it compare to traditional RAG?",
+    conversation_history=history
+)
+```
+
+### Streaming Responses
+
+```python
+# Stream the response
+for chunk in client.ask_streaming("Explain knowledge graphs"):
+    print(chunk, end='', flush=True)
+print()
+```
+
+### Error Handling
+
+```python
+from requests.exceptions import HTTPError
+
+try:
+    result = client.search("query")
+except HTTPError as e:
+    if e.response.status_code == 401:
+        print("Invalid API key")
+    elif e.response.status_code == 429:
+        print("Rate limited, please wait")
+    elif e.response.status_code == 403:
+        print("Insufficient permissions")
+    else:
+        print(f"Error: {e}")
+```
+
+## Complete Example Script
+
+```python
+#!/usr/bin/env python3
+"""Example: Upload documents and ask questions."""
+
+from moca_client import MOCAClient
+import sys
+
+def main():
+    # Initialize client
+    client = MOCAClient(
+        base_url="http://localhost:8000",
+        api_key="your-api-key"
+    )
+    
+    # Check health
+    health = client.health()
+    if health['status'] != 'healthy':
+        print("API not healthy!")
+        sys.exit(1)
+    
+    # Get stats
+    stats = client.stats()
+    print(f"Documents: {stats['document_count']}")
+    print(f"Entities: {stats['entity_count']}")
+    
+    # Search
+    results = client.search("important topic", limit=5)
+    print(f"\nFound {len(results['results'])} results")
+    
+    # Ask a question
+    response = client.ask("Summarize the key points")
+    print(f"\nAnswer: {response['answer']}")
+
+if __name__ == "__main__":
+    main()
+```

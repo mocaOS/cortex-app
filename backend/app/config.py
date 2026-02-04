@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     prompt_security: bool = Field(default=True)  # Enable prompt injection detection and protection
     
     # ==========================================================================
+    # Admin Authentication
+    # ==========================================================================
+    admin_email: str = Field(default="admin@example.com")  # Admin login email
+    admin_password: str = Field(default="")  # Admin login password (required for auth)
+    admin_api_key: str = Field(default="")  # Admin API key for full backend access
+    session_secret: str = Field(default="")  # Secret for JWT session encryption (min 32 chars)
+    
+    # ==========================================================================
     # Compute3 Turbo Mode Configuration
     # ==========================================================================
     compute3_api_key: str = Field(default="")  # Compute3 API key for turbo mode

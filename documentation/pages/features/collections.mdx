@@ -1,0 +1,221 @@
+---
+title: Collections
+description: Organize documents into collections with scoped graphs and search
+---
+
+# Collections
+
+Collections help you organize documents into logical groups for easier management, scoped search, and isolated knowledge graphs.
+
+## Why Use Collections?
+
+- **Organization** - Group related documents together
+- **Scoped Search** - Search within specific collections only
+- **Isolated Graphs** - Each collection has its own entity graph
+- **Access Control** - Apply different permissions per collection
+- **Multi-tenant** - Separate knowledge bases for different teams/projects
+
+## Collection Structure
+
+```
+MOCA Knowledge Base
+├── Collection: "Research Papers"
+│   ├── Document: paper1.pdf
+│   ├── Document: paper2.pdf
+│   └── Graph: entities & relationships
+│
+├── Collection: "Product Documentation"
+│   ├── Document: user-guide.pdf
+│   ├── Document: api-reference.md
+│   └── Graph: entities & relationships
+│
+└── Collection: "default"
+    ├── Document: misc1.txt
+    └── Graph: entities & relationships
+```
+
+## API Usage
+
+### Create a Collection
+
+```bash
+curl -X POST "http://localhost:8000/api/collections" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Research Papers",
+    "description": "Academic papers on AI and ML"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "id": "coll_abc123",
+  "name": "Research Papers",
+  "description": "Academic papers on AI and ML",
+  "document_count": 0,
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+
+### List Collections
+
+```bash
+curl "http://localhost:8000/api/collections" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "collections": [
+    {
+      "id": "coll_abc123",
+      "name": "Research Papers",
+      "document_count": 45,
+      "entity_count": 892
+    },
+    {
+      "id": "default",
+      "name": "default",
+      "document_count": 12,
+      "entity_count": 156
+    }
+  ]
+}
+```
+
+### Get Collection Details
+
+```bash
+curl "http://localhost:8000/api/collections/coll_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "id": "coll_abc123",
+  "name": "Research Papers",
+  "description": "Academic papers on AI and ML",
+  "document_count": 45,
+  "chunk_count": 1280,
+  "entity_count": 892,
+  "relationship_count": 2341,
+  "total_size_bytes": 52428800,
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-20T14:22:00Z"
+}
+```
+
+### Update a Collection
+
+```bash
+curl -X PUT "http://localhost:8000/api/collections/coll_abc123" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "AI Research Papers",
+    "description": "Updated description"
+  }'
+```
+
+### Delete a Collection
+
+```bash
+curl -X DELETE "http://localhost:8000/api/collections/coll_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+> **Warning:** Deleting a collection also deletes all documents and entities within it.
+
+## Document Management
+
+### Upload to a Collection
+
+```bash
+curl -X POST "http://localhost:8000/api/upload" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@paper.pdf" \
+  -F "collection_id=coll_abc123"
+```
+
+### Move Documents Between Collections
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/move" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_ids": ["doc_1", "doc_2"],
+    "target_collection_id": "coll_def456"
+  }'
+```
+
+### List Documents in a Collection
+
+```bash
+curl "http://localhost:8000/api/documents?collection_id=coll_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Collection-Scoped Operations
+
+### Search Within a Collection
+
+```bash
+curl -X POST "http://localhost:8000/api/search" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "transformer architecture",
+    "collection_id": "coll_abc123"
+  }'
+```
+
+### Ask AI About a Collection
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the common themes in these papers?",
+    "collection_id": "coll_abc123"
+  }'
+```
+
+### Get Collection Graph
+
+```bash
+curl "http://localhost:8000/api/graph/visualization?collection_id=coll_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Default Collection
+
+Documents uploaded without a `collection_id` go to the default collection.
+
+Configure the default collection name:
+
+```bash
+DEFAULT_COLLECTION=default
+```
+
+## Configuration
+
+```bash
+# Enable collections feature
+ENABLE_COLLECTIONS=true
+
+# Default collection for uncategorized documents
+DEFAULT_COLLECTION=default
+```
+
+## Best Practices
+
+1. **Meaningful Names** - Use descriptive names for easy identification
+2. **Logical Grouping** - Group documents by topic, project, or source
+3. **Don't Over-Segment** - Too many small collections reduce graph connectivity
+4. **Regular Cleanup** - Remove unused collections periodically
+5. **Use Descriptions** - Add descriptions for documentation

@@ -1,0 +1,271 @@
+---
+title: Authentication
+description: Secure your MOCA Library API with API key authentication
+---
+
+# Authentication
+
+MOCA Library uses API key authentication to secure endpoints. This guide covers how authentication works and how to manage API keys.
+
+## Overview
+
+MOCA has two authentication layers:
+
+1. **Admin Login** - Username/password for the web interface
+2. **API Keys** - Token-based authentication for API access
+
+## Admin Login
+
+The frontend requires admin credentials to access:
+
+```bash
+# Set in .env
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=your-secure-password
+SESSION_SECRET=at-least-32-characters-random-string
+```
+
+Login at `http://localhost:3000/login` with these credentials.
+
+## API Key Authentication
+
+All API endpoints (except `/health`) require an API key.
+
+### Using API Keys
+
+Include the key in the `X-API-Key` header:
+
+```bash
+curl "http://localhost:8000/api/documents" \
+  -H "X-API-Key: your-api-key"
+```
+
+Or use the `Authorization` header:
+
+```bash
+curl "http://localhost:8000/api/documents" \
+  -H "Authorization: Bearer your-api-key"
+```
+
+## API Key Types
+
+### Admin Key
+
+The admin API key has full access to all endpoints:
+
+```bash
+ADMIN_API_KEY=moca_admin_your-secure-key
+```
+
+Capabilities:
+- All document operations (upload, delete, reprocess)
+- Search and RAG queries
+- Knowledge graph access
+- Collection and community management
+- API key management (create, revoke other keys)
+- Background task management
+
+### User Keys
+
+User API keys have configurable permissions:
+
+| Permission | Description |
+|------------|-------------|
+| `read` | Search, view documents, ask questions |
+| `write` | Upload documents, create collections |
+| `delete` | Delete documents and collections |
+| `admin` | Full access including key management |
+
+## Managing API Keys
+
+### Create a New Key
+
+```bash
+curl -X POST "http://localhost:8000/api/admin/api-keys" \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production App",
+    "permissions": ["read", "write"],
+    "expires_at": "2025-12-31T23:59:59Z"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "id": "key_abc123",
+  "name": "Production App",
+  "key": "moca_user_abc123xyz789",
+  "permissions": ["read", "write"],
+  "expires_at": "2025-12-31T23:59:59Z",
+  "created_at": "2024-01-15T10:30:00Z",
+  "message": "Store this key securely - it won't be shown again"
+}
+```
+
+> **Warning:** The full API key is only shown once. Store it securely.
+
+### List API Keys
+
+```bash
+curl "http://localhost:8000/api/admin/api-keys" \
+  -H "X-API-Key: your-admin-key"
+```
+
+```json
+{
+  "keys": [
+    {
+      "id": "key_abc123",
+      "name": "Production App",
+      "key_prefix": "moca_user_abc...",
+      "permissions": ["read", "write"],
+      "is_active": true,
+      "expires_at": "2025-12-31T23:59:59Z",
+      "last_used_at": "2024-01-15T14:22:00Z",
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+### Update a Key
+
+```bash
+curl -X PUT "http://localhost:8000/api/admin/api-keys/key_abc123" \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Name",
+    "permissions": ["read", "write", "delete"]
+  }'
+```
+
+### Revoke a Key
+
+```bash
+curl -X POST "http://localhost:8000/api/admin/api-keys/key_abc123/revoke" \
+  -H "X-API-Key: your-admin-key"
+```
+
+### Reactivate a Key
+
+```bash
+curl -X POST "http://localhost:8000/api/admin/api-keys/key_abc123/activate" \
+  -H "X-API-Key: your-admin-key"
+```
+
+### Delete a Key
+
+```bash
+curl -X DELETE "http://localhost:8000/api/admin/api-keys/key_abc123" \
+  -H "X-API-Key: your-admin-key"
+```
+
+## Permission Checks
+
+API endpoints check permissions:
+
+| Endpoint | Required Permission |
+|----------|---------------------|
+| `GET /api/documents` | `read` |
+| `GET /api/search` | `read` |
+| `POST /api/rag` | `read` |
+| `POST /api/upload` | `write` |
+| `POST /api/collections` | `write` |
+| `DELETE /api/documents/*` | `delete` |
+| `POST /api/admin/api-keys` | `admin` |
+
+## Error Responses
+
+### Missing API Key
+
+```json
+{
+  "detail": "API key required. Provide X-API-Key header or api_key query parameter."
+}
+```
+Status: `401 Unauthorized`
+
+### Invalid API Key
+
+```json
+{
+  "detail": "Invalid API key"
+}
+```
+Status: `401 Unauthorized`
+
+### Expired API Key
+
+```json
+{
+  "detail": "API key has expired"
+}
+```
+Status: `401 Unauthorized`
+
+### Insufficient Permissions
+
+```json
+{
+  "detail": "Permission 'delete' required for this operation"
+}
+```
+Status: `403 Forbidden`
+
+## Best Practices
+
+### Key Rotation
+
+Rotate API keys regularly:
+
+1. Create a new key with the same permissions
+2. Update your applications to use the new key
+3. Revoke the old key after confirming the switch
+
+### Least Privilege
+
+Grant only necessary permissions:
+
+```bash
+# Read-only key for search/Q&A
+{"permissions": ["read"]}
+
+# Writer key for document management
+{"permissions": ["read", "write"]}
+
+# Full access (use sparingly)
+{"permissions": ["read", "write", "delete", "admin"]}
+```
+
+### Key Expiration
+
+Set expiration dates for temporary access:
+
+```bash
+{
+  "name": "Contractor Access",
+  "permissions": ["read"],
+  "expires_at": "2024-03-31T23:59:59Z"
+}
+```
+
+### Secure Storage
+
+- Never commit API keys to version control
+- Use environment variables or secret managers
+- Rotate keys if they may have been exposed
+
+### Audit Usage
+
+Monitor API key usage:
+
+```bash
+curl "http://localhost:8000/api/admin/api-keys" \
+  -H "X-API-Key: your-admin-key"
+```
+
+Check `last_used_at` to identify unused or suspicious keys.

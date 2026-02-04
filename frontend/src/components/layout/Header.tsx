@@ -13,6 +13,7 @@ import {
   Network,
   Zap,
   PenLine,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -82,43 +83,60 @@ export default function Header() {
             />
           </Link>
 
-          <nav className="flex items-center gap-1 glass rounded-full p-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
-                  isActive(item.href)
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                  // Special styling for Turbo when ready (green) or warming up (yellow)
-                  item.href === "/turbo" && turboReady && !isActive(item.href)
-                    ? "text-green-400 hover:text-green-300"
-                    : item.href === "/turbo" && turboActive && !isActive(item.href)
-                    ? "text-yellow-400 hover:text-yellow-300"
-                    : ""
-                )}
-              >
-                <item.icon className={cn(
-                  "w-4 h-4",
-                  // Green for ready, yellow pulsing for warming up
-                  item.href === "/turbo" && turboReady && "text-green-400",
-                  item.href === "/turbo" && turboActive && !turboReady && "animate-pulse text-yellow-400"
-                )} />
-                <span className="text-sm font-medium hidden sm:inline">
-                  {item.label}
-                </span>
-                {/* Show indicator dot: green when ready, yellow pulsing when warming up */}
-                {item.href === "/turbo" && turboReady && (
-                  <span className="w-2 h-2 bg-green-400 rounded-full" />
-                )}
-                {item.href === "/turbo" && turboActive && !turboReady && (
-                  <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
-                )}
-              </Link>
-            ))}
-          </nav>
+          <div className="flex items-center gap-3">
+            {/* Main Navigation */}
+            <nav className="flex items-center gap-1 glass rounded-full p-1">
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
+                    isActive(item.href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                    // Special styling for Turbo when ready (green) or warming up (yellow)
+                    item.href === "/turbo" && turboReady && !isActive(item.href)
+                      ? "text-green-400 hover:text-green-300"
+                      : item.href === "/turbo" && turboActive && !isActive(item.href)
+                      ? "text-yellow-400 hover:text-yellow-300"
+                      : ""
+                  )}
+                >
+                  <item.icon className={cn(
+                    "w-4 h-4",
+                    // Green for ready, yellow pulsing for warming up
+                    item.href === "/turbo" && turboReady && "text-green-400",
+                    item.href === "/turbo" && turboActive && !turboReady && "animate-pulse text-yellow-400"
+                  )} />
+                  <span className="text-sm font-medium hidden sm:inline">
+                    {item.label}
+                  </span>
+                  {/* Show indicator dot: green when ready, yellow pulsing when warming up */}
+                  {item.href === "/turbo" && turboReady && (
+                    <span className="w-2 h-2 bg-green-400 rounded-full" />
+                  )}
+                  {item.href === "/turbo" && turboActive && !turboReady && (
+                    <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+                  )}
+                </Link>
+              ))}
+            </nav>
+
+            {/* Settings */}
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 glass",
+                isActive("/admin")
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title="Settings"
+            >
+              <Settings className="w-5 h-5" />
+            </Link>
+          </div>
         </div>
       </div>
     </header>

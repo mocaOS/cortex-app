@@ -84,11 +84,8 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
   const fetchDocuments = async () => {
     try {
-      const res = await fetch("/api/documents");
-      if (res.ok) {
-        const data = await res.json();
-        setDocuments(data.documents);
-      }
+      const data = await api.getDocuments();
+      setDocuments(data.documents);
     } catch (error) {
       console.error("Failed to fetch documents:", error);
     } finally {
@@ -216,16 +213,14 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setDocuments((prev) => prev.filter((d) => d.id !== id));
-        setSelectedIds((prev) => {
-          const newSet = new Set(prev);
-          newSet.delete(id);
-          return newSet;
-        });
-        onDelete();
-      }
+      await api.deleteDocument(id);
+      setDocuments((prev) => prev.filter((d) => d.id !== id));
+      setSelectedIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+      onDelete();
     } catch (error) {
       console.error("Failed to delete document:", error);
     } finally {
@@ -361,17 +356,10 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     setIsDeletingSelected(true);
     try {
-      const res = await fetch("/api/documents/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_ids: Array.from(selectedIds) }),
-      });
-
-      if (res.ok) {
-        setSelectedIds(new Set());
-        await fetchDocuments();
-        onDelete();
-      }
+      await api.deleteDocuments(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      await fetchDocuments();
+      onDelete();
     } catch (error) {
       console.error("Failed to delete documents:", error);
     } finally {

@@ -1,0 +1,254 @@
+---
+title: Communities
+description: Automatic detection of document clusters and theme summarization
+---
+
+import { Mermaid } from "zudoku/mermaid";
+
+# Communities
+
+MOCA automatically detects **communities** - clusters of related documents and entities that share common themes. This enables topic discovery, document organization, and focused Q&A.
+
+## What Are Communities?
+
+Communities are groups of entities (and their associated documents) that are densely connected in the knowledge graph. They represent natural topic clusters within your knowledge base.
+
+<Mermaid chart={`
+graph TB
+    subgraph comm1["Community 1: Machine Learning"]
+        A[Neural Networks]
+        B[Deep Learning]
+        C[Gradient Descent]
+        A --- B
+        B --- C
+        A --- C
+    end
+    
+    subgraph comm2["Community 2: NLP"]
+        D[Transformer]
+        E[BERT]
+        F[Attention]
+        D --- E
+        E --- F
+        D --- F
+    end
+    
+    subgraph comm3["Community 3: Computer Vision"]
+        G[CNN]
+        H[Image Recognition]
+        I[Object Detection]
+        G --- H
+        H --- I
+    end
+    
+    B -.-> D
+    A -.-> G
+`} />
+
+## Detection Algorithm
+
+MOCA uses the **Louvain algorithm** for community detection:
+
+<Mermaid chart={`
+flowchart TD
+    A["🕸️ Knowledge Graph"] --> B["📊 Graph Analysis"]
+    B --> C["🔍 Louvain Algorithm"]
+    C --> D["📦 Community Assignment"]
+    D --> E["🤖 Theme Extraction"]
+    E --> F["📝 Auto-naming"]
+    
+    C -.-> C1["Find densely connected clusters"]
+    D -.-> D1["Assign entities to communities"]
+    E -.-> E1["LLM summarizes themes"]
+`} />
+
+## API Usage
+
+### Detect Communities
+
+Start community detection (runs as a background task):
+
+```bash
+curl -X POST "http://localhost:8000/api/communities/detect" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "default",
+    "min_community_size": 3
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "task_id": "task_abc123",
+  "status": "pending",
+  "message": "Community detection started"
+}
+```
+
+### Track Detection Progress
+
+```bash
+curl "http://localhost:8000/api/tasks/task_abc123" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "task_id": "task_abc123",
+  "task_type": "community_detection",
+  "status": "running",
+  "progress_percent": 45.0,
+  "message": "Analyzing graph structure..."
+}
+```
+
+### List Communities
+
+```bash
+curl "http://localhost:8000/api/communities" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "communities": [
+    {
+      "id": "comm_1",
+      "name": "Machine Learning Fundamentals",
+      "description": "Core ML concepts including neural networks, optimization, and training methods",
+      "document_count": 12,
+      "entity_count": 156,
+      "top_entities": ["Neural Network", "Deep Learning", "Gradient Descent"]
+    },
+    {
+      "id": "comm_2",
+      "name": "Natural Language Processing",
+      "description": "NLP techniques, transformers, and language models",
+      "document_count": 8,
+      "entity_count": 98,
+      "top_entities": ["Transformer", "BERT", "Attention"]
+    }
+  ],
+  "total": 23
+}
+```
+
+### Get Community Details
+
+```bash
+curl "http://localhost:8000/api/communities/comm_1" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "id": "comm_1",
+  "name": "Machine Learning Fundamentals",
+  "description": "Core ML concepts including neural networks, optimization, and training methods",
+  "summary": "This community covers the foundational aspects of machine learning, with a focus on neural network architectures, training algorithms, and optimization techniques...",
+  "document_count": 12,
+  "entity_count": 156,
+  "entities": [
+    {"name": "Neural Network", "type": "Concept", "mentions": 45},
+    {"name": "Deep Learning", "type": "Concept", "mentions": 38}
+  ],
+  "documents": [
+    {"id": "doc_1", "title": "Deep Learning Fundamentals.pdf"},
+    {"id": "doc_2", "title": "Neural Network Training.pdf"}
+  ]
+}
+```
+
+### Get Community Documents
+
+```bash
+curl "http://localhost:8000/api/communities/comm_1/documents" \
+  -H "X-API-Key: your-api-key"
+```
+
+### Summarize a Community
+
+Generate an AI summary of a community's content:
+
+```bash
+curl -X POST "http://localhost:8000/api/communities/comm_1/summarize" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "community_id": "comm_1",
+  "summary": "This community contains 12 documents focused on machine learning fundamentals. Key topics include:\n\n1. Neural network architectures (CNNs, RNNs, Transformers)\n2. Training algorithms and optimization (SGD, Adam, learning rate scheduling)\n3. Regularization techniques (dropout, batch normalization)\n\nThe documents span from introductory material to advanced research papers.",
+  "key_topics": ["Neural Networks", "Optimization", "Regularization"],
+  "generated_at": "2024-01-15T10:30:00Z"
+}
+```
+
+## Community-Based Queries
+
+### Search Within a Community
+
+```bash
+curl -X POST "http://localhost:8000/api/search" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "backpropagation algorithm",
+    "community_id": "comm_1"
+  }'
+```
+
+### Ask About a Community
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the key topics covered in this community?",
+    "community_id": "comm_1"
+  }'
+```
+
+## Regenerating Communities
+
+Communities are **not** automatically updated when documents are added. To update:
+
+```bash
+curl -X POST "http://localhost:8000/api/communities/detect" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "force_regenerate": true
+  }'
+```
+
+## Configuration
+
+```bash
+# Enable community detection
+ENABLE_COMMUNITY_DETECTION=true
+
+# Minimum entities per community
+MIN_COMMUNITY_SIZE=3
+
+# Maximum communities to detect
+MAX_COMMUNITIES=50
+
+# Enable automatic summarization
+ENABLE_GRAPH_SUMMARIZATION=true
+
+# Model for summaries (defaults to OPENAI_MODEL)
+# COMMUNITY_SUMMARY_MODEL=gpt-4o-mini
+```
+
+## Use Cases
+
+1. **Topic Discovery** - Find natural topic clusters in your documents
+2. **Content Organization** - Use communities to organize collections
+3. **Focused Q&A** - Ask questions about specific topic areas
+4. **Knowledge Mapping** - Visualize how topics relate
+5. **Onboarding** - Help new users understand the knowledge base

@@ -25,9 +25,44 @@ import type {
   CustomInputCreate,
   CustomInputResponse,
   CustomInputItem,
+  APIKeyListItem,
+  CreateAPIKeyRequest,
+  CreateAPIKeyResponse,
+  UpdateAPIKeyRequest,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+/**
+ * Get the admin API key from localStorage (set after login).
+ * This is used for authenticated API calls from the frontend.
+ */
+function getAdminApiKey(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("admin_api_key") || "";
+  }
+  return "";
+}
+
+/**
+ * Set the admin API key in localStorage.
+ * Called after successful admin login.
+ */
+export function setAdminApiKey(key: string): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("admin_api_key", key);
+  }
+}
+
+/**
+ * Clear the admin API key from localStorage.
+ * Called on logout.
+ */
+export function clearAdminApiKey(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("admin_api_key");
+  }
+}
 
 class ApiClient {
   private async request<T>(
@@ -35,10 +70,13 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${API_BASE}${endpoint}`;
+    const apiKey = getAdminApiKey();
+    
     const res = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
         ...options.headers,
       },
     });
@@ -75,10 +113,12 @@ class ApiClient {
     params.set("start_processing", String(startProcessing));
 
     const url = `${API_BASE}/api/upload?${params}`;
+    const apiKey = getAdminApiKey();
 
     const res = await fetch(url, {
       method: "POST",
       body: formData,
+      headers: apiKey ? { "X-API-Key": apiKey } : {},
     });
 
     if (!res.ok) {
@@ -191,6 +231,16 @@ class ApiClient {
   }
 
   /**
+   * Bulk delete multiple documents.
+   */
+  async deleteDocuments(documentIds: string[]): Promise<{ message: string; deleted_count: number }> {
+    return this.request<{ message: string; deleted_count: number }>("/api/documents/delete", {
+      method: "POST",
+      body: JSON.stringify({ document_ids: documentIds }),
+    });
+  }
+
+  /**
    * Reprocess multiple documents using their stored original files.
    * No file re-upload needed - files are stored permanently.
    * Documents are queued and processed with controlled concurrency.
@@ -245,6 +295,8 @@ class ApiClient {
     status: string;
     message: string;
   }> {
+    const apiKey = getAdminApiKey();
+    
     if (file) {
       // With new file
       const formData = new FormData();
@@ -253,6 +305,7 @@ class ApiClient {
       const res = await fetch(`${API_BASE}/api/documents/${documentId}/reprocess`, {
         method: "POST",
         body: formData,
+        headers: apiKey ? { "X-API-Key": apiKey } : {},
       });
 
       if (!res.ok) {
@@ -265,6 +318,7 @@ class ApiClient {
       // Without file - use stored file
       const res = await fetch(`${API_BASE}/api/documents/${documentId}/reprocess`, {
         method: "POST",
+        headers: apiKey ? { "X-API-Key": apiKey } : {},
       });
 
       if (!res.ok) {
@@ -366,10 +420,12 @@ class ApiClient {
       useFastSearch = false,
     } = options;
 
+    const apiKey = getAdminApiKey();
     const res = await fetch(`${API_BASE}/api/ask/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
       body: JSON.stringify({
         question,
@@ -500,8 +556,12 @@ class ApiClient {
 
   async getTaskResult<T = Record<string, unknown>>(taskId: string): Promise<T | null> {
     const url = `${API_BASE}/api/tasks/${taskId}/result`;
+    const apiKey = getAdminApiKey();
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
     });
     
     if (res.status === 202) {
@@ -672,10 +732,12 @@ class ApiClient {
       maxHops = 2,
     } = options;
 
+    const apiKey = getAdminApiKey();
     const res = await fetch(`${API_BASE}/api/ask/stream/thinking`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
       body: JSON.stringify({
         question,
@@ -816,6 +878,72 @@ class ApiClient {
    */
   async getTurboJobLogs(jobId: string): Promise<{ job_id: string; logs: string }> {
     return this.request<{ job_id: string; logs: string }>(`/api/turbo/jobs/${jobId}/logs`);
+  }
+
+  // ===========================================================================
+  // Admin API Key Management
+  // ===========================================================================
+
+  /**
+   * List all API keys (admin only).
+   */
+  async listApiKeys(): Promise<APIKeyListItem[]> {
+    return this.request<APIKeyListItem[]>("/api/admin/api-keys");
+  }
+
+  /**
+   * Create a new API key (admin only).
+   * The actual key is returned only once in the response.
+   */
+  async createApiKey(request: CreateAPIKeyRequest): Promise<CreateAPIKeyResponse> {
+    return this.request<CreateAPIKeyResponse>("/api/admin/api-keys", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Get a specific API key by ID (admin only).
+   */
+  async getApiKey(keyId: string): Promise<APIKeyListItem> {
+    return this.request<APIKeyListItem>(`/api/admin/api-keys/${keyId}`);
+  }
+
+  /**
+   * Update an API key (admin only).
+   */
+  async updateApiKey(keyId: string, request: UpdateAPIKeyRequest): Promise<APIKeyListItem> {
+    return this.request<APIKeyListItem>(`/api/admin/api-keys/${keyId}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Delete an API key (admin only).
+   */
+  async deleteApiKey(keyId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/api-keys/${keyId}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Revoke an API key (admin only).
+   */
+  async revokeApiKey(keyId: string): Promise<APIKeyListItem> {
+    return this.request<APIKeyListItem>(`/api/admin/api-keys/${keyId}/revoke`, {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Activate a revoked API key (admin only).
+   */
+  async activateApiKey(keyId: string): Promise<APIKeyListItem> {
+    return this.request<APIKeyListItem>(`/api/admin/api-keys/${keyId}/activate`, {
+      method: "POST",
+    });
   }
 }
 

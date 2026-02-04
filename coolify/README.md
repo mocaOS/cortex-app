@@ -17,6 +17,8 @@ The compose file uses Coolify's magic environment variables:
 
 Set these in Coolify's environment configuration:
 
+### LLM Configuration
+
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `OPENAI_API_KEY` | OpenAI API key | Yes |
@@ -25,6 +27,19 @@ Set these in Coolify's environment configuration:
 | `EMBEDDING_MODEL` | Embedding model name | No |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No |
 | `USE_OPENAI_EMBEDDINGS` | Whether to use OpenAI embeddings | No |
+
+### Admin Authentication
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `ADMIN_EMAIL` | Admin login email | Yes |
+| `ADMIN_PASSWORD` | Admin login password | Yes |
+| `ADMIN_API_KEY` | Admin API key for full backend access | Yes |
+| `SESSION_SECRET` | JWT session secret (min 32 chars) | Yes |
+
+> 💡 **Generating secure values:**
+> - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `moca_admin_`
+> - `SESSION_SECRET`: Use `openssl rand -hex 32`
 
 > ⚠️ **Do NOT set `NEO4J_USER`** - Neo4j interprets all `NEO4J_*` env vars as config settings, causing startup failures. The username is hardcoded to `neo4j` in the compose file.
 

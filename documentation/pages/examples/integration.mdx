@@ -1,0 +1,554 @@
+---
+title: Integration Examples
+description: Integrate MOCA Library with popular frameworks, tools, and platforms
+---
+
+# Integration Examples
+
+Examples for integrating MOCA Library with popular frameworks, AI tools, and automation platforms.
+
+## Next.js / React Integration
+
+### API Route Handler
+
+Create a backend route to proxy requests to MOCA:
+
+```typescript
+// app/api/search/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+
+const MOCA_URL = process.env.MOCA_API_URL!;
+const MOCA_KEY = process.env.MOCA_API_KEY!;
+
+export async function POST(request: NextRequest) {
+  try {
+    const { query, limit = 10 } = await request.json();
+    
+    const response = await fetch(`${MOCA_URL}/api/search`, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': MOCA_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, limit }),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`MOCA API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error('Search error:', error);
+    return NextResponse.json(
+      { error: 'Search failed' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### React Hook
+
+```typescript
+// hooks/useMOCA.ts
+import { useState, useCallback } from 'react';
+
+interface SearchResult {
+  id: string;
+  content: string;
+  score: number;
+  document_title: string;
+}
+
+interface SearchResponse {
+  results: SearchResult[];
+  total: number;
+}
+
+export function useMOCASearch() {
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const search = useCallback(async (query: string) => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      
+      if (!response.ok) throw new Error('Search failed');
+      
+      const data: SearchResponse = await response.json();
+      setResults(data.results);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { search, results, loading, error };
+}
+
+// Usage in component
+function SearchComponent() {
+  const { search, results, loading, error } = useMOCASearch();
+  const [query, setQuery] = useState('');
+
+  return (
+    <div>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search..."
+      />
+      <button onClick={() => search(query)} disabled={loading}>
+        {loading ? 'Searching...' : 'Search'}
+      </button>
+      
+      {error && <p className="error">{error}</p>}
+      
+      <ul>
+        {results.map((r) => (
+          <li key={r.id}>
+            <strong>{r.document_title}</strong>
+            <p>{r.content.slice(0, 200)}...</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Streaming Chat Component
+
+```typescript
+// components/ChatWithMOCA.tsx
+'use client';
+
+import { useState, useRef } from 'react';
+
+export function ChatWithMOCA() {
+  const [messages, setMessages] = useState<Array<{role: string, content: string}>>([]);
+  const [input, setInput] = useState('');
+  const [streaming, setStreaming] = useState(false);
+
+  const askQuestion = async () => {
+    if (!input.trim() || streaming) return;
+    
+    const question = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: question }]);
+    setStreaming(true);
+    
+    try {
+      const response = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          query: question,
+          conversation_history: messages 
+        }),
+      });
+      
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let answer = '';
+      
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        answer += chunk;
+        
+        // Update the last message in real-time
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (updated[lastIdx]?.role === 'assistant') {
+            updated[lastIdx].content = answer;
+          } else {
+            updated.push({ role: 'assistant', content: answer });
+          }
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error('Ask error:', error);
+    } finally {
+      setStreaming(false);
+    }
+  };
+
+  return (
+    <div className="chat-container">
+      <div className="messages">
+        {messages.map((msg, i) => (
+          <div key={i} className={`message ${msg.role}`}>
+            {msg.content}
+          </div>
+        ))}
+      </div>
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && askQuestion()}
+        placeholder="Ask a question..."
+        disabled={streaming}
+      />
+    </div>
+  );
+}
+```
+
+---
+
+## LangChain Integration
+
+### Custom Retriever
+
+```python
+from langchain.schema import BaseRetriever, Document
+from typing import List
+import requests
+
+
+class MOCARetriever(BaseRetriever):
+    """LangChain retriever that uses MOCA Library for search."""
+    
+    base_url: str
+    api_key: str
+    collection_id: str = "default"
+    k: int = 5
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """Retrieve relevant documents from MOCA."""
+        response = requests.post(
+            f"{self.base_url}/api/search",
+            headers={"X-API-Key": self.api_key},
+            json={
+                "query": query,
+                "limit": self.k,
+                "collection_id": self.collection_id
+            }
+        )
+        response.raise_for_status()
+        
+        results = response.json()["results"]
+        return [
+            Document(
+                page_content=r["content"],
+                metadata={
+                    "source": r["document_title"],
+                    "doc_id": r["document_id"],
+                    "score": r["score"]
+                }
+            )
+            for r in results
+        ]
+
+
+# Usage with LangChain
+from langchain.chains import RetrievalQA
+from langchain.chat_models import ChatOpenAI
+
+retriever = MOCARetriever(
+    base_url="http://localhost:8000",
+    api_key="your-key",
+    collection_id="research",
+    k=5
+)
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    retriever=retriever,
+    return_source_documents=True
+)
+
+result = qa_chain({"query": "What are the key findings?"})
+print(result["result"])
+```
+
+### LangChain Tool
+
+```python
+from langchain.tools import Tool
+import requests
+
+
+def moca_search(query: str) -> str:
+    """Search the MOCA knowledge base."""
+    response = requests.post(
+        "http://localhost:8000/api/search",
+        headers={"X-API-Key": "your-key"},
+        json={"query": query, "limit": 5}
+    )
+    results = response.json()["results"]
+    return "\n\n".join([
+        f"**{r['document_title']}**: {r['content'][:500]}"
+        for r in results
+    ])
+
+
+moca_tool = Tool(
+    name="MOCA Search",
+    func=moca_search,
+    description="Search the company knowledge base for information about products, processes, and documentation."
+)
+
+# Use with an agent
+from langchain.agents import initialize_agent, AgentType
+from langchain.chat_models import ChatOpenAI
+
+agent = initialize_agent(
+    tools=[moca_tool],
+    llm=ChatOpenAI(model="gpt-4o-mini"),
+    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION
+)
+
+response = agent.run("What does our documentation say about authentication?")
+```
+
+---
+
+## Slack Bot Integration
+
+```python
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
+import requests
+import os
+
+app = App(token=os.environ["SLACK_BOT_TOKEN"])
+
+MOCA_URL = os.environ["MOCA_API_URL"]
+MOCA_KEY = os.environ["MOCA_API_KEY"]
+
+
+@app.command("/ask")
+def handle_ask(ack, respond, command):
+    """Handle /ask slash command."""
+    ack()
+    
+    question = command["text"]
+    if not question:
+        respond("Please provide a question: `/ask What is X?`")
+        return
+    
+    respond(f"Looking up: _{question}_...")
+    
+    try:
+        response = requests.post(
+            f"{MOCA_URL}/api/rag",
+            headers={"X-API-Key": MOCA_KEY},
+            json={"query": question}
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        answer = data["answer"]
+        sources = data.get("sources", [])
+        
+        # Format response
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Answer:*\n{answer}"}
+            }
+        ]
+        
+        if sources:
+            source_text = "\n".join([
+                f"• {s['document_title']}"
+                for s in sources[:3]
+            ])
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"*Sources:*\n{source_text}"}
+                ]
+            })
+        
+        respond(blocks=blocks)
+        
+    except Exception as e:
+        respond(f"Error: {str(e)}")
+
+
+@app.command("/search")
+def handle_search(ack, respond, command):
+    """Handle /search slash command."""
+    ack()
+    
+    query = command["text"]
+    if not query:
+        respond("Please provide a search query: `/search topic`")
+        return
+    
+    try:
+        response = requests.post(
+            f"{MOCA_URL}/api/search",
+            headers={"X-API-Key": MOCA_KEY},
+            json={"query": query, "limit": 5}
+        )
+        response.raise_for_status()
+        
+        results = response.json()["results"]
+        
+        if not results:
+            respond("No results found.")
+            return
+        
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Search results for:* _{query}_"}
+            }
+        ]
+        
+        for r in results:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{r['document_title']}*\n{r['content'][:200]}..."
+                }
+            })
+        
+        respond(blocks=blocks)
+        
+    except Exception as e:
+        respond(f"Error: {str(e)}")
+
+
+if __name__ == "__main__":
+    handler = SocketModeHandler(
+        app, 
+        os.environ["SLACK_APP_TOKEN"]
+    )
+    handler.start()
+```
+
+---
+
+## Webhook Integration
+
+### Configure Webhooks
+
+Set a webhook URL to receive notifications:
+
+```bash
+WEBHOOK_URL=https://your-app.com/webhooks/moca
+```
+
+### Webhook Handler (Flask)
+
+```python
+from flask import Flask, request, jsonify
+import hmac
+import hashlib
+
+app = Flask(__name__)
+WEBHOOK_SECRET = "your-webhook-secret"
+
+
+def verify_signature(payload: bytes, signature: str) -> bool:
+    """Verify webhook signature."""
+    expected = hmac.new(
+        WEBHOOK_SECRET.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(f"sha256={expected}", signature)
+
+
+@app.route('/webhooks/moca', methods=['POST'])
+def handle_webhook():
+    """Handle MOCA webhooks."""
+    # Verify signature
+    signature = request.headers.get('X-MOCA-Signature', '')
+    if not verify_signature(request.data, signature):
+        return jsonify({"error": "Invalid signature"}), 401
+    
+    event = request.json
+    event_type = event.get('type')
+    
+    if event_type == 'document.processed':
+        doc_id = event['document_id']
+        doc_title = event['document_title']
+        print(f"Document processed: {doc_title} ({doc_id})")
+        # Trigger your workflow
+        
+    elif event_type == 'document.failed':
+        doc_id = event['document_id']
+        error = event.get('error', 'Unknown error')
+        print(f"Document failed: {doc_id} - {error}")
+        # Send alert
+        
+    elif event_type == 'community.detected':
+        count = event['community_count']
+        print(f"Communities detected: {count}")
+        # Update dashboard
+    
+    return jsonify({"status": "ok"})
+
+
+if __name__ == "__main__":
+    app.run(port=5000)
+```
+
+---
+
+## n8n / Make.com
+
+### HTTP Request Node
+
+Configure an HTTP Request node in n8n:
+
+**Method:** POST  
+**URL:** `{{$env.MOCA_URL}}/api/rag`  
+**Headers:**
+```json
+{
+  "X-API-Key": "{{$env.MOCA_API_KEY}}",
+  "Content-Type": "application/json"
+}
+```
+**Body:**
+```json
+{
+  "query": "{{$node.previous.json.question}}"
+}
+```
+
+### Example n8n Workflow
+
+1. **Webhook Trigger** - Receive incoming questions
+2. **HTTP Request** - Call MOCA API
+3. **Set Node** - Format the response
+4. **Respond to Webhook** - Return the answer
+
+---
+
+## Zapier Integration
+
+Use Zapier's Webhooks to integrate with MOCA:
+
+1. **Trigger:** New row in Google Sheets
+2. **Action:** Webhooks by Zapier → POST
+3. **URL:** `https://api.your-domain.com/api/search`
+4. **Headers:** `X-API-Key: your-key`
+5. **Data:** `{"query": "{{Sheet Row Data}}"}`
