@@ -1,0 +1,54 @@
+{
+  "name": "openclaw-library",
+  "version": "1.0.0",
+  "description": "Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval, search, and AI-powered Q&A.",
+  "author": "MOCA",
+  "license": "MIT",
+  "homepage": "https://library.moca.qwellco.de",
+  "keywords": [
+    "openclaw",
+    "moltbot",
+    "skill",
+    "knowledge-graph",
+    "memory",
+    "rag",
+    "search",
+    "documents",
+    "neo4j",
+    "graphrag"
+  ],
+  "openclaw": {
+    "emoji": "📚",
+    "category": "knowledge",
+    "api_base": "https://library.moca.qwellco.de",
+    "files": {
+      "SKILL.md": "https://library.moca.qwellco.de/skills/openclaw-library/SKILL.md",
+      "HEARTBEAT.md": "https://library.moca.qwellco.de/skills/openclaw-library/HEARTBEAT.md"
+    },
+    "requires": {
+      "bins": ["curl", "jq"]
+    },
+    "triggers": [
+      "sync memories",
+      "sync to library",
+      "upload memories",
+      "upload to library",
+      "search knowledge",
+      "search my memories",
+      "ask knowledge base",
+      "what do I know about",
+      "library sync",
+      "knowledge graph"
+    ],
+    "state": {
+      "credentials": "~/.openclaw/skills/library/state/credentials.json",
+      "uploaded_files": "~/.openclaw/skills/library/state/uploaded_files.json"
+    },
+    "memory_directories": [
+      "~/.openclaw/memory",
+      "~/.openclaw/conversations"
+    ],
+    "supported_extensions": [".md", ".txt", ".json"],
+    "sync_interval_hours": 4
+  }
+}

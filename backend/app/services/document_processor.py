@@ -17,7 +17,7 @@ import logging
 import functools
 import re
 from pathlib import Path
-from typing import Optional, List, AsyncGenerator, Callable, Tuple
+from typing import Optional, List, AsyncGenerator, Callable, Tuple, Dict
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -136,6 +136,36 @@ def _get_processing_executor() -> ThreadPoolExecutor:
     return _processing_executor
 
 
+# =============================================================================
+# Task Tracking for Document Processing
+# =============================================================================
+# Track active processing tasks per document to enable cancellation when
+# documents are deleted. This ensures clean shutdown of processing before
+# removing document data from the knowledge graph.
+
+# Registry of active processing tasks by document ID
+_active_tasks: Dict[str, asyncio.Task] = {}
+
+# Lock for thread-safe access to task registry
+_task_lock: Optional[asyncio.Lock] = None
+
+# Cancellation flags per document - set when processing should stop
+_cancellation_flags: Dict[str, asyncio.Event] = {}
+
+
+def _get_task_lock() -> asyncio.Lock:
+    """Get or create the task registry lock (must be created in async context)."""
+    global _task_lock
+    if _task_lock is None:
+        _task_lock = asyncio.Lock()
+    return _task_lock
+
+
+class CancellationRequested(Exception):
+    """Raised when document processing is cancelled."""
+    pass
+
+
 class DocumentProcessor:
     """Process documents using Haystack components with GraphRAG extraction."""
     
@@ -186,6 +216,217 @@ class DocumentProcessor:
             logger.info("Using SentenceTransformers embeddings")
         
         logger.info(f"Document processor initialized (GraphRAG: {self.graph_extractor.is_available})")
+    
+    # =========================================================================
+    # Task Cancellation Methods
+    # =========================================================================
+    
+    async def cancel_document_processing(self, doc_id: str) -> bool:
+        """
+        Cancel any active processing task for a document.
+        
+        This method:
+        1. Sets the cancellation flag to signal the processing loop to stop
+        2. Cancels the asyncio task
+        3. Waits for the task to finish (with timeout)
+        4. Cleans up the task registry
+        
+        Args:
+            doc_id: The document ID to cancel processing for
+            
+        Returns:
+            True if a task was cancelled, False if no task was running
+        """
+        task_lock = _get_task_lock()
+        async with task_lock:
+            was_running = doc_id in _active_tasks
+            
+            # Set cancellation flag first (for graceful shutdown)
+            if doc_id in _cancellation_flags:
+                _cancellation_flags[doc_id].set()
+                logger.info(f"Set cancellation flag for document {doc_id}")
+            
+            # Cancel the task
+            if doc_id in _active_tasks:
+                task = _active_tasks[doc_id]
+                if not task.done():
+                    task.cancel()
+                    logger.info(f"Cancelled processing task for document {doc_id}")
+                    
+                    # Wait for task to finish with timeout
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(task), 
+                            timeout=5.0
+                        )
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+                    except Exception as e:
+                        logger.warning(f"Error waiting for task cancellation: {e}")
+                
+                # Clean up task registry
+                del _active_tasks[doc_id]
+            
+            # Clean up cancellation flag
+            if doc_id in _cancellation_flags:
+                del _cancellation_flags[doc_id]
+            
+            if was_running:
+                # Update document status to indicate cancellation
+                try:
+                    self.neo4j.update_document_status(
+                        doc_id,
+                        ProcessingStatus.FAILED,
+                        error_message="Processing cancelled (document deleted)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not update status for cancelled document {doc_id}: {e}")
+            
+            return was_running
+    
+    async def cancel_multiple_documents(self, doc_ids: List[str]) -> int:
+        """
+        Cancel processing for multiple documents.
+        
+        Args:
+            doc_ids: List of document IDs to cancel
+            
+        Returns:
+            Number of tasks that were cancelled
+        """
+        cancelled_count = 0
+        for doc_id in doc_ids:
+            if await self.cancel_document_processing(doc_id):
+                cancelled_count += 1
+        return cancelled_count
+    
+    async def cancel_all_processing(self) -> int:
+        """
+        Cancel all active processing tasks.
+        
+        Returns:
+            Number of tasks that were cancelled
+        """
+        task_lock = _get_task_lock()
+        async with task_lock:
+            doc_ids = list(_active_tasks.keys())
+        
+        cancelled_count = 0
+        for doc_id in doc_ids:
+            if await self.cancel_document_processing(doc_id):
+                cancelled_count += 1
+        
+        logger.info(f"Cancelled {cancelled_count} processing tasks")
+        return cancelled_count
+    
+    def is_processing(self, doc_id: str) -> bool:
+        """
+        Check if a document is currently being processed.
+        
+        Args:
+            doc_id: The document ID to check
+            
+        Returns:
+            True if the document has an active processing task
+        """
+        if doc_id not in _active_tasks:
+            return False
+        task = _active_tasks[doc_id]
+        return not task.done()
+    
+    def get_processing_documents(self) -> List[str]:
+        """
+        Get list of document IDs currently being processed.
+        
+        Returns:
+            List of document IDs with active processing tasks
+        """
+        return [
+            doc_id for doc_id, task in _active_tasks.items()
+            if not task.done()
+        ]
+    
+    def _check_cancellation(self, doc_id: str) -> None:
+        """
+        Check if processing has been cancelled for a document.
+        
+        Raises:
+            CancellationRequested: If cancellation was requested
+        """
+        if doc_id in _cancellation_flags and _cancellation_flags[doc_id].is_set():
+            raise CancellationRequested(f"Processing cancelled for document {doc_id}")
+    
+    async def _register_task(self, doc_id: str, task: asyncio.Task) -> None:
+        """Register a processing task in the task registry."""
+        task_lock = _get_task_lock()
+        async with task_lock:
+            # Cancel any existing task for this document
+            if doc_id in _active_tasks:
+                old_task = _active_tasks[doc_id]
+                if not old_task.done():
+                    old_task.cancel()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(old_task), timeout=2.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+            
+            # Create cancellation flag
+            _cancellation_flags[doc_id] = asyncio.Event()
+            
+            # Register new task
+            _active_tasks[doc_id] = task
+            logger.debug(f"Registered processing task for document {doc_id}")
+    
+    async def _unregister_task(self, doc_id: str) -> None:
+        """Unregister a processing task from the task registry."""
+        task_lock = _get_task_lock()
+        async with task_lock:
+            if doc_id in _active_tasks:
+                del _active_tasks[doc_id]
+            if doc_id in _cancellation_flags:
+                del _cancellation_flags[doc_id]
+            logger.debug(f"Unregistered processing task for document {doc_id}")
+    
+    async def _start_processing(self, doc_id: str, file_path: str, file_type: str) -> None:
+        """
+        Start a document processing task with proper tracking.
+        
+        This method:
+        1. Creates the asyncio task
+        2. Registers it in the task registry
+        3. Ensures cleanup on completion
+        
+        Args:
+            doc_id: Document ID to process
+            file_path: Path to the file
+            file_type: File extension/type
+        """
+        # Create the processing task
+        task = asyncio.create_task(
+            self._process_document_with_cleanup(doc_id, file_path, file_type)
+        )
+        
+        # Register it for tracking
+        await self._register_task(doc_id, task)
+    
+    async def _process_document_with_cleanup(
+        self, 
+        doc_id: str, 
+        file_path: str, 
+        file_type: str
+    ) -> None:
+        """
+        Wrapper around _process_document that ensures task cleanup on completion.
+        """
+        try:
+            await self._process_document(doc_id, file_path, file_type)
+        finally:
+            # Always unregister the task when done (success or failure)
+            await self._unregister_task(doc_id)
+    
+    # =========================================================================
+    # Document Processing Methods
+    # =========================================================================
     
     def queue_document_for_reprocessing(self, doc_id: str) -> bool:
         """
@@ -268,8 +509,8 @@ class DocumentProcessor:
             progress_message="Queued for reprocessing"
         )
         
-        # Start reprocessing in background using stored file
-        asyncio.create_task(self._process_document(doc_id, file_path, file_type))
+        # Start reprocessing in background using stored file (with task tracking)
+        await self._start_processing(doc_id, file_path, file_type)
         
         return True
     
@@ -292,8 +533,8 @@ class DocumentProcessor:
             f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
         )
         
-        # Process in background (same as new document)
-        asyncio.create_task(self._process_document(doc_id, file_path, file_type))
+        # Process in background (same as new document, with task tracking)
+        await self._start_processing(doc_id, file_path, file_type)
         
         return True
     
@@ -376,9 +617,9 @@ class DocumentProcessor:
         # First store the file
         doc_id = await self.store_file_only(file_path, filename, file_size, collection_id)
         
-        # Then start processing
+        # Then start processing (with task tracking for cancellation support)
         file_type = Path(filename).suffix.lower()
-        asyncio.create_task(self._process_document(doc_id, file_path, file_type))
+        await self._start_processing(doc_id, file_path, file_type)
         
         return doc_id
     
@@ -436,11 +677,24 @@ class DocumentProcessor:
                     return
                 
                 try:
+                    # Register task for tracking (enables cancellation during batch processing)
+                    task_lock = _get_task_lock()
+                    async with task_lock:
+                        _cancellation_flags[doc_id] = asyncio.Event()
+                        # We don't store in _active_tasks since we await directly
+                    
                     await self._process_document(doc_id, file_path, file_type)
                     completed += 1
+                except CancellationRequested:
+                    logger.info(f"Processing cancelled for document {doc_id}")
+                    failed += 1
                 except Exception as e:
                     logger.error(f"Error processing document {doc_id}: {e}")
                     failed += 1
+                finally:
+                    # Clean up cancellation flag
+                    if doc_id in _cancellation_flags:
+                        del _cancellation_flags[doc_id]
                 
                 if progress_callback:
                     progress_callback(completed + failed, total, f"Processed {completed + failed}/{total}")
@@ -468,12 +722,17 @@ class DocumentProcessor:
         
         CPU-intensive operations are run in a thread pool to avoid blocking
         the async event loop, keeping the API responsive during batch processing.
+        
+        Supports cancellation via cancellation flags - checked at key stages.
         """
         total_entities = 0
         total_relationships = 0
         loop = asyncio.get_event_loop()
         
         try:
+            # Check for cancellation before starting
+            self._check_cancellation(doc_id)
+            
             # Update status to processing (run in executor to not block)
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -491,6 +750,9 @@ class DocumentProcessor:
             # Yield control to allow other async tasks to run
             await asyncio.sleep(0)
             
+            # Check for cancellation before conversion
+            self._check_cancellation(doc_id)
+            
             # Convert file to Haystack document
             converter = self._get_converter(file_type)
             if not converter:
@@ -505,6 +767,9 @@ class DocumentProcessor:
             
             if not documents:
                 raise ValueError("No content extracted from file")
+            
+            # Check for cancellation after conversion
+            self._check_cancellation(doc_id)
             
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -553,6 +818,9 @@ class DocumentProcessor:
                     chunk.content = _restore_urls(chunk.content, combined_url_map)
                 logger.debug(f"Restored URLs in {len(chunks)} chunks")
             
+            # Check for cancellation after chunking
+            self._check_cancellation(doc_id)
+            
             await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(self.neo4j.update_document_progress, doc_id, 15, 100, f"Generating embeddings for {len(chunks)} chunks...")
@@ -561,12 +829,18 @@ class DocumentProcessor:
             # Yield control before heavy embedding operation
             await asyncio.sleep(0)
             
+            # Check for cancellation before embedding
+            self._check_cancellation(doc_id)
+            
             # Generate embeddings (most CPU-intensive - run in thread pool)
             embed_result = await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(self.embedder.run, documents=chunks)
             )
             embedded_chunks = embed_result.get("documents", [])
+            
+            # Check for cancellation after embedding
+            self._check_cancellation(doc_id)
             
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -576,6 +850,10 @@ class DocumentProcessor:
             # Store chunks in Neo4j
             chunk_ids = []
             for idx, chunk in enumerate(embedded_chunks):
+                # Check for cancellation periodically during chunk storage
+                if idx % 10 == 0:
+                    self._check_cancellation(doc_id)
+                
                 chunk_id = f"{doc_id}_chunk_{idx}"
                 chunk_ids.append(chunk_id)
                 chunk_model = DocumentChunk(
@@ -609,6 +887,9 @@ class DocumentProcessor:
                     await asyncio.sleep(0)
             
             logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
+            
+            # Check for cancellation before graph extraction
+            self._check_cancellation(doc_id)
             
             # =================================================================
             # GraphRAG: Extract entities and relationships from chunks
@@ -660,6 +941,9 @@ class DocumentProcessor:
                     """Extract from a single chunk with semaphore control."""
                     nonlocal completed_count, active_extractions, total_entities
                     async with semaphore:
+                        # Check for cancellation before starting extraction
+                        self._check_cancellation(doc_id)
+                        
                         async with active_lock:
                             active_extractions += 1
                             current_active = active_extractions
@@ -676,6 +960,8 @@ class DocumentProcessor:
                                 document_summary=document_summary
                             )
                             extraction_results[idx] = (chunk_id, extraction)
+                        except CancellationRequested:
+                            raise  # Re-raise cancellation
                         except Exception as e:
                             logger.warning(f"Graph extraction failed for chunk {chunk_id}: {e}")
                             extraction_results[idx] = (chunk_id, None)
@@ -718,6 +1004,10 @@ class DocumentProcessor:
                 
                 # Store results in order (run Neo4j operations in executor)
                 for idx in sorted(extraction_results.keys()):
+                    # Check for cancellation during extraction storage
+                    if idx % 10 == 0:
+                        self._check_cancellation(doc_id)
+                    
                     chunk_id, extraction = extraction_results[idx]
                     if extraction and (extraction.entities or extraction.relationships):
                         counts = await loop.run_in_executor(
@@ -763,6 +1053,15 @@ class DocumentProcessor:
                 f"{total_relationships} relationships"
             )
             
+        except CancellationRequested as e:
+            # Processing was cancelled (document being deleted)
+            logger.info(f"Processing cancelled for document {doc_id}: {e}")
+            # Don't update status here - the cancel method handles it
+        except asyncio.CancelledError:
+            # Task was cancelled externally
+            logger.info(f"Processing task cancelled for document {doc_id}")
+            # Don't update status here - the cancel method handles it
+            raise  # Re-raise to properly cancel the task
         except Exception as e:
             logger.error(f"Error processing document {doc_id}: {e}")
             await loop.run_in_executor(

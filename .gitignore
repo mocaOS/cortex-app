@@ -48,3 +48,6 @@ scripts/
 # Downloaded documents
 documents
 !frontend/**/documents
+
+# Skills *.zip
+openclaw-library.zip

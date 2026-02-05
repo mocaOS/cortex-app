@@ -842,8 +842,23 @@ async def get_document_content(document_id: str):
 
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str, auth: AuthResult = Depends(require_manage_permission)):
-    """Delete a document and clean up orphaned entities and communities from the knowledge base."""
+    """
+    Delete a document and clean up orphaned entities and communities from the knowledge base.
+    
+    This endpoint will:
+    1. Cancel any active processing tasks for the document
+    2. Delete the document and its chunks
+    3. Remove orphaned entities (only connected to this document)
+    4. Remove orphaned communities (with no remaining members)
+    """
     try:
+        # Cancel any active processing first
+        processor = get_document_processor()
+        was_processing = await processor.cancel_document_processing(document_id)
+        if was_processing:
+            logger.info(f"Cancelled active processing for document {document_id} before deletion")
+        
+        # Then delete the document and clean up graph
         neo4j = get_neo4j_service()
         result = neo4j.delete_document(document_id)
         if not result["deleted"]:
@@ -851,6 +866,7 @@ async def delete_document(document_id: str, auth: AuthResult = Depends(require_m
         
         return {
             "message": "Document deleted successfully",
+            "processing_cancelled": was_processing,
             "orphaned_entities_removed": result["orphaned_entities_removed"],
             "orphaned_communities_removed": result["orphaned_communities_removed"]
         }
@@ -866,15 +882,26 @@ async def delete_documents(request: DeleteRequest, auth: AuthResult = Depends(re
     """
     Delete multiple documents from the knowledge base.
     
-    This endpoint deletes the specified documents and cleans up any orphaned entities and communities.
+    This endpoint will:
+    1. Cancel any active processing tasks for the documents
+    2. Delete all specified documents and their chunks
+    3. Remove orphaned entities and communities
     """
     try:
+        # Cancel any active processing first
+        processor = get_document_processor()
+        cancelled_count = await processor.cancel_multiple_documents(request.document_ids)
+        if cancelled_count > 0:
+            logger.info(f"Cancelled {cancelled_count} active processing tasks before bulk deletion")
+        
+        # Then delete the documents and clean up graph
         neo4j = get_neo4j_service()
         result = neo4j.delete_documents(request.document_ids)
         
         return {
             "message": f"Successfully deleted {result['deleted_count']} document(s)",
             "deleted_count": result["deleted_count"],
+            "processing_cancelled": cancelled_count,
             "orphaned_entities_removed": result["orphaned_entities_removed"],
             "orphaned_communities_removed": result["orphaned_communities_removed"]
         }
@@ -889,14 +916,26 @@ async def delete_all_documents(auth: AuthResult = Depends(require_manage_permiss
     Delete all documents from the knowledge base.
     
     WARNING: This is a destructive operation that removes all documents, chunks, entities, and communities.
+    
+    This endpoint will:
+    1. Cancel ALL active processing tasks
+    2. Delete all documents, chunks, entities, and communities
     """
     try:
+        # Cancel all active processing first
+        processor = get_document_processor()
+        cancelled_count = await processor.cancel_all_processing()
+        if cancelled_count > 0:
+            logger.info(f"Cancelled {cancelled_count} active processing tasks before deleting all documents")
+        
+        # Then delete everything
         neo4j = get_neo4j_service()
         result = neo4j.delete_all_documents()
         
         return {
             "message": f"Successfully deleted all {result['deleted_count']} document(s)",
             "deleted_count": result["deleted_count"],
+            "processing_cancelled": cancelled_count,
             "entities_removed": result["entities_removed"],
             "communities_removed": result["communities_removed"]
         }
