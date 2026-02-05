@@ -232,9 +232,47 @@ ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 ENTITY_SIMILARITY_THRESHOLD=0.85
 ```
 
+## Graph Cleanup
+
+When documents are deleted, MOCA automatically cleans up the knowledge graph:
+
+<Mermaid chart={`
+flowchart TD
+    A["🗑️ Delete Document"] --> B["⏹️ Cancel Processing"]
+    B --> C["🔍 Find Orphaned Entities"]
+    C --> D["❌ Delete Orphans"]
+    D --> E["🧹 Clean Communities"]
+    E --> F["✅ Graph Clean"]
+    
+    C -.-> C1["Entities only in<br/>deleted document"]
+    E -.-> E1["Communities with<br/>no members"]
+`} />
+
+### What Gets Cleaned
+
+| Item | Behavior |
+|------|----------|
+| **Active Processing** | Cancelled immediately before deletion |
+| **Chunks** | All chunks from the document are removed |
+| **Entities** | Removed if only mentioned by this document |
+| **Shared Entities** | Preserved if mentioned by other documents |
+| **Relationships** | Removed with their entities (DETACH DELETE) |
+| **Communities** | Removed if no member entities remain |
+
+### Cleanup API
+
+Clean up orphaned data manually:
+
+```bash
+# Clean orphaned entities
+curl -X POST "http://localhost:8000/api/cleanup/orphaned-entities" \
+  -H "X-API-Key: your-api-key"
+```
+
 ## Best Practices
 
 1. **Quality Documents** - Better source documents = better entities
 2. **Review Entities** - Periodically review extracted entities for accuracy
 3. **Tune Threshold** - Adjust `ENTITY_SIMILARITY_THRESHOLD` based on your domain
 4. **Use Communities** - Enable community detection for large graphs
+5. **Safe Deletion** - Delete documents safely knowing the graph will be cleaned automatically

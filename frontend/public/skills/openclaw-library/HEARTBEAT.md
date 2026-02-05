@@ -180,11 +180,10 @@ fi
 echo "📁 Uploading to OpenClaw collection: $COLLECTION_ID"
 
 # Upload the file to OpenClaw collection WITHOUT starting processing
-RESULT=$(curl -s -X POST "$API_BASE/api/upload" \
+# IMPORTANT: collection_id and start_processing are QUERY PARAMETERS, not form fields
+RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
   -H "X-API-Key: $API_KEY" \
-  -F "file=@$FILE_PATH" \
-  -F "collection_id=$COLLECTION_ID" \
-  -F "start_processing=false")
+  -F "file=@$FILE_PATH")
 
 DOCUMENT_ID=$(echo "$RESULT" | jq -r '.document_id')
 STATUS=$(echo "$RESULT" | jq -r '.status')
@@ -425,12 +424,10 @@ for DIR in "${MEMORY_DIRS[@]}"; do
     echo "   📄 $(basename "$FILE")"
     
     # Upload file to OpenClaw collection WITHOUT processing
-    # IMPORTANT: collection_id MUST be the OpenClaw collection ID
-    RESULT=$(curl -s -X POST "$API_BASE/api/upload" \
+    # IMPORTANT: collection_id and start_processing must be QUERY PARAMETERS, not form fields
+    RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
-      -F "file=@$FILE" \
-      -F "collection_id=$COLLECTION_ID" \
-      -F "start_processing=false")
+      -F "file=@$FILE")
     
     DOCUMENT_ID=$(echo "$RESULT" | jq -r '.document_id // .doc_id')
     RESULT_COLLECTION=$(echo "$RESULT" | jq -r '.collection_id // "unknown"')

@@ -238,51 +238,57 @@ class DocumentProcessor:
             True if a task was cancelled, False if no task was running
         """
         task_lock = _get_task_lock()
+        task_to_wait = None
+        was_running = False
+        
         async with task_lock:
             was_running = doc_id in _active_tasks
             
-            # Set cancellation flag first (for graceful shutdown)
+            # Set cancellation flag FIRST (for graceful shutdown via _check_cancellation)
             if doc_id in _cancellation_flags:
                 _cancellation_flags[doc_id].set()
                 logger.info(f"Set cancellation flag for document {doc_id}")
             
-            # Cancel the task
+            # Get the task to cancel (we'll wait outside the lock)
             if doc_id in _active_tasks:
-                task = _active_tasks[doc_id]
-                if not task.done():
-                    task.cancel()
-                    logger.info(f"Cancelled processing task for document {doc_id}")
-                    
-                    # Wait for task to finish with timeout
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(task), 
-                            timeout=5.0
-                        )
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        pass
-                    except Exception as e:
-                        logger.warning(f"Error waiting for task cancellation: {e}")
-                
-                # Clean up task registry
+                task_to_wait = _active_tasks[doc_id]
+                if not task_to_wait.done():
+                    task_to_wait.cancel()
+                    logger.info(f"Sent cancel signal to processing task for document {doc_id}")
+        
+        # Wait for task outside the lock to avoid deadlock
+        if task_to_wait and not task_to_wait.done():
+            try:
+                # Wait for the task to actually finish
+                await asyncio.wait_for(
+                    asyncio.gather(task_to_wait, return_exceptions=True),
+                    timeout=10.0  # Increased timeout
+                )
+                logger.info(f"Processing task for document {doc_id} has stopped")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout waiting for task cancellation for document {doc_id}")
+            except Exception as e:
+                logger.warning(f"Error waiting for task cancellation: {e}")
+        
+        # Clean up after waiting
+        async with task_lock:
+            if doc_id in _active_tasks:
                 del _active_tasks[doc_id]
-            
-            # Clean up cancellation flag
             if doc_id in _cancellation_flags:
                 del _cancellation_flags[doc_id]
-            
-            if was_running:
-                # Update document status to indicate cancellation
-                try:
-                    self.neo4j.update_document_status(
-                        doc_id,
-                        ProcessingStatus.FAILED,
-                        error_message="Processing cancelled (document deleted)"
-                    )
-                except Exception as e:
-                    logger.warning(f"Could not update status for cancelled document {doc_id}: {e}")
-            
-            return was_running
+        
+        if was_running:
+            # Update document status to indicate cancellation
+            try:
+                self.neo4j.update_document_status(
+                    doc_id,
+                    ProcessingStatus.FAILED,
+                    error_message="Processing cancelled (document deleted)"
+                )
+            except Exception as e:
+                logger.warning(f"Could not update status for cancelled document {doc_id}: {e}")
+        
+        return was_running
     
     async def cancel_multiple_documents(self, doc_ids: List[str]) -> int:
         """
@@ -392,22 +398,43 @@ class DocumentProcessor:
         Start a document processing task with proper tracking.
         
         This method:
-        1. Creates the asyncio task
-        2. Registers it in the task registry
-        3. Ensures cleanup on completion
+        1. Sets up cancellation flag FIRST (before task starts)
+        2. Creates the asyncio task
+        3. Registers it in the task registry
+        4. Ensures cleanup on completion
         
         Args:
             doc_id: Document ID to process
             file_path: Path to the file
             file_type: File extension/type
         """
-        # Create the processing task
-        task = asyncio.create_task(
-            self._process_document_with_cleanup(doc_id, file_path, file_type)
-        )
+        task_lock = _get_task_lock()
         
-        # Register it for tracking
-        await self._register_task(doc_id, task)
+        async with task_lock:
+            # Cancel any existing task for this document FIRST
+            if doc_id in _active_tasks:
+                old_task = _active_tasks[doc_id]
+                if doc_id in _cancellation_flags:
+                    _cancellation_flags[doc_id].set()
+                if not old_task.done():
+                    old_task.cancel()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(old_task), timeout=2.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+            
+            # Create cancellation flag BEFORE starting task
+            # This ensures _check_cancellation works from the first checkpoint
+            _cancellation_flags[doc_id] = asyncio.Event()
+            
+            # Now create the processing task
+            task = asyncio.create_task(
+                self._process_document_with_cleanup(doc_id, file_path, file_type)
+            )
+            
+            # Register it for tracking
+            _active_tasks[doc_id] = task
+            logger.info(f"Started processing task for document {doc_id}")
     
     async def _process_document_with_cleanup(
         self, 
@@ -850,9 +877,8 @@ class DocumentProcessor:
             # Store chunks in Neo4j
             chunk_ids = []
             for idx, chunk in enumerate(embedded_chunks):
-                # Check for cancellation periodically during chunk storage
-                if idx % 10 == 0:
-                    self._check_cancellation(doc_id)
+                # Check for cancellation BEFORE EVERY chunk storage
+                self._check_cancellation(doc_id)
                 
                 chunk_id = f"{doc_id}_chunk_{idx}"
                 chunk_ids.append(chunk_id)
@@ -997,16 +1023,24 @@ class DocumentProcessor:
                 )
                 
                 # Run all extractions concurrently (limited by semaphore)
-                await asyncio.gather(*extraction_tasks)
+                # Use return_exceptions=True to collect results even if some fail
+                try:
+                    await asyncio.gather(*extraction_tasks, return_exceptions=True)
+                except CancellationRequested:
+                    logger.info(f"Document {doc_id}: extraction cancelled")
+                    raise
+                
+                # Check for cancellation after extraction phase
+                self._check_cancellation(doc_id)
                 
                 # Yield control after all extractions
                 await asyncio.sleep(0)
                 
                 # Store results in order (run Neo4j operations in executor)
                 for idx in sorted(extraction_results.keys()):
-                    # Check for cancellation during extraction storage
-                    if idx % 10 == 0:
-                        self._check_cancellation(doc_id)
+                    # Check for cancellation BEFORE EVERY storage operation
+                    # This is critical to stop entity storage when deletion is requested
+                    self._check_cancellation(doc_id)
                     
                     chunk_id, extraction = extraction_results[idx]
                     if extraction and (extraction.entities or extraction.relationships):

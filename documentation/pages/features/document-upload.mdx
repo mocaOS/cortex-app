@@ -168,9 +168,27 @@ curl "http://localhost:8000/api/documents" \
 
 ### Delete a Document
 
+When you delete a document, MOCA automatically:
+
+1. **Cancels active processing** - If the document is being processed, the task is stopped
+2. **Removes chunks** - All text chunks are deleted
+3. **Cleans up entities** - Orphaned entities (only in this document) are removed
+4. **Cleans up communities** - Empty communities are deleted
+
 ```bash
 curl -X DELETE "http://localhost:8000/api/documents/doc_abc123" \
   -H "X-API-Key: your-api-key"
+```
+
+**Response:**
+
+```json
+{
+  "message": "Document deleted successfully",
+  "processing_cancelled": true,
+  "orphaned_entities_removed": 15,
+  "orphaned_communities_removed": 2
+}
 ```
 
 ### Reprocess a Document
@@ -184,12 +202,37 @@ curl -X POST "http://localhost:8000/api/documents/doc_abc123/reprocess" \
 
 ### Bulk Delete
 
+Delete multiple documents at once. All active processing is cancelled before deletion:
+
 ```bash
-curl -X POST "http://localhost:8000/api/documents/bulk-delete" \
+curl -X POST "http://localhost:8000/api/documents/delete" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"document_ids": ["doc_abc123", "doc_def456"]}'
 ```
+
+**Response:**
+
+```json
+{
+  "message": "Successfully deleted 2 document(s)",
+  "deleted_count": 2,
+  "processing_cancelled": 1,
+  "orphaned_entities_removed": 28,
+  "orphaned_communities_removed": 3
+}
+```
+
+### Delete All Documents
+
+Delete the entire knowledge base (use with caution):
+
+```bash
+curl -X DELETE "http://localhost:8000/api/documents" \
+  -H "X-API-Key: your-api-key"
+```
+
+This cancels all active processing tasks and removes all documents, chunks, entities, and communities.
 
 ## Configuration
 

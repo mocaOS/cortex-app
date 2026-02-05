@@ -64,6 +64,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
+- **🧹 Smart Cleanup**: Automatic task cancellation and complete graph cleanup on document deletion
 
 ## 🏗️ Architecture
 
@@ -183,9 +184,9 @@ npm run dev
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
 | GET | `/api/documents/{id}/content` | Get document with full chunk content |
-| DELETE | `/api/documents/{id}` | Delete a document (cleans up orphaned entities) |
-| POST | `/api/documents/delete` | Bulk delete multiple documents |
-| DELETE | `/api/documents` | Delete ALL documents (destructive!) |
+| DELETE | `/api/documents/{id}` | Delete a document (cancels processing, cleans up graph) |
+| POST | `/api/documents/delete` | Bulk delete multiple documents (cancels all processing) |
+| DELETE | `/api/documents` | Delete ALL documents (cancels all tasks, cleans entire graph) |
 | POST | `/api/search` | Semantic search |
 | POST | `/api/ask` | Enhanced GraphRAG Q&A (hybrid search, reranking, agentic mode) |
 | POST | `/api/ask/stream` | Streaming GraphRAG Q&A with SSE |
@@ -744,6 +745,28 @@ The system can automatically detect communities of related entities:
 2. **Community Extraction** - Group entities that frequently co-occur or are connected
 3. **Summary Generation** - LLM generates descriptive names and summaries for each community
 4. **Context Enhancement** - Community summaries are used to enrich RAG answers
+
+### Document Deletion & Cleanup
+
+When documents are deleted, MOCA ensures complete cleanup of the knowledge graph:
+
+1. **Task Cancellation** - Any active processing tasks for the document are stopped immediately
+2. **Chunk Removal** - All text chunks associated with the document are deleted
+3. **Orphaned Entity Cleanup** - Entities that were only mentioned by this document are removed
+4. **Relationship Cleanup** - All relationships to deleted entities are automatically removed
+5. **Community Cleanup** - Communities with no remaining members are deleted
+
+This ensures your knowledge graph stays clean and free of orphaned data, even when users delete documents during processing.
+
+**Response includes cleanup stats:**
+```json
+{
+  "message": "Document deleted successfully",
+  "processing_cancelled": true,
+  "orphaned_entities_removed": 15,
+  "orphaned_communities_removed": 2
+}
+```
 
 ## 🛡️ Prompt Security
 

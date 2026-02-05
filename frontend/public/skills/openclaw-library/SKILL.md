@@ -232,11 +232,10 @@ curl -X POST "https://library.moca.qwellco.de/api/collections" \
 For uploading a single file with immediate processing:
 
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/upload" \
+# collection_id and start_processing are QUERY PARAMETERS
+curl -X POST "https://library.moca.qwellco.de/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: YOUR_API_KEY" \
-  -F "file=@/path/to/memory.md" \
-  -F "collection_id=YOUR_COLLECTION_ID" \
-  -F "start_processing=true"
+  -F "file=@/path/to/memory.md"
 ```
 
 Response:
@@ -255,11 +254,10 @@ For uploading multiple files efficiently, upload without processing first, then 
 
 **Step 1: Upload files without processing**
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/upload" \
+# collection_id and start_processing are QUERY PARAMETERS
+curl -X POST "https://library.moca.qwellco.de/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=false" \
   -H "X-API-Key: YOUR_API_KEY" \
-  -F "file=@/path/to/memory.md" \
-  -F "collection_id=YOUR_COLLECTION_ID" \
-  -F "start_processing=false"
+  -F "file=@/path/to/memory.md"
 ```
 
 Response:
@@ -413,11 +411,10 @@ UPLOADED_COUNT=0
 for file in ~/.openclaw/memory/*.{md,txt,json} 2>/dev/null; do
   if [ -f "$file" ]; then
     echo "   📄 $(basename "$file") -> $COLLECTION_ID"
-    RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/upload" \
+    # collection_id and start_processing are QUERY PARAMETERS
+    RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
-      -F "file=@$file" \
-      -F "collection_id=$COLLECTION_ID" \
-      -F "start_processing=false")
+      -F "file=@$file")
     
     # Verify the upload succeeded and went to the right collection
     DOC_COLLECTION=$(echo "$RESULT" | jq -r '.collection_id // "unknown"')
@@ -483,11 +480,10 @@ fi
 echo "✅ Uploading to OpenClaw collection: $COLLECTION_ID"
 
 # Upload to OpenClaw collection
-curl -X POST "$API_BASE/api/upload" \
+# collection_id and start_processing are QUERY PARAMETERS
+curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: $API_KEY" \
-  -F "file=@/path/to/memory.md" \
-  -F "collection_id=$COLLECTION_ID" \
-  -F "start_processing=true"
+  -F "file=@/path/to/memory.md"
 ```
 
 ### Search Your Memories
