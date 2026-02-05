@@ -126,6 +126,22 @@ echo "📁 All uploads will go to OpenClaw collection: $COLLECTION_ID"
 
 ---
 
+## ⚠️ CRITICAL: Upload API Parameter Format
+
+**For ALL file uploads, parameters MUST be passed as URL query parameters, NOT as form fields:**
+
+| Parameter | Correct Usage | Wrong Usage |
+|-----------|---------------|-------------|
+| `collection_id` | `?collection_id=xxx` in URL | ~~`-F "collection_id=xxx"`~~ |
+| `start_processing` | `?start_processing=true` in URL | ~~`-F "start_processing=true"`~~ |
+| `file` | `-F "file=@/path/to/file"` | (this is correct) |
+
+**✅ CORRECT:** `curl -X POST "$URL?collection_id=$ID&start_processing=false" -F "file=@$FILE"`
+
+**❌ WRONG:** `curl -X POST "$URL" -F "collection_id=$ID" -F "start_processing=false" -F "file=@$FILE"`
+
+---
+
 ## Scan Memory Directories for New Files
 
 Check these directories for memory files to sync:
@@ -181,6 +197,11 @@ For efficiency, we use a **two-step bulk upload process**:
 
 **IMPORTANT:** Before uploading, ALWAYS look up the OpenClaw collection by name to get its ID.
 
+**⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:**
+- `collection_id` and `start_processing` MUST be in the URL as query parameters (after the `?`)
+- NEVER use `-F collection_id=...` or `-F start_processing=...` - this will NOT work
+- The ONLY `-F` flag should be for the file itself: `-F "file=@..."`
+
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
 API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
@@ -204,10 +225,18 @@ fi
 echo "📁 Uploading to OpenClaw collection: $COLLECTION_ID"
 
 # Upload the file to OpenClaw collection WITHOUT starting processing
-# IMPORTANT: collection_id and start_processing are QUERY PARAMETERS, not form fields
+#
+# ⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:
+# - collection_id and start_processing MUST be in the URL after the ?
+# - NEVER use -F for collection_id or start_processing
+# - The ONLY -F flag should be for the file: -F "file=@..."
+#
 RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@$FILE_PATH")
+
+# ❌ WRONG - NEVER DO THIS:
+# curl -X POST "$API_BASE/api/upload" -F "collection_id=$COLLECTION_ID" -F "file=@$FILE_PATH"
 
 DOCUMENT_ID=$(echo "$RESULT" | jq -r '.document_id')
 STATUS=$(echo "$RESULT" | jq -r '.status')
@@ -466,7 +495,12 @@ for DIR in "${MEMORY_DIRS[@]}"; do
     echo "   📄 $(basename "$FILE")"
     
     # Upload file to OpenClaw collection WITHOUT processing
-    # IMPORTANT: collection_id and start_processing must be QUERY PARAMETERS, not form fields
+    #
+    # ⚠️ CRITICAL: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
+    # NEVER use -F for collection_id - the ONLY -F flag is for the file: -F "file=@..."
+    # ❌ WRONG: curl ... -F "collection_id=$COLLECTION_ID" -F "file=@$FILE"
+    # ✅ CORRECT: curl ... "$URL?collection_id=$COLLECTION_ID" -F "file=@$FILE"
+    #
     RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
       -F "file=@$FILE")

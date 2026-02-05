@@ -1,6 +1,6 @@
 ---
 name: openclaw-library
-version: 1.1.0
+version: 1.2.0
 description: Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval and search.
 metadata: {"openclaw":{"emoji":"📚","category":"knowledge"}}
 ---
@@ -18,16 +18,22 @@ All memory files are organized within a single dedicated collection named **Open
 | **SKILL.md** (this file) | Main skill documentation and API reference |
 | **HEARTBEAT.md** | Periodic sync tasks and memory upload workflow |
 | **skill.json** | Skill metadata and configuration |
+| **state/credentials.example.json** | Example credentials file - copy to `credentials.json` and add your API key and base URL |
+| **state/uploaded_files.json** | Tracks uploaded files to avoid duplicates (auto-updated during sync) |
 
 **Install locally:**
 ```bash
-mkdir -p ~/.openclaw/skills/library
+mkdir -p ~/.openclaw/skills/library/state
+
 # Download skill files from your MOCA Library instance
 # Replace YOUR_BASE_URL with your actual library URL (e.g., https://library.example.com)
 curl -s YOUR_BASE_URL/skills/openclaw-library/SKILL.md > ~/.openclaw/skills/library/SKILL.md
 curl -s YOUR_BASE_URL/skills/openclaw-library/HEARTBEAT.md > ~/.openclaw/skills/library/HEARTBEAT.md
 curl -s YOUR_BASE_URL/skills/openclaw-library/skill.json > ~/.openclaw/skills/library/skill.json
-mkdir -p ~/.openclaw/skills/library/state
+
+# Download example state files
+curl -s YOUR_BASE_URL/skills/openclaw-library/state/credentials.example.json > ~/.openclaw/skills/library/state/credentials.example.json
+curl -s YOUR_BASE_URL/skills/openclaw-library/state/uploaded_files.json > ~/.openclaw/skills/library/state/uploaded_files.json
 ```
 
 ---
@@ -233,6 +239,32 @@ All requests require:
 1. The `X-API-Key` header with your API key
 2. The base URL from your credentials
 
+### ⚠️ CRITICAL: Upload API Parameter Format
+
+**For file uploads, parameters MUST be passed as URL query parameters, NOT as form fields:**
+
+| Parameter | Correct Usage | Wrong Usage |
+|-----------|---------------|-------------|
+| `collection_id` | `?collection_id=xxx` in URL | ~~`-F "collection_id=xxx"`~~ |
+| `start_processing` | `?start_processing=true` in URL | ~~`-F "start_processing=true"`~~ |
+| `file` | `-F "file=@/path/to/file"` | (this is correct) |
+
+**✅ CORRECT:**
+```bash
+curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
+  -H "X-API-Key: $API_KEY" \
+  -F "file=@/path/to/file.md"
+```
+
+**❌ WRONG (will not work):**
+```bash
+curl -X POST "$API_BASE/api/upload" \
+  -H "X-API-Key: $API_KEY" \
+  -F "collection_id=$COLLECTION_ID" \
+  -F "start_processing=true" \
+  -F "file=@/path/to/file.md"
+```
+
 **Before making any API calls, load your credentials:**
 
 ```bash
@@ -272,11 +304,22 @@ curl -X POST "$API_BASE/api/collections" \
 
 For uploading a single file with immediate processing:
 
+**⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:**
+- `collection_id` and `start_processing` MUST be in the URL as query parameters
+- NEVER use `-F collection_id=...` or `-F start_processing=...` - this will NOT work
+- The ONLY `-F` flag should be for the file itself: `-F "file=@..."`
+
 ```bash
-# collection_id and start_processing are QUERY PARAMETERS
-curl -X POST "$API_BASE/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=true" \
+# CORRECT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
+curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
+
+# ❌ WRONG - NEVER DO THIS:
+# curl -X POST "$API_BASE/api/upload" \
+#   -F "collection_id=$COLLECTION_ID" \
+#   -F "start_processing=true" \
+#   -F "file=@/path/to/memory.md"
 ```
 
 Response:
@@ -293,12 +336,23 @@ Response:
 
 For uploading multiple files efficiently, upload without processing first, then trigger batch processing:
 
+**⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:**
+- `collection_id` and `start_processing` MUST be in the URL as query parameters
+- NEVER use `-F collection_id=...` or `-F start_processing=...` - this will NOT work
+- The ONLY `-F` flag should be for the file itself: `-F "file=@..."`
+
 **Step 1: Upload files without processing**
 ```bash
-# collection_id and start_processing are QUERY PARAMETERS
-curl -X POST "$API_BASE/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=false" \
+# CORRECT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
+curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
+
+# ❌ WRONG - NEVER DO THIS:
+# curl -X POST "$API_BASE/api/upload" \
+#   -F "collection_id=$COLLECTION_ID" \
+#   -F "start_processing=false" \
+#   -F "file=@/path/to/memory.md"
 ```
 
 Response:
@@ -458,7 +512,8 @@ UPLOADED_COUNT=0
 for file in ~/.openclaw/memory/*.{md,txt,json} 2>/dev/null; do
   if [ -f "$file" ]; then
     echo "   📄 $(basename "$file") -> $COLLECTION_ID"
-    # collection_id and start_processing are QUERY PARAMETERS
+    # IMPORTANT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
+    # NEVER use -F for collection_id - only -F "file=@..." is correct
     RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
       -F "file=@$file")
@@ -533,7 +588,8 @@ fi
 echo "✅ Uploading to OpenClaw collection: $COLLECTION_ID"
 
 # Upload to OpenClaw collection
-# collection_id and start_processing are QUERY PARAMETERS
+# IMPORTANT: collection_id and start_processing MUST be URL QUERY PARAMETERS
+# NEVER use -F for collection_id or start_processing - only -F "file=@..." is correct
 curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
@@ -734,4 +790,6 @@ echo '{"files": {}, "last_sync": null}' > ~/.openclaw/skills/library/state/uploa
 
 ## Version History
 
+- **1.2.0** - Clarified API parameter format (URL query params only, never -F for collection_id), added state file downloads to installation
+- **1.1.0** - Added base_url configuration, improved collection lookup by name
 - **1.0.0** - Initial release with memory sync, search, and RAG capabilities
