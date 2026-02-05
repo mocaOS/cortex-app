@@ -36,20 +36,19 @@ curl "$MOCA_URL/api/stats" \
 ### Upload a Document
 
 ```bash
-curl -X POST "$MOCA_URL/api/upload" \
+# collection_id and start_processing are query parameters
+curl -X POST "$MOCA_URL/api/upload?collection_id=default&start_processing=true" \
   -H "X-API-Key: $MOCA_API_KEY" \
-  -F "file=@document.pdf" \
-  -F "collection_id=default" \
-  -F "start_processing=true"
+  -F "file=@document.pdf"
 ```
 
 ### Upload Without Processing (for bulk)
 
 ```bash
-curl -X POST "$MOCA_URL/api/upload" \
+# start_processing is a query parameter
+curl -X POST "$MOCA_URL/api/upload?start_processing=false" \
   -H "X-API-Key: $MOCA_API_KEY" \
-  -F "file=@document.pdf" \
-  -F "start_processing=false"
+  -F "file=@document.pdf"
 ```
 
 ### Process Pending Documents

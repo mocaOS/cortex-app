@@ -132,10 +132,10 @@ curl -X DELETE "http://localhost:8000/api/collections/coll_abc123" \
 ### Upload to a Collection
 
 ```bash
-curl -X POST "http://localhost:8000/api/upload" \
+# collection_id is a query parameter
+curl -X POST "http://localhost:8000/api/upload?collection_id=coll_abc123" \
   -H "X-API-Key: your-api-key" \
-  -F "file=@paper.pdf" \
-  -F "collection_id=coll_abc123"
+  -F "file=@paper.pdf"
 ```
 
 ### Move Documents Between Collections

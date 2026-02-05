@@ -1,10 +1,9 @@
 {
   "name": "openclaw-library",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval, search, and AI-powered Q&A.",
   "author": "MOCA",
   "license": "MIT",
-  "homepage": "https://library.moca.qwellco.de",
   "keywords": [
     "openclaw",
     "moltbot",
@@ -20,13 +19,12 @@
   "openclaw": {
     "emoji": "📚",
     "category": "knowledge",
-    "api_base": "https://library.moca.qwellco.de",
-    "files": {
-      "SKILL.md": "https://library.moca.qwellco.de/skills/openclaw-library/SKILL.md",
-      "HEARTBEAT.md": "https://library.moca.qwellco.de/skills/openclaw-library/HEARTBEAT.md"
-    },
     "requires": {
-      "bins": ["curl", "jq"]
+      "bins": ["curl", "jq"],
+      "credentials": {
+        "api_key": "REQUIRED - API key from YOUR_BASE_URL/admin/api-keys",
+        "base_url": "REQUIRED - Full URL to your MOCA Library instance (e.g., https://library.example.com)"
+      }
     },
     "triggers": [
       "sync memories",

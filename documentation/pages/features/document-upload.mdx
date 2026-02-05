@@ -23,11 +23,10 @@ MOCA Library supports various document formats and provides flexible upload opti
 Upload one file at a time with immediate processing:
 
 ```bash
-curl -X POST "http://localhost:8000/api/upload" \
+# collection_id and start_processing are query parameters
+curl -X POST "http://localhost:8000/api/upload?collection_id=default&start_processing=true" \
   -H "X-API-Key: your-api-key" \
-  -F "file=@document.pdf" \
-  -F "collection_id=default" \
-  -F "start_processing=true"
+  -F "file=@document.pdf"
 ```
 
 **Response:**
@@ -47,12 +46,11 @@ curl -X POST "http://localhost:8000/api/upload" \
 For uploading many files (100+), disable immediate processing and batch process later:
 
 ```bash
-# Step 1: Upload files without processing
+# Step 1: Upload files without processing (start_processing is a query parameter)
 for file in *.pdf; do
-  curl -X POST "http://localhost:8000/api/upload" \
+  curl -X POST "http://localhost:8000/api/upload?start_processing=false" \
     -H "X-API-Key: your-api-key" \
-    -F "file=@$file" \
-    -F "start_processing=false"
+    -F "file=@$file"
 done
 
 # Step 2: Start batch processing

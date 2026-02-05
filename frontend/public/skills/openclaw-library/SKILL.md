@@ -1,9 +1,8 @@
 ---
 name: openclaw-library
-version: 1.0.0
+version: 1.1.0
 description: Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval and search.
-homepage: https://library.moca.qwellco.de
-metadata: {"openclaw":{"emoji":"📚","category":"knowledge","api_base":"https://library.moca.qwellco.de"}}
+metadata: {"openclaw":{"emoji":"📚","category":"knowledge"}}
 ---
 
 # OpenClaw Library Skill
@@ -23,26 +22,33 @@ All memory files are organized within a single dedicated collection named **Open
 **Install locally:**
 ```bash
 mkdir -p ~/.openclaw/skills/library
-curl -s https://library.moca.qwellco.de/skills/openclaw-library/SKILL.md > ~/.openclaw/skills/library/SKILL.md
-curl -s https://library.moca.qwellco.de/skills/openclaw-library/HEARTBEAT.md > ~/.openclaw/skills/library/HEARTBEAT.md
-curl -s https://library.moca.qwellco.de/skills/openclaw-library/skill.json > ~/.openclaw/skills/library/skill.json
+# Download skill files from your MOCA Library instance
+# Replace YOUR_BASE_URL with your actual library URL (e.g., https://library.example.com)
+curl -s YOUR_BASE_URL/skills/openclaw-library/SKILL.md > ~/.openclaw/skills/library/SKILL.md
+curl -s YOUR_BASE_URL/skills/openclaw-library/HEARTBEAT.md > ~/.openclaw/skills/library/HEARTBEAT.md
+curl -s YOUR_BASE_URL/skills/openclaw-library/skill.json > ~/.openclaw/skills/library/skill.json
 mkdir -p ~/.openclaw/skills/library/state
 ```
-
-**Base URL:** `https://library.moca.qwellco.de`
 
 ---
 
 ## First-Time Setup
 
-### Step 1: Get Your API Key
+### Step 1: Get Your Base URL and API Key
 
-You need a MOCA Library API key to use this skill. Ask your human to:
+**IMPORTANT:** You need BOTH a base URL AND an API key to use this skill.
 
-1. Log into the Library at https://library.moca.qwellco.de
-2. Go to Admin → API Keys
-3. Create a new API key with **READ** and **MANAGE** permissions
-4. Copy the API key (it's only shown once!)
+Ask your human to provide:
+
+1. **Base URL** - The full URL to their MOCA Library instance
+   - Example: `https://library.example.com`
+   - This is where the Library is hosted
+
+2. **API Key** - A MOCA Library API key
+   - Log into the Library at YOUR_BASE_URL
+   - Go to Admin → API Keys
+   - Create a new API key with **READ** and **MANAGE** permissions
+   - Copy the API key (it's only shown once!)
 
 ### Step 2: Configure Credentials
 
@@ -52,30 +58,44 @@ When you first use this skill, check if credentials exist:
 cat ~/.openclaw/skills/library/state/credentials.json
 ```
 
-**If the file doesn't exist or has no valid `api_key`:**
+**If the file doesn't exist or is missing `api_key` OR `base_url`:**
 
 Tell your human:
-> "I need a MOCA Library API key to sync memories. Please provide an API key from https://library.moca.qwellco.de/admin/api-keys"
+> "I need BOTH a MOCA Library base URL AND an API key to sync memories. Please provide:
+> 1. The base URL of your MOCA Library (e.g., https://library.example.com)
+> 2. An API key from YOUR_BASE_URL/admin/api-keys"
 
-Once they provide the key, save it:
+Once they provide BOTH values, save them:
 
 ```bash
 mkdir -p ~/.openclaw/skills/library/state
 cat > ~/.openclaw/skills/library/state/credentials.json << 'EOF'
 {
   "api_key": "YOUR_API_KEY_HERE",
+  "base_url": "YOUR_BASE_URL_HERE",
   "collection_id": null
 }
 EOF
 ```
 
-### Step 3: Validate the API Key
+**CRITICAL:** Both `api_key` AND `base_url` are REQUIRED. Do not proceed without both values.
 
-Test the connection:
+### Step 3: Validate the Connection
+
+Test the connection using BOTH values:
 
 ```bash
-curl -s "https://library.moca.qwellco.de/health" \
-  -H "X-API-Key: YOUR_API_KEY"
+API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
+
+# Validate credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
+
+curl -s "$API_BASE/health" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 Expected response:
@@ -83,7 +103,7 @@ Expected response:
 {"status": "healthy", "neo4j_connected": true, "version": "2.0.0"}
 ```
 
-**If you get an error:** The API key is invalid. Ask your human for a valid key.
+**If you get an error:** Either the base URL is incorrect or the API key is invalid. Ask your human for valid credentials.
 
 ### Step 4: Find or Create OpenClaw Collection (REQUIRED)
 
@@ -93,8 +113,14 @@ Expected response:
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE="https://library.moca.qwellco.de"
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 COLLECTION_NAME="OpenClaw"
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # ALWAYS query the API to find the collection by name
 echo "🔍 Finding OpenClaw collection..."
@@ -203,26 +229,41 @@ Format:
 
 ## API Reference
 
-All requests require the `X-API-Key` header with your API key.
+All requests require:
+1. The `X-API-Key` header with your API key
+2. The base URL from your credentials
+
+**Before making any API calls, load your credentials:**
+
+```bash
+API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
+
+# Validate both are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
+```
 
 ### Health Check
 
 ```bash
-curl "https://library.moca.qwellco.de/health"
+curl "$API_BASE/health"
 ```
 
 ### List Collections
 
 ```bash
-curl "https://library.moca.qwellco.de/api/collections" \
-  -H "X-API-Key: YOUR_API_KEY"
+curl "$API_BASE/api/collections" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 ### Create Collection
 
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/collections" \
-  -H "X-API-Key: YOUR_API_KEY" \
+curl -X POST "$API_BASE/api/collections" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "OpenClaw", "description": "Memory files from OpenClaw agent"}'
 ```
@@ -233,8 +274,8 @@ For uploading a single file with immediate processing:
 
 ```bash
 # collection_id and start_processing are QUERY PARAMETERS
-curl -X POST "https://library.moca.qwellco.de/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=true" \
-  -H "X-API-Key: YOUR_API_KEY" \
+curl -X POST "$API_BASE/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=true" \
+  -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
 ```
 
@@ -255,8 +296,8 @@ For uploading multiple files efficiently, upload without processing first, then 
 **Step 1: Upload files without processing**
 ```bash
 # collection_id and start_processing are QUERY PARAMETERS
-curl -X POST "https://library.moca.qwellco.de/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=false" \
-  -H "X-API-Key: YOUR_API_KEY" \
+curl -X POST "$API_BASE/api/upload?collection_id=YOUR_COLLECTION_ID&start_processing=false" \
+  -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
 ```
 
@@ -272,8 +313,8 @@ Response:
 
 **Step 2: Trigger batch processing**
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/documents/process-pending" \
-  -H "X-API-Key: YOUR_API_KEY"
+curl -X POST "$API_BASE/api/documents/process-pending" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 Response:
@@ -292,8 +333,8 @@ Response:
 Check which documents are waiting to be processed:
 
 ```bash
-curl "https://library.moca.qwellco.de/api/documents/pending" \
-  -H "X-API-Key: YOUR_API_KEY"
+curl "$API_BASE/api/documents/pending" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 Response:
@@ -310,8 +351,8 @@ Response:
 ### Check Document Status
 
 ```bash
-curl "https://library.moca.qwellco.de/api/documents/DOCUMENT_ID" \
-  -H "X-API-Key: YOUR_API_KEY"
+curl "$API_BASE/api/documents/DOCUMENT_ID" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 Status values:
@@ -324,8 +365,8 @@ Status values:
 ### Search Knowledge Base
 
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/search" \
-  -H "X-API-Key: YOUR_API_KEY" \
+curl -X POST "$API_BASE/api/search" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "your search query", "top_k": 10}'
 ```
@@ -333,8 +374,8 @@ curl -X POST "https://library.moca.qwellco.de/api/search" \
 ### Ask AI (RAG Query)
 
 ```bash
-curl -X POST "https://library.moca.qwellco.de/api/ask" \
-  -H "X-API-Key: YOUR_API_KEY" \
+curl -X POST "$API_BASE/api/ask" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What do I know about topic X?",
@@ -356,8 +397,8 @@ Response:
 ### Get Statistics
 
 ```bash
-curl "https://library.moca.qwellco.de/api/stats" \
-  -H "X-API-Key: YOUR_API_KEY"
+curl "$API_BASE/api/stats" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 ---
@@ -371,13 +412,19 @@ For efficiency, upload all files first without processing, then trigger batch pr
 **All files are uploaded to the OpenClaw collection ONLY.**
 
 ```bash
-# Get credentials
+# Get credentials - BOTH api_key and base_url are REQUIRED
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-COLLECTION_ID=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.collection_id')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # ALWAYS look up the OpenClaw collection by name (don't trust cached ID)
 echo "🔍 Finding OpenClaw collection by name..."
-COLLECTIONS=$(curl -s "https://library.moca.qwellco.de/api/collections" -H "X-API-Key: $API_KEY")
+COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
 
 # Find collection by exact name match
 COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r '.collections[] | select(.name == "OpenClaw") | .id' | head -n1)
@@ -385,7 +432,7 @@ COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r '.collections[] | select(.name == "O
 # If not found, create it
 if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
   echo "📚 Creating OpenClaw collection..."
-  CREATE_RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/collections" \
+  CREATE_RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"name": "OpenClaw", "description": "Memory files synced from OpenClaw agent"}')
@@ -412,7 +459,7 @@ for file in ~/.openclaw/memory/*.{md,txt,json} 2>/dev/null; do
   if [ -f "$file" ]; then
     echo "   📄 $(basename "$file") -> $COLLECTION_ID"
     # collection_id and start_processing are QUERY PARAMETERS
-    RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
+    RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
       -F "file=@$file")
     
@@ -430,7 +477,7 @@ echo ""
 echo "📦 Uploaded $UPLOADED_COUNT files. Starting batch processing..."
 
 # Step 2: Trigger processing for all pending documents
-PROCESS_RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/documents/process-pending" \
+PROCESS_RESULT=$(curl -s -X POST "$API_BASE/api/documents/process-pending" \
   -H "X-API-Key: $API_KEY")
 
 TASK_ID=$(echo "$PROCESS_RESULT" | jq -r '.task_id')
@@ -438,7 +485,7 @@ echo "🔄 Processing started. Task ID: $TASK_ID"
 
 # Step 3: Wait for processing to complete (optional)
 while true; do
-  TASK_STATUS=$(curl -s "https://library.moca.qwellco.de/api/tasks/$TASK_ID" \
+  TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" \
     -H "X-API-Key: $API_KEY")
   
   STATUS=$(echo "$TASK_STATUS" | jq -r '.status')
@@ -464,8 +511,14 @@ For a single file with immediate processing (uploads to OpenClaw collection ONLY
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE="https://library.moca.qwellco.de"
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 COLLECTION_NAME="OpenClaw"
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # ALWAYS look up the OpenClaw collection by name before uploading
 echo "🔍 Finding OpenClaw collection..."
@@ -490,8 +543,15 @@ curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 
-curl -X POST "https://library.moca.qwellco.de/api/search" \
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
+
+curl -X POST "$API_BASE/api/search" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "what I discussed about project X"}'
@@ -501,8 +561,15 @@ curl -X POST "https://library.moca.qwellco.de/api/search" \
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 
-curl -X POST "https://library.moca.qwellco.de/api/ask" \
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
+
+curl -X POST "$API_BASE/api/ask" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "Summarize what I know about machine learning"}'
@@ -512,19 +579,30 @@ curl -X POST "https://library.moca.qwellco.de/api/ask" \
 
 ## Error Handling
 
-### Missing API Key
+### Missing Credentials
 
-If `credentials.json` doesn't exist or `api_key` is null:
+If `credentials.json` doesn't exist or is missing `api_key` OR `base_url`:
 
 ```
-⚠️ MOCA Library API key not configured!
+⚠️ MOCA Library credentials not configured!
 
-I need an API key to sync memories to the Library. Please:
-1. Go to https://library.moca.qwellco.de/admin/api-keys
-2. Create an API key with READ and MANAGE permissions
-3. Give me the key so I can save it
+I need BOTH a base URL AND an API key to sync memories to the Library. Please provide:
 
-Without an API key, I cannot upload memories or search the knowledge base.
+1. Base URL - The full URL to your MOCA Library instance (e.g., https://library.example.com)
+2. API Key - Get from YOUR_BASE_URL/admin/api-keys with READ and MANAGE permissions
+
+Without both values, I cannot upload memories or search the knowledge base.
+```
+
+### Invalid Base URL
+
+If the connection fails or returns 404:
+
+```
+⚠️ Cannot connect to MOCA Library!
+
+The base URL you provided is not reachable or incorrect.
+Please verify the URL is correct and the service is running.
 ```
 
 ### Invalid API Key
@@ -535,7 +613,7 @@ If health check fails with 401:
 ⚠️ Invalid MOCA Library API key!
 
 The API key you provided is not valid or has been revoked.
-Please provide a new API key from https://library.moca.qwellco.de/admin/api-keys
+Please provide a new API key from YOUR_BASE_URL/admin/api-keys
 ```
 
 ### Collection Not Found
@@ -621,11 +699,12 @@ You don't have to wait for heartbeat - if they ask, do it!
 ### Can't connect to API
 
 ```bash
-# Check if the API is reachable
-curl -v "https://library.moca.qwellco.de/health"
+# Check if the API is reachable (use your configured base_url)
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
+curl -v "$API_BASE/health"
 ```
 
-If connection fails, the service might be down. Try again later.
+If connection fails, either the base URL is incorrect or the service might be down. Verify the URL and try again later.
 
 ### File not appearing in library
 

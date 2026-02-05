@@ -9,23 +9,28 @@
 cat ~/.openclaw/skills/library/state/credentials.json 2>/dev/null
 ```
 
-**If file doesn't exist or `api_key` is null:**
+**If file doesn't exist or is missing `api_key` OR `base_url`:**
 
 Stop here and tell your human:
 
-> "I need a MOCA Library API key to sync my memories. Please provide an API key from https://library.moca.qwellco.de/admin/api-keys"
+> "I need BOTH a MOCA Library base URL AND an API key to sync my memories. Please provide:
+> 1. The base URL of your MOCA Library (e.g., https://library.example.com)
+> 2. An API key from YOUR_BASE_URL/admin/api-keys"
 
-Once they provide the key, save it and continue:
+Once they provide BOTH values, save them and continue:
 
 ```bash
 mkdir -p ~/.openclaw/skills/library/state
 cat > ~/.openclaw/skills/library/state/credentials.json << 'EOF'
 {
   "api_key": "THE_API_KEY_THEY_PROVIDED",
+  "base_url": "THE_BASE_URL_THEY_PROVIDED",
   "collection_id": null
 }
 EOF
 ```
+
+**CRITICAL:** Both `api_key` AND `base_url` are REQUIRED. Do not proceed without both values.
 
 ---
 
@@ -33,14 +38,21 @@ EOF
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 
-curl -s "https://library.moca.qwellco.de/health" \
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
+
+curl -s "$API_BASE/health" \
   -H "X-API-Key: $API_KEY"
 ```
 
 **Expected:** `{"status": "healthy", ...}`
 
-**If status is not "healthy" or you get an error:** The API might be down or your key is invalid. Tell your human and try again later.
+**If status is not "healthy" or you get an error:** Either the base URL is incorrect, the API might be down, or your key is invalid. Tell your human and try again later.
 
 ---
 
@@ -54,8 +66,14 @@ curl -s "https://library.moca.qwellco.de/health" \
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE="https://library.moca.qwellco.de"
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 COLLECTION_NAME="OpenClaw"
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # ALWAYS look up the collection by name - don't trust cached values
 echo "🔍 Finding OpenClaw collection by name..."
@@ -165,8 +183,14 @@ For efficiency, we use a **two-step bulk upload process**:
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE="https://library.moca.qwellco.de"
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 COLLECTION_NAME="OpenClaw"
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # ALWAYS look up the collection by name before uploading
 COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
@@ -197,9 +221,16 @@ After uploading ALL files, trigger processing for all pending documents:
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
+API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
+
+# Validate both credentials are present
+if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
+  exit 1
+fi
 
 # Start processing all pending documents
-PROCESS_RESULT=$(curl -s -X POST "https://library.moca.qwellco.de/api/documents/process-pending" \
+PROCESS_RESULT=$(curl -s -X POST "$API_BASE/api/documents/process-pending" \
   -H "X-API-Key: $API_KEY")
 
 TASK_ID=$(echo "$PROCESS_RESULT" | jq -r '.task_id')
@@ -217,7 +248,7 @@ MAX_ATTEMPTS=60  # 5 minutes at 5s intervals
 ATTEMPT=0
 
 while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-  TASK_STATUS=$(curl -s "https://library.moca.qwellco.de/api/tasks/$TASK_ID" \
+  TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" \
     -H "X-API-Key: $API_KEY")
   
   STATUS=$(echo "$TASK_STATUS" | jq -r '.status')
@@ -288,13 +319,14 @@ Here's the full sync logic using efficient bulk upload:
 # IMPORTANT: All memory files are uploaded ONLY to the "OpenClaw" collection.
 # This script will automatically find or create the OpenClaw collection.
 # Files are NEVER uploaded to any other collection.
+#
+# REQUIRED: Both api_key and base_url must be configured in credentials.json
 
 set -e
 
 STATE_DIR="$HOME/.openclaw/skills/library/state"
 CREDENTIALS="$STATE_DIR/credentials.json"
 TRACKING="$STATE_DIR/uploaded_files.json"
-API_BASE="https://library.moca.qwellco.de"
 COLLECTION_NAME="OpenClaw"  # Target collection - DO NOT CHANGE
 
 # Memory directories to scan
@@ -311,17 +343,27 @@ echo ""
 
 # Load credentials
 if [ ! -f "$CREDENTIALS" ]; then
-  echo "❌ No credentials found. Please provide an API key."
+  echo "❌ No credentials found. Please provide both api_key and base_url."
   exit 1
 fi
 
 API_KEY=$(jq -r '.api_key' "$CREDENTIALS")
+API_BASE=$(jq -r '.base_url' "$CREDENTIALS")
 COLLECTION_ID=$(jq -r '.collection_id' "$CREDENTIALS")
 
+# Validate BOTH credentials are present
 if [ "$API_KEY" = "null" ] || [ -z "$API_KEY" ]; then
   echo "❌ No API key configured. Please provide an API key."
   exit 1
 fi
+
+if [ "$API_BASE" = "null" ] || [ -z "$API_BASE" ]; then
+  echo "❌ No base URL configured. Please provide a base URL."
+  exit 1
+fi
+
+echo "   Base URL: $API_BASE"
+echo ""
 
 # Initialize tracking if needed
 if [ ! -f "$TRACKING" ]; then
@@ -592,8 +634,8 @@ Will retry failed files on next sync.
 
 **If credentials are missing:**
 ```
-⚠️ Library sync skipped - No API key configured.
-Please provide a MOCA Library API key to enable memory sync.
+⚠️ Library sync skipped - Missing credentials.
+Please provide BOTH a MOCA Library base URL AND API key to enable memory sync.
 ```
 
 ---
