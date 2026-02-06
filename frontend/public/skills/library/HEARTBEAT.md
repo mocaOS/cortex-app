@@ -96,9 +96,9 @@ if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"name\": \"$COLLECTION_NAME\", \"description\": \"Memory files synced from OpenClaw agent\"}")
-  
+
   COLLECTION_ID=$(echo "$CREATE_RESULT" | jq -r '.id')
-  
+
   if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
     echo "❌ FATAL: Failed to create OpenClaw collection"
     echo "   Error: $(echo "$CREATE_RESULT" | jq -r '.detail // .message // "Unknown error"')"
@@ -148,9 +148,33 @@ Check these directories for memory files to sync:
 
 1. `~/.openclaw/memory/` - Primary memory storage
 2. `~/.openclaw/conversations/` - Conversation logs
-3. Any custom paths your human has configured
+3. **QMD sessions** - When QMD is enabled (`~/.openclaw/agents/main/qmd/sessions/`)
+4. Any custom paths your human has configured
 
 **Supported file types:** `.md`, `.txt`, `.json`
+
+### Detect QMD and Add Session Directory
+
+If QMD is enabled as the memory backend, automatically include the QMD sessions directory:
+
+```bash
+# Check if QMD is the active memory backend
+MEMORY_BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"')
+
+if [ "$MEMORY_BACKEND" = "qmd" ]; then
+  echo "   🔍 QMD backend detected - including session files"
+
+  # Get agent ID (default to "main")
+  AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"')
+
+  # QMD sessions directory
+  QMD_SESSIONS_DIR="$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
+
+  if [ -d "$QMD_SESSIONS_DIR" ]; then
+    echo "   📁 Found QMD sessions at: $QMD_SESSIONS_DIR"
+  fi
+fi
+```
 
 ### Load Upload Tracking State
 
@@ -279,13 +303,13 @@ ATTEMPT=0
 while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
   TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" \
     -H "X-API-Key: $API_KEY")
-  
+
   STATUS=$(echo "$TASK_STATUS" | jq -r '.status')
   PROGRESS=$(echo "$TASK_STATUS" | jq -r '.progress_percent // 0')
   MESSAGE=$(echo "$TASK_STATUS" | jq -r '.message // ""')
-  
+
   echo "   Progress: ${PROGRESS}% - $MESSAGE"
-  
+
   if [ "$STATUS" = "completed" ] || [ "$STATUS" = "COMPLETED" ]; then
     echo "✅ All documents processed successfully!"
     break
@@ -294,7 +318,7 @@ while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     echo "❌ Processing failed: $ERROR"
     break
   fi
-  
+
   ATTEMPT=$((ATTEMPT + 1))
   sleep 5
 done
@@ -337,18 +361,77 @@ echo "$TRACKING" > ~/.openclaw/skills/library/state/uploaded_files.json
 
 ---
 
-## Complete Sync Script
+## Implementation Notes & Best Practices
 
-Here's the full sync logic using efficient bulk upload:
+### Update Tracking Immediately (Not Batched)
+
+**CRITICAL:** Save tracking data immediately after each successful upload, not batched at the end. This ensures:
+- If sync is interrupted, already-uploaded files are tracked
+- Re-running skips already-synced files
+- No duplicate uploads occur
+
+```bash
+# ❌ WRONG: Batching updates at the end
+# All uploads happen first, then one big tracking update
+# If interrupted, tracking is lost!
+
+# ✅ CORRECT: Update tracking immediately after each upload
+for file in "$DIR"/*.md; do
+  # ... upload file ...
+
+  # Update tracking RIGHT NOW
+  jq --arg path "$file" \
+     --arg hash "$CURRENT_HASH" \
+     --arg docid "$DOCUMENT_ID" \
+     --arg time "$TIMESTAMP" \
+     '.files[$path] = {"hash": $hash, "document_id": $docid, "uploaded_at": $time} | .last_sync = $time' \
+     "$TRACKING_FILE" > "$TRACKING_FILE.tmp"
+  mv "$TRACKING_FILE.tmp" "$TRACKING_FILE"
+done
+```
+
+### Fallback for Missing jq
+
+If `jq` is not installed, use Python:
+
+```bash
+# JSON helper using Python
+json_get() {
+  python3 -c "import json,sys; d=json.load(sys.stdin); print(d$1 if d.get('$2') else '')" 2>/dev/null
+}
+
+# Find collection by name without jq
+collection_id=$(echo "$COLLECTIONS" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+ids=[c['id'] for c in d.get('collections',[]) if c.get('name')=='OpenClaw']
+print(ids[0] if ids else '')")
+```
+
+### Handling Large QMD Session Backlogs
+
+QMD can accumulate many session files (70+). For large batches:
+- Upload all files first without processing (fast)
+- Trigger single batch processing job
+- Poll for ~5 minutes, then let it run server-side
+- Don't block indefinitely
+
+---
+
+## Complete Sync Script (Production Version)
+
+Here's the full sync logic with Python fallback and immediate tracking updates:
 
 ```bash
 #!/bin/bash
-# OpenClaw Library Sync Script (Bulk Upload Version)
+# OpenClaw Library Sync Script - Production Version
+#
+# Features:
+# - Works with or without jq (falls back to Python 3)
+# - Updates tracking immediately after each upload (survives interruptions)
+# - Handles QMD session files automatically
 #
 # IMPORTANT: All memory files are uploaded ONLY to the "OpenClaw" collection.
-# This script will automatically find or create the OpenClaw collection.
-# Files are NEVER uploaded to any other collection.
-#
 # REQUIRED: Both api_key and base_url must be configured in credentials.json
 
 set -e
@@ -356,17 +439,73 @@ set -e
 STATE_DIR="$HOME/.openclaw/skills/library/state"
 CREDENTIALS="$STATE_DIR/credentials.json"
 TRACKING="$STATE_DIR/uploaded_files.json"
-COLLECTION_NAME="OpenClaw"  # Target collection - DO NOT CHANGE
+COLLECTION_NAME="OpenClaw"
+
+# ============================================================================
+# JSON HELPERS (works with or without jq)
+# ============================================================================
+
+# Check if jq is available
+HAS_JQ=$(command -v jq &> /dev/null && echo "yes" || echo "no")
+
+json_get() {
+  # Usage: json_get KEY < FILE
+  # KEY format: "['key1']" or "['key1']['key2']"
+  if [ "$HAS_JQ" = "yes" ]; then
+    jq -r "$1 // empty"
+  else
+    python3 -c "import json,sys; d=json.load(sys.stdin); keys=$1; result=d; [result:=result.get(k) for k in keys if result and k in result]; print(result if result is not None else '')"
+  fi
+}
+
+json_select_collection() {
+  # Usage: echo COLLECTIONS | json_select_collection NAME
+  local NAME="$1"
+  if [ "$HAS_JQ" = "yes" ]; then
+    jq -r ".collections[] | select(.name == \"$NAME\") | .id" | head -n1
+  else
+    python3 -c "import json,sys; d=json.load(sys.stdin); ids=[c['id'] for c in d.get('collections',[]) if c.get('name')=='$NAME']; print(ids[0] if ids else '')"
+  fi
+}
+
+json_set() {
+  # Usage: cat FILE | json_set KEY VALUE > FILE.tmp
+  local KEY="$1"
+  local VALUE="$2"
+  if [ "$HAS_JQ" = "yes" ]; then
+    jq --arg v "$VALUE" "$KEY = \$v"
+  else
+    python3 -c "import json,sys; d=json.load(sys.stdin); d$KEY='$VALUE'; json.dump(d,sys.stdout,indent=2)"
+  fi
+}
+
+# ============================================================================
+# SETUP
+# ============================================================================
 
 # Memory directories to scan
 MEMORY_DIRS=(
+  "$HOME/clawd/memory"
   "$HOME/.openclaw/memory"
   "$HOME/.openclaw/conversations"
 )
 
+# Detect QMD and add sessions directory if enabled
+MEMORY_BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | json_get "['memory']['backend']")
+[ -z "$MEMORY_BACKEND" ] && MEMORY_BACKEND="sqlite"
+
+if [ "$MEMORY_BACKEND" = "qmd" ]; then
+  AGENT_ID="main"
+  QMD_SESSIONS_DIR="$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
+  if [ -d "$QMD_SESSIONS_DIR" ]; then
+    MEMORY_DIRS+=("$QMD_SESSIONS_DIR")
+  fi
+fi
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📚 OpenClaw Library Sync"
-echo "   Target collection: $COLLECTION_NAME"
+echo "   Backend: $MEMORY_BACKEND | Directories: ${#MEMORY_DIRS[@]}"
+echo "   JSON: $([ "$HAS_JQ" = "yes" ] && echo 'jq' || echo 'python3')"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -376,18 +515,11 @@ if [ ! -f "$CREDENTIALS" ]; then
   exit 1
 fi
 
-API_KEY=$(jq -r '.api_key' "$CREDENTIALS")
-API_BASE=$(jq -r '.base_url' "$CREDENTIALS")
-COLLECTION_ID=$(jq -r '.collection_id' "$CREDENTIALS")
+API_KEY=$(json_get "['api_key']" < "$CREDENTIALS")
+API_BASE=$(json_get "['base_url']" < "$CREDENTIALS")
 
-# Validate BOTH credentials are present
-if [ "$API_KEY" = "null" ] || [ -z "$API_KEY" ]; then
-  echo "❌ No API key configured. Please provide an API key."
-  exit 1
-fi
-
-if [ "$API_BASE" = "null" ] || [ -z "$API_BASE" ]; then
-  echo "❌ No base URL configured. Please provide a base URL."
+if [ -z "$API_KEY" ] || [ -z "$API_BASE" ]; then
+  echo "❌ Missing credentials. Both api_key and base_url are required."
   exit 1
 fi
 
@@ -400,185 +532,188 @@ if [ ! -f "$TRACKING" ]; then
 fi
 
 # ============================================================================
-# PREREQUISITE: Find OpenClaw collection by NAME (MANDATORY - ALWAYS DO THIS)
-# All files MUST go to the OpenClaw collection - no exceptions
-# We ALWAYS look up by name to ensure we have the correct collection ID
+# FIND COLLECTION
 # ============================================================================
 echo "🔍 Finding OpenClaw collection by name..."
 
-# ALWAYS query the API to find the OpenClaw collection by name
-# Don't trust cached collection_id - it might be wrong or stale
 COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
 
-# Check if we got a valid response
-if [ -z "$COLLECTIONS" ] || [ "$(echo "$COLLECTIONS" | jq -r '.collections // empty')" = "" ]; then
+if [ -z "$COLLECTIONS" ]; then
   echo "   ❌ FATAL: Could not fetch collections from API"
-  echo "      Response: $COLLECTIONS"
   exit 1
 fi
 
-# Find the OpenClaw collection by its exact name
-COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r ".collections[] | select(.name == \"$COLLECTION_NAME\") | .id" | head -n1)
+COLLECTION_ID=$(echo "$COLLECTIONS" | json_select_collection "$COLLECTION_NAME")
 
-if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-  echo "   📚 OpenClaw collection not found. Creating it now..."
+if [ -z "$COLLECTION_ID" ]; then
+  echo "   📚 Creating OpenClaw collection..."
   CREATE_RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"name\": \"$COLLECTION_NAME\", \"description\": \"Memory files synced from OpenClaw agent\"}")
-  
-  COLLECTION_ID=$(echo "$CREATE_RESULT" | jq -r '.id')
-  
-  if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-    echo "   ❌ FATAL: Failed to create OpenClaw collection"
-    echo "      Error: $(echo "$CREATE_RESULT" | jq -r '.detail // .message // "Unknown error"')"
-    echo "      Full response: $CREATE_RESULT"
+
+  COLLECTION_ID=$(echo "$CREATE_RESULT" | json_get "['id']")
+
+  if [ -z "$COLLECTION_ID" ]; then
+    echo "   ❌ FATAL: Failed to create collection"
     exit 1
   fi
-  echo "   ✅ Created OpenClaw collection: $COLLECTION_ID"
+  echo "   ✅ Created: $COLLECTION_ID"
 else
-  echo "   ✅ Found OpenClaw collection: $COLLECTION_ID"
+  echo "   ✅ Found: $COLLECTION_ID"
 fi
 
-# Save the verified collection ID to credentials
-jq --arg cid "$COLLECTION_ID" '.collection_id = $cid' "$CREDENTIALS" > "$CREDENTIALS.tmp"
-mv "$CREDENTIALS.tmp" "$CREDENTIALS"
-echo "   💾 Collection ID saved: $COLLECTION_ID"
-
-# Final validation - NEVER proceed without valid collection
-if [ "$COLLECTION_ID" = "null" ] || [ -z "$COLLECTION_ID" ]; then
-  echo ""
-  echo "❌ FATAL: Cannot proceed without a valid OpenClaw collection ID"
-  exit 1
-fi
+# Update credentials with collection ID
+python3 << PYEOF
+import json
+with open("$CREDENTIALS") as f:
+    d = json.load(f)
+d['collection_id'] = '$COLLECTION_ID'
+with open("$CREDENTIALS", 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
 
 echo ""
 
-# Arrays to track uploads
-declare -a UPLOADED_FILES
+# ============================================================================
+# UPLOAD FILES (with immediate tracking)
+# ============================================================================
+echo "📤 Uploading files to OpenClaw collection..."
+
 declare -a UPLOADED_DOC_IDS
-declare -a UPLOADED_HASHES
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 UPLOAD_COUNT=0
 SKIP_COUNT=0
 
-# ============================================================================
-# PHASE 1: Upload all new/modified files to OpenClaw collection (without processing)
-# ============================================================================
-echo "📤 Phase 1: Uploading new files to OpenClaw collection..."
-echo "   Collection ID: $COLLECTION_ID"
-echo ""
+# Helper to get stored hash
+get_stored_hash() {
+  local FILE_PATH="$1"
+  if [ "$HAS_JQ" = "yes" ]; then
+    jq -r --arg p "$FILE_PATH" '.files[$p].hash // ""' "$TRACKING"
+  else
+    python3 -c "import json; d=json.load(open('$TRACKING')); print(d.get('files',{}).get('$FILE_PATH',{}).get('hash',''))"
+  fi
+}
+
+# Update tracking immediately after each upload
+update_tracking() {
+  local FILE_PATH="$1"
+  local FILE_HASH="$2"
+  local DOC_ID="$3"
+  local STATUS="$4"
+
+  python3 - "$TRACKING" "$FILE_PATH" "$FILE_HASH" "$DOC_ID" "$TIMESTAMP" "$STATUS" << 'PYEOF'
+import json, sys
+path, file_path, file_hash, doc_id, ts, status = sys.argv[1:7]
+with open(path) as f:
+    d = json.load(f)
+if 'files' not in d:
+    d['files'] = {}
+d['files'][file_path] = {
+    'hash': file_hash,
+    'document_id': doc_id,
+    'uploaded_at': ts,
+    'status': status
+}
+d['last_sync'] = ts
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
+}
 
 for DIR in "${MEMORY_DIRS[@]}"; do
   if [ ! -d "$DIR" ]; then
     continue
   fi
-  
-  for FILE in "$DIR"/*.{md,txt,json} 2>/dev/null; do
-    if [ ! -f "$FILE" ]; then
-      continue
-    fi
-    
-    # Calculate hash (use shasum on macOS, sha256sum on Linux)
-    if command -v sha256sum &> /dev/null; then
-      CURRENT_HASH=$(sha256sum "$FILE" | cut -d' ' -f1)
-    else
-      CURRENT_HASH=$(shasum -a 256 "$FILE" | cut -d' ' -f1)
-    fi
-    
-    STORED_HASH=$(jq -r --arg path "$FILE" '.files[$path].hash // ""' "$TRACKING")
-    
-    if [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
-      SKIP_COUNT=$((SKIP_COUNT + 1))
-      continue
-    fi
-    
-    echo "   📄 $(basename "$FILE")"
-    
-    # Upload file to OpenClaw collection WITHOUT processing
-    #
-    # ⚠️ CRITICAL: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
-    # NEVER use -F for collection_id - the ONLY -F flag is for the file: -F "file=@..."
-    # ❌ WRONG: curl ... -F "collection_id=$COLLECTION_ID" -F "file=@$FILE"
-    # ✅ CORRECT: curl ... "$URL?collection_id=$COLLECTION_ID" -F "file=@$FILE"
-    #
-    RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
-      -H "X-API-Key: $API_KEY" \
-      -F "file=@$FILE")
-    
-    DOCUMENT_ID=$(echo "$RESULT" | jq -r '.document_id // .doc_id')
-    RESULT_COLLECTION=$(echo "$RESULT" | jq -r '.collection_id // "unknown"')
-    
-    if [ "$DOCUMENT_ID" = "null" ] || [ -z "$DOCUMENT_ID" ]; then
-      echo "      ❌ Upload failed: $(echo "$RESULT" | jq -r '.detail // .message // "Unknown error"')"
-      continue
-    fi
-    
-    # Verify the document was uploaded to the correct collection
-    if [ "$RESULT_COLLECTION" != "unknown" ] && [ "$RESULT_COLLECTION" != "$COLLECTION_ID" ]; then
-      echo "      ⚠️ WARNING: File uploaded to wrong collection: $RESULT_COLLECTION (expected: $COLLECTION_ID)"
-    else
-      echo "      ✅ -> $DOCUMENT_ID (collection: $COLLECTION_ID)"
-    fi
-    
-    # Track for later processing
-    UPLOADED_FILES+=("$FILE")
-    UPLOADED_DOC_IDS+=("$DOCUMENT_ID")
-    UPLOADED_HASHES+=("$CURRENT_HASH")
-    UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
+
+  echo "   📁 $DIR"
+
+  # Use explicit patterns instead of brace expansion
+  for PATTERN in "$DIR"/*.md "$DIR"/*.txt "$DIR"/*.json; do
+    for FILE in $PATTERN; do
+      [ ! -f "$FILE" ] && continue
+
+      # Calculate hash
+      if command -v sha256sum &> /dev/null; then
+        CURRENT_HASH=$(sha256sum "$FILE" | cut -d' ' -f1)
+      else
+        CURRENT_HASH=$(shasum -a 256 "$FILE" | cut -d' ' -f1)
+      fi
+
+      STORED_HASH=$(get_stored_hash "$FILE")
+
+      if [ "$CURRENT_HASH" = "$STORED_HASH" ] && [ -n "$STORED_HASH" ]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+
+      BASENAME=$(basename "$FILE")
+      echo "      📄 $BASENAME"
+
+      # Upload to OpenClaw collection
+      RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
+        -H "X-API-Key: $API_KEY" \
+        -F "file=@$FILE")
+
+      DOCUMENT_ID=$(echo "$RESULT" | json_get "['document_id']")
+      [ -z "$DOCUMENT_ID" ] && DOCUMENT_ID=$(echo "$RESULT" | json_get "['doc_id']")
+
+      if [ -z "$DOCUMENT_ID" ]; then
+        echo "      ❌ Upload failed"
+        continue
+      fi
+
+      echo "      ✅ $DOCUMENT_ID"
+
+      # ⭐ CRITICAL: Update tracking IMMEDIATELY
+      # If script is interrupted, we don't re-upload this file
+      update_tracking "$FILE" "$CURRENT_HASH" "$DOCUMENT_ID" "uploaded"
+
+      UPLOADED_DOC_IDS+=("$DOCUMENT_ID")
+      UPLOAD_COUNT=$((UPLOAD_COUNT + 1))
+    done
   done
 done
 
 echo ""
-echo "📦 Uploaded $UPLOAD_COUNT files, $SKIP_COUNT already synced"
+echo "📦 Uploaded: $UPLOAD_COUNT | Skipped: $SKIP_COUNT"
 
 # ============================================================================
-# PHASE 2: Trigger batch processing for all pending documents
+# TRIGGER BATCH PROCESSING
 # ============================================================================
 if [ $UPLOAD_COUNT -gt 0 ]; then
   echo ""
-  echo "🔄 Phase 2: Triggering batch processing..."
+  echo "🔄 Triggering batch processing..."
   
   PROCESS_RESULT=$(curl -s -X POST "$API_BASE/api/documents/process-pending" \
     -H "X-API-Key: $API_KEY")
   
-  TASK_ID=$(echo "$PROCESS_RESULT" | jq -r '.task_id')
-  PENDING_COUNT=$(echo "$PROCESS_RESULT" | jq -r '.pending_count // 0')
+  TASK_ID=$(echo "$PROCESS_RESULT" | json_get "['task_id']")
+  PENDING_COUNT=$(echo "$PROCESS_RESULT" | json_get "['pending_count']")
+  [ -z "$PENDING_COUNT" ] && PENDING_COUNT=0
   
-  if [ "$TASK_ID" = "null" ] || [ -z "$TASK_ID" ]; then
-    echo "   ⚠️ Could not start batch processing: $(echo "$PROCESS_RESULT" | jq -r '.detail // .message // "Unknown error"')"
-    # Fall back: update tracking with pending status
-    TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    for i in "${!UPLOADED_FILES[@]}"; do
-      jq --arg path "${UPLOADED_FILES[$i]}" \
-         --arg hash "${UPLOADED_HASHES[$i]}" \
-         --arg docid "${UPLOADED_DOC_IDS[$i]}" \
-         --arg time "$TIMESTAMP" \
-         '.files[$path] = {"hash": $hash, "document_id": $docid, "uploaded_at": $time, "status": "pending"} | .last_sync = $time' \
-         "$TRACKING" > "$TRACKING.tmp"
-      mv "$TRACKING.tmp" "$TRACKING"
-    done
+  if [ -z "$TASK_ID" ]; then
+    echo "   ⚠️ Could not start batch processing"
   else
-    echo "   📊 Processing $PENDING_COUNT documents (Task: $TASK_ID)"
+    echo "   📊 Task: $TASK_ID | Pending: $PENDING_COUNT"
     
-    # ============================================================================
-    # PHASE 3: Wait for batch processing to complete
-    # ============================================================================
+    # Wait for processing (max ~5 minutes)
     echo ""
-    echo "⏳ Phase 3: Waiting for processing to complete..."
+    echo "⏳ Waiting for processing..."
     
-    MAX_ATTEMPTS=120  # 10 minutes at 5s intervals
+    MAX_ATTEMPTS=60
     ATTEMPT=0
+    FINAL_STATUS="processing"
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
       TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" -H "X-API-Key: $API_KEY")
       
-      STATUS=$(echo "$TASK_STATUS" | jq -r '.status' | tr '[:upper:]' '[:lower:]')
-      PROGRESS=$(echo "$TASK_STATUS" | jq -r '.progress_percent // 0')
-      MESSAGE=$(echo "$TASK_STATUS" | jq -r '.message // ""')
+      STATUS=$(echo "$TASK_STATUS" | json_get "['status']" | tr '[:upper:]' '[:lower:]')
+      PROGRESS=$(echo "$TASK_STATUS" | json_get "['progress_percent']")
+      [ -z "$PROGRESS" ] && PROGRESS=0
       
-      # Only print progress updates every few iterations to reduce noise
-      if [ $((ATTEMPT % 3)) -eq 0 ]; then
-        echo "   Progress: ${PROGRESS}% - $MESSAGE"
+      if [ $((ATTEMPT % 6)) -eq 0 ]; then
+        echo "   Progress: ${PROGRESS}%"
       fi
       
       if [ "$STATUS" = "completed" ]; then
@@ -588,8 +723,7 @@ if [ $UPLOAD_COUNT -gt 0 ]; then
         break
       elif [ "$STATUS" = "failed" ]; then
         echo ""
-        ERROR=$(echo "$TASK_STATUS" | jq -r '.error // "Unknown error"')
-        echo "   ❌ Processing failed: $ERROR"
+        echo "   ❌ Processing failed"
         FINAL_STATUS="failed"
         break
       fi
@@ -599,25 +733,126 @@ if [ $UPLOAD_COUNT -gt 0 ]; then
     done
     
     if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-      echo "   ⏳ Processing still in progress (will continue in background)"
-      FINAL_STATUS="processing"
+      echo "   ⏳ Processing continues in background"
     fi
     
-    # ============================================================================
-    # PHASE 4: Update tracking for all uploaded files
-    # ============================================================================
-    echo ""
-    echo "📝 Updating tracking records..."
-    
-    TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    for i in "${!UPLOADED_FILES[@]}"; do
-      # Check individual document status if batch completed
+    # Update final status
+    for DOC_ID in "${UPLOADED_DOC_IDS[@]}"; do
+      python3 - "$TRACKING" "$DOC_ID" "$FINAL_STATUS" << 'PYEOF'
+import json, sys
+path, doc_id, status = sys.argv[1:4]
+with open(path) as f:
+    d = json.load(f)
+for fp, info in d.get('files', {}).items():
+    if info.get('document_id') == doc_id:
+        info['status'] = status
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
+    done
+  fi
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 Sync complete!"
+echo "   📤 Uploaded: $UPLOAD_COUNT files"
+echo "   ⏭️  Skipped:  $SKIP_COUNT files"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+```
+
+---
+
+## Summary Response Format
+
+After sync, report to your human:
+
+**If nothing to sync:**
+```
+HEARTBEAT_OK - Library sync complete. No new memory files to upload. 📚
+```
+
+**If files were uploaded:**
+```
+Library sync complete - Uploaded 5 new memory files:
+- conversation_2026-02-05.md
+- project_notes.md
+- qmd/session_2026-02-06.md (QMD session)
+Total: 47 documents in OpenClaw collection
+```
+
+**If there were errors:**
+```
+Library sync completed with issues:
+- ✅ Uploaded: 2 files
+- ❌ Failed: 1 file (too large)
+Will retry on next sync.
+```
+
+---
+
+## Quick Commands
+
+**Check sync status:**
+```bash
+cat ~/.openclaw/skills/library/state/uploaded_files.json | \
+  python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"Last sync: {d.get('last_sync','never')}, Files: {len(d.get('files',{}))}\")"
+```
+
+**Force re-upload a file:**
+```bash
+python3 - ~/.openclaw/skills/library/state/uploaded_files.json "/path/to/file.md" << 'EOF'
+import json, sys
+path, file_path = sys.argv[1:3]
+with open(path) as f:
+    d = json.load(f)
+d['files'].pop(file_path, None)
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
+EOF
+```
+
+**Reset all tracking:**
+```bash
+echo '{"files": {}, "last_sync": null}' > ~/.openclaw/skills/library/state/uploaded_files.json
+```
+
+---
+
+## Troubleshooting
+
+### "python3: command not found"
+Install Python 3 - it's required for the skill to work without jq.
+
+### "sha256sum: command not found" (macOS)
+Use `shasum -a 256` instead - the script handles this automatically.
+
+### Connection refused
+The API might be temporarily unavailable. Try again in a few minutes.
+
+### 401 Unauthorized
+Your API key is invalid. Ask your human for a new one from the Library admin panel.
+
+---
+
+## When to Tell Your Human
+
+**Do tell them:**
+- First-time setup needs API credentials
+- API key is invalid or expired
+- Many files failed to upload (>10%)
+- Something unusual happened
+
+**Don't bother them:**
+- Routine successful syncs
+- A few files skipped (already synced)
+- Normal operation
       if [ "$FINAL_STATUS" = "completed" ]; then
         DOC_STATUS=$(curl -s "$API_BASE/api/documents/${UPLOADED_DOC_IDS[$i]}" -H "X-API-Key: $API_KEY" | jq -r '.processing_status // .status' | tr '[:upper:]' '[:lower:]')
       else
         DOC_STATUS="$FINAL_STATUS"
       fi
-      
+
       jq --arg path "${UPLOADED_FILES[$i]}" \
          --arg hash "${UPLOADED_HASHES[$i]}" \
          --arg docid "${UPLOADED_DOC_IDS[$i]}" \
@@ -649,101 +884,3 @@ After sync, report to your human:
 HEARTBEAT_OK - Library sync complete. No new memory files to upload. 📚
 ```
 
-**If files were uploaded:**
-```
-Library sync complete - Uploaded 3 new memory files to knowledge graph:
-- conversation_2026-02-05.md
-- project_notes.md  
-- research_summary.txt
-Total in library: 47 documents, 892 entities
-```
-
-**If there were errors:**
-```
-Library sync completed with issues:
-- ✅ Uploaded: 2 files
-- ❌ Failed: 1 file (research.md - file too large)
-Will retry failed files on next sync.
-```
-
-**If credentials are missing:**
-```
-⚠️ Library sync skipped - Missing credentials.
-Please provide BOTH a MOCA Library base URL AND API key to enable memory sync.
-```
-
----
-
-## When to Tell Your Human
-
-**Do tell them:**
-- First-time setup needs an API key
-- API key is invalid or expired
-- Many files failed to upload
-- Something unusual happened
-
-**Don't bother them:**
-- Routine successful syncs
-- A few files skipped (already synced)
-- Normal operation
-
----
-
-## Sync Frequency
-
-**Recommended:** Every 4-6 hours during active use
-
-**Track your last sync:**
-```bash
-LAST_SYNC=$(jq -r '.last_sync' ~/.openclaw/skills/library/state/uploaded_files.json)
-echo "Last library sync: $LAST_SYNC"
-```
-
-**Check if sync is needed:**
-```bash
-LAST_SYNC=$(jq -r '.last_sync // "1970-01-01T00:00:00Z"' ~/.openclaw/skills/library/state/uploaded_files.json)
-LAST_SYNC_EPOCH=$(date -d "$LAST_SYNC" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_SYNC" +%s)
-NOW_EPOCH=$(date +%s)
-HOURS_SINCE=$(( (NOW_EPOCH - LAST_SYNC_EPOCH) / 3600 ))
-
-if [ $HOURS_SINCE -ge 4 ]; then
-  echo "Time to sync! Last sync was $HOURS_SINCE hours ago."
-fi
-```
-
----
-
-## Quick Commands
-
-**Check sync status:**
-```bash
-cat ~/.openclaw/skills/library/state/uploaded_files.json | jq '.last_sync, (.files | length)'
-```
-
-**Force re-upload a file:**
-```bash
-# Remove file from tracking to force re-upload
-jq 'del(.files["/path/to/file.md"])' ~/.openclaw/skills/library/state/uploaded_files.json > tmp.json
-mv tmp.json ~/.openclaw/skills/library/state/uploaded_files.json
-```
-
-**Reset all tracking (will re-upload everything):**
-```bash
-echo '{"files": {}, "last_sync": null}' > ~/.openclaw/skills/library/state/uploaded_files.json
-```
-
----
-
-## Troubleshooting
-
-### "jq: command not found"
-Install jq or use alternative JSON parsing.
-
-### "sha256sum: command not found" (macOS)
-Use `shasum -a 256` instead of `sha256sum`.
-
-### Connection refused
-The API might be temporarily unavailable. Try again in a few minutes.
-
-### 401 Unauthorized
-Your API key is invalid. Ask your human for a new one.

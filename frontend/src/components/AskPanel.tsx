@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Zap, Gauge } from "lucide-react";
 import { api } from "@/lib/api";
@@ -37,16 +37,103 @@ function stripThinkingTags(content: string): string {
   return content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
+// =========================================================================
+// LocalStorage persistence for Ask AI settings
+// =========================================================================
+const ASK_SETTINGS_KEY = "moca-ask-settings";
+
+interface PersistedAskSettings {
+  useStreaming: boolean;
+  useAgentic: boolean;
+  useFastSearch: boolean;
+  selectedCollectionId?: string;
+  selectedCollectionName?: string;
+}
+
+const DEFAULT_SETTINGS: PersistedAskSettings = {
+  useStreaming: true,
+  useAgentic: false,
+  useFastSearch: false,
+};
+
+function loadSettings(): PersistedAskSettings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+  try {
+    const stored = localStorage.getItem(ASK_SETTINGS_KEY);
+    if (!stored) return DEFAULT_SETTINGS;
+    const parsed = JSON.parse(stored) as Partial<PersistedAskSettings>;
+    return { ...DEFAULT_SETTINGS, ...parsed };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function saveSettings(settings: PersistedAskSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ASK_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Silently ignore storage errors (quota exceeded, etc.)
+  }
+}
+
 export default function AskPanel() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [useStreaming, setUseStreaming] = useState(true);
-  const [useAgentic, setUseAgentic] = useState(false);
-  const [useFastSearch, setUseFastSearch] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize settings from localStorage
+  const [useStreaming, setUseStreaming] = useState(() => loadSettings().useStreaming);
+  const [useAgentic, setUseAgentic] = useState(() => loadSettings().useAgentic);
+  const [useFastSearch, setUseFastSearch] = useState(() => loadSettings().useFastSearch);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | undefined>(
+    () => loadSettings().selectedCollectionId
+  );
+  const [selectedCollectionName, setSelectedCollectionName] = useState<string | undefined>(
+    () => loadSettings().selectedCollectionName
+  );
+
+  // Persist settings to localStorage whenever they change
+  useEffect(() => {
+    saveSettings({
+      useStreaming,
+      useAgentic,
+      useFastSearch,
+      selectedCollectionId,
+      selectedCollectionName,
+    });
+  }, [useStreaming, useAgentic, useFastSearch, selectedCollectionId, selectedCollectionName]);
+
+  // Resolve collection name on mount if a collection was persisted
+  useEffect(() => {
+    if (selectedCollectionId) {
+      api.getCollection(selectedCollectionId).then((col) => {
+        setSelectedCollectionName(col.name);
+      }).catch(() => {
+        // Collection may have been deleted - clear the stale selection
+        setSelectedCollectionId(undefined);
+        setSelectedCollectionName(undefined);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCollectionChange = useCallback((collectionId: string | undefined) => {
+    setSelectedCollectionId(collectionId);
+    if (!collectionId) {
+      setSelectedCollectionName(undefined);
+    } else {
+      // Fetch collection name for display
+      api.getCollection(collectionId).then((col) => {
+        setSelectedCollectionName(col.name);
+      }).catch(() => {
+        setSelectedCollectionName(collectionId);
+      });
+    }
+  }, []);
 
   // When fast search is enabled, disable agentic mode
   const handleFastSearchChange = (value: boolean) => {
@@ -103,6 +190,7 @@ export default function AskPanel() {
           useGraph: !useFastSearch,
           useAgentic: useAgentic && !useFastSearch,
           useFastSearch,
+          collectionId: selectedCollectionId,
         })) {
           if (event.thinking) {
             thinkingSteps = [...thinkingSteps, event.thinking as string];
@@ -200,6 +288,7 @@ export default function AskPanel() {
           useAgentic: useAgentic && !useFastSearch,
           useGraph: !useFastSearch,
           useFastSearch,
+          collectionId: selectedCollectionId,
         });
 
         // In fast mode, strip <think>...</think> tags from the response
@@ -256,6 +345,9 @@ export default function AskPanel() {
         onAgenticChange={setUseAgentic}
         useFastSearch={useFastSearch}
         onFastSearchChange={handleFastSearchChange}
+        selectedCollectionId={selectedCollectionId}
+        onCollectionChange={handleCollectionChange}
+        selectedCollectionName={selectedCollectionName}
       />
 
       {/* Chat History */}

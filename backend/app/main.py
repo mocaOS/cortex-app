@@ -443,6 +443,16 @@ async def upload_file(
     """
     settings = get_settings()
     
+    # Enforce file limit
+    if settings.max_files > 0:
+        neo4j = get_neo4j_service()
+        stats = neo4j.get_stats()
+        if stats["document_count"] >= settings.max_files:
+            raise HTTPException(
+                status_code=403,
+                detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
+            )
+    
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in settings.allowed_extensions:
@@ -760,6 +770,15 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
     """
     settings = get_settings()
     neo4j = get_neo4j_service()
+    
+    # Enforce file limit
+    if settings.max_files > 0:
+        stats = neo4j.get_stats()
+        if stats["document_count"] >= settings.max_files:
+            raise HTTPException(
+                status_code=403,
+                detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
+            )
     
     # Validate Q&A has an answer
     if request.input_type == CustomInputType.QA and not request.answer:
@@ -1410,7 +1429,8 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
             max_hops=request.max_hops,
             conversation_history=conversation_history,
             use_reranking=request.use_reranking,
-            use_agentic=request.use_agentic
+            use_agentic=request.use_agentic,
+            collection_id=request.collection_id
         )
         
         sources = [
@@ -1485,7 +1505,8 @@ async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(re
                     question=request.question,
                     top_k=request.top_k,
                     max_hops=request.max_hops,
-                    conversation_history=request.conversation_history
+                    conversation_history=request.conversation_history,
+                    collection_id=request.collection_id
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
                 
@@ -1544,7 +1565,7 @@ Important: Do NOT include any thinking, reasoning, or internal monologue in your
                     messages.append({"role": "user", "content": request.question})
                 else:
                     # First message - do vector search and include context
-                    results = processor.search(request.question, top_k=request.top_k)
+                    results = processor.search(request.question, top_k=request.top_k, collection_id=request.collection_id)
                     context = "\n\n".join([r['content'][:600] for r in results[:3]])
                     
                     if context:
@@ -1632,7 +1653,8 @@ Question: {request.question}"""
                     request.question,
                     top_k=request.top_k * 2,
                     max_hops=request.max_hops,
-                    use_hybrid_rrf=settings.enable_hybrid_search
+                    use_hybrid_rrf=settings.enable_hybrid_search,
+                    collection_id=request.collection_id
                 )
                 results = search_result["results"]
                 graph_data = search_result["graph_context"]
@@ -1644,7 +1666,7 @@ Question: {request.question}"""
                         chunks=graph_data["chunks"]
                     )
             else:
-                results = processor.search(request.question, top_k=request.top_k * 2)
+                results = processor.search(request.question, top_k=request.top_k * 2, collection_id=request.collection_id)
             
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
@@ -1974,6 +1996,17 @@ async def create_collection(request: CollectionCreate, auth: AuthResult = Depend
     """Create a new collection."""
     try:
         neo4j = get_neo4j_service()
+        
+        # Enforce collection limit
+        settings = get_settings()
+        if settings.max_collections > 0:
+            stats = neo4j.get_stats()
+            if stats["collection_count"] >= settings.max_collections:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Collection limit reached (max: {settings.max_collections}). Delete existing collections or increase MAX_COLLECTIONS."
+                )
+        
         collection = neo4j.create_collection(request.name, request.description)
         if not collection:
             raise HTTPException(status_code=500, detail="Failed to create collection")
@@ -2350,7 +2383,8 @@ async def ask_with_thinking_stream(request: RAGRequest):
                 question=request.question,
                 top_k=request.top_k,
                 max_hops=request.max_hops,
-                conversation_history=request.conversation_history
+                conversation_history=request.conversation_history,
+                collection_id=request.collection_id
             ):
                 yield f"data: {json.dumps(event)}\n\n"
             

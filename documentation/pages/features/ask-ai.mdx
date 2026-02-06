@@ -28,11 +28,11 @@ flowchart TD
 ### Ask a Question
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What are the main benefits of knowledge graphs?"
+    "question": "What are the main benefits of knowledge graphs?"
   }'
 ```
 
@@ -68,11 +68,11 @@ curl -X POST "http://localhost:8000/api/rag" \
 For real-time responses, use the streaming endpoint:
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag/stream" \
+curl -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Explain GraphRAG in detail"
+    "question": "Explain GraphRAG in detail"
   }' \
   --no-buffer
 ```
@@ -107,12 +107,12 @@ flowchart TD
 `} />
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag/agentic" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Compare the methodologies used in papers A and B",
-    "enable_reasoning": true
+    "question": "Compare the methodologies used in papers A and B",
+    "use_agentic": true
   }'
 ```
 
@@ -155,11 +155,11 @@ Agentic mode:
 Maintain context across multiple questions:
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Can you elaborate on the third point?",
+    "question": "Can you elaborate on the third point?",
     "conversation_history": [
       {"role": "user", "content": "What are the benefits of knowledge graphs?"},
       {"role": "assistant", "content": "Knowledge graphs provide: 1) Structured relationships..."}
@@ -169,29 +169,58 @@ curl -X POST "http://localhost:8000/api/rag" \
 
 ## Collection-Scoped Questions
 
-Ask about specific document collections:
+Scope your questions to a specific collection so only its documents, chunks, and entities are searched. By default, Ask AI searches across all collections.
+
+**In the UI:** Open the Settings panel on the Ask AI page and use the **Collection Scope** dropdown to select a collection. Choose "All Collections" to search everything.
+
+**Via API:**
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What were the Q4 results?",
+    "question": "What were the Q4 results?",
     "collection_id": "financial-reports"
   }'
 ```
+
+Collection scoping works with all modes — standard, streaming, deep research, and fast search:
+
+```bash
+# Streaming with collection scope
+curl -X POST "http://localhost:8000/api/ask/stream" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Summarize the latest findings",
+    "collection_id": "research-papers"
+  }' --no-buffer
+
+# Deep research with collection scope
+curl -X POST "http://localhost:8000/api/ask" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Compare the approaches discussed in these papers",
+    "collection_id": "research-papers",
+    "use_agentic": true
+  }'
+```
+
+When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to only include data from that collection's documents.
 
 ## Fast Mode
 
 Use a faster (potentially cheaper) model for simpler questions:
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What is the company mission?",
-    "fast_mode": true
+    "question": "What is the company mission?",
+    "use_fast_search": true
   }'
 ```
 

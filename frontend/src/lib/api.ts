@@ -368,6 +368,7 @@ class ApiClient {
       useAgentic?: boolean;
       useGraph?: boolean;
       useFastSearch?: boolean;
+      collectionId?: string;
     } = {}
   ): Promise<RAGResponse> {
     const {
@@ -377,6 +378,7 @@ class ApiClient {
       useAgentic = false,
       useGraph = true,
       useFastSearch = false,
+      collectionId,
     } = options;
 
     return this.request<RAGResponse>("/api/ask", {
@@ -389,6 +391,7 @@ class ApiClient {
         use_agentic: useAgentic,
         use_graph: useGraph,
         use_fast_search: useFastSearch,
+        ...(collectionId ? { collection_id: collectionId } : {}),
       }),
     });
   }
@@ -416,6 +419,7 @@ class ApiClient {
       useGraph?: boolean;
       useAgentic?: boolean;
       useFastSearch?: boolean;
+      collectionId?: string;
     } = {}
   ): AsyncGenerator<StreamEvent, void, unknown> {
     const {
@@ -425,6 +429,7 @@ class ApiClient {
       useGraph = true,
       useAgentic = false,
       useFastSearch = false,
+      collectionId,
     } = options;
 
     const apiKey = getAdminApiKey();
@@ -442,6 +447,7 @@ class ApiClient {
         use_graph: useGraph,
         use_agentic: useAgentic,
         use_fast_search: useFastSearch,
+        ...(collectionId ? { collection_id: collectionId } : {}),
       }),
     });
 

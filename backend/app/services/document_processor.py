@@ -986,6 +986,9 @@ class DocumentProcessor:
                                 document_summary=document_summary
                             )
                             extraction_results[idx] = (chunk_id, extraction)
+                            # Count entities from extraction result for progress reporting
+                            if extraction and extraction.entities:
+                                total_entities += len(extraction.entities)
                         except CancellationRequested:
                             raise  # Re-raise cancellation
                         except Exception as e:
@@ -1037,6 +1040,10 @@ class DocumentProcessor:
                 await asyncio.sleep(0)
                 
                 # Store results in order (run Neo4j operations in executor)
+                # Note: total_entities is already counted during extraction for progress reporting
+                # Here we track stored counts separately for accurate final logging
+                stored_entities = 0
+                stored_relationships = 0
                 for idx in sorted(extraction_results.keys()):
                     # Check for cancellation BEFORE EVERY storage operation
                     # This is critical to stop entity storage when deletion is requested
@@ -1048,17 +1055,21 @@ class DocumentProcessor:
                             _get_processing_executor(),
                             functools.partial(self.neo4j.store_graph_extraction, chunk_id, extraction)
                         )
-                        total_entities += counts["entities"]
-                        total_relationships += counts["relationships"]
+                        stored_entities += counts["entities"]
+                        stored_relationships += counts["relationships"]
                         
                         logger.debug(
-                            f"Chunk {idx}: extracted {counts['entities']} entities, "
+                            f"Chunk {idx}: stored {counts['entities']} entities, "
                             f"{counts['relationships']} relationships"
                         )
                     
                     # Yield control every 10 chunks
                     if idx % 10 == 0:
                         await asyncio.sleep(0)
+                
+                # Update totals from stored counts for final reporting
+                total_entities = stored_entities
+                total_relationships = stored_relationships
                 
                 logger.info(
                     f"Document {doc_id}: graph extraction complete - "
@@ -1212,9 +1223,10 @@ class QueryProcessor:
         self, 
         query: str, 
         top_k: int = 5,
-        filters: Optional[dict] = None
+        filters: Optional[dict] = None,
+        collection_id: Optional[str] = None
     ) -> list[dict]:
-        """Perform semantic search."""
+        """Perform semantic search, optionally scoped to a collection."""
         # Generate query embedding
         query_embedding = self.embed_query(query)
         
@@ -1222,7 +1234,8 @@ class QueryProcessor:
         results = self.neo4j.vector_search(
             query_embedding=query_embedding,
             top_k=top_k,
-            filters=filters
+            filters=filters,
+            collection_id=collection_id
         )
         
         return results
@@ -1263,11 +1276,13 @@ class QueryProcessor:
         query: str,
         top_k: int = 5,
         max_hops: int = 2,
-        use_hybrid_rrf: bool = True
+        use_hybrid_rrf: bool = True,
+        collection_id: Optional[str] = None
     ) -> dict:
         """
         Perform hybrid search combining vector similarity, keyword search, and graph traversal.
         Uses Reciprocal Rank Fusion (RRF) for better results.
+        Optionally scoped to a specific collection.
         
         Returns:
             Dict with 'results', 'graph_context', and search metadata
@@ -1290,7 +1305,8 @@ class QueryProcessor:
                 max_hops=max_hops,
                 vector_weight=self.settings.vector_weight,
                 keyword_weight=self.settings.keyword_weight,
-                graph_weight=self.settings.graph_weight
+                graph_weight=self.settings.graph_weight,
+                collection_id=collection_id
             )
             return {
                 "results": hybrid_result["results"],
@@ -1322,10 +1338,12 @@ class QueryProcessor:
         max_hops: int = 2,
         conversation_history: Optional[List[ConversationMessage]] = None,
         use_reranking: bool = True,
-        use_agentic: bool = False
+        use_agentic: bool = False,
+        collection_id: Optional[str] = None
     ) -> dict:
         """
         Answer a question using enhanced GraphRAG features.
+        Optionally scoped to a specific collection.
         
         Features:
         - Hybrid search with RRF (vector + keyword + graph)
@@ -1341,7 +1359,8 @@ class QueryProcessor:
                 question=question,
                 top_k=top_k,
                 max_hops=max_hops,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
+                collection_id=collection_id
             )
         
         graph_context = None
@@ -1353,7 +1372,8 @@ class QueryProcessor:
                 question, 
                 top_k=top_k * 2,  # Get more for reranking
                 max_hops=max_hops,
-                use_hybrid_rrf=self.settings.enable_hybrid_search
+                use_hybrid_rrf=self.settings.enable_hybrid_search,
+                collection_id=collection_id
             )
             results = search_result["results"]
             graph_data = search_result["graph_context"]
@@ -1373,7 +1393,7 @@ class QueryProcessor:
                 )
         else:
             # Fall back to vector-only search
-            results = self.search(question, top_k=top_k * 2)
+            results = self.search(question, top_k=top_k * 2, collection_id=collection_id)
             search_metadata = {"search_method": "vector_only"}
         
         # Apply re-ranking if enabled
@@ -1566,7 +1586,8 @@ Response Style:
                 use_graph=True,
                 max_hops=max_hops,
                 conversation_history=conversation_history,
-                use_agentic=False
+                use_agentic=False,
+                collection_id=collection_id
             )
         
         # Use turbo mode config if active, otherwise default settings
@@ -1664,7 +1685,8 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}"""},
                 sub_q,
                 top_k=top_k,
                 max_hops=max_hops,
-                use_hybrid_rrf=True
+                use_hybrid_rrf=True,
+                collection_id=collection_id
             )
             
             # Re-rank results
@@ -1958,7 +1980,8 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions."""},
                 sub_q,
                 top_k=top_k,
                 max_hops=max_hops,
-                use_hybrid_rrf=True
+                use_hybrid_rrf=True,
+                collection_id=collection_id
             )
             
             if self.settings.enable_reranking and search_result["results"]:

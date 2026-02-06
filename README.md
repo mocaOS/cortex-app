@@ -325,6 +325,23 @@ curl -X POST http://localhost:8000/api/ask \
   }'
 ```
 
+### Example: Collection-Scoped Ask
+
+Scope your question to a specific collection so only its documents, chunks, and entities are searched:
+
+```bash
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Summarize the key findings",
+    "collection_id": "research-papers",
+    "use_graph": true,
+    "use_reranking": true
+  }'
+```
+
+Collection scoping works with all modes — streaming, deep research, and fast search.
+
 ### Example: Streaming Response
 
 ```bash
@@ -387,6 +404,14 @@ curl -X POST "http://localhost:8000/api/upload?collection_id=<collection-id>" \
 
 # Get collection entities
 curl http://localhost:8000/api/collections/<collection-id>/entities
+
+# Ask AI scoped to this collection
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What are the main findings?",
+    "collection_id": "<collection-id>"
+  }'
 ```
 
 ### Example: Community Detection
@@ -714,7 +739,7 @@ When a document is uploaded (or custom input is added), the following pipeline e
 
 ### Query Pipeline (Enhanced)
 
-When you ask a question:
+When you ask a question (optionally scoped to a specific collection via `collection_id`):
 
 1. **Query Embedding** - Convert question to vector
 2. **Entity Extraction** - Extract entity names from the question

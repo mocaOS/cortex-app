@@ -421,20 +421,27 @@ class Neo4jService:
         self, 
         query_embedding: list[float], 
         top_k: int = 5,
-        filters: Optional[dict] = None
+        filters: Optional[dict] = None,
+        collection_id: Optional[str] = None
     ) -> list[dict]:
-        """Perform vector similarity search."""
+        """Perform vector similarity search, optionally scoped to a collection."""
         with self.driver.session() as session:
             # Build the query with optional filters
             filter_clause = ""
             if filters and "file_type" in filters:
                 filter_clause = "AND d.file_type = $file_type"
             
+            # Collection scoping: post-filter vector results to collection membership
+            collection_clause = ""
+            if collection_id:
+                collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+            
             result = session.run(f"""
                 CALL db.index.vector.queryNodes('chunk_embedding', $top_k, $embedding)
                 YIELD node as chunk, score
                 MATCH (d:Document)-[:HAS_CHUNK]->(chunk)
                 WHERE d.processing_status = 'completed' {filter_clause}
+                {collection_clause}
                 RETURN d.id as document_id,
                        d.filename as filename,
                        chunk.id as chunk_id,
@@ -446,7 +453,8 @@ class Neo4jService:
             """,
                 embedding=query_embedding,
                 top_k=top_k,
-                file_type=filters.get("file_type") if filters else None
+                file_type=filters.get("file_type") if filters else None,
+                collection_id=collection_id
             )
             
             return [dict(record) for record in result]
@@ -973,10 +981,12 @@ class Neo4jService:
         self,
         entity_names: List[str],
         max_hops: int = 2,
-        limit: int = 50
+        limit: int = 50,
+        collection_id: Optional[str] = None
     ) -> dict:
         """
         Traverse the graph from given entities to find related context.
+        Optionally scoped to a specific collection.
         
         Returns:
             Dict with 'entities', 'relationships', and 'chunks'
@@ -987,6 +997,12 @@ class Neo4jService:
         with self.driver.session() as session:
             # Find related entities and relationships within max_hops
             # Note: max_hops must be injected as literal - Neo4j doesn't allow parameters in variable-length patterns
+            
+            # Collection scoping for chunks
+            collection_clause = ""
+            if collection_id:
+                collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+            
             result = session.run(f"""
                 MATCH (start:Entity)
                 WHERE start.name IN $entity_names
@@ -1003,6 +1019,7 @@ class Neo4jService:
                 OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
                 WHERE e.name IN $entity_names OR e IN related_entities
                 OPTIONAL MATCH (d:Document)-[:HAS_CHUNK]->(c)
+                {collection_clause}
                 
                 RETURN start.name as start_entity,
                        start.type as start_type,
@@ -1016,7 +1033,8 @@ class Neo4jService:
                        }}) as chunks
             """, 
                 entity_names=entity_names, 
-                limit=limit
+                limit=limit,
+                collection_id=collection_id
             )
             
             entities = []
@@ -1073,21 +1091,28 @@ class Neo4jService:
     def fulltext_search(
         self,
         query_text: str,
-        top_k: int = 10
+        top_k: int = 10,
+        collection_id: Optional[str] = None
     ) -> List[dict]:
         """
-        Perform full-text keyword search on chunk content.
+        Perform full-text keyword search on chunk content, optionally scoped to a collection.
         """
         with self.driver.session() as session:
             try:
                 # Escape special characters for Lucene query
                 escaped_query = query_text.replace('"', '\\"').replace('~', '\\~')
                 
-                result = session.run("""
+                # Collection scoping
+                collection_clause = ""
+                if collection_id:
+                    collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+                
+                result = session.run(f"""
                     CALL db.index.fulltext.queryNodes('chunk_content', $search_text)
                     YIELD node as chunk, score
                     MATCH (d:Document)-[:HAS_CHUNK]->(chunk)
                     WHERE d.processing_status = 'completed'
+                    {collection_clause}
                     RETURN d.id as document_id,
                            d.filename as filename,
                            chunk.id as chunk_id,
@@ -1096,7 +1121,7 @@ class Neo4jService:
                            score
                     ORDER BY score DESC
                     LIMIT $top_k
-                """, search_text=escaped_query, top_k=top_k)
+                """, search_text=escaped_query, top_k=top_k, collection_id=collection_id)
                 
                 return [dict(record) for record in result]
             except Exception as e:
@@ -1227,23 +1252,25 @@ class Neo4jService:
         max_hops: int = 2,
         vector_weight: float = 0.5,
         keyword_weight: float = 0.3,
-        graph_weight: float = 0.2
+        graph_weight: float = 0.2,
+        collection_id: Optional[str] = None
     ) -> dict:
         """
         Perform hybrid search with Reciprocal Rank Fusion.
         Combines: vector similarity + full-text keyword + graph traversal
+        Optionally scoped to a specific collection.
         
         Returns:
             Dict with 'results' (RRF-fused) and 'graph_context'
         """
         # 1. Vector search
-        vector_results = self.vector_search(query_embedding, top_k * 3)
+        vector_results = self.vector_search(query_embedding, top_k * 3, collection_id=collection_id)
         
         # 2. Keyword/full-text search
-        keyword_results = self.fulltext_search(query_text, top_k * 3)
+        keyword_results = self.fulltext_search(query_text, top_k * 3, collection_id=collection_id)
         
         # 3. Graph traversal for context
-        graph_context = self.traverse_from_entities(entity_names, max_hops)
+        graph_context = self.traverse_from_entities(entity_names, max_hops, collection_id=collection_id)
         
         # 4. Get chunks from graph context
         graph_chunks = graph_context.get("chunks", [])

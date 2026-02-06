@@ -44,10 +44,11 @@ docker-compose.override.yml
 nginx/ssl/
 
 scripts/
+!frontend/public/skills/library/scripts/
 
 # Downloaded documents
 documents
 !frontend/**/documents
 
 # Skills *.zip
-openclaw-library.zip
+library.zip

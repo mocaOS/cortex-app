@@ -159,6 +159,8 @@ curl "http://localhost:8000/api/documents?collection_id=coll_abc123" \
 
 ## Collection-Scoped Operations
 
+Collection scoping applies to all Ask AI modes (standard, streaming, deep research, and fast search) as well as basic search. When a `collection_id` is provided, vector search, keyword search, and graph traversal are all filtered to only include data from that collection's documents.
+
 ### Search Within a Collection
 
 ```bash
@@ -173,12 +175,16 @@ curl -X POST "http://localhost:8000/api/search" \
 
 ### Ask AI About a Collection
 
+**In the UI:** Open the Settings panel on the Ask AI page and use the **Collection Scope** dropdown to select a collection.
+
+**Via API:**
+
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What are the common themes in these papers?",
+    "question": "What are the common themes in these papers?",
     "collection_id": "coll_abc123"
   }'
 ```

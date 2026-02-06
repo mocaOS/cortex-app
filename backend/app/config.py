@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     max_file_size_mb: int = Field(default=50)
     allowed_extensions: list[str] = Field(default=[".pdf", ".txt", ".md", ".docx", ".xlsx"])
     
+    # Resource Limits (0 = unlimited)
+    max_files: int = Field(default=0)  # Max total documents (uploads + custom inputs). 0 = unlimited
+    max_collections: int = Field(default=0)  # Max collections (default collection counts as 1). 0 = unlimited
+    
     # Embedding Configuration
     embedding_model: str = Field(default="openai/text-embedding-3-small")
     embedding_dimension: int = Field(default=1536)  # text-embedding-3-small native dimension

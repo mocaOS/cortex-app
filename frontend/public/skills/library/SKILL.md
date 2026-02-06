@@ -1,7 +1,7 @@
 ---
 name: openclaw-library
-version: 1.2.0
-description: Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval and search.
+version: 1.3.0
+description: Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval and search. Now with QMD (Quick Memory Daemon) support.
 metadata: {"openclaw":{"emoji":"📚","category":"knowledge"}}
 ---
 
@@ -193,7 +193,11 @@ This skill syncs files from your memory directories to the OpenClaw collection i
 **Default memory locations:**
 - `~/.openclaw/memory/` - Primary memory storage
 - `~/.openclaw/conversations/` - Conversation logs
+- **QMD sessions**: `~/.openclaw/agents/main/qmd/sessions/` - When QMD is enabled
 - Custom paths configured by your human
+
+**QMD (Quick Memory Daemon) Support:**
+When `memory.backend = "qmd"` in `openclaw.json`, the skill automatically detects and syncs session exports from the QMD storage directory. These are markdown transcripts of your conversations.
 
 **Supported file types:**
 - `.md` - Markdown files
@@ -713,6 +717,64 @@ Don't add failed files to `uploaded_files.json` so they'll be retried.
 
 ---
 
+## QMD Memory Detection
+
+The skill automatically detects if QMD is enabled and includes QMD session files in the sync.
+
+### Check if QMD is Enabled
+
+```bash
+# Read memory backend from openclaw.json
+MEMORY_BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"')
+
+if [ "$MEMORY_BACKEND" = "qmd" ]; then
+  echo "QMD is enabled - will sync session files"
+  
+  # Determine the agent ID (default to "main" if not specified)
+  AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"')
+  
+  # QMD sessions directory
+  QMD_SESSIONS_DIR="$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
+  
+  if [ -d "$QMD_SESSIONS_DIR" ]; then
+    echo "QMD sessions found at: $QMD_SESSIONS_DIR"
+    # Add to memory directories for sync
+    MEMORY_DIRS+=("$QMD_SESSIONS_DIR")
+  fi
+else
+  echo "Using standard memory backend: $MEMORY_BACKEND"
+fi
+```
+
+### Get QMD Sessions Directory
+
+Returns the path to QMD session exports if QMD is enabled:
+
+```bash
+get_qmd_sessions_dir() {
+  # Check if QMD is the active backend
+  local BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"')
+  
+  if [ "$BACKEND" != "qmd" ]; then
+    return 1  # QMD not enabled
+  fi
+  
+  # Get agent ID (default to "main")
+  local AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"')
+  
+  # Return QMD sessions path
+  echo "$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
+}
+
+# Usage
+if QMD_DIR=$(get_qmd_sessions_dir); then
+  echo "QMD sessions: $QMD_DIR"
+  MEMORY_DIRS+=("$QMD_DIR")
+fi
+```
+
+---
+
 ## Integration with Heartbeat
 
 Add this to your HEARTBEAT.md:
@@ -788,8 +850,48 @@ echo '{"files": {}, "last_sync": null}' > ~/.openclaw/skills/library/state/uploa
 
 ---
 
+## Dependencies
+
+This skill requires the following tools to be available:
+
+| Tool | Purpose | Fallback Behavior |
+|------|---------|-------------------|
+| `jq` | JSON parsing | Uses `python3` as fallback |
+| `python3` | JSON fallback, tracking updates | Required - sync will fail without it |
+| `sha256sum` or `shasum` | File hash calculation | Required for duplicate detection |
+| `curl` | API requests | Required - sync will fail without it |
+
+**Note on jq vs python3:** If `jq` is not installed, the skill automatically falls back to Python for JSON operations. This is handled transparently in the sync script.
+
+---
+
+## Lessons Learned & Implementation Notes
+
+### Tracking File Updates Should Be Immediate
+
+Upload tracking must be saved **immediately after each file upload**, not batched at the end. If the sync is interrupted mid-run:
+- Files that were uploaded will be tracked
+- Re-running won't re-upload already-synced files
+- Avoids duplicate uploads on retry
+
+### File Pattern Matching Gotchas
+
+Bash brace expansion `*.{md,txt,json}` can cause issues when files are missing:
+- Use explicit loops: `for file in "$DIR"/*.md "$DIR"/*.txt; do`
+- Always check `if [ -f "$file" ]` before processing
+
+### QMD Sessions Included Automatically
+
+When QMD is enabled, session transcripts are exported to `~/.openclaw/agents/<agentId>/qmd/sessions/`. These contain full conversation history and can be large in number (70+ files). Sync handles this properly by:
+- Bulk uploading without processing first
+- Triggering background batch processing
+- Not waiting indefinitely for processing to complete
+
+---
+
 ## Version History
 
+- **1.3.0** - Added QMD (Quick Memory Daemon) support - automatically detects when QMD is enabled and syncs session files from `~/.openclaw/agents/<agentId>/qmd/sessions/`
 - **1.2.0** - Clarified API parameter format (URL query params only, never -F for collection_id), added state file downloads to installation
 - **1.1.0** - Added base_url configuration, improved collection lookup by name
 - **1.0.0** - Initial release with memory sync, search, and RAG capabilities

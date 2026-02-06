@@ -22,27 +22,13 @@ mkdir -p ~/.openclaw/skills/library
 cp -r . ~/.openclaw/skills/library/
 ```
 
-### 2. Configure Credentials
+### 2. Configure API Key
 
-**REQUIRED:** You need BOTH a base URL AND an API key to use this skill.
-
-1. Get your MOCA Library base URL from your administrator (e.g., `https://library.example.com`)
-2. Get an API key from YOUR_BASE_URL/admin/api-keys
-
-Then configure:
+Get an API key from https://library.moca.qwellco.de/admin/api-keys, then:
 
 ```bash
 cp state/credentials.example.json state/credentials.json
-# Edit state/credentials.json and add BOTH your base_url and api_key
-```
-
-Example `credentials.json`:
-```json
-{
-  "api_key": "your-api-key-here",
-  "base_url": "https://library.example.com",
-  "collection_id": null
-}
+# Edit state/credentials.json and add your API key
 ```
 
 ### 3. Start Syncing
@@ -63,11 +49,16 @@ The skill will automatically:
 | `state/credentials.example.json` | Template for API credentials |
 | `state/uploaded_files.json` | Upload tracking state |
 
+## API Base URL
+
+```
+https://library.moca.qwellco.de
+```
+
 ## Requirements
 
 - `curl` - For API requests
 - `jq` - For JSON parsing
-- A valid MOCA Library base URL
 - A valid MOCA Library API key with READ and MANAGE permissions
 
 ## Memory Directories
@@ -80,17 +71,11 @@ Supported file types: `.md`, `.txt`, `.json`
 
 ## Usage Examples
 
-First, load your credentials:
-```bash
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-```
-
 ### Search Knowledge
 
 ```bash
-curl -X POST "$API_BASE/api/search" \
-  -H "X-API-Key: $API_KEY" \
+curl -X POST "https://library.moca.qwellco.de/api/search" \
+  -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "project notes"}'
 ```
@@ -98,8 +83,8 @@ curl -X POST "$API_BASE/api/search" \
 ### Ask AI
 
 ```bash
-curl -X POST "$API_BASE/api/ask" \
-  -H "X-API-Key: $API_KEY" \
+curl -X POST "https://library.moca.qwellco.de/api/ask" \
+  -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "What do I know about machine learning?"}'
 ```

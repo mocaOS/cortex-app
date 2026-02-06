@@ -19,6 +19,8 @@ interface CollectionSelectorProps {
   onChange: (collectionId: string | undefined) => void;
   allowCreate?: boolean;
   className?: string;
+  /** Label shown when no collection is selected (default: "Default Collection") */
+  placeholder?: string;
 }
 
 export default function CollectionSelector({
@@ -26,6 +28,7 @@ export default function CollectionSelector({
   onChange,
   allowCreate = true,
   className,
+  placeholder = "Default Collection",
 }: CollectionSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -106,7 +109,7 @@ export default function CollectionSelector({
           ) : selectedCollection ? (
             selectedCollection.name
           ) : (
-            <span className="text-muted-foreground">Default Collection</span>
+            <span className="text-muted-foreground">{placeholder}</span>
           )}
         </span>
         <ChevronDown
@@ -189,7 +192,7 @@ export default function CollectionSelector({
                 )}
               >
                 <FolderOpen className="w-4 h-4" />
-                <span className="flex-1 text-left">Default Collection</span>
+                <span className="flex-1 text-left">{placeholder}</span>
                 {!value && <Check className="w-4 h-4" />}
               </button>
 

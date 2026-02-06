@@ -1,0 +1,557 @@
+{
+  "files": {
+    "/home/tobias/clawd/memory/2026-02-03-1147.md": {
+      "hash": "edb58361780a6f48cf968d6316c315fdb32a25d379ad90f8b06b90169789da7a",
+      "document_id": "7bed94c2-6a8f-40c3-b8e3-ef5f3100ef0a",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1151.md": {
+      "hash": "dac066334488f7c97d8dd0777e23faed1491780a95f7f69eff328d915a7a53e5",
+      "document_id": "ccb74c44-f54c-4cd6-b986-cfe1ad56d444",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1229.md": {
+      "hash": "3a2a79650168057902b4579994936e32b176982fb151e25814eeeaaccafd1d8f",
+      "document_id": "ab65505e-6547-4bad-8086-7e3a7e564563",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1238.md": {
+      "hash": "225104c8b1ea62e2bc15ace98cf5a2c7f1319500b4e02784045b165bce72601f",
+      "document_id": "0be38c08-a460-44c5-9a17-26b32f596c5e",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1246.md": {
+      "hash": "60804691cd4242d38963878f048e6d07d92954e02449a977e19bb55da2e8f51a",
+      "document_id": "e98f85a0-e88d-447a-812c-f20ada560b89",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1324.md": {
+      "hash": "7fc5e8a43eef36fab7f309008ac6a66f67d4e19a6fdee7fcdbc3c0b2e7b77df3",
+      "document_id": "55e8f8c9-e008-4253-9e84-e77bf0e74732",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1532.md": {
+      "hash": "fd58388aae7a4188dbeadb9748f1ae08ee5465363e37048e7f1773ebe1ceb0ee",
+      "document_id": "f34700fb-3c2f-48a8-9c23-3aeda4a04c8c",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-03-1544.md": {
+      "hash": "9b1c4d8022589bee2dfd414612bc97b31ae8e3e5f91c33eb4c736ac2a6038b9e",
+      "document_id": "5a1aa410-4c94-468a-88c6-2993c1fb1a3e",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-0853.md": {
+      "hash": "956ca7f4abf0c753ca39a64107ad8227b5cc92e9a7243c4fd4a35606fa564b7d",
+      "document_id": "574f3f9b-4de1-41ce-9518-1bfcf5a7a6c2",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1009.md": {
+      "hash": "369e53c9fb0e0af8812cde38473a7529f39f41a2b549d455531cd931cbe05117",
+      "document_id": "9c0ea761-558d-44b8-bd8c-55c174d46995",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1028.md": {
+      "hash": "576881af158fd4d134fc7e93e2ea26dc520c7377f936df50a4c4b928c1f2308f",
+      "document_id": "5bf937a4-ad7e-4280-bd1e-bf00fa970a66",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1037.md": {
+      "hash": "01be67207db491d5875d430b8ed08db2744c10ed5a8aadfd65b6636509bf1961",
+      "document_id": "ca452649-f876-4915-a70e-2be9ede337df",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1058.md": {
+      "hash": "1a1100c7d474d47ef9c7ad2289fa7365a099135d368ed903772e59203a0ef93e",
+      "document_id": "204e12fe-45ae-4659-bfc4-f32fdf70fbb4",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1318.md": {
+      "hash": "36c4a38697981ce256ed1bca0c9bfb93038a6464d5d2dba387693689266ab970",
+      "document_id": "c9efdbe4-6d01-41c7-aae0-48e0cc08c6b3",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1345.md": {
+      "hash": "df574ab3a6436c0366b6571732d4a3eb6b97aa87ca1dd8995e50d5219e905d1c",
+      "document_id": "fde69558-7611-45c6-ba75-6acc192db9ad",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1411.md": {
+      "hash": "f5125c4cf7c1cda63f0b4bdc2ed5cde3b0f6f8d47e8aff6d86ab9900d209d6c0",
+      "document_id": "ddb846f4-4b8f-4319-a819-c451a2d51b05",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1417.md": {
+      "hash": "0b41c82cba2a03079737753998cf0c6525c660d8ea5dd063b523819b4ff3f3d0",
+      "document_id": "0c9a6518-a878-4fee-b016-b573b188662f",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-04-1425.md": {
+      "hash": "8a8b663543bfcd778b90d3e543f320de25aa9d8fd2833e1045747d07e2f02d0a",
+      "document_id": "4755e18f-4a06-4fd1-a7b3-2a0444c2e92c",
+      "uploaded_at": "2026-02-05T15:16:28.770Z",
+      "status": "completed"
+    },
+    "/home/tobias/clawd/memory/2026-02-06.md": {
+      "hash": "ff382b09f0d58c489488d4a33074f97ec79cac1658236ae38fdf6a51c41b544b",
+      "document_id": "10acbca6-9353-4573-a28c-d40b710e0a0a",
+      "uploaded_at": "2026-02-06T10:55:22.014814Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/d3f3a224-d9e3-485d-95c6-b942e37b70b7.md": {
+      "hash": "7ed0f4696fc018d4c328c95576ac375cfa661118b3e6933ac30c0b054cb85f05",
+      "document_id": "01a3cf48-6dd0-47c7-bad8-ce92b1918de0",
+      "uploaded_at": "2026-02-06T10:55:22.778151Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/155daac5-e976-4aeb-9979-d0e7512ce567.md": {
+      "hash": "702e6409aee65dda3323ea9cca1e4116fdf03e882389912753619d9f7647580c",
+      "document_id": "65cefe8d-c031-4f83-b42d-d445f1ca3b8a",
+      "uploaded_at": "2026-02-06T10:55:23.094712Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/e3d2bece-3e82-4476-88f5-1dcb6fc3ee45.md": {
+      "hash": "d5b8a87eb5b8af9060fbe80ffd4b56da51ae01ade8dca4a7173cb8a21c028b1e",
+      "document_id": "38eba19f-b7b9-48a7-9209-674dd49e5913",
+      "uploaded_at": "2026-02-06T10:55:23.414942Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/8a792a57-e718-4e1c-a7db-1345a45a6170.md": {
+      "hash": "8d350117d1a39bffbebff3469ac1886cdcbfb48cd8af103ffee5a4599f103c4f",
+      "document_id": "095c9001-f04b-453f-ae5b-cea70827d573",
+      "uploaded_at": "2026-02-06T10:55:23.722605Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/b33e8e76-1ea1-4aba-bdaf-dcc993634a79.md": {
+      "hash": "f0a57588575ca8f5564559347584c730c9d87eb4cce0820e07f31459d775b1e3",
+      "document_id": "5fece3b2-6c0e-4c1d-ac65-e3974983029c",
+      "uploaded_at": "2026-02-06T10:55:24.026542Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/df0424a3-952a-4679-9978-1bf6bbefeca3.md": {
+      "hash": "b7a7d094ce5d2584bdc8d96dd9ea4e8f95c1aaab41f59f04c5286a5081f16ffc",
+      "document_id": "04722660-26d8-4297-a9ed-8abafa1ffb31",
+      "uploaded_at": "2026-02-06T10:55:24.328303Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/96f18f21-8fe5-45ca-bda3-41d8d72b0014.md": {
+      "hash": "e84764bfa75257797386dc10b31a310cb0eab316dbac47cdc87a47e6c2a83580",
+      "document_id": "c3a7e75c-c5e7-4f5b-9d99-bf706d9fbd59",
+      "uploaded_at": "2026-02-06T10:55:24.668707Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/50db11df-6734-47f4-9988-8531c1bd0d89.md": {
+      "hash": "8ccfc64bed9a54e58800c103635146ec74759880c43ca2d5cc472ae31eeeed90",
+      "document_id": "3d1dd5aa-6541-4a01-a56e-d89ffca38ca7",
+      "uploaded_at": "2026-02-06T10:55:25.001764Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/e2fdcc4a-c767-406d-8907-fa45790925cf.md": {
+      "hash": "6d09c66ec36856f82085b7de797cdaf517e938dd90e0da9a7b75afed144326f1",
+      "document_id": "95160dca-94cf-4e42-9b6f-02e976160556",
+      "uploaded_at": "2026-02-06T10:55:25.348596Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/99fd6810-8dd5-42c9-8d75-658fe3d5da46.md": {
+      "hash": "0630e3c75eb85a9a60b7187e1211f8ae5d831b4c1523322fbe1b6105c6f08479",
+      "document_id": "c07b561d-1406-48d7-9cd9-e60c96c02b33",
+      "uploaded_at": "2026-02-06T10:55:25.669560Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/647d576b-0ed4-46d4-9f5e-768fc1478427.md": {
+      "hash": "050bc6916d92144ec07ed3215d6cfc698d6d8d4da376c4c1aad0dc1d502d7855",
+      "document_id": "bd6149b9-03ce-4455-b3be-cf74c0a0ead2",
+      "uploaded_at": "2026-02-06T10:55:25.969565Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/58b08bac-29b8-43b8-bf89-210991f29396.md": {
+      "hash": "25146727274d782715dc61dc12c975490903f974885e3e404d42e7faa77f340e",
+      "document_id": "f97e1060-6cea-490a-8be9-8a26984d649d",
+      "uploaded_at": "2026-02-06T10:55:26.302723Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/ba2916a8-0943-4349-b2ae-cf3d86462a02.md": {
+      "hash": "021256f5846febdaa64ed3e2c253d6babb4d16fcc96a2fd142782589f5de8f5a",
+      "document_id": "be22b0cc-827e-456f-8c53-e5b725dd5872",
+      "uploaded_at": "2026-02-06T10:55:26.611779Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/fe2fd8cf-c811-455b-aad0-502193a0acb0.md": {
+      "hash": "45afaedb7558ea81bd3019678c1abbe5ae63e192c901b2fbbb55d2d7d5788570",
+      "document_id": "94028c82-f0dd-419f-9055-2e367c2c496d",
+      "uploaded_at": "2026-02-06T10:55:26.908831Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/6c99011a-9be7-4f40-8e41-c5dc58d08079.md": {
+      "hash": "31307916f0ea0445d0f133ee59256d7526fb5b9f70c6a38a258972e791c73737",
+      "document_id": "f06283ec-9b60-4471-a2ac-e109892564e6",
+      "uploaded_at": "2026-02-06T10:55:27.381502Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/e82af0d3-00b8-4199-b523-41ea1f2686e0.md": {
+      "hash": "18755733698185aeaf65b94a7f34899aa259bc21b857d1f64098ed61c9fe57ca",
+      "document_id": "df1bb46f-8ae1-444b-a9f3-ca900f39b3fc",
+      "uploaded_at": "2026-02-06T10:55:27.747662Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/78fc9774-f724-404a-ac6b-20cbf5bbb5b2.md": {
+      "hash": "451bd79415b09cc893609c0c49265bac77bc7b534912defa242a08e54bf89cdb",
+      "document_id": "65a7f456-7a3a-4d80-9d35-6a8e04041386",
+      "uploaded_at": "2026-02-06T10:55:28.046274Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/1efccb4b-7baf-46d9-b0bc-d75c5398328f.md": {
+      "hash": "64754e3852751b5678180bfadcc6f13dcd6617d7b1e7cb0b02bdf24d0906f5e3",
+      "document_id": "f4d7e972-2962-48ea-90dc-777ba6f93003",
+      "uploaded_at": "2026-02-06T10:55:28.342314Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/d35e7915-6628-4ab6-a7b2-1d4eb0041833.md": {
+      "hash": "99b015f672afb33b39404bfb99460ce1ba89b25bb4c8ec5d462267e7701953d0",
+      "document_id": "ec9c09f1-1d67-4b1c-9d80-74a8d6d01567",
+      "uploaded_at": "2026-02-06T10:55:28.653017Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/1b65fe6e-9772-460a-adcc-76fcedba4e58.md": {
+      "hash": "d138688658b3e114b4875f331ae752348e36cb4b1c98fff08b84eb4ba5aed958",
+      "document_id": "ff13482e-fae2-4573-8cda-cd46a2f7a516",
+      "uploaded_at": "2026-02-06T10:55:28.948737Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/976f00d2-f50e-4062-a848-3610f37e4e9d.md": {
+      "hash": "8aa7caed46e93a6d5aac9524c493daed72b6f51d283ffec2ea573df850a7917e",
+      "document_id": "64c8f453-0d7e-47a7-b12e-8e4fa9003a1a",
+      "uploaded_at": "2026-02-06T10:55:29.244581Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/ed9035b6-a5c7-4f0e-ab5a-45705d7b9adb.md": {
+      "hash": "b3fee8a05bbd7516f918100fe858b80dc0b7b948ac0989fc6c79d761751551fc",
+      "document_id": "97b89d5f-e6c9-49f0-b953-dc56fe42c386",
+      "uploaded_at": "2026-02-06T10:55:29.549070Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/08fef9c1-8577-43fe-bd2a-3a73b65bea91.md": {
+      "hash": "718b565a45996f22e5b68c3d11da2e8ac884cd6f59f62c87b7965670abcc775f",
+      "document_id": "dd6dd04b-6f67-41fb-ac65-f45996bac939",
+      "uploaded_at": "2026-02-06T10:55:29.841244Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/4f6ddbd1-79ef-49a9-8474-14ac9c3dec14.md": {
+      "hash": "f0087dd0a54a82e6b95ba2d3e0cec8cb42a39b2a6fdf9c17c7d00cade9bb75e0",
+      "document_id": "ebffce37-79de-4814-8523-0c21fa995fe4",
+      "uploaded_at": "2026-02-06T10:55:30.125768Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/359ad2c4-5942-4a49-bd1d-373c27e87a0b.md": {
+      "hash": "9f113df420e6dd44426276df4b9c96d8b972e88f48150b02025de1e544b84ce7",
+      "document_id": "dd417be7-a916-4200-93c3-d38e7a15ddd7",
+      "uploaded_at": "2026-02-06T10:55:30.412566Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/8c8a2e7b-3c56-474b-9166-0fa1a40b2ec7.md": {
+      "hash": "b7892c252b5cd6c118bc52fb5f3b2aaa278e998530599ce9baaeb11b6344ff70",
+      "document_id": "39e1539c-acd3-4085-bd97-2079884ec94d",
+      "uploaded_at": "2026-02-06T10:55:30.710044Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/9f8f5248-3ae6-4241-a5c0-0907d6deb6ec.md": {
+      "hash": "77a5c3c3ad4cb7e697871ba7d2282dd3b5e7c1d8775082de9d1370b7fc5388f3",
+      "document_id": "fec749db-db59-43d1-866b-f69761155a97",
+      "uploaded_at": "2026-02-06T10:55:31.012957Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/dcc04ffa-4c97-4129-87e3-daa5966bbc29.md": {
+      "hash": "365dc977fb2fa6217c96b591a8223ff2ec62eb4e8ea348ea0ff2c49850b44cb1",
+      "document_id": "e1b3aa69-b4ec-4918-a7c0-ef4c5b98ced9",
+      "uploaded_at": "2026-02-06T10:55:31.374578Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/c0826b33-a1c2-40c8-af50-e7798ea86129.md": {
+      "hash": "49fb8839635e1e0ff79401b4b031cedaa2240c23ccead3ac2bfdb92bf63a8f76",
+      "document_id": "cfed031d-2e10-4e08-9445-4d0acd4861e7",
+      "uploaded_at": "2026-02-06T10:55:31.683152Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/e620de08-b036-4e95-bc80-3814d34615f5.md": {
+      "hash": "420e32ca657d131052ca902949e2270ff4c178c43ae6ba3ee1e81f1d1bd95d4b",
+      "document_id": "da9265be-2d59-4980-84c8-0c598851b4d4",
+      "uploaded_at": "2026-02-06T10:55:31.966151Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/97db001a-2b41-4bfa-b4d9-56797b459e7d.md": {
+      "hash": "50a94b42065bb5f02ca4a24231063b53f80ed4c01cf170a80a481307a5ee769e",
+      "document_id": "111908db-6790-4613-9dac-f127fa2f7d4c",
+      "uploaded_at": "2026-02-06T10:55:32.253423Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/cd4f6cb1-eca0-4bd4-a839-e0ea768fbbf5.md": {
+      "hash": "693a3cb48833fe01428bec3902da1d92789532a3b3610484cabd0c7e9ed61925",
+      "document_id": "32cd1991-249d-49bd-ae8a-73e38736eecb",
+      "uploaded_at": "2026-02-06T10:55:32.613839Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/9c5d79bc-ebc9-4188-9072-5cf3bb768305.md": {
+      "hash": "f9f572af01b4731ef97e6a8178bda54f03cf4f870060dfc9199a72a30fe3b731",
+      "document_id": "4a824e17-11ee-4f78-958e-de769a7a2528",
+      "uploaded_at": "2026-02-06T10:55:32.944646Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/981aae04-4231-4aec-ac43-f3aa8147baf5.md": {
+      "hash": "2fa4bceb18ee05eb257f4709c13fd2a8dbce2f2fada6d1e3cd672ca8a58b6c71",
+      "document_id": "abe4dceb-67d6-44d0-8b82-1b13a4cf7f5f",
+      "uploaded_at": "2026-02-06T10:55:33.216252Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/5833a2e5-531e-4d48-96f9-d8daf4460f30.md": {
+      "hash": "55d1cfa8dbe37a61e78e056814f83f9858dcc144d16f6c2ef56ae7e0b1ee1aa7",
+      "document_id": "e3db31c7-9e56-4de2-8bc4-9fa9c27c4dfc",
+      "uploaded_at": "2026-02-06T10:55:33.487655Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/a89e8f82-5cf0-4581-9a81-b436626aa777.md": {
+      "hash": "267cafbc41db52696e56b85fe45c42bae1fac23218d4bf80b7e6b71275a47cc4",
+      "document_id": "96231593-798c-468b-8e2c-5c4134569345",
+      "uploaded_at": "2026-02-06T10:55:33.731113Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/3b3da0d7-39ba-4904-97a5-58d66595cf27.md": {
+      "hash": "612ab66c6b1ab438d043f477c35892de4cbe319d0f13444373762531e073598d",
+      "document_id": "061ce591-fdf5-4106-945e-bd5500e08ca5",
+      "uploaded_at": "2026-02-06T10:55:34.021892Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/7f957387-4e4a-4472-a473-a10d90012a97.md": {
+      "hash": "b76aca2a0299604fcca1999df84e691f5fee22ff52db0eeaed41fc034c9db119",
+      "document_id": "f4d7cc0f-b120-43d5-94a8-fadd0c55140b",
+      "uploaded_at": "2026-02-06T10:55:34.310118Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/c8186c23-49f4-4511-9881-9f760ed915c7.md": {
+      "hash": "243ee6b0ded470315e68d3ea16ddca35b59cbbcb4c70ac6f72e67517a623060c",
+      "document_id": "08d01782-c127-4ab8-95d7-9a19c01e7de6",
+      "uploaded_at": "2026-02-06T10:55:34.593607Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/35a95e6f-9b5f-4cee-891e-6e5f8f7feace.md": {
+      "hash": "0481de321767d0952a06778979b765163fcb91fc4112b2c32b27ff92c739d74b",
+      "document_id": "d119b62e-6a83-490c-bd9e-e24ee0dd0318",
+      "uploaded_at": "2026-02-06T10:55:34.893180Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/551188f4-fbcf-4519-adbe-b38a92a23fba.md": {
+      "hash": "add6999efa826e62b5ba7f190927467366afd2e720c64d90483f0d0b0ffcb717",
+      "document_id": "b99aa646-43eb-4034-9e6c-0de3d50629ae",
+      "uploaded_at": "2026-02-06T10:55:35.177555Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/8b421e6a-33b3-4f85-abe1-b71ec3441be7.md": {
+      "hash": "b90e8b9ea896aa6cdd37fd4a8245f28ba3b7b32fe25b972e911ccb4fabd25e47",
+      "document_id": "2a77b6c2-2e79-4a7f-aa7f-8e28fd4cbf89",
+      "uploaded_at": "2026-02-06T10:55:35.459623Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/f6c78237-b412-4005-9dad-6f4d7e529fd6.md": {
+      "hash": "6108f1f0c481e1a842a834b74647937d6a40dab276bb7618752af2688bc6b642",
+      "document_id": "9410026d-f622-446e-9a44-ee99e23cf70c",
+      "uploaded_at": "2026-02-06T10:55:35.757705Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/da634060-8fb2-4e50-ad44-4f663bb16b18.md": {
+      "hash": "75c7842225883d13ece7dafaf452d4e79c99ed6506fa3255a17e026106d2dbbb",
+      "document_id": "40f3bef9-b1e5-41bc-88c1-22d6a565c3a6",
+      "uploaded_at": "2026-02-06T10:55:36.020227Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/18c3bb83-791c-4258-8bdf-6dcfedd5bda2.md": {
+      "hash": "30d33e92bfc88b784e4628abf44f78119f1719fdd85d5424152dde38bc24f4ca",
+      "document_id": "2ec1bc00-5f03-4b5e-9e72-e11aa1b0a9cf",
+      "uploaded_at": "2026-02-06T10:55:36.290161Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/8a556691-c89f-4208-a06e-bc3711d464a2.md": {
+      "hash": "10ec735c824c890e42dbd5f351ae8c401833997359edd3c8f9f581f02b66d609",
+      "document_id": "3831128c-85d9-481a-bdba-2775905102ac",
+      "uploaded_at": "2026-02-06T10:55:36.575724Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/3688ff37-253e-459f-b39d-88ac53cef161.md": {
+      "hash": "db8d228cc95c8e6727ba42643f24b7716d95ce7f80f8b5c87740091a1ea9e24a",
+      "document_id": "a8428452-c2bc-419b-8103-e7772a05da1c",
+      "uploaded_at": "2026-02-06T10:55:36.863659Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/a8dbe9cb-ebbf-4915-818d-1f55d2c8a3e7.md": {
+      "hash": "137663ded878df4877e47e27f0ecd7c1abed94f64dd4af60f5c063bd03bffaa7",
+      "document_id": "f2c9b803-6a74-447d-b27b-12773d180512",
+      "uploaded_at": "2026-02-06T10:55:37.134262Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/7faf73db-d15d-4833-b422-0454add379f1.md": {
+      "hash": "35afb0da26b129f3511bafc6fe5fee3608cf319747e8ceb11e65fd8b55c68836",
+      "document_id": "5c3ea557-7dcd-4c0f-9f14-48f63bcc0a91",
+      "uploaded_at": "2026-02-06T10:55:37.401151Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/95d01370-7649-45cc-a92e-9e1b01adf3db.md": {
+      "hash": "49f0c2785f79f0608d03c602087028309f6f3acf299210d3df04f580a641d55d",
+      "document_id": "9f3e2fdb-2142-4ae1-a137-3f1956dff2df",
+      "uploaded_at": "2026-02-06T10:55:37.662161Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/64056cfb-ee90-4ab8-93c0-2db829f54a8e.md": {
+      "hash": "9f9ee9c4815e00a5923387c3fa878173449055cf065e478d8b42805dc1aeba55",
+      "document_id": "a6b19ddc-0091-4ccf-a851-5d534ef09fbe",
+      "uploaded_at": "2026-02-06T10:55:37.935820Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/2dc50bbc-5a94-40d7-a015-ec968475aed4.md": {
+      "hash": "a547f5ff6d04f4c13ff86348a8181b1df5eee0b3d7bf24ef19c60334dc2ba611",
+      "document_id": "b0df3e01-d25c-4ff8-9633-40f7d401850a",
+      "uploaded_at": "2026-02-06T10:55:38.213640Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/93a7a623-22a2-49f8-8373-61a053f1c429.md": {
+      "hash": "bec6af1d15a8e55c4b8f288c56a38d1e0a2fb9c7c744267b1fbd3d3583245d4e",
+      "document_id": "7992978c-961f-4dfe-9fbf-d3c5b59761bc",
+      "uploaded_at": "2026-02-06T10:55:38.509678Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/70af9d76-d4bc-48a8-9be9-b658b623b420.md": {
+      "hash": "5c119ae3f483b21ddb4443f2871ec4fb15208639e9efbb90f9d1e76687e3f8c0",
+      "document_id": "d97f1d3f-6056-4505-8322-e37853793c93",
+      "uploaded_at": "2026-02-06T10:55:38.798816Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/b6e76d5c-4fd7-440f-831d-58ba65c33dcf.md": {
+      "hash": "dcea1795d5c2dfa460814912919c77f21ce1044b741d840dfe0e68a00ef36b49",
+      "document_id": "67ff0a83-d9d4-4411-beeb-9f41b49ec8d7",
+      "uploaded_at": "2026-02-06T10:55:39.149901Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/319315fb-3654-4dd4-a325-13cfd3034420.md": {
+      "hash": "5724a068024c5324e730e8cc274b84c75c0bae888cb3147eee69758ea3372abc",
+      "document_id": "fd871143-1452-4ff7-9513-c201c14e9328",
+      "uploaded_at": "2026-02-06T10:55:39.455195Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/9709bf34-d6ca-4be3-8d30-6e53582d6fbe.md": {
+      "hash": "1cd998b1ad75c81d3a21b1b8ad0b36a5773e38e73702d1527fd1857a49e0f1af",
+      "document_id": "698eba1b-5bc4-47ba-a4f2-e80bdf3b6f02",
+      "uploaded_at": "2026-02-06T10:55:39.722495Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/9f36f989-b7fd-49f1-89ef-d78e8f197a6f.md": {
+      "hash": "9264e223b143ab8fa2fb35ad4e7bd42d7f6d76f1542aa3cbcf727dee7583e799",
+      "document_id": "3b91f719-ee14-46ea-85f3-5688b2c7002c",
+      "uploaded_at": "2026-02-06T10:55:40.004936Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/67be7cb0-5853-46ed-b8f6-e3f32eaaa950.md": {
+      "hash": "0cf525a89d99729dc08e2d9aabb1865a1ee6077aad334b7f741345e8b306ac0e",
+      "document_id": "ad5b8301-c665-4dd9-9b55-9a8b7b278778",
+      "uploaded_at": "2026-02-06T10:55:40.302089Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/94d2dbea-6a2a-4e66-a15b-94d790c91cca.md": {
+      "hash": "d712054437a379a010f7b1da7be1234ed8019aadaf708e0e5e75240762be28cd",
+      "document_id": "e2ad9441-66f8-489b-b7d0-12f75e16dc2d",
+      "uploaded_at": "2026-02-06T10:55:40.590926Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/36150bcc-1187-4296-a506-ce099d27d06e.md": {
+      "hash": "db6b07d697d6ea8497ac7ade4a7c93e4ea042c794546da10b67b41c2fe40f7b8",
+      "document_id": "858b0cfd-0653-4a52-a5e2-3dbc44ff6694",
+      "uploaded_at": "2026-02-06T10:55:40.864702Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/ce7ebc87-7bd0-415a-956c-de13362301c4.md": {
+      "hash": "0cf31f36d6da05987063c79c4325064da5e4341814b290d17aa84215a01d3ac3",
+      "document_id": "4e6785dd-fffd-48ff-98c7-36f5279e8a48",
+      "uploaded_at": "2026-02-06T10:55:41.139510Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/f07aeca2-4be2-43f3-b074-98021c34d3eb.md": {
+      "hash": "2804caf2653fd372d460f737d52f20a6daf7c592ac02288f32529e7019382335",
+      "document_id": "a6c55288-0c9c-43db-a048-1b72b7054054",
+      "uploaded_at": "2026-02-06T10:55:41.418991Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/1ee4ad3e-b80f-49a6-99e4-4461ec4f7f29.md": {
+      "hash": "3e1d523517d6f987c001611d0ed85d3fa0b87addca6cbfece3194a4bcf1cab58",
+      "document_id": "54753c44-370f-4e6b-8923-536b015278d5",
+      "uploaded_at": "2026-02-06T10:55:41.703553Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/d5d88811-7f8c-4dd1-9bc3-167ea584b1e1.md": {
+      "hash": "783ac043f7370d07fde2e74ed6bb77e3cac63b396322ac15ae20d2c94e2b2bc1",
+      "document_id": "8e992b9c-bd11-4dbc-83e6-8787f213c14d",
+      "uploaded_at": "2026-02-06T10:55:41.983092Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/2f131185-7787-4df8-b147-d913e08e24a5.md": {
+      "hash": "fdfe3ccb9b7b476b53d0ce63b0b31c6d807a289f97cba21d78f7b68f9a5c859d",
+      "document_id": "5269104a-7093-4bd4-bbc7-49bc6b368223",
+      "uploaded_at": "2026-02-06T10:55:42.249823Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/1e0ad9af-6018-42b9-a0b5-62348b4f6eae.md": {
+      "hash": "586db36b046adb4e783ca6ee4ac30cbb2a470a63728d038ad85daf630483c592",
+      "document_id": "6084b4bb-04c5-4f05-a735-2efe6184c96d",
+      "uploaded_at": "2026-02-06T10:55:42.505032Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/51957230-18b3-47d2-883e-cf3eee06785d.md": {
+      "hash": "cd7b8bee261f9e2d5731280b8893d39cb65de57504ea4d3ef444fafb1763f6fc",
+      "document_id": "e90d7007-18bf-414a-85fd-1ad7bd33fd3b",
+      "uploaded_at": "2026-02-06T10:55:42.775779Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/53552ef4-2203-4c60-9678-cb05bf01fc0f.md": {
+      "hash": "ebefdd8adf0835a2cc5c82b232fc1fd7728de2994a0a31ef963d536771c4ba45",
+      "document_id": "9b5786cb-a723-4a1e-93a4-c82d983aad12",
+      "uploaded_at": "2026-02-06T10:55:43.073590Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/fab7070c-7d48-4498-b240-d9a78b84833b.md": {
+      "hash": "9e3013a85246460ee816ff83cc4dbc964dcbc238b833a042825605b7ff0829e5",
+      "document_id": "7afc38ad-0422-4817-8768-8ef63415ccff",
+      "uploaded_at": "2026-02-06T10:55:43.364061Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/77fd9f2d-09be-4830-8095-275695c1cc1d.md": {
+      "hash": "18bef7fb61ca002b3bde28d6813dde31ceb7b208e97d8e71309e84fdb45a86d3",
+      "document_id": "34ad640a-997f-4621-9146-da38061a99a8",
+      "uploaded_at": "2026-02-06T10:55:43.649033Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/fda41676-472b-40c2-ad47-444a23ba1e15.md": {
+      "hash": "7fcc9dd1445f59b16e6af9bbd8bd3d43f712ab4f03b90fb1ac531b4eecabdb1d",
+      "document_id": "9a29eb00-674a-4885-a400-4d66b2c96ae1",
+      "uploaded_at": "2026-02-06T10:55:43.906955Z",
+      "status": "completed"
+    },
+    "/home/tobias/.openclaw/agents/main/qmd/sessions/6ffa9597-b4cf-4207-80bf-61a4d0cd133b.md": {
+      "hash": "8cadc47625ac4ab4fa16ce8899f8e8c3ee78739fe5af5331a9763adbe2729540",
+      "document_id": "adaccf2c-9409-4500-b2f3-c422071964c3",
+      "uploaded_at": "2026-02-06T10:55:44.161076Z",
+      "status": "completed"
+    }
+  },
+  "last_sync": "2026-02-06T10:11:06.518254+00:00"
+}
