@@ -120,6 +120,12 @@ const config: ZudokuConfig = {
         },
         {
           type: "category",
+          label: "Changelog",
+          icon: "list",
+          items: ["/changelog"],
+        },
+        {
+          type: "category",
           label: "Resources",
           collapsible: false,
           icon: "link",

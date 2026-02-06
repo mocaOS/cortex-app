@@ -1,0 +1,109 @@
+---
+title: Changelog
+description: A chronological log of all notable changes, improvements, and fixes to MOCA Library.
+---
+
+All notable changes to MOCA Library are documented here, organized by date.
+
+---
+
+## February 6, 2026
+
+### API Key Usage Tracking and Analytics
+
+- Introduced a dedicated API usage tracking service that records every request per API key, categorized by endpoint type (ask, search, upload, documents, graph, collections, admin, etc.)
+- Added middleware to automatically track API requests and errors for all authenticated endpoints
+- Admin API key records are now persisted in Neo4j for long-term usage statistics
+- New backend models for API key usage statistics, usage data points, and usage history
+
+### Admin Dashboard Improvements
+
+- Added an **API Key Analytics** panel with interactive usage charts showing request volume over time and endpoint breakdown
+- New **API Key Manager** component for creating, viewing, and managing API keys directly from the admin UI
+- Introduced a **System Reset Modal** with granular deletion options (documents, uploaded files, custom inputs, collections, API keys) and a confirmation safeguard
+- Admin page now displays system configuration overview including API key usage settings
+- Updated MOCA logo assets (dark and light variants)
+
+### Resource Limits
+
+- Added `MAX_FILES` and `MAX_COLLECTIONS` environment variables to cap the number of documents and collections (set to `0` for unlimited)
+- Backend now enforces these limits on file uploads, custom input creation, and collection creation, returning a `403` error when limits are exceeded
+
+### Collection-Scoped AI Queries
+
+- The Ask AI feature now supports scoping queries to a specific collection via `collection_id`, so answers are drawn only from documents in that collection
+- Collection scoping works across all ask modes: standard, streaming, streaming with thinking, and fast search
+- Ask AI settings (streaming, agentic mode, fast search, selected collection) are now persisted to localStorage so preferences survive page reloads
+
+### Skill Library Restructure
+
+- Renamed the skill package from `openclaw-library` to `library`
+- Added sync scripts (Python, Shell, and JavaScript) for automated skill file synchronization
+- Removed obsolete OpenClaw library skill files
+
+---
+
+## February 5, 2026
+
+### Document Deletion with Task Cancellation
+
+- Deleting a document now automatically cancels any active processing task for that document before removal, preventing orphaned background jobs
+- Introduced proper task tracking for active document processing with cancellation flag support
+- Added `cancel_multiple_documents` and improved `cancel_processing_task` methods in the DocumentProcessor with deadlock-safe locking
+- Processing tasks are now started with cancellation flags initialized upfront, ensuring graceful shutdown from the very first checkpoint
+
+### Knowledge Graph Cleanup on Deletion
+
+- Document deletion now triggers a comprehensive cleanup of the knowledge graph, removing orphaned entities and communities that are no longer referenced by any remaining document
+- API responses for deletion endpoints now include detailed cleanup statistics (entities removed, communities removed, etc.)
+- Updated documentation pages for Document Upload and Knowledge Graph features to explain the new deletion and cleanup behavior
+
+### API Parameter Changes
+
+- `collection_id` and `start_processing` parameters on the upload endpoint are now passed as URL query parameters instead of form data fields
+- Updated API examples in the documentation (cURL and Python) to reflect the new parameter format
+- Skill documentation updated to emphasize that both `api_key` and `base_url` credentials are required
+- Skill version bumped to 1.2.0
+
+---
+
+## February 4, 2026
+
+### Admin Authentication and API Key Management
+
+- Implemented a full admin authentication system with email/password login validated against environment variables (`ADMIN_EMAIL`, `ADMIN_PASSWORD`)
+- Added session management with encrypted JWT tokens stored in HTTP-only cookies
+- Introduced Next.js middleware to protect all routes (except `/login`) behind authentication
+- Created a dedicated login page with form validation and error handling, wrapped in React Suspense for smooth loading states
+
+### Permission-Based API Protection
+
+- All API endpoints are now protected with a three-tier permission system: **read**, **manage**, and **admin**
+- Read endpoints (search, ask, list documents, stats) require at minimum a valid API key with read permission
+- Write endpoints (upload, delete, create collections) require manage permission
+- Admin endpoints (API key CRUD, system management) require admin-level access
+- New backend services: `auth_service` for request authentication and `api_key_service` for key lifecycle management
+
+### Documentation Site Launch
+
+- Launched the full documentation site built with Zudoku, featuring:
+  - Getting Started guides (Introduction, Quickstart, Configuration)
+  - Core Features documentation (Document Upload, Search, Ask AI, Knowledge Graph, Collections, Communities, Turbo Mode)
+  - Guides (Deployment, Authentication, Security)
+  - Code examples (Python, cURL, Integration)
+  - OpenAPI-powered API Reference
+  - Pagefind-based full-text search
+  - LLM-friendly output (`llms.txt` and `llms-full.txt`)
+- Created comprehensive backend API documentation (`BACKEND_API_DOCUMENTATION.md`)
+- Cleaned up documentation pages by removing redundant section headers for a streamlined reading experience
+
+---
+
+## January 29, 2026
+
+### Rebrand to MOCA Library
+
+- Renamed the project from **MOCA Knowledge Base** to **MOCA Library**
+- Updated the tagline to **"The Agentic Knowledge Base for the AI Era"**
+- Added a new "What is MOCA Library?" section to the README explaining the project's philosophy around portable, long-term AI memory
+- Introduced the memory hierarchy concept: Context (short-term) → Agent Memory Stack (mid-term) → MOCA Library (long-term)
