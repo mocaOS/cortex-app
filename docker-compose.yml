@@ -32,6 +32,8 @@ services:
       - NEO4J_PASSWORD=password123
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
+      # API Key Analytics - track admin key usage (default: false)
+      - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
     ports:
       - "8000:8000"
     volumes:

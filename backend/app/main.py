@@ -4,14 +4,17 @@ import os
 import logging
 import asyncio
 import uuid
+import shutil
+import glob
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, Dict, List
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 import aiofiles
 import json
@@ -52,6 +55,17 @@ from app.models import (
     CreateAPIKeyResponse,
     APIKeyListItem,
     UpdateAPIKeyRequest,
+    # API Key Stats models
+    APIKeyStats,
+    APIKeyUsageDataPoint,
+    APIKeyUsageHistoryResponse,
+    AdminStatsOverview,
+    APIKeyWithStats,
+    # System Reset models
+    SystemResetRequest,
+    SystemResetResponse,
+    # System Config model
+    SystemConfigResponse,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -72,6 +86,7 @@ from app.services.auth_service import (
     AuthResult,
 )
 from app.services.api_key_service import get_api_key_service
+from app.services.api_usage_service import get_api_usage_service
 
 # Configure logging
 logging.basicConfig(
@@ -99,6 +114,20 @@ async def lifespan(app: FastAPI):
         logger.info("Neo4j schema initialized")
     except Exception as e:
         logger.warning(f"Could not initialize Neo4j schema: {e}")
+    
+    # Ensure admin API key record exists for usage tracking (only if tracking is enabled)
+    if settings.track_admin_api_key_usage:
+        try:
+            admin_key_prefix = "admin"
+            if settings.admin_api_key:
+                # Use first 8 chars of the actual admin key as prefix for identification
+                admin_key_prefix = settings.admin_api_key[:8] + "..." if len(settings.admin_api_key) >= 8 else "admin"
+            neo4j.ensure_admin_key_exists(admin_key_prefix)
+            logger.info("Admin API key record ensured for usage tracking")
+        except Exception as e:
+            logger.warning(f"Could not ensure admin API key record: {e}")
+    else:
+        logger.info("Admin API key usage tracking is disabled")
     
     # Warm up processors
     try:
@@ -130,6 +159,70 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# API Usage Tracking Middleware
+# =============================================================================
+
+class APIUsageMiddleware(BaseHTTPMiddleware):
+    """Middleware to track API usage per API key."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Skip tracking for non-API paths
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        
+        # Skip tracking for certain endpoints that don't need it
+        skip_paths = ["/api/admin/api-keys/with-stats", "/api/admin/stats"]
+        if any(request.url.path.startswith(p) for p in skip_paths):
+            return await call_next(request)
+        
+        # Extract API key from header
+        api_key = request.headers.get("X-API-Key")
+        key_id = None
+        is_admin_key = False
+        
+        if api_key:
+            # Validate and get key_id
+            from app.services.auth_service import validate_api_key
+            auth = await validate_api_key(api_key)
+            if auth.is_authenticated and auth.key_id:
+                key_id = auth.key_id
+                is_admin_key = auth.is_admin
+        
+        # Process the request
+        response = await call_next(request)
+        
+        # Record usage if we have a valid key_id
+        if key_id:
+            # Check if we should skip tracking for admin key
+            app_settings = get_settings()
+            if is_admin_key and not app_settings.track_admin_api_key_usage:
+                return response
+            
+            try:
+                is_error = response.status_code >= 400
+                error_message = None
+                if is_error:
+                    error_message = f"HTTP {response.status_code}"
+                
+                usage_service = get_api_usage_service()
+                usage_service.record_request(
+                    key_id=key_id,
+                    endpoint_path=request.url.path,
+                    is_error=is_error,
+                    error_message=error_message
+                )
+            except Exception as e:
+                # Don't let usage tracking failures break the API
+                logger.warning(f"Failed to record API usage: {e}")
+        
+        return response
+
+
+# Add usage tracking middleware
+app.add_middleware(APIUsageMiddleware)
 
 
 # =============================================================================
@@ -2564,6 +2657,90 @@ async def get_turbo_job_logs(job_id: str):
 
 
 # =============================================================================
+# Admin System Configuration Endpoint
+# =============================================================================
+
+@app.get("/api/admin/config", response_model=SystemConfigResponse)
+async def get_system_config(auth: AuthResult = Depends(require_admin)):
+    """
+    Get system configuration (safe settings only).
+    
+    Admin-only endpoint. Returns current system configuration excluding
+    sensitive data like API keys, passwords, and secrets.
+    """
+    settings = get_settings()
+    
+    return SystemConfigResponse(
+        # LLM Configuration
+        openai_model=settings.openai_model,
+        fast_mode_model=settings.fast_mode_model,
+        
+        # Embedding Configuration
+        embedding_model=settings.embedding_model,
+        embedding_dimension=settings.embedding_dimension,
+        use_openai_embeddings=settings.use_openai_embeddings,
+        
+        # Upload Configuration
+        max_file_size_mb=settings.max_file_size_mb,
+        allowed_extensions=settings.allowed_extensions,
+        
+        # Chunking Configuration
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        chunk_by=settings.chunk_by,
+        sentences_per_chunk=settings.sentences_per_chunk,
+        
+        # GraphRAG Configuration
+        enable_graph_extraction=settings.enable_graph_extraction,
+        max_graph_hops=settings.max_graph_hops,
+        concurrent_extractions=settings.concurrent_extractions,
+        
+        # Batch Processing
+        batch_processing_concurrency=settings.batch_processing_concurrency,
+        processing_thread_workers=settings.processing_thread_workers,
+        
+        # Enhanced RAG Configuration
+        enable_reranking=settings.enable_reranking,
+        reranking_model=settings.reranking_model,
+        enable_hybrid_search=settings.enable_hybrid_search,
+        vector_weight=settings.vector_weight,
+        keyword_weight=settings.keyword_weight,
+        graph_weight=settings.graph_weight,
+        max_conversation_history=settings.max_conversation_history,
+        enable_agentic_rag=settings.enable_agentic_rag,
+        max_agentic_steps=settings.max_agentic_steps,
+        
+        # Community Detection
+        enable_community_detection=settings.enable_community_detection,
+        min_community_size=settings.min_community_size,
+        max_communities=settings.max_communities,
+        enable_graph_summarization=settings.enable_graph_summarization,
+        
+        # Entity Resolution
+        enable_semantic_entity_resolution=settings.enable_semantic_entity_resolution,
+        entity_similarity_threshold=settings.entity_similarity_threshold,
+        
+        # Collections
+        enable_collections=settings.enable_collections,
+        default_collection=settings.default_collection,
+        
+        # Visibility/UX
+        stream_reasoning_steps=settings.stream_reasoning_steps,
+        show_retrieval_stats=settings.show_retrieval_stats,
+        
+        # Security
+        prompt_security=settings.prompt_security,
+        
+        # Turbo Mode (Compute3)
+        turbo_mode_available=settings.turbo_mode_available,
+        compute3_gpu_type=settings.compute3_gpu_type,
+        compute3_gpu_count=settings.compute3_gpu_count,
+        compute3_model=settings.compute3_model,
+        compute3_default_runtime=settings.compute3_default_runtime,
+    )
+
+
+# =============================================================================
 # Admin API Key Management Endpoints
 # =============================================================================
 
@@ -2610,6 +2787,26 @@ async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depend
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# NOTE: This route MUST come before the {key_id} routes to avoid path parameter conflicts
+@app.get("/api/admin/api-keys/with-stats", response_model=List[APIKeyWithStats])
+async def list_api_keys_with_stats(auth: AuthResult = Depends(require_admin)):
+    """
+    List all API keys with their usage statistics.
+    
+    Admin-only endpoint. Returns keys with embedded stats including:
+    - Total requests
+    - Requests today/this week/this month
+    - Error counts
+    - Endpoint breakdown
+    """
+    try:
+        usage_service = get_api_usage_service()
+        return usage_service.list_keys_with_stats()
+    except Exception as e:
+        logger.error(f"Error listing API keys with stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/admin/api-keys/{key_id}", response_model=APIKeyListItem)
 async def get_api_key(key_id: str, auth: AuthResult = Depends(require_admin)):
     """
@@ -2642,7 +2839,21 @@ async def update_api_key(
     Update an API key's name, permissions, or active status.
     
     Admin-only endpoint.
+    Note: The system admin key cannot be disabled.
     """
+    # Protect the admin key from being disabled
+    if key_id == "admin":
+        if request.is_active is False:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot disable the system admin key - it is protected"
+            )
+        # Admin key can't be modified through this endpoint
+        raise HTTPException(
+            status_code=403,
+            detail="The system admin key cannot be modified through this endpoint"
+        )
+    
     try:
         api_key_service = get_api_key_service()
         result = api_key_service.update_api_key(key_id, request)
@@ -2664,7 +2875,15 @@ async def delete_api_key(key_id: str, auth: AuthResult = Depends(require_admin))
     Delete an API key permanently.
     
     Admin-only endpoint.
+    Note: The system admin key cannot be deleted.
     """
+    # Protect the admin key from deletion
+    if key_id == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete the system admin key - it is protected"
+        )
+    
     try:
         api_key_service = get_api_key_service()
         success = api_key_service.delete_api_key(key_id)
@@ -2686,7 +2905,15 @@ async def revoke_api_key(key_id: str, auth: AuthResult = Depends(require_admin))
     Revoke an API key (deactivate without deleting).
     
     Admin-only endpoint. The key can be reactivated later.
+    Note: The system admin key cannot be revoked.
     """
+    # Protect the admin key from being revoked
+    if key_id == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot revoke the system admin key - it is protected"
+        )
+    
     try:
         api_key_service = get_api_key_service()
         result = api_key_service.revoke_api_key(key_id)
@@ -2721,6 +2948,207 @@ async def activate_api_key(key_id: str, auth: AuthResult = Depends(require_admin
         raise
     except Exception as e:
         logger.error(f"Error activating API key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# API Key Statistics Endpoints
+# =============================================================================
+
+@app.get("/api/admin/api-keys/{key_id}/stats", response_model=APIKeyStats)
+async def get_api_key_stats(key_id: str, auth: AuthResult = Depends(require_admin)):
+    """
+    Get detailed usage statistics for a specific API key.
+    
+    Admin-only endpoint. Returns:
+    - Total requests all time
+    - Requests today, this week, this month
+    - Error count and last error details
+    - Endpoint usage breakdown
+    """
+    try:
+        usage_service = get_api_usage_service()
+        stats = usage_service.get_key_stats(key_id)
+        
+        if not stats:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting API key stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/api-keys/{key_id}/usage-history", response_model=APIKeyUsageHistoryResponse)
+async def get_api_key_usage_history(
+    key_id: str,
+    days: int = Query(default=30, ge=1, le=365, description="Number of days of history"),
+    auth: AuthResult = Depends(require_admin)
+):
+    """
+    Get daily usage history for an API key.
+    
+    Admin-only endpoint. Returns daily request and error counts
+    for the specified number of days (default 30, max 365).
+    Useful for charting usage trends.
+    """
+    try:
+        usage_service = get_api_usage_service()
+        history = usage_service.get_key_usage_history(key_id, days)
+        
+        if not history:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return history
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting API key usage history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/stats/overview", response_model=AdminStatsOverview)
+async def get_admin_stats_overview(auth: AuthResult = Depends(require_admin)):
+    """
+    Get aggregated statistics across all API keys.
+    
+    Admin-only endpoint. Returns dashboard-level metrics:
+    - Total and active key counts
+    - Total requests today/this week/this month/all time
+    - Total errors
+    - Most active key
+    - Aggregated endpoint breakdown
+    """
+    try:
+        usage_service = get_api_usage_service()
+        return usage_service.get_admin_overview()
+    except Exception as e:
+        logger.error(f"Error getting admin stats overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# System Reset Endpoint
+# =============================================================================
+
+@app.post("/api/admin/reset", response_model=SystemResetResponse)
+async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(require_admin)):
+    """
+    Reset the system by deleting selected data.
+    
+    WARNING: This is a destructive operation that cannot be undone.
+    
+    Admin-only endpoint. Allows selective deletion of:
+    - Documents (includes chunks, entities, relationships, communities)
+    - Uploaded files from disk
+    - Custom input files from disk
+    - Collections (except default)
+    - API keys
+    """
+    settings = get_settings()
+    neo4j = get_neo4j_service()
+    processor = get_document_processor()
+    
+    result = SystemResetResponse(
+        message="",
+        documents_deleted=0,
+        entities_removed=0,
+        communities_removed=0,
+        collections_deleted=0,
+        api_keys_deleted=0,
+        uploaded_files_deleted=0,
+        custom_inputs_deleted=0,
+        processing_cancelled=0
+    )
+    
+    try:
+        # Step 1: Cancel all active processing tasks first
+        cancelled_count = await processor.cancel_all_processing()
+        result.processing_cancelled = cancelled_count
+        if cancelled_count > 0:
+            logger.info(f"System reset: Cancelled {cancelled_count} active processing tasks")
+        
+        # Step 2: Delete documents from Neo4j (if requested)
+        if request.delete_documents:
+            doc_result = neo4j.delete_all_documents()
+            result.documents_deleted = doc_result.get("deleted_count", 0)
+            result.entities_removed = doc_result.get("entities_removed", 0)
+            result.communities_removed = doc_result.get("communities_removed", 0)
+            logger.info(f"System reset: Deleted {result.documents_deleted} documents, "
+                       f"{result.entities_removed} entities, {result.communities_removed} communities")
+        
+        # Step 3: Delete uploaded files from disk (if requested)
+        if request.delete_uploaded_files:
+            upload_dir = Path(settings.upload_dir)
+            if upload_dir.exists():
+                files_deleted = 0
+                for file_path in upload_dir.iterdir():
+                    if file_path.is_file():
+                        try:
+                            file_path.unlink()
+                            files_deleted += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to delete file {file_path}: {e}")
+                result.uploaded_files_deleted = files_deleted
+                logger.info(f"System reset: Deleted {files_deleted} uploaded files")
+        
+        # Step 4: Delete custom input files from disk (if requested)
+        if request.delete_custom_inputs:
+            custom_inputs_dir = Path(settings.custom_inputs_dir)
+            if custom_inputs_dir.exists():
+                files_deleted = 0
+                for file_path in custom_inputs_dir.iterdir():
+                    if file_path.is_file():
+                        try:
+                            file_path.unlink()
+                            files_deleted += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to delete file {file_path}: {e}")
+                result.custom_inputs_deleted = files_deleted
+                logger.info(f"System reset: Deleted {files_deleted} custom input files")
+        
+        # Step 5: Delete collections (if requested)
+        if request.delete_collections:
+            result.collections_deleted = neo4j.delete_all_collections()
+            logger.info(f"System reset: Deleted {result.collections_deleted} collections")
+        
+        # Step 6: Delete API keys (if requested - dangerous!)
+        if request.delete_api_keys:
+            result.api_keys_deleted = neo4j.delete_all_api_keys()
+            logger.info(f"System reset: Deleted {result.api_keys_deleted} API keys")
+        
+        # Build summary message
+        parts = []
+        if result.documents_deleted > 0:
+            parts.append(f"{result.documents_deleted} documents")
+        if result.entities_removed > 0:
+            parts.append(f"{result.entities_removed} entities")
+        if result.communities_removed > 0:
+            parts.append(f"{result.communities_removed} communities")
+        if result.collections_deleted > 0:
+            parts.append(f"{result.collections_deleted} collections")
+        if result.api_keys_deleted > 0:
+            parts.append(f"{result.api_keys_deleted} API keys")
+        if result.uploaded_files_deleted > 0:
+            parts.append(f"{result.uploaded_files_deleted} uploaded files")
+        if result.custom_inputs_deleted > 0:
+            parts.append(f"{result.custom_inputs_deleted} custom inputs")
+        
+        if parts:
+            result.message = f"System reset complete. Deleted: {', '.join(parts)}."
+        else:
+            result.message = "No items were selected for deletion."
+        
+        if result.processing_cancelled > 0:
+            result.message += f" Cancelled {result.processing_cancelled} active processing tasks."
+        
+        logger.info(f"System reset completed: {result.message}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error during system reset: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

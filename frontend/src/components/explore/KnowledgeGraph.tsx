@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import type { GraphNode, GraphEdge, EntityDetails, GraphStats } from "@/types";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { X, ExternalLink, Loader2 } from "lucide-react";
+import { X, ExternalLink, Loader2, Maximize2, Minimize2 } from "lucide-react";
 
 // Internal node type for force graph
 interface ForceGraphNode {
@@ -248,6 +248,32 @@ export default function KnowledgeGraph({
   const [entityDetails, setEntityDetails] = useState<EntityDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [hoveredNode, setHoveredNode] = useState<ForceGraphNode | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Handle fullscreen toggle
+  const toggleFullscreen = useCallback(async () => {
+    if (!containerRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      console.error("Fullscreen toggle failed:", error);
+    }
+  }, []);
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
 
   // Convert nodes and edges to force-graph format
   const graphData = useMemo(() => {
@@ -553,6 +579,18 @@ export default function KnowledgeGraph({
 
       {/* Zoom controls */}
       <div className="absolute bottom-4 right-4 flex flex-col gap-2 z-10">
+        <button
+          onClick={toggleFullscreen}
+          className="w-10 h-10 bg-card/90 backdrop-blur-sm border border-border rounded-lg flex items-center justify-center hover:bg-muted transition-colors"
+          title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        >
+          {isFullscreen ? (
+            <Minimize2 className="w-4 h-4" />
+          ) : (
+            <Maximize2 className="w-4 h-4" />
+          )}
+        </button>
+        <div className="h-px bg-border" />
         <button
           onClick={() => fgRef.current?.zoom(fgRef.current.zoom() * 1.5, 300)}
           className="w-10 h-10 bg-card/90 backdrop-blur-sm border border-border rounded-lg flex items-center justify-center text-lg font-medium hover:bg-muted transition-colors"

@@ -43,7 +43,7 @@ interface DocumentCardProps {
   doc: Document;
   index: number;
   isSelected: boolean;
-  onToggleSelection: (id: string) => void;
+  onToggleSelection: (id: string, shiftKey?: boolean) => void;
   onDelete: (id: string) => void;
   onReprocess: (id: string) => void;
   onReprocessWithFile: (id: string, file: File) => void;
@@ -170,7 +170,7 @@ export function DocumentCard({
       <div className="flex items-start gap-4">
         {/* Circular checkbox */}
         <button
-          onClick={() => onToggleSelection(doc.id)}
+          onClick={(e) => onToggleSelection(doc.id, e.shiftKey)}
           className={cn(
             "w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors",
             isSelected

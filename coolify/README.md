@@ -36,6 +36,7 @@ Set these in Coolify's environment configuration:
 | `ADMIN_PASSWORD` | Admin login password | Yes |
 | `ADMIN_API_KEY` | Admin API key for full backend access | Yes |
 | `SESSION_SECRET` | JWT session secret (min 32 chars) | Yes |
+| `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key (default: `false`) | No |
 
 > 💡 **Generating secure values:**
 > - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `moca_admin_`

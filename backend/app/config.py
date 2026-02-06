@@ -57,10 +57,10 @@ class Settings(BaseSettings):
     enable_graph_extraction: bool = Field(default=True)  # Enable LLM-based entity/relationship extraction
     graph_extraction_model: str = Field(default="")  # Model for extraction (defaults to openai_model if empty)
     max_graph_hops: int = Field(default=2)  # Maximum hops for graph traversal in queries
-    concurrent_extractions: int = Field(default=20)  # Number of chunks to process concurrently for graph extraction
+    concurrent_extractions: int = Field(default=3)  # Number of chunks to process concurrently for graph extraction
     
     # Batch Processing Configuration
-    batch_processing_concurrency: int = Field(default=10)  # Number of documents to process concurrently in batch mode
+    batch_processing_concurrency: int = Field(default=2)  # Number of documents to process concurrently in batch mode
     processing_thread_workers: int = Field(default=4)  # Thread pool workers for CPU-intensive operations
     
     # Enhanced RAG Configuration
@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     admin_password: str = Field(default="")  # Admin login password (required for auth)
     admin_api_key: str = Field(default="")  # Admin API key for full backend access
     session_secret: str = Field(default="")  # Secret for JWT session encryption (min 32 chars)
+    track_admin_api_key_usage: bool = Field(default=False)  # Track usage analytics for admin API key
     
     # ==========================================================================
     # Compute3 Turbo Mode Configuration

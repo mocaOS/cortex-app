@@ -814,7 +814,7 @@ export default function ExplorePage() {
               <div className="h-[600px] relative">
                 {/* Search mode indicator */}
                 {selectedEntities.length > 0 && (
-                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-accent/90 text-accent-foreground px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2">
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-accent/90 text-foreground px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2">
                     <Sparkles className="w-4 h-4" />
                     Showing connections for {selectedEntities.length} {selectedEntities.length === 1 ? "entity" : "entities"}
                     <button

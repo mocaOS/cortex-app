@@ -581,6 +581,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `ADMIN_PASSWORD` | Admin login password | Yes | - |
 | `ADMIN_API_KEY` | Admin API key for full backend access | Yes | - |
 | `SESSION_SECRET` | JWT session encryption secret (min 32 chars) | Yes | - |
+| `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key | No | `false` |
 
 #### Compute3 Turbo Mode
 

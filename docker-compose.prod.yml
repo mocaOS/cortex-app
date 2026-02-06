@@ -32,6 +32,8 @@ services:
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
       - PYTHONUNBUFFERED=1
+      # API Key Analytics - track admin key usage (default: false)
+      - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs

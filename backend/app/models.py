@@ -497,3 +497,263 @@ class UpdateAPIKeyRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="New name")
     permissions: Optional[List[APIKeyPermission]] = Field(default=None, description="New permissions")
     is_active: Optional[bool] = Field(default=None, description="Activate or deactivate the key")
+
+
+# =============================================================================
+# API Key Usage Statistics
+# =============================================================================
+
+class APIKeyStats(BaseModel):
+    """Usage statistics for an API key."""
+    total_requests: int = Field(default=0, description="Total API calls made with this key")
+    requests_today: int = Field(default=0, description="Requests in current day (UTC)")
+    requests_this_week: int = Field(default=0, description="Requests in current week")
+    requests_this_month: int = Field(default=0, description="Requests in current month")
+    error_count: int = Field(default=0, description="Total errors encountered")
+    last_error_at: Optional[datetime] = Field(default=None, description="When last error occurred")
+    last_error_message: Optional[str] = Field(default=None, description="Last error message")
+    endpoint_breakdown: dict = Field(default_factory=dict, description="Request counts by endpoint category")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total_requests": 1234,
+                "requests_today": 45,
+                "requests_this_week": 312,
+                "requests_this_month": 890,
+                "error_count": 5,
+                "last_error_at": "2024-01-15T10:30:00Z",
+                "last_error_message": "Rate limit exceeded",
+                "endpoint_breakdown": {
+                    "ask": 500,
+                    "search": 300,
+                    "upload": 50,
+                    "documents": 200,
+                    "graph": 100,
+                    "other": 84
+                }
+            }
+        }
+
+
+class APIKeyUsageDataPoint(BaseModel):
+    """A single data point for usage history charts."""
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    requests: int = Field(default=0, description="Request count for this date")
+    errors: int = Field(default=0, description="Error count for this date")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "date": "2024-01-15",
+                "requests": 156,
+                "errors": 2
+            }
+        }
+
+
+class APIKeyWithStats(APIKeyListItem):
+    """API key with usage statistics attached."""
+    stats: Optional[APIKeyStats] = Field(default=None, description="Usage statistics")
+
+
+class APIKeyUsageHistoryResponse(BaseModel):
+    """Response model for API key usage history."""
+    key_id: str = Field(..., description="API key ID")
+    key_name: str = Field(..., description="API key name")
+    history: List[APIKeyUsageDataPoint] = Field(default_factory=list, description="Daily usage data")
+    period_days: int = Field(default=30, description="Number of days in history")
+
+
+class AdminStatsOverview(BaseModel):
+    """Aggregated statistics across all API keys for admin dashboard."""
+    total_keys: int = Field(default=0, description="Total number of API keys")
+    active_keys: int = Field(default=0, description="Number of active API keys")
+    total_requests_all_time: int = Field(default=0, description="Total requests across all keys")
+    total_requests_today: int = Field(default=0, description="Total requests today across all keys")
+    total_requests_this_week: int = Field(default=0, description="Total requests this week across all keys")
+    total_requests_this_month: int = Field(default=0, description="Total requests this month across all keys")
+    total_errors: int = Field(default=0, description="Total errors across all keys")
+    most_active_key: Optional[str] = Field(default=None, description="Name of the most active key")
+    endpoint_breakdown: dict = Field(default_factory=dict, description="Aggregated endpoint usage")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total_keys": 5,
+                "active_keys": 4,
+                "total_requests_all_time": 15000,
+                "total_requests_today": 234,
+                "total_requests_this_week": 1567,
+                "total_requests_this_month": 5890,
+                "total_errors": 45,
+                "most_active_key": "Production API Key",
+                "endpoint_breakdown": {
+                    "ask": 8000,
+                    "search": 4000,
+                    "upload": 500,
+                    "documents": 1500,
+                    "graph": 800,
+                    "other": 200
+                }
+            }
+        }
+
+
+# =============================================================================
+# System Reset
+# =============================================================================
+
+class SystemResetRequest(BaseModel):
+    """Request model for system reset with selective deletion options."""
+    delete_documents: bool = Field(default=True, description="Delete all documents, chunks, entities, and communities")
+    delete_uploaded_files: bool = Field(default=True, description="Delete uploaded files from disk")
+    delete_custom_inputs: bool = Field(default=True, description="Delete custom input files from disk")
+    delete_collections: bool = Field(default=True, description="Delete all non-default collections")
+    delete_api_keys: bool = Field(default=False, description="Delete all API keys (dangerous - defaults to false)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "delete_documents": True,
+                "delete_uploaded_files": True,
+                "delete_custom_inputs": True,
+                "delete_collections": True,
+                "delete_api_keys": False
+            }
+        }
+
+
+class SystemResetResponse(BaseModel):
+    """Response model for system reset operation."""
+    message: str = Field(..., description="Summary message")
+    documents_deleted: int = Field(default=0, description="Number of documents deleted")
+    entities_removed: int = Field(default=0, description="Number of entities removed")
+    communities_removed: int = Field(default=0, description="Number of communities removed")
+    collections_deleted: int = Field(default=0, description="Number of collections deleted")
+    api_keys_deleted: int = Field(default=0, description="Number of API keys deleted")
+    uploaded_files_deleted: int = Field(default=0, description="Number of uploaded files deleted")
+    custom_inputs_deleted: int = Field(default=0, description="Number of custom input files deleted")
+    processing_cancelled: int = Field(default=0, description="Number of processing tasks cancelled")
+
+
+# =============================================================================
+# System Configuration (Safe to expose - no secrets)
+# =============================================================================
+
+class SystemConfigResponse(BaseModel):
+    """System configuration response - excludes sensitive data like API keys and passwords."""
+    
+    # LLM Configuration
+    openai_model: str = Field(..., description="Primary LLM model")
+    fast_mode_model: str = Field(..., description="Fast mode LLM model")
+    
+    # Embedding Configuration
+    embedding_model: str = Field(..., description="Embedding model")
+    embedding_dimension: int = Field(..., description="Embedding vector dimension")
+    use_openai_embeddings: bool = Field(..., description="Whether OpenAI embeddings are enabled")
+    
+    # Upload Configuration
+    max_file_size_mb: int = Field(..., description="Maximum file size in MB")
+    allowed_extensions: List[str] = Field(..., description="Allowed file extensions")
+    
+    # Chunking Configuration
+    chunk_size: int = Field(..., description="Chunk size in tokens/words")
+    chunk_overlap: int = Field(..., description="Overlap between chunks")
+    chunk_by: str = Field(..., description="Chunking method: word or sentence")
+    sentences_per_chunk: int = Field(..., description="Sentences per chunk when using sentence splitting")
+    
+    # GraphRAG Configuration
+    enable_graph_extraction: bool = Field(..., description="Whether graph extraction is enabled")
+    max_graph_hops: int = Field(..., description="Maximum hops for graph traversal")
+    concurrent_extractions: int = Field(..., description="Concurrent chunk extractions")
+    
+    # Batch Processing
+    batch_processing_concurrency: int = Field(..., description="Batch processing concurrency limit")
+    processing_thread_workers: int = Field(..., description="Thread pool workers")
+    
+    # Enhanced RAG Configuration
+    enable_reranking: bool = Field(..., description="Whether reranking is enabled")
+    reranking_model: str = Field(..., description="Cross-encoder reranking model")
+    enable_hybrid_search: bool = Field(..., description="Whether hybrid search is enabled")
+    vector_weight: float = Field(..., description="Vector search weight in hybrid")
+    keyword_weight: float = Field(..., description="Keyword search weight in hybrid")
+    graph_weight: float = Field(..., description="Graph context weight in hybrid")
+    max_conversation_history: int = Field(..., description="Max conversation messages")
+    enable_agentic_rag: bool = Field(..., description="Whether agentic RAG is enabled")
+    max_agentic_steps: int = Field(..., description="Maximum agentic RAG steps")
+    
+    # Community Detection
+    enable_community_detection: bool = Field(..., description="Whether community detection is enabled")
+    min_community_size: int = Field(..., description="Minimum community size")
+    max_communities: int = Field(..., description="Maximum number of communities")
+    enable_graph_summarization: bool = Field(..., description="Whether graph summarization is enabled")
+    
+    # Entity Resolution
+    enable_semantic_entity_resolution: bool = Field(..., description="Whether semantic entity resolution is enabled")
+    entity_similarity_threshold: float = Field(..., description="Entity similarity threshold")
+    
+    # Collections
+    enable_collections: bool = Field(..., description="Whether collections are enabled")
+    default_collection: str = Field(..., description="Default collection name")
+    
+    # Visibility/UX
+    stream_reasoning_steps: bool = Field(..., description="Whether to stream reasoning steps")
+    show_retrieval_stats: bool = Field(..., description="Whether to show retrieval stats")
+    
+    # Security
+    prompt_security: bool = Field(..., description="Whether prompt security is enabled")
+    
+    # Turbo Mode (Compute3)
+    turbo_mode_available: bool = Field(..., description="Whether turbo mode is available")
+    compute3_gpu_type: str = Field(..., description="GPU type for turbo mode")
+    compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
+    compute3_model: str = Field(..., description="Model for turbo mode")
+    compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "openai_model": "gpt-4o-mini",
+                "fast_mode_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+                "embedding_dimension": 1536,
+                "use_openai_embeddings": True,
+                "max_file_size_mb": 50,
+                "allowed_extensions": [".pdf", ".txt", ".md"],
+                "chunk_size": 500,
+                "chunk_overlap": 50,
+                "chunk_by": "sentence",
+                "sentences_per_chunk": 5,
+                "enable_graph_extraction": True,
+                "max_graph_hops": 2,
+                "concurrent_extractions": 20,
+                "batch_processing_concurrency": 10,
+                "processing_thread_workers": 4,
+                "enable_reranking": True,
+                "reranking_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                "enable_hybrid_search": True,
+                "vector_weight": 0.5,
+                "keyword_weight": 0.3,
+                "graph_weight": 0.2,
+                "max_conversation_history": 6,
+                "enable_agentic_rag": True,
+                "max_agentic_steps": 3,
+                "enable_community_detection": True,
+                "min_community_size": 3,
+                "max_communities": 50,
+                "enable_graph_summarization": True,
+                "enable_semantic_entity_resolution": True,
+                "entity_similarity_threshold": 0.85,
+                "enable_collections": True,
+                "default_collection": "default",
+                "stream_reasoning_steps": True,
+                "show_retrieval_stats": True,
+                "prompt_security": True,
+                "turbo_mode_available": False,
+                "compute3_gpu_type": "h100",
+                "compute3_gpu_count": 4,
+                "compute3_model": "MiniMaxAI/MiniMax-M2.1",
+                "compute3_default_runtime": 3600
+            }
+        }

@@ -55,6 +55,8 @@ services:
       - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
       - COMPUTE3_GPU_COUNT=${COMPUTE3_GPU_COUNT:-4}
       - COMPUTE3_MODEL=${COMPUTE3_MODEL:-minimax-m21}
+      # API Key Analytics - track admin key usage (default: false)
+      - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs

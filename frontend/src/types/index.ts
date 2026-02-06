@@ -436,3 +436,144 @@ export interface UpdateAPIKeyRequest {
   permissions?: APIKeyPermission[];
   is_active?: boolean;
 }
+
+// =============================================================================
+// API Key Usage Statistics Types
+// =============================================================================
+
+export interface APIKeyStats {
+  total_requests: number;
+  requests_today: number;
+  requests_this_week: number;
+  requests_this_month: number;
+  error_count: number;
+  last_error_at?: string | null;
+  last_error_message?: string | null;
+  endpoint_breakdown: Record<string, number>;
+}
+
+export interface APIKeyUsageDataPoint {
+  date: string;
+  requests: number;
+  errors: number;
+}
+
+export interface APIKeyWithStats extends APIKeyListItem {
+  stats?: APIKeyStats;
+}
+
+export interface APIKeyUsageHistoryResponse {
+  key_id: string;
+  key_name: string;
+  history: APIKeyUsageDataPoint[];
+  period_days: number;
+}
+
+export interface AdminStatsOverview {
+  total_keys: number;
+  active_keys: number;
+  total_requests_all_time: number;
+  total_requests_today: number;
+  total_requests_this_week: number;
+  total_requests_this_month: number;
+  total_errors: number;
+  most_active_key?: string | null;
+  endpoint_breakdown: Record<string, number>;
+}
+
+// =============================================================================
+// System Reset Types
+// =============================================================================
+
+export interface SystemResetRequest {
+  delete_documents?: boolean;
+  delete_uploaded_files?: boolean;
+  delete_custom_inputs?: boolean;
+  delete_collections?: boolean;
+  delete_api_keys?: boolean;
+}
+
+export interface SystemResetResponse {
+  message: string;
+  documents_deleted: number;
+  entities_removed: number;
+  communities_removed: number;
+  collections_deleted: number;
+  api_keys_deleted: number;
+  uploaded_files_deleted: number;
+  custom_inputs_deleted: number;
+  processing_cancelled: number;
+}
+
+// =============================================================================
+// System Configuration Types
+// =============================================================================
+
+export interface SystemConfig {
+  // LLM Configuration
+  openai_model: string;
+  fast_mode_model: string;
+  
+  // Embedding Configuration
+  embedding_model: string;
+  embedding_dimension: number;
+  use_openai_embeddings: boolean;
+  
+  // Upload Configuration
+  max_file_size_mb: number;
+  allowed_extensions: string[];
+  
+  // Chunking Configuration
+  chunk_size: number;
+  chunk_overlap: number;
+  chunk_by: string;
+  sentences_per_chunk: number;
+  
+  // GraphRAG Configuration
+  enable_graph_extraction: boolean;
+  max_graph_hops: number;
+  concurrent_extractions: number;
+  
+  // Batch Processing
+  batch_processing_concurrency: number;
+  processing_thread_workers: number;
+  
+  // Enhanced RAG Configuration
+  enable_reranking: boolean;
+  reranking_model: string;
+  enable_hybrid_search: boolean;
+  vector_weight: number;
+  keyword_weight: number;
+  graph_weight: number;
+  max_conversation_history: number;
+  enable_agentic_rag: boolean;
+  max_agentic_steps: number;
+  
+  // Community Detection
+  enable_community_detection: boolean;
+  min_community_size: number;
+  max_communities: number;
+  enable_graph_summarization: boolean;
+  
+  // Entity Resolution
+  enable_semantic_entity_resolution: boolean;
+  entity_similarity_threshold: number;
+  
+  // Collections
+  enable_collections: boolean;
+  default_collection: string;
+  
+  // Visibility/UX
+  stream_reasoning_steps: boolean;
+  show_retrieval_stats: boolean;
+  
+  // Security
+  prompt_security: boolean;
+  
+  // Turbo Mode (Compute3)
+  turbo_mode_available: boolean;
+  compute3_gpu_type: string;
+  compute3_gpu_count: number;
+  compute3_model: string;
+  compute3_default_runtime: number;
+}

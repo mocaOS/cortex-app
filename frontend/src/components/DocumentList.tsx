@@ -66,6 +66,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
   
+  // Track last clicked index for shift-click range selection
+  const lastClickedIndex = useRef<number | null>(null);
+  
   // Pagination - read from URL, default to 1
   const currentPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
   
@@ -228,16 +231,40 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   };
 
-  const toggleSelection = (id: string) => {
-    setSelectedIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
+  const toggleSelection = (id: string, shiftKey?: boolean) => {
+    const currentIndex = filteredDocuments.findIndex((d) => d.id === id);
+    
+    // Handle shift-click range selection
+    if (shiftKey && lastClickedIndex.current !== null && currentIndex !== -1) {
+      const start = Math.min(lastClickedIndex.current, currentIndex);
+      const end = Math.max(lastClickedIndex.current, currentIndex);
+      
+      // Get all document IDs in the range
+      const rangeIds = filteredDocuments.slice(start, end + 1).map((d) => d.id);
+      
+      setSelectedIds((prev) => {
+        const newSet = new Set(prev);
+        // Add all documents in the range
+        rangeIds.forEach((docId) => newSet.add(docId));
+        return newSet;
+      });
+    } else {
+      // Normal toggle
+      setSelectedIds((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(id)) {
+          newSet.delete(id);
+        } else {
+          newSet.add(id);
+        }
+        return newSet;
+      });
+    }
+    
+    // Update last clicked index for next shift-click
+    if (currentIndex !== -1) {
+      lastClickedIndex.current = currentIndex;
+    }
   };
 
   const toggleSelectAll = () => {

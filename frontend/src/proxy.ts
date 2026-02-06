@@ -17,7 +17,7 @@ const protectedRoutes = [
 // Routes that are public (no auth required)
 const publicRoutes = ["/login"];
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
   
   // Check if current route is protected
@@ -52,7 +52,7 @@ export default async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-// Configure which routes the middleware runs on
+// Configure which routes the proxy runs on
 export const config = {
   matcher: [
     /*

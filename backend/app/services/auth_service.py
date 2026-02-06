@@ -34,13 +34,15 @@ class AuthResult:
         is_admin: bool = False,
         permissions: List[APIKeyPermission] = None,
         key_id: Optional[str] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        key_name: Optional[str] = None
     ):
         self.is_authenticated = is_authenticated
         self.is_admin = is_admin
         self.permissions = permissions or []
         self.key_id = key_id
         self.error = error
+        self.key_name = key_name
     
     def has_permission(self, permission: APIKeyPermission) -> bool:
         """Check if this auth result has a specific permission."""
@@ -129,7 +131,8 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                     is_authenticated=True,
                     is_admin=False,
                     permissions=permissions,
-                    key_id=stored_key["id"]
+                    key_id=stored_key["id"],
+                    key_name=stored_key["name"]
                 )
         
         # No matching key found

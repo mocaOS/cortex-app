@@ -29,6 +29,13 @@ import type {
   CreateAPIKeyRequest,
   CreateAPIKeyResponse,
   UpdateAPIKeyRequest,
+  APIKeyStats,
+  APIKeyWithStats,
+  APIKeyUsageHistoryResponse,
+  AdminStatsOverview,
+  SystemResetRequest,
+  SystemResetResponse,
+  SystemConfig,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -943,6 +950,75 @@ class ApiClient {
   async activateApiKey(keyId: string): Promise<APIKeyListItem> {
     return this.request<APIKeyListItem>(`/api/admin/api-keys/${keyId}/activate`, {
       method: "POST",
+    });
+  }
+
+  // ===========================================================================
+  // API Key Statistics
+  // ===========================================================================
+
+  /**
+   * List all API keys with their usage statistics (admin only).
+   */
+  async listApiKeysWithStats(): Promise<APIKeyWithStats[]> {
+    return this.request<APIKeyWithStats[]>("/api/admin/api-keys/with-stats");
+  }
+
+  /**
+   * Get detailed usage statistics for a specific API key (admin only).
+   */
+  async getApiKeyStats(keyId: string): Promise<APIKeyStats> {
+    return this.request<APIKeyStats>(`/api/admin/api-keys/${keyId}/stats`);
+  }
+
+  /**
+   * Get daily usage history for an API key (admin only).
+   * 
+   * @param keyId - The API key ID
+   * @param days - Number of days of history (default 30, max 365)
+   */
+  async getApiKeyUsageHistory(keyId: string, days = 30): Promise<APIKeyUsageHistoryResponse> {
+    return this.request<APIKeyUsageHistoryResponse>(
+      `/api/admin/api-keys/${keyId}/usage-history?days=${days}`
+    );
+  }
+
+  /**
+   * Get aggregated statistics across all API keys (admin only).
+   */
+  async getAdminStatsOverview(): Promise<AdminStatsOverview> {
+    return this.request<AdminStatsOverview>("/api/admin/stats/overview");
+  }
+
+  // ===========================================================================
+  // System Configuration
+  // ===========================================================================
+
+  /**
+   * Get system configuration (admin only).
+   * 
+   * Returns current system configuration excluding sensitive data
+   * like API keys, passwords, and secrets.
+   */
+  async getSystemConfig(): Promise<SystemConfig> {
+    return this.request<SystemConfig>("/api/admin/config");
+  }
+
+  // ===========================================================================
+  // System Reset
+  // ===========================================================================
+
+  /**
+   * Reset the system by deleting selected data (admin only).
+   * 
+   * WARNING: This is a destructive operation that cannot be undone.
+   * 
+   * @param options - What to delete
+   */
+  async resetSystem(options: SystemResetRequest): Promise<SystemResetResponse> {
+    return this.request<SystemResetResponse>("/api/admin/reset", {
+      method: "POST",
+      body: JSON.stringify(options),
     });
   }
 }

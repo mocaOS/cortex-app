@@ -10,6 +10,7 @@ Features:
 from neo4j import GraphDatabase, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 from typing import Optional, List, Tuple
+from datetime import datetime, timedelta
 import logging
 import numpy as np
 from contextlib import asynccontextmanager
@@ -2394,6 +2395,69 @@ class Neo4jService:
                 return dict(record)
             return None
     
+    def ensure_admin_key_exists(self, admin_key_prefix: str = "admin") -> dict:
+        """
+        Ensure the admin API key has a record in Neo4j for usage tracking.
+        
+        The admin key is validated against an environment variable, not a stored hash,
+        but we still need a record to track usage statistics.
+        
+        Args:
+            admin_key_prefix: Prefix to identify the admin key
+            
+        Returns:
+            The admin key record (created or existing)
+        """
+        with self.driver.session() as session:
+            # Try to find existing admin key record
+            result = session.run("""
+                MATCH (k:APIKey {id: 'admin'})
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.created_by as created_by,
+                       k.total_requests as total_requests
+            """)
+            
+            record = result.single()
+            if record:
+                logger.debug("Admin API key record already exists")
+                return dict(record)
+            
+            # Create admin key record (no hash stored - validated against env var)
+            result = session.run("""
+                CREATE (k:APIKey {
+                    id: 'admin',
+                    name: 'Admin API Key',
+                    key_prefix: $key_prefix,
+                    key_hash: 'ENV_VAR_AUTH',
+                    permissions: ['read', 'manage'],
+                    is_active: true,
+                    created_at: datetime(),
+                    created_by: 'system',
+                    is_admin_key: true,
+                    total_requests: 0,
+                    error_count: 0
+                })
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.created_by as created_by
+            """, key_prefix=admin_key_prefix)
+            
+            record = result.single()
+            if record:
+                logger.info("Created admin API key record for usage tracking")
+                return dict(record)
+            
+            return {}
+    
     def get_api_key_by_id(self, key_id: str) -> Optional[dict]:
         """Get an API key by its ID."""
         with self.driver.session() as session:
@@ -2519,6 +2583,498 @@ class Neo4jService:
                 MATCH (k:APIKey {id: $id})
                 SET k.last_used_at = datetime()
             """, id=key_id)
+    
+    # =========================================================================
+    # API Key Usage Tracking
+    # =========================================================================
+    
+    def record_api_key_usage(
+        self,
+        key_id: str,
+        endpoint_category: str,
+        is_error: bool = False,
+        error_message: Optional[str] = None
+    ) -> None:
+        """
+        Record a single API request for usage tracking.
+        
+        This method:
+        1. Increments the total request counter on the APIKey node
+        2. Updates/creates the daily usage log node
+        3. Tracks endpoint-specific counts
+        4. Records errors if applicable
+        
+        Args:
+            key_id: The API key ID
+            endpoint_category: Category of endpoint (ask, search, upload, documents, graph, other)
+            is_error: Whether this request resulted in an error
+            error_message: Error message if is_error is True
+        """
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        
+        with self.driver.session() as session:
+            # Update API key stats and daily usage in a single transaction
+            session.run("""
+                MATCH (k:APIKey {id: $key_id})
+                
+                // Update total requests on the key
+                SET k.total_requests = COALESCE(k.total_requests, 0) + 1,
+                    k.last_used_at = datetime()
+                
+                // Handle error tracking
+                WITH k
+                CALL {
+                    WITH k
+                    WHERE $is_error = true
+                    SET k.error_count = COALESCE(k.error_count, 0) + 1,
+                        k.last_error_at = datetime(),
+                        k.last_error_message = $error_message
+                    RETURN 1 as dummy
+                    UNION ALL
+                    WITH k
+                    WHERE $is_error = false
+                    RETURN 0 as dummy
+                }
+                
+                // Get or create daily usage log
+                WITH k
+                MERGE (log:APIKeyUsageLog {key_id: $key_id, date: $today})
+                ON CREATE SET 
+                    log.request_count = 1,
+                    log.error_count = CASE WHEN $is_error THEN 1 ELSE 0 END,
+                    log.endpoint_counts = {},
+                    log.created_at = datetime()
+                ON MATCH SET 
+                    log.request_count = log.request_count + 1,
+                    log.error_count = log.error_count + CASE WHEN $is_error THEN 1 ELSE 0 END
+                
+                // Create relationship if not exists
+                MERGE (k)-[:HAS_USAGE]->(log)
+                
+                // Update endpoint counts in the log
+                WITH log
+                SET log.endpoint_counts = CASE 
+                    WHEN log.endpoint_counts IS NULL THEN {`$endpoint_category`: 1}
+                    ELSE apoc.map.setKey(
+                        log.endpoint_counts, 
+                        $endpoint_category, 
+                        COALESCE(log.endpoint_counts[$endpoint_category], 0) + 1
+                    )
+                END
+            """, 
+                key_id=key_id, 
+                today=today, 
+                endpoint_category=endpoint_category,
+                is_error=is_error,
+                error_message=error_message
+            )
+    
+    def record_api_key_usage_simple(
+        self,
+        key_id: str,
+        endpoint_category: str,
+        is_error: bool = False,
+        error_message: Optional[str] = None
+    ) -> None:
+        """
+        Record API usage without APOC dependency (simpler version).
+        Uses multiple queries instead of complex APOC functions.
+        """
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        
+        with self.driver.session() as session:
+            # Update API key counters
+            if is_error:
+                session.run("""
+                    MATCH (k:APIKey {id: $key_id})
+                    SET k.total_requests = COALESCE(k.total_requests, 0) + 1,
+                        k.error_count = COALESCE(k.error_count, 0) + 1,
+                        k.last_used_at = datetime(),
+                        k.last_error_at = datetime(),
+                        k.last_error_message = $error_message
+                """, key_id=key_id, error_message=error_message)
+            else:
+                session.run("""
+                    MATCH (k:APIKey {id: $key_id})
+                    SET k.total_requests = COALESCE(k.total_requests, 0) + 1,
+                        k.last_used_at = datetime()
+                """, key_id=key_id)
+            
+            # Get or create daily usage log and update counts
+            session.run("""
+                MATCH (k:APIKey {id: $key_id})
+                MERGE (log:APIKeyUsageLog {key_id: $key_id, date: $today})
+                ON CREATE SET 
+                    log.request_count = 0,
+                    log.error_count = 0,
+                    log.created_at = datetime()
+                MERGE (k)-[:HAS_USAGE]->(log)
+                SET log.request_count = log.request_count + 1,
+                    log.error_count = log.error_count + CASE WHEN $is_error THEN 1 ELSE 0 END
+            """, key_id=key_id, today=today, is_error=is_error)
+            
+            # Update endpoint counts using a property naming convention
+            endpoint_prop = f"ep_{endpoint_category}"
+            session.run(f"""
+                MATCH (log:APIKeyUsageLog {{key_id: $key_id, date: $today}})
+                SET log.{endpoint_prop} = COALESCE(log.{endpoint_prop}, 0) + 1
+            """, key_id=key_id, today=today)
+    
+    def get_api_key_stats(self, key_id: str) -> Optional[dict]:
+        """
+        Get comprehensive usage statistics for an API key.
+        
+        Returns stats including:
+        - Total requests all time
+        - Requests today/this week/this month
+        - Error counts
+        - Endpoint breakdown
+        """
+        today = datetime.utcnow()
+        today_str = today.strftime("%Y-%m-%d")
+        
+        # Calculate date boundaries
+        week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+        month_start = today.strftime("%Y-%m-01")
+        
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey {id: $key_id})
+                
+                // Get requests today
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(today_log:APIKeyUsageLog {date: $today_str})
+                
+                // Get requests this week
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(week_log:APIKeyUsageLog)
+                WHERE week_log.date >= $week_start
+                
+                // Get requests this month
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(month_log:APIKeyUsageLog)
+                WHERE month_log.date >= $month_start
+                
+                // Get all logs for endpoint breakdown
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(all_log:APIKeyUsageLog)
+                
+                RETURN k.id as id,
+                       k.name as name,
+                       COALESCE(k.total_requests, 0) as total_requests,
+                       COALESCE(k.error_count, 0) as error_count,
+                       k.last_error_at as last_error_at,
+                       k.last_error_message as last_error_message,
+                       COALESCE(today_log.request_count, 0) as requests_today,
+                       COALESCE(SUM(week_log.request_count), 0) as requests_this_week,
+                       COALESCE(SUM(month_log.request_count), 0) as requests_this_month,
+                       COLLECT(DISTINCT all_log) as all_logs
+            """, 
+                key_id=key_id,
+                today_str=today_str,
+                week_start=week_start,
+                month_start=month_start
+            )
+            
+            record = result.single()
+            if not record or record["id"] is None:
+                return None
+            
+            # Aggregate endpoint breakdown from logs
+            endpoint_breakdown = {}
+            for log in record["all_logs"]:
+                if log:
+                    log_dict = dict(log)
+                    for key, value in log_dict.items():
+                        if key.startswith("ep_") and isinstance(value, (int, float)):
+                            endpoint = key[3:]  # Remove "ep_" prefix
+                            endpoint_breakdown[endpoint] = endpoint_breakdown.get(endpoint, 0) + int(value)
+            
+            return {
+                "total_requests": record["total_requests"],
+                "requests_today": record["requests_today"],
+                "requests_this_week": int(record["requests_this_week"]) if record["requests_this_week"] else 0,
+                "requests_this_month": int(record["requests_this_month"]) if record["requests_this_month"] else 0,
+                "error_count": record["error_count"],
+                "last_error_at": record["last_error_at"],
+                "last_error_message": record["last_error_message"],
+                "endpoint_breakdown": endpoint_breakdown
+            }
+    
+    def get_api_key_usage_history(self, key_id: str, days: int = 30) -> List[dict]:
+        """
+        Get daily usage history for an API key.
+        
+        Args:
+            key_id: The API key ID
+            days: Number of days of history to retrieve
+            
+        Returns:
+            List of {date, requests, errors} for each day
+        """
+        start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey {id: $key_id})-[:HAS_USAGE]->(log:APIKeyUsageLog)
+                WHERE log.date >= $start_date
+                RETURN log.date as date,
+                       log.request_count as requests,
+                       log.error_count as errors
+                ORDER BY log.date ASC
+            """, key_id=key_id, start_date=start_date)
+            
+            return [
+                {
+                    "date": record["date"],
+                    "requests": record["requests"] or 0,
+                    "errors": record["errors"] or 0
+                }
+                for record in result
+            ]
+    
+    def get_admin_stats_overview(self) -> dict:
+        """
+        Get aggregated statistics across all API keys.
+        """
+        today = datetime.utcnow()
+        today_str = today.strftime("%Y-%m-%d")
+        week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+        month_start = today.strftime("%Y-%m-01")
+        
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey)
+                
+                // Get today's logs
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(today_log:APIKeyUsageLog {date: $today_str})
+                
+                // Get week's logs
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(week_log:APIKeyUsageLog)
+                WHERE week_log.date >= $week_start
+                
+                // Get month's logs
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(month_log:APIKeyUsageLog)
+                WHERE month_log.date >= $month_start
+                
+                // Get all logs for endpoint breakdown
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(all_log:APIKeyUsageLog)
+                
+                WITH k, 
+                     COALESCE(SUM(today_log.request_count), 0) as today_requests,
+                     COALESCE(SUM(week_log.request_count), 0) as week_requests,
+                     COALESCE(SUM(month_log.request_count), 0) as month_requests,
+                     COLLECT(DISTINCT all_log) as logs
+                
+                RETURN COUNT(k) as total_keys,
+                       SUM(CASE WHEN k.is_active THEN 1 ELSE 0 END) as active_keys,
+                       SUM(COALESCE(k.total_requests, 0)) as total_requests_all_time,
+                       SUM(today_requests) as total_requests_today,
+                       SUM(week_requests) as total_requests_this_week,
+                       SUM(month_requests) as total_requests_this_month,
+                       SUM(COALESCE(k.error_count, 0)) as total_errors,
+                       COLLECT({name: k.name, requests: k.total_requests}) as keys_with_requests,
+                       COLLECT(logs) as all_logs
+            """, 
+                today_str=today_str,
+                week_start=week_start,
+                month_start=month_start
+            )
+            
+            record = result.single()
+            if not record:
+                return {
+                    "total_keys": 0,
+                    "active_keys": 0,
+                    "total_requests_all_time": 0,
+                    "total_requests_today": 0,
+                    "total_requests_this_week": 0,
+                    "total_requests_this_month": 0,
+                    "total_errors": 0,
+                    "most_active_key": None,
+                    "endpoint_breakdown": {}
+                }
+            
+            # Find most active key
+            most_active_key = None
+            max_requests = 0
+            for key_info in record["keys_with_requests"]:
+                if key_info and key_info.get("requests", 0) and key_info["requests"] > max_requests:
+                    max_requests = key_info["requests"]
+                    most_active_key = key_info.get("name")
+            
+            # Aggregate endpoint breakdown
+            endpoint_breakdown = {}
+            for log_list in record["all_logs"]:
+                if log_list:
+                    for log in log_list:
+                        if log:
+                            log_dict = dict(log)
+                            for key, value in log_dict.items():
+                                if key.startswith("ep_") and isinstance(value, (int, float)):
+                                    endpoint = key[3:]
+                                    endpoint_breakdown[endpoint] = endpoint_breakdown.get(endpoint, 0) + int(value)
+            
+            return {
+                "total_keys": record["total_keys"] or 0,
+                "active_keys": int(record["active_keys"]) if record["active_keys"] else 0,
+                "total_requests_all_time": int(record["total_requests_all_time"]) if record["total_requests_all_time"] else 0,
+                "total_requests_today": int(record["total_requests_today"]) if record["total_requests_today"] else 0,
+                "total_requests_this_week": int(record["total_requests_this_week"]) if record["total_requests_this_week"] else 0,
+                "total_requests_this_month": int(record["total_requests_this_month"]) if record["total_requests_this_month"] else 0,
+                "total_errors": int(record["total_errors"]) if record["total_errors"] else 0,
+                "most_active_key": most_active_key,
+                "endpoint_breakdown": endpoint_breakdown
+            }
+    
+    def list_api_keys_with_stats(self) -> List[dict]:
+        """
+        List all API keys with their usage statistics.
+        """
+        today = datetime.utcnow()
+        today_str = today.strftime("%Y-%m-%d")
+        week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+        month_start = today.strftime("%Y-%m-01")
+        
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey)
+                
+                // Get today's log
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(today_log:APIKeyUsageLog {date: $today_str})
+                
+                // Get week's logs
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(week_log:APIKeyUsageLog)
+                WHERE week_log.date >= $week_start
+                
+                // Get month's logs  
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(month_log:APIKeyUsageLog)
+                WHERE month_log.date >= $month_start
+                
+                // Get all logs for endpoint breakdown
+                OPTIONAL MATCH (k)-[:HAS_USAGE]->(all_log:APIKeyUsageLog)
+                
+                WITH k,
+                     COALESCE(today_log.request_count, 0) as requests_today,
+                     COLLECT(DISTINCT week_log) as week_logs,
+                     COLLECT(DISTINCT month_log) as month_logs,
+                     COLLECT(DISTINCT all_log) as all_logs
+                
+                RETURN k.id as id,
+                       k.name as name,
+                       k.key_prefix as key_prefix,
+                       k.permissions as permissions,
+                       k.is_active as is_active,
+                       k.created_at as created_at,
+                       k.last_used_at as last_used_at,
+                       k.created_by as created_by,
+                       COALESCE(k.total_requests, 0) as total_requests,
+                       COALESCE(k.error_count, 0) as error_count,
+                       k.last_error_at as last_error_at,
+                       k.last_error_message as last_error_message,
+                       requests_today,
+                       REDUCE(s = 0, log IN week_logs | s + COALESCE(log.request_count, 0)) as requests_this_week,
+                       REDUCE(s = 0, log IN month_logs | s + COALESCE(log.request_count, 0)) as requests_this_month,
+                       all_logs
+                ORDER BY k.created_at DESC
+            """,
+                today_str=today_str,
+                week_start=week_start,
+                month_start=month_start
+            )
+            
+            keys = []
+            for record in result:
+                # Aggregate endpoint breakdown
+                endpoint_breakdown = {}
+                for log in record["all_logs"]:
+                    if log:
+                        log_dict = dict(log)
+                        for key, value in log_dict.items():
+                            if key.startswith("ep_") and isinstance(value, (int, float)):
+                                endpoint = key[3:]
+                                endpoint_breakdown[endpoint] = endpoint_breakdown.get(endpoint, 0) + int(value)
+                
+                keys.append({
+                    "id": record["id"],
+                    "name": record["name"],
+                    "key_prefix": record["key_prefix"],
+                    "permissions": record["permissions"] or [],
+                    "is_active": record["is_active"],
+                    "created_at": record["created_at"],
+                    "last_used_at": record["last_used_at"],
+                    "created_by": record["created_by"],
+                    "stats": {
+                        "total_requests": record["total_requests"],
+                        "requests_today": record["requests_today"],
+                        "requests_this_week": record["requests_this_week"] or 0,
+                        "requests_this_month": record["requests_this_month"] or 0,
+                        "error_count": record["error_count"],
+                        "last_error_at": record["last_error_at"],
+                        "last_error_message": record["last_error_message"],
+                        "endpoint_breakdown": endpoint_breakdown
+                    }
+                })
+            
+            return keys
+    
+    # =========================================================================
+    # System Reset Operations
+    # =========================================================================
+    
+    def delete_all_collections(self) -> int:
+        """
+        Delete all non-default collections.
+        
+        Documents in deleted collections are moved to the default collection first.
+        
+        Returns:
+            Number of collections deleted
+        """
+        with self.driver.session() as session:
+            # First, move all documents from non-default collections to default
+            session.run("""
+                MATCH (col:Collection)-[:CONTAINS]->(d:Document)
+                WHERE col.id <> 'default'
+                MATCH (default_col:Collection {id: 'default'})
+                MERGE (default_col)-[:CONTAINS]->(d)
+                SET d.collection_id = 'default'
+                WITH col, d
+                MATCH (col)-[r:CONTAINS]->(d)
+                DELETE r
+            """)
+            
+            # Then delete all non-default collections
+            result = session.run("""
+                MATCH (col:Collection)
+                WHERE col.id <> 'default'
+                WITH collect(col) as collections
+                UNWIND collections as col
+                DETACH DELETE col
+                RETURN count(*) as deleted
+            """)
+            
+            deleted_count = result.single()["deleted"]
+            logger.info(f"Deleted {deleted_count} non-default collections")
+            return deleted_count
+    
+    def delete_all_api_keys(self) -> int:
+        """
+        Delete all API keys from the system.
+        
+        WARNING: This will remove all API keys, requiring new ones to be created.
+        
+        Returns:
+            Number of API keys deleted
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (k:APIKey)
+                WITH collect(k) as keys
+                UNWIND keys as k
+                DELETE k
+                RETURN count(*) as deleted
+            """)
+            
+            deleted_count = result.single()["deleted"]
+            logger.info(f"Deleted {deleted_count} API keys")
+            return deleted_count
 
 
 # Singleton instance

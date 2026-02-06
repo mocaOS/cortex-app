@@ -7,7 +7,7 @@ const docsUrl = process.env.DOCS_URL || "http://localhost:3000";
 const config: ZudokuConfig = {
   site: {
     logo: {
-      src: { light: "/logo-light.svg", dark: "/logo-dark.svg" },
+      src: { light: "/moca-logo-light.svg", dark: "/moca-logo-dark.svg" },
       alt: "MOCA Library",
       width: "130px",
     },
