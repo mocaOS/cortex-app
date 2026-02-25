@@ -257,6 +257,19 @@ COMPUTE3_DEFAULT_RUNTIME=3600
 ```bash
 # Backend API URL (for client-side requests)
 NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Custom Logo URL (optional)
+# If set, the logo will be replaced with the image from this URL
+# NEXT_PUBLIC_LOGO_URL=https://example.com/logo.png
+
+# Custom Accent Color (optional)
+# If set, overrides the default accent color in the UI
+# Accepts any valid CSS color value (hex, rgb, hsl, oklch, etc.)
+# Examples:
+#   NEXT_PUBLIC_ACCENT_COLOR=#3b82f6
+#   NEXT_PUBLIC_ACCENT_COLOR=rgb(59, 130, 246)
+#   NEXT_PUBLIC_ACCENT_COLOR=oklch(0.65 0.2 250)
+# NEXT_PUBLIC_ACCENT_COLOR=
 ```
 
 ---
@@ -284,6 +297,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `ADMIN_PASSWORD` | Yes | - | Admin login password |
 | `ADMIN_API_KEY` | Yes | - | Admin API key |
 | `SESSION_SECRET` | Yes | - | JWT session secret |
+| `NEXT_PUBLIC_LOGO_URL` | No | - | Custom logo URL |
+| `NEXT_PUBLIC_ACCENT_COLOR` | No | - | Custom UI accent color (CSS) |
 
 ---
 

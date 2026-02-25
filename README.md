@@ -608,6 +608,14 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `SESSION_SECRET` | JWT session encryption secret (min 32 chars) | Yes | - |
 | `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key | No | `false` |
 
+#### Frontend Customization
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `NEXT_PUBLIC_API_URL` | Backend API URL | Yes | `http://localhost:8000` |
+| `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | MOCA logo |
+| `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | MOCA theme |
+
 #### Compute3 Turbo Mode
 
 | Variable | Description | Required | Default |
