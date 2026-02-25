@@ -46,8 +46,8 @@ function LoginForm() {
                   : "/logo.svg"
               }
               alt="Logo"
-              width={64}
-              height={64}
+              width={350}
+              height={350}
               className="h-16 w-auto"
               priority
             />
