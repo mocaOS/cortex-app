@@ -34,6 +34,13 @@ export default function Header() {
   const [turboActive, setTurboActive] = useState(false);
   const [turboReady, setTurboReady] = useState(false);
 
+  // Helper to extract file extension from URL
+  const getLogoExtension = (url: string): string => {
+    const urlPath = url.split("?")[0]; // Remove query parameters
+    const ext = urlPath.split(".").pop() || "svg";
+    return ext;
+  };
+
   // Check turbo mode availability on mount
   useEffect(() => {
     const checkTurboStatus = async () => {
@@ -74,8 +81,12 @@ export default function Header() {
         <div className="flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <Image
-              src="/logo.svg"
-              alt="MOCA Logo"
+              src={
+                process.env.NEXT_PUBLIC_LOGO_URL
+                  ? `/custom-logo.${getLogoExtension(process.env.NEXT_PUBLIC_LOGO_URL)}`
+                  : "/logo.svg"
+              }
+              alt="Logo"
               width={40}
               height={40}
               className="h-10 w-auto"
@@ -98,17 +109,24 @@ export default function Header() {
                     // Special styling for Turbo when ready (green) or warming up (yellow)
                     item.href === "/turbo" && turboReady && !isActive(item.href)
                       ? "text-green-400 hover:text-green-300"
-                      : item.href === "/turbo" && turboActive && !isActive(item.href)
-                      ? "text-yellow-400 hover:text-yellow-300"
-                      : ""
+                      : item.href === "/turbo" &&
+                          turboActive &&
+                          !isActive(item.href)
+                        ? "text-yellow-400 hover:text-yellow-300"
+                        : "",
                   )}
                 >
-                  <item.icon className={cn(
-                    "w-4 h-4",
-                    // Green for ready, yellow pulsing for warming up
-                    item.href === "/turbo" && turboReady && "text-green-400",
-                    item.href === "/turbo" && turboActive && !turboReady && "animate-pulse text-yellow-400"
-                  )} />
+                  <item.icon
+                    className={cn(
+                      "w-4 h-4",
+                      // Green for ready, yellow pulsing for warming up
+                      item.href === "/turbo" && turboReady && "text-green-400",
+                      item.href === "/turbo" &&
+                        turboActive &&
+                        !turboReady &&
+                        "animate-pulse text-yellow-400",
+                    )}
+                  />
                   <span className="text-sm font-medium hidden sm:inline">
                     {item.label}
                   </span>
@@ -130,7 +148,7 @@ export default function Header() {
                 "flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 glass",
                 isActive("/admin")
                   ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
               )}
               title="Settings"
             >
