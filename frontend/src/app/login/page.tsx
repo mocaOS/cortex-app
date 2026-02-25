@@ -16,6 +16,13 @@ function LoginForm() {
     FormData
   >(login, null);
 
+  // Helper to extract file extension from URL
+  const getLogoExtension = (url: string): string => {
+    const urlPath = url.split("?")[0]; // Remove query parameters
+    const ext = urlPath.split(".").pop() || "svg";
+    return ext;
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-6">
       <motion.div
@@ -33,8 +40,12 @@ function LoginForm() {
             className="inline-flex items-center justify-center mb-6"
           >
             <Image
-              src="/logo.svg"
-              alt="MOCA Logo"
+              src={
+                process.env.NEXT_PUBLIC_LOGO_URL
+                  ? `/custom-logo.${getLogoExtension(process.env.NEXT_PUBLIC_LOGO_URL)}`
+                  : "/logo.svg"
+              }
+              alt="Logo"
               width={64}
               height={64}
               className="h-16 w-auto"

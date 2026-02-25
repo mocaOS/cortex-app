@@ -11,14 +11,36 @@ RUN npm ci
 # Build the source code
 FROM base AS builder
 WORKDIR /app
+
+# Install curl for downloading custom logo
+RUN apk add --no-cache curl
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build-time arg for public API URL (required for Next.js NEXT_PUBLIC_* vars)
+# Build-time args for Next.js NEXT_PUBLIC_* vars
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+ARG NEXT_PUBLIC_LOGO_URL
+ENV NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
+
+ARG NEXT_PUBLIC_ACCENT_COLOR
+ENV NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
+
+# Download custom logo if NEXT_PUBLIC_LOGO_URL is set
+# Extracts the file extension and saves with correct format
+RUN if [ -n "$NEXT_PUBLIC_LOGO_URL" ]; then \
+        echo "Downloading custom logo from $NEXT_PUBLIC_LOGO_URL"; \
+        EXT="${NEXT_PUBLIC_LOGO_URL##*.}"; \
+        EXT=$(echo "$EXT" | cut -d'?' -f1); \
+        curl -fsSL "$NEXT_PUBLIC_LOGO_URL" -o "/app/public/custom-logo.$EXT" && \
+        echo "Custom logo downloaded successfully as custom-logo.$EXT"; \
+    else \
+        echo "No custom logo URL provided, using default logo"; \
+    fi
 
 RUN npm run build
 
