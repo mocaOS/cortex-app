@@ -26,7 +26,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable}`}>
+    <html
+      lang="en"
+      className={`dark ${inter.variable} ${jetbrainsMono.variable}`}
+    >
+      <head>
+        {process.env.NEXT_PUBLIC_ACCENT_COLOR && (
+          <style
+            dangerouslySetInnerHTML={{
+              __html: `
+                :root, .dark {
+                  --accent: ${process.env.NEXT_PUBLIC_ACCENT_COLOR};
+                }
+              `,
+            }}
+          />
+        )}
+      </head>
       <body className="font-sans antialiased">
         <div className="min-h-screen bg-background flex flex-col">
           <AuthProvider>
