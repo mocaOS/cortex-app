@@ -24,11 +24,7 @@ import json
 from datetime import datetime
 
 from haystack import Document as HaystackDocument
-from haystack.components.converters import (
-    PyPDFToDocument,
-    TextFileToDocument,
-    MarkdownToDocument,
-)
+from docling_haystack.converter import DoclingConverter, ExportType
 from haystack.components.preprocessors import DocumentSplitter
 
 from app.config import get_settings
@@ -174,10 +170,11 @@ class DocumentProcessor:
         self.neo4j = get_neo4j_service()
         self.graph_extractor = get_graph_extractor()
         
-        # Initialize converters
-        self.pdf_converter = PyPDFToDocument()
-        self.text_converter = TextFileToDocument()
-        self.md_converter = MarkdownToDocument()
+        # Initialize Docling converter (handles all document formats)
+        # Uses MARKDOWN export type for consistent processing with existing pipeline
+        self.docling_converter = DoclingConverter(
+            export_type=ExportType.MARKDOWN,
+        )
         
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
@@ -565,15 +562,32 @@ class DocumentProcessor:
         
         return True
     
+    # Docling-supported file extensions
+    DOCLING_EXTENSIONS = {
+        # Office documents
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+        # Web pages
+        ".html", ".htm",
+        # Text files
+        ".txt", ".md", ".markdown", ".rst",
+        # Images (OCR)
+        ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
+        # Audio (ASR)
+        ".wav", ".mp3", ".webvtt", ".vtt",
+        # LaTeX
+        ".tex", ".latex",
+        # XML schemas (USPTO, JATS, XBRL)
+        ".xml",
+    }
+
     def _get_converter(self, file_type: str):
-        """Get the appropriate converter for a file type."""
-        converters = {
-            ".pdf": self.pdf_converter,
-            ".txt": self.text_converter,
-            ".md": self.md_converter,
-            ".markdown": self.md_converter,
-        }
-        return converters.get(file_type.lower())
+        """Get the appropriate converter for a file type.
+        
+        Docling handles all supported document formats natively.
+        """
+        if file_type.lower() in self.DOCLING_EXTENSIONS:
+            return self.docling_converter
+        return None
     
     async def store_file_only(
         self, 
@@ -786,9 +800,10 @@ class DocumentProcessor:
                 raise ValueError(f"Unsupported file type: {file_type}")
             
             # Run conversion in thread pool (CPU-bound)
+            # DoclingConverter.run() expects 'paths' parameter (not 'sources')
             result = await loop.run_in_executor(
                 _get_processing_executor(),
-                functools.partial(converter.run, sources=[Path(file_path)])
+                functools.partial(converter.run, paths=[Path(file_path)])
             )
             documents = result.get("documents", [])
             

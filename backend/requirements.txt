@@ -1,34 +1,33 @@
 # Core
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-python-multipart==0.0.9
-pydantic==2.6.1
-pydantic-settings==2.1.0
+fastapi>=0.109.2
+uvicorn[standard]>=0.27.1
+python-multipart>=0.0.9
+pydantic>=2.6.1
+pydantic-settings>=2.3.0
 
-# Haystack AI Framework
-haystack-ai==2.0.0
-sentence-transformers==2.3.1
+# Haystack AI Framework (2.8+ required for docling-haystack)
+haystack-ai>=2.8.0,<3.0.0
+sentence-transformers>=2.3.1
 
-# Document Processing
-pypdf==4.0.1
-python-docx==1.1.0
-openpyxl==3.1.2
+# Document Processing - Docling (handles PDF, DOCX, XLSX, PPTX, HTML, images, audio, LaTeX)
+docling-haystack>=0.1.0
 markdown==3.5.2
 markdown-it-py==3.0.0
 mdit-plain==1.0.1
 beautifulsoup4==4.12.3
 
 # Neo4j
-neo4j==5.17.0
+neo4j>=5.17.0
 
 # LLM Support
-openai==1.12.0
-tiktoken==0.6.0
+openai>=1.12.0
+tiktoken>=0.6.0
 
 # Utilities
-python-dotenv==1.0.1
-aiofiles==23.2.1
-httpx==0.26.0
-tenacity==8.2.3
-numpy==1.26.4
-PyJWT==2.8.0
+python-dotenv>=1.0.1
+aiofiles>=23.2.1
+httpx>=0.26.0
+tenacity>=8.2.3
+numpy>=1.26.4
+PyJWT>=2.8.0
+nltk>=3.9.1
