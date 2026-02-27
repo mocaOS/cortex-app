@@ -44,6 +44,7 @@ from app.models import (
 from app.services.neo4j_service import get_neo4j_service
 from app.services.graph_extractor import get_graph_extractor
 from app.services.llm_config import get_llm_config
+from app.services.docling_converter import DoclingDocumentConverter
 from app.services.prompt_security import (
     validate_and_process_input,
     get_anti_injection_instruction,
@@ -178,6 +179,7 @@ class DocumentProcessor:
         self.pdf_converter = PyPDFToDocument()
         self.text_converter = TextFileToDocument()
         self.md_converter = MarkdownToDocument()
+        self.docling_converter = DoclingDocumentConverter()  # For PDF/DOCX
         
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
@@ -566,14 +568,24 @@ class DocumentProcessor:
         return True
     
     def _get_converter(self, file_type: str):
-        """Get the appropriate converter for a file type."""
+        """Get the appropriate converter for a file type.
+
+        Uses Docling for PDF and DOCX files to convert them to markdown.
+        Falls back to PyPDFToDocument for PDF if Docling is unavailable.
+        """
+        file_type = file_type.lower()
+
+        # Use Docling for PDF and DOCX (rich document conversion to markdown)
+        if file_type in (".pdf", ".docx", ".doc"):
+            return self.docling_converter
+
+        # Text-based formats use Haystack's built-in converters
         converters = {
-            ".pdf": self.pdf_converter,
             ".txt": self.text_converter,
             ".md": self.md_converter,
             ".markdown": self.md_converter,
         }
-        return converters.get(file_type.lower())
+        return converters.get(file_type)
     
     async def store_file_only(
         self, 
