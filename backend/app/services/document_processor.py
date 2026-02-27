@@ -25,11 +25,11 @@ from datetime import datetime
 
 from haystack import Document as HaystackDocument
 from haystack.components.converters import (
-    PyPDFToDocument,
     TextFileToDocument,
     MarkdownToDocument,
 )
 from haystack.components.preprocessors import DocumentSplitter
+from docling_haystack.converter import DoclingConverter
 
 from app.config import get_settings
 from app.models import (
@@ -175,9 +175,9 @@ class DocumentProcessor:
         self.graph_extractor = get_graph_extractor()
         
         # Initialize converters
-        self.pdf_converter = PyPDFToDocument()
-        self.text_converter = TextFileToDocument()
-        self.md_converter = MarkdownToDocument()
+        self.docling_converter = DoclingConverter()  # Handles PDF, DOCX, XLSX, PPTX, HTML, images
+        self.text_converter = TextFileToDocument()   # Keep for plain text
+        self.md_converter = MarkdownToDocument()     # Keep for markdown
         
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
@@ -567,13 +567,16 @@ class DocumentProcessor:
     
     def _get_converter(self, file_type: str):
         """Get the appropriate converter for a file type."""
-        converters = {
-            ".pdf": self.pdf_converter,
-            ".txt": self.text_converter,
-            ".md": self.md_converter,
-            ".markdown": self.md_converter,
-        }
-        return converters.get(file_type.lower())
+        docling_formats = {".pdf", ".docx", ".xlsx", ".pptx", ".html", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"}
+        
+        file_type_lower = file_type.lower()
+        if file_type_lower in docling_formats:
+            return self.docling_converter
+        elif file_type_lower == ".txt":
+            return self.text_converter
+        elif file_type_lower in {".md", ".markdown"}:
+            return self.md_converter
+        return None
     
     async def store_file_only(
         self, 
@@ -786,10 +789,17 @@ class DocumentProcessor:
                 raise ValueError(f"Unsupported file type: {file_type}")
             
             # Run conversion in thread pool (CPU-bound)
-            result = await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(converter.run, sources=[Path(file_path)])
-            )
+            # DoclingConverter uses 'paths', standard Haystack converters use 'sources'
+            if isinstance(converter, DoclingConverter):
+                result = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(converter.run, paths=[Path(file_path)])
+                )
+            else:
+                result = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(converter.run, sources=[Path(file_path)])
+                )
             documents = result.get("documents", [])
             
             if not documents:

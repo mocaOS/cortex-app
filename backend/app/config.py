@@ -42,7 +42,11 @@ class Settings(BaseSettings):
     upload_dir: str = Field(default="./uploads")
     custom_inputs_dir: str = Field(default="./custom_inputs")  # Separate folder for manually entered content
     max_file_size_mb: int = Field(default=50)
-    allowed_extensions: list[str] = Field(default=[".pdf", ".txt", ".md", ".docx", ".xlsx"])
+    allowed_extensions: list[str] = Field(default=[
+        ".pdf", ".docx", ".xlsx", ".pptx", ".html",
+        ".txt", ".md", ".markdown",
+        ".png", ".jpg", ".jpeg", ".tiff", ".bmp"
+    ])
     
     # Resource Limits (0 = unlimited)
     max_files: int = Field(default=0)  # Max total documents (uploads + custom inputs). 0 = unlimited

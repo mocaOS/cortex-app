@@ -30,7 +30,7 @@ interface ProcessingTask {
   message: string;
 }
 
-const ALLOWED_TYPES = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
+const ALLOWED_TYPES = [".pdf", ".docx", ".xlsx", ".pptx", ".html", ".txt", ".md", ".markdown", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"];
 
 export default function FileUpload({ onUpload }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);

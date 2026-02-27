@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const ALLOWED_TYPES = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
+const ALLOWED_TYPES = [".pdf", ".docx", ".xlsx", ".pptx", ".html", ".txt", ".md", ".markdown", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"];
 
 interface UploadZoneProps {
   isDragging: boolean;
