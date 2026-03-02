@@ -260,7 +260,7 @@ class VisionAnalyzer:
                     ],
                 }
             ],
-            "max_tokens": 1000,
+            "max_tokens": 4096,
         }
 
         headers = {
