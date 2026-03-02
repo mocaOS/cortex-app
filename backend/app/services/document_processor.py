@@ -27,6 +27,20 @@ from haystack import Document as HaystackDocument
 from docling_haystack.converter import DoclingConverter, ExportType
 from haystack.components.preprocessors import DocumentSplitter
 
+# Docling imports for enhanced OCR
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.document import ConversionResult
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    TableStructureOptions,
+    TableFormerMode,
+    EasyOcrOptions,
+    TesseractOcrOptions,
+    OcrOptions,
+)
+from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
+
 from app.config import get_settings
 from app.models import (
     DocumentChunk,
@@ -170,11 +184,55 @@ class DocumentProcessor:
         self.neo4j = get_neo4j_service()
         self.graph_extractor = get_graph_extractor()
         
-        # Initialize Docling converter (handles all document formats)
+        # Initialize Docling converter with enhanced OCR settings for better image text extraction
+        # Configure pipeline options for maximum accuracy on scanned documents and images
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = True
+        pipeline_options.do_table_structure = True
+        pipeline_options.table_structure_options = TableStructureOptions(
+            do_cell_matching=True,
+            mode=TableFormerMode.ACCURATE,  # Prioritize accuracy over speed
+        )
+
+        # Configure EasyOCR for best image text recognition (80+ languages, GPU support)
+        pipeline_options.ocr_options = EasyOcrOptions(
+            lang=["en", "de"],
+            use_gpu=True,  # Enable GPU acceleration if available
+            confidence_threshold=0.2,  # Lower threshold = more aggressive text detection
+        )
+
+        # Alternative: Tesseract OCR (uncomment to use instead of EasyOCR)
+        # pipeline_options.ocr_options = TesseractOcrOptions(
+        #     lang=["eng"],
+        #     force_full_page_ocr=True,  # Force OCR on entire page for scanned docs
+        # )
+
+        # Configure accelerator for thorough processing
+        pipeline_options.accelerator_options = AcceleratorOptions(
+            num_threads=8,  # Increase threads for more thorough processing
+            device=AcceleratorDevice.AUTO,  # Auto-detect CUDA/MPS/CPU
+        )
+
+        # Generate higher resolution images for better OCR accuracy
+        pipeline_options.generate_page_images = True
+        pipeline_options.images_scale = 2.0  # 2x resolution for better text recognition
+
+        # Create underlying Docling DocumentConverter with enhanced pipeline options
+        # This handles PDF, IMAGE, and other formats with the configured OCR settings
+        underlying_converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                InputFormat.IMAGE: PdfFormatOption(pipeline_options=pipeline_options),
+            }
+        )
+
+        # Create Haystack DoclingConverter with the pre-configured underlying converter
         # Uses MARKDOWN export type for consistent processing with existing pipeline
         self.docling_converter = DoclingConverter(
             export_type=ExportType.MARKDOWN,
+            converter=underlying_converter,
         )
+        logger.info("Docling converter initialized with enhanced OCR settings (EasyOCR, 8 threads, 2x image scale)")
         
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better

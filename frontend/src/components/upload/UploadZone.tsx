@@ -5,7 +5,22 @@ import { motion } from "framer-motion";
 import { Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const ALLOWED_TYPES = [".pdf", ".txt", ".md", ".docx", ".xlsx"];
+const ALLOWED_TYPES = [
+  // Office documents
+  ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+  // Web pages
+  ".html", ".htm",
+  // Text files
+  ".txt", ".md", ".markdown", ".rst",
+  // Images (OCR)
+  ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
+  // Audio (ASR)
+  ".wav", ".mp3", ".webvtt", ".vtt",
+  // LaTeX
+  ".tex", ".latex",
+  // XML schemas
+  ".xml",
+];
 
 interface UploadZoneProps {
   isDragging: boolean;

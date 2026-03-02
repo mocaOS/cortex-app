@@ -25,11 +25,39 @@ export function formatDate(dateString: string): string {
 
 export function getFileTypeIcon(fileType: string): string {
   const types: Record<string, string> = {
+    // Office documents
     ".pdf": "📄",
+    ".docx": "📑",
+    ".doc": "📑",
+    ".xlsx": "📊",
+    ".xls": "📊",
+    ".pptx": "📽️",
+    ".ppt": "📽️",
+    // Web pages
+    ".html": "🌐",
+    ".htm": "🌐",
+    // Text files
     ".txt": "📝",
     ".md": "📋",
-    ".docx": "📑",
-    ".xlsx": "📊",
+    ".markdown": "📋",
+    ".rst": "📋",
+    // Images (OCR)
+    ".png": "🖼️",
+    ".jpg": "🖼️",
+    ".jpeg": "🖼️",
+    ".tiff": "🖼️",
+    ".tif": "🖼️",
+    ".bmp": "🖼️",
+    // Audio (ASR)
+    ".wav": "🎵",
+    ".mp3": "🎵",
+    ".webvtt": "💬",
+    ".vtt": "💬",
+    // LaTeX
+    ".tex": "📐",
+    ".latex": "📐",
+    // XML schemas
+    ".xml": "📋",
   };
   return types[fileType] || "📁";
 }

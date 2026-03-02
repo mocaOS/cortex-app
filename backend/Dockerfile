@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for Docling (PDF/image processing requires X11 libs)
+# Install system dependencies for Docling (PDF/image processing requires X11 libs, OCR)
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libgl1 \
     libglib2.0-0 \
+    libsm6 \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
