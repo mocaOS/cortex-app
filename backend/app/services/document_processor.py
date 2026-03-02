@@ -196,6 +196,7 @@ class DocumentProcessor:
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
         pipeline_options.do_table_structure = True
+        pipeline_options.do_picture_description = True  # Enable Docling's built-in image description
         pipeline_options.table_structure_options = TableStructureOptions(
             do_cell_matching=True,
             mode=TableFormerMode.ACCURATE,  # Prioritize accuracy over speed
@@ -240,7 +241,7 @@ class DocumentProcessor:
             converter=underlying_converter,
         )
         logger.info(
-            "Docling converter initialized with enhanced OCR settings (EasyOCR, 8 threads, 2x image scale)"
+            "Docling converter initialized with enhanced OCR and image description (EasyOCR, 8 threads, 2x image scale)"
         )
 
         # Initialize splitter based on configuration
@@ -920,114 +921,112 @@ class DocumentProcessor:
 
             # =================================================================
             # Image Extraction and Analysis
-            # Extract images from documents and analyze with vision model
+            # Extract images from documents and analyze with vision model or Docling fallback
             # =================================================================
             image_analyses = []
-            if (
-                self.vision_analyzer.is_vision_model_available or True
-            ):  # Always try to extract images
-                try:
-                    await loop.run_in_executor(
-                        _get_processing_executor(),
-                        functools.partial(
-                            self.neo4j.update_document_progress,
-                            doc_id,
-                            8,
-                            100,
-                            "Extracting and analyzing images...",
-                        ),
-                    )
+            # Always extract images - analysis method (vision model or Docling) is determined in analyze_image()
+            try:
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        8,
+                        100,
+                        "Extracting and analyzing images...",
+                    ),
+                )
 
-                    # Get the underlying DoclingDocument from the converter result
-                    # The DoclingConverter wraps the result, we need to access the native document
-                    # Check if converter has the native document available
-                    docling_doc = None
+                # Get the underlying DoclingDocument from the converter result
+                # The DoclingConverter wraps the result, we need to access the native document
+                # Check if converter has the native document available
+                docling_doc = None
 
-                    # Try to get the native DoclingDocument from the first document
-                    if hasattr(converter, "converter") and hasattr(
-                        converter.converter, "convert"
-                    ):
-                        # Re-convert to get native DoclingDocument for image extraction
-                        # This is more efficient than storing both representations
-                        try:
-                            native_result = converter.converter.convert(file_path)
-                            docling_doc = native_result.document
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not get native DoclingDocument for image extraction: {e}"
-                            )
-
-                    if docling_doc:
-                        # Extract and analyze images
-                        image_analyses = await self.vision_analyzer.analyze_all_images(
-                            docling_doc,
-                            force_vision_model=self.vision_analyzer.is_vision_model_available,
+                # Try to get the native DoclingDocument from the first document
+                if hasattr(converter, "converter") and hasattr(
+                    converter.converter, "convert"
+                ):
+                    # Re-convert to get native DoclingDocument for image extraction
+                    # This is more efficient than storing both representations
+                    try:
+                        native_result = converter.converter.convert(file_path)
+                        docling_doc = native_result.document
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not get native DoclingDocument for image extraction: {e}"
                         )
 
-                        if image_analyses:
-                            logger.info(
-                                f"Document {doc_id}: analyzed {len(image_analyses)} images"
+                if docling_doc:
+                    # Extract and analyze images
+                    image_analyses = await self.vision_analyzer.analyze_all_images(
+                        docling_doc,
+                        force_vision_model=self.vision_analyzer.is_vision_model_available,
+                    )
+
+                    if image_analyses:
+                        logger.info(
+                            f"Document {doc_id}: analyzed {len(image_analyses)} images"
+                        )
+
+                        # Store image analysis as special chunks
+                        for idx, analysis in enumerate(image_analyses):
+                            # Create a chunk for each image analysis
+                            image_chunk_id = f"{doc_id}_image_{idx}"
+                            image_content = (
+                                f"[Image {idx + 1}]\n{analysis.description}"
                             )
 
-                            # Store image analysis as special chunks
-                            for idx, analysis in enumerate(image_analyses):
-                                # Create a chunk for each image analysis
-                                image_chunk_id = f"{doc_id}_image_{idx}"
+                            if analysis.analysis_method == "vision_model":
+                                image_content = f"[Image Analysis (Vision Model)]\n{analysis.description}"
+                            elif analysis.analysis_method == "docling":
                                 image_content = (
-                                    f"[Image {idx + 1}]\n{analysis.description}"
+                                    f"[Image Description]\n{analysis.description}"
                                 )
 
-                                if analysis.analysis_method == "vision_model":
-                                    image_content = f"[Image Analysis (Vision Model)]\n{analysis.description}"
-                                elif analysis.analysis_method == "docling":
-                                    image_content = (
-                                        f"[Image Description]\n{analysis.description}"
-                                    )
+                            # Create a text chunk from the image analysis
+                            # This allows image content to be searchable via RAG
+                            image_chunk = DocumentChunk(
+                                id=image_chunk_id,
+                                document_id=doc_id,
+                                content=image_content,
+                                embedding=None,  # Will be embedded below
+                                chunk_index=1000
+                                + idx,  # Use high index to separate from text chunks
+                                metadata={
+                                    "type": "image_analysis",
+                                    "image_id": analysis.image_id,
+                                    "analysis_method": analysis.analysis_method,
+                                },
+                            )
 
-                                # Create a text chunk from the image analysis
-                                # This allows image content to be searchable via RAG
-                                image_chunk = DocumentChunk(
-                                    id=image_chunk_id,
-                                    document_id=doc_id,
-                                    content=image_content,
-                                    embedding=None,  # Will be embedded below
-                                    chunk_index=1000
-                                    + idx,  # Use high index to separate from text chunks
-                                    metadata={
-                                        "type": "image_analysis",
-                                        "image_id": analysis.image_id,
-                                        "analysis_method": analysis.analysis_method,
-                                    },
-                                )
+                            # Embed the image description
+                            embed_result = await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.embedder.run,
+                                    documents=[
+                                        HaystackDocument(
+                                            content=image_content,
+                                            meta=image_chunk.metadata,
+                                        )
+                                    ],
+                                ),
+                            )
+                            embedded_docs = embed_result.get("documents", [])
+                            if embedded_docs:
+                                image_chunk.embedding = embedded_docs[0].embedding
 
-                                # Embed the image description
-                                embed_result = await loop.run_in_executor(
-                                    _get_processing_executor(),
-                                    functools.partial(
-                                        self.embedder.run,
-                                        documents=[
-                                            HaystackDocument(
-                                                content=image_content,
-                                                meta=image_chunk.metadata,
-                                            )
-                                        ],
-                                    ),
-                                )
-                                embedded_docs = embed_result.get("documents", [])
-                                if embedded_docs:
-                                    image_chunk.embedding = embedded_docs[0].embedding
+                            # Store image chunk
+                            await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.store_chunk, image_chunk
+                                ),
+                            )
 
-                                # Store image chunk
-                                await loop.run_in_executor(
-                                    _get_processing_executor(),
-                                    functools.partial(
-                                        self.neo4j.store_chunk, image_chunk
-                                    ),
-                                )
-
-                except Exception as e:
-                    logger.warning(f"Image extraction/analysis failed: {e}")
-                    # Continue processing without image analysis
+            except Exception as e:
+                logger.warning(f"Image extraction/analysis failed: {e}")
+                # Continue processing without image analysis
 
             # Check for cancellation after image analysis
             self._check_cancellation(doc_id)

@@ -212,6 +212,32 @@ DEFAULT_COLLECTION=default
 
 ---
 
+## Vision Model Configuration
+
+Configure image analysis capabilities:
+
+```bash
+# Vision model for image analysis (optional)
+# If not set, uses Docling's built-in SmolDocling for image descriptions
+VISION_MODEL=gpt-4o
+
+# API configuration (falls back to OPENAI settings if not set)
+VISION_MODEL_API_BASE=https://api.openai.com/v1
+VISION_MODEL_API_KEY=sk-your-api-key-here
+```
+
+### Vision Model Options
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VISION_MODEL` | No | - | Vision model for image analysis (e.g., `gpt-4o`, `claude-3-5-sonnet`) |
+| `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | API endpoint for vision model |
+| `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | API key for vision model |
+
+When no vision model is configured, Docling's built-in image description (SmolDocling) is used automatically. See [Image Analysis Guide](/guides/image-analysis) for details.
+
+---
+
 ## Security
 
 ### Prompt Security
@@ -293,6 +319,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |
 | `ENABLE_COMMUNITY_DETECTION` | No | `true` | Enable communities |
 | `PROMPT_SECURITY` | No | `true` | Enable prompt guard |
+| `VISION_MODEL` | No | - | Vision model for image analysis |
+| `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | Vision model API endpoint |
+| `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | Vision model API key |
 | `ADMIN_EMAIL` | Yes | - | Admin login email |
 | `ADMIN_PASSWORD` | Yes | - | Admin login password |
 | `ADMIN_API_KEY` | Yes | - | Admin API key |

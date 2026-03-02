@@ -35,7 +35,7 @@ VISION_MODEL_API_KEY=your-litellm-key
 
 If no vision model is configured, the system uses:
 
-1. **Docling descriptions** - Built-in image analysis (if available)
+1. **Docling descriptions** - Built-in image analysis using SmolDocling (enabled by default)
 2. **Basic metadata** - Page numbers and captions
 
 Images are still extracted and searchable, but with less detail.
@@ -100,11 +100,11 @@ Images are extracted from:
 ```
 Document Upload
     ↓
-Docling Conversion
+Docling Conversion (with do_picture_description=True)
     ↓
-Image Extraction
+Image Extraction + Docling Description Generation
     ↓
-Vision Model Analysis
+Vision Model Analysis (if configured, takes precedence)
     ↓
 Create Searchable Chunks
     ↓
@@ -212,11 +212,12 @@ title indicates Q4 2024 performance.
 
 ### 2. Docling Description
 
-Built-in descriptions when available:
+Built-in descriptions generated during document conversion:
 
 - Basic image classification
 - Simple descriptions
 - Fast and free
+- Always enabled (via `do_picture_description=True`)
 
 Example output:
 
@@ -363,15 +364,18 @@ Analyze this business chart. Identify:
 
 ### Pipeline Options
 
-Enable image generation in Docling:
+Docling is configured with image description enabled by default:
 
 ```python
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 pipeline_options = PdfPipelineOptions()
-pipeline_options.generate_picture_images = True
+pipeline_options.do_picture_description = True  # Enable automatic image descriptions
+pipeline_options.generate_page_images = True
 pipeline_options.images_scale = 2.0  # Higher resolution
 ```
+
+This enables Docling's built-in vision model (SmolDocling) to generate image descriptions during conversion.
 
 ## Best Practices
 

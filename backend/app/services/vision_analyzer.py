@@ -297,20 +297,24 @@ class VisionAnalyzer:
     def analyze_image_with_docling(
         self, extracted_image: ExtractedImage
     ) -> Optional[str]:
-        """Use Docling's built-in image description if available.
+        """Return Docling's pre-generated image description from conversion.
+
+        This method returns the description that Docling generated during document
+        conversion when do_picture_description=True is enabled in the pipeline options.
+
+        NOTE: This requires do_picture_description=True in Docling pipeline options.
+        If not enabled during conversion, this will always return None.
 
         Args:
             extracted_image: The extracted image with metadata
 
         Returns:
-            Description text or None
+            Description text or None if no description was generated
         """
         # Return existing description from Docling if available
         if extracted_image.existing_description:
             return extracted_image.existing_description
 
-        # Docling doesn't provide standalone image analysis
-        # It only analyzes images during document conversion with do_picture_description=True
         logger.info("No Docling description available for this image")
         return None
 
