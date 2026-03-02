@@ -1,0 +1,403 @@
+---
+title: Image Analysis
+description: Extract and analyze images from documents using vision models
+---
+
+Cortex automatically extracts and analyzes images from uploaded documents, making visual content searchable through RAG queries.
+
+## Overview
+
+The image analysis system:
+
+- **Extracts images** from PDF, DOCX, PPTX, XLSX, and image files
+- **Analyzes content** using configurable vision models
+- **Makes images searchable** through semantic search
+- **Integrates with RAG** for comprehensive answers
+
+## Configuration
+
+### Enable Vision Model (Optional)
+
+Add vision model configuration to your `.env` file:
+
+```bash
+# OpenAI GPT-4 Vision
+VISION_MODEL=gpt-4o
+VISION_MODEL_API_KEY=sk-your-openai-api-key
+
+# Or use your LiteLLM setup
+VISION_MODEL=openai/gpt-4o
+VISION_MODEL_API_BASE=https://litellm.deploy.qwellco.de/v1
+VISION_MODEL_API_KEY=your-litellm-key
+```
+
+### Without Vision Model
+
+If no vision model is configured, the system uses:
+
+1. **Docling descriptions** - Built-in image analysis (if available)
+2. **Basic metadata** - Page numbers and captions
+
+Images are still extracted and searchable, but with less detail.
+
+## Supported Vision Models
+
+| Provider | Model | Configuration |
+|----------|-------|---------------|
+| **OpenAI** | GPT-4o | `VISION_MODEL=gpt-4o` |
+| **Anthropic** | Claude 3.5 | `VISION_MODEL=claude-3-5-sonnet-20241022` |
+| **Local** | LLaVA | `VISION_MODEL=llava` via Ollama |
+| **Custom** | Any | OpenAI-compatible API |
+
+### OpenAI GPT-4 Vision
+
+```bash
+VISION_MODEL=gpt-4o
+VISION_MODEL_API_BASE=https://api.openai.com/v1
+VISION_MODEL_API_KEY=sk-your-key
+```
+
+### Anthropic Claude
+
+```bash
+VISION_MODEL=claude-3-5-sonnet-20241022
+VISION_MODEL_API_BASE=https://api.anthropic.com/v1
+VISION_MODEL_API_KEY=your-anthropic-key
+```
+
+### Local Models (Ollama)
+
+```bash
+VISION_MODEL=llava
+VISION_MODEL_API_BASE=http://localhost:11434/v1
+VISION_MODEL_API_KEY=ollama
+```
+
+### Custom Endpoints
+
+Any OpenAI-compatible vision API:
+
+```bash
+VISION_MODEL=your-model-name
+VISION_MODEL_API_BASE=https://your-api-endpoint.com/v1
+VISION_MODEL_API_KEY=your-api-key
+```
+
+## Supported File Types
+
+Images are extracted from:
+
+- **PDF** - Embedded images, charts, diagrams
+- **DOCX** - Word document images
+- **PPTX** - PowerPoint images
+- **XLSX** - Excel images
+- **Images** - PNG, JPG, JPEG, TIFF, BMP
+
+## How It Works
+
+### Processing Flow
+
+```
+Document Upload
+    ↓
+Docling Conversion
+    ↓
+Image Extraction
+    ↓
+Vision Model Analysis
+    ↓
+Create Searchable Chunks
+    ↓
+Embed & Store
+    ↓
+Available in RAG Queries
+```
+
+### Integration with RAG
+
+Image analyses are automatically:
+
+- **Searchable** - Via semantic search
+- **Cited** - In RAG responses with source references
+- **Contextual** - Included in answer generation
+
+Example query:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What charts are in the quarterly report?"
+  }'
+```
+
+Response includes image analyses:
+
+```json
+{
+  "answer": "The quarterly report contains three charts...",
+  "sources": [
+    {
+      "content": "[Image Analysis] Bar chart showing Q1 revenue...",
+      "metadata": {
+        "type": "image_analysis",
+        "image_id": "picture_1",
+        "analysis_method": "vision_model"
+      }
+    }
+  ]
+}
+```
+
+## Usage
+
+### Upload Documents
+
+Upload documents as usual - images are processed automatically:
+
+```bash
+curl -X POST "http://localhost:8000/api/upload" \
+  -H "X-API-Key: your-key" \
+  -F "file=@presentation.pptx"
+```
+
+### Query for Image Content
+
+Ask questions about visual content:
+
+```bash
+curl -X POST "http://localhost:8000/api/rag" \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What diagrams explain the architecture?"
+  }'
+```
+
+### Search Images Directly
+
+Search across all image analyses:
+
+```bash
+curl -X POST "http://localhost:8000/api/search" \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "charts showing revenue growth"
+  }'
+```
+
+## Analysis Methods
+
+The system uses three analysis methods:
+
+### 1. Vision Model
+
+When configured, provides detailed analysis:
+
+- Object identification
+- Text extraction (OCR)
+- Chart/diagram interpretation
+- Context understanding
+
+Example output:
+
+```
+[Image Analysis] The image shows a bar chart comparing quarterly revenue 
+across four regions. North America leads with $2.3M, followed by Europe 
+at $1.8M, Asia Pacific at $1.2M, and Latin America at $0.7M. The chart 
+title indicates Q4 2024 performance.
+```
+
+### 2. Docling Description
+
+Built-in descriptions when available:
+
+- Basic image classification
+- Simple descriptions
+- Fast and free
+
+Example output:
+
+```
+[Image Description] Bar chart showing regional sales data
+```
+
+### 3. Fallback
+
+Basic metadata when other methods unavailable:
+
+- Page number
+- Caption (if present)
+
+Example output:
+
+```
+Image on page 3 - Caption: Figure 2: Revenue breakdown
+```
+
+## Programmatic Access
+
+### Python Example
+
+```python
+from app.services.vision_analyzer import get_vision_analyzer
+from docling.document_converter import DocumentConverter
+
+# Initialize
+analyzer = get_vision_analyzer()
+converter = DocumentConverter()
+
+# Convert document
+result = converter.convert("report.pdf")
+doc = result.document
+
+# Analyze images
+analyses = await analyzer.analyze_all_images(doc)
+
+for analysis in analyses:
+    print(f"Image: {analysis.image_id}")
+    print(f"Method: {analysis.analysis_method}")
+    print(f"Description: {analysis.description}")
+```
+
+### Extract Images to Disk
+
+```python
+from pathlib import Path
+
+# Save all images from document
+saved = analyzer.extract_and_save_images(
+    docling_doc=doc,
+    output_dir=Path("./extracted_images")
+)
+
+for image_id, file_path in saved:
+    print(f"Saved {image_id} to {file_path}")
+```
+
+## Troubleshooting
+
+### No Images Extracted
+
+**Problem**: No images found in document
+
+**Solutions**:
+
+- Verify document contains embedded images (not vector graphics)
+- Check if images are rendered as text/shapes
+- Ensure document conversion succeeds
+
+### Vision API Errors
+
+**Problem**: Vision model returns errors
+
+**Solutions**:
+
+- Verify API key is valid
+- Check API endpoint URL
+- Confirm model name is correct
+- Review API quotas and rate limits
+- Check image size limits (usually ~20MB)
+
+### Poor Descriptions
+
+**Problem**: Image descriptions lack detail
+
+**Solutions**:
+
+- Use more capable vision model (GPT-4o, Claude 3.5)
+- Customize analysis prompt (advanced)
+- Ensure images are clear and high-resolution
+- Check for image corruption
+
+### Slow Processing
+
+**Problem**: Image analysis takes too long
+
+**Solutions**:
+
+- Reduce image resolution before upload
+- Use faster vision model
+- Process documents during off-peak hours
+- Consider local vision model (Ollama/LLaVA)
+
+## Performance Considerations
+
+### Processing Time
+
+- Each image adds 2-5 seconds processing time
+- Depends on vision model response time
+- Sequential processing (one image at a time)
+
+### API Costs
+
+Vision model usage incurs costs:
+
+- OpenAI GPT-4o: ~$0.01-0.03 per image
+- Claude 3.5: ~$0.003-0.015 per image
+- Local models: Free (but requires GPU)
+
+### Optimization Tips
+
+- Use Docling descriptions for simple images
+- Process only necessary documents with vision model
+- Consider batch processing during low-usage periods
+
+## Advanced Configuration
+
+### Custom Analysis Prompts
+
+Modify the analysis prompt in `vision_analyzer.py`:
+
+```python
+analysis_prompt = """
+Analyze this business chart. Identify:
+1. Chart type (bar, line, pie, etc.)
+2. Data trends and key insights
+3. Notable data points
+4. Title and axis labels
+"""
+```
+
+### Pipeline Options
+
+Enable image generation in Docling:
+
+```python
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+
+pipeline_options = PdfPipelineOptions()
+pipeline_options.generate_picture_images = True
+pipeline_options.images_scale = 2.0  # Higher resolution
+```
+
+## Best Practices
+
+### Document Preparation
+
+- Use high-resolution images when possible
+- Ensure text in images is legible
+- Include descriptive captions in documents
+
+### Vision Model Selection
+
+- **GPT-4o**: Best for complex charts, diagrams, mixed content
+- **Claude 3.5**: Excellent for text extraction and detailed descriptions
+- **Local models**: Good for privacy-sensitive or cost-conscious use cases
+
+### Query Formulation
+
+Ask specific questions about visual content:
+
+- ✅ "What does the revenue trend chart show?"
+- ✅ "Explain the architecture diagram"
+- ✅ "What are the key findings in the scatter plot?"
+- ❌ "Tell me about the document"
+
+## Related Guides
+
+- [Document Processing](./document-processing) - How documents are converted and chunked
+- [RAG Queries](./rag-queries) - Querying your knowledge base
+- [Configuration](./configuration) - System configuration options
