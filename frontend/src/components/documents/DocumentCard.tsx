@@ -32,6 +32,9 @@ interface Document {
   progress_current?: number;
   progress_total?: number;
   progress_message?: string;
+  image_progress_current?: number;
+  image_progress_total?: number;
+  image_progress_message?: string;
   collection_id?: string | null;
   collection_name?: string | null;
   is_custom_input?: boolean;
@@ -52,8 +55,14 @@ interface DocumentCardProps {
   isReprocessing: boolean;
 }
 
-const isProcessing = (status: string) => {
-  return status === "processing" || status === "extracting" || status === "pending";
+const isProcessing = (status: string, doc?: Document) => {
+  if (status === "processing" || status === "extracting" || status === "pending") return true;
+  if (status === "completed" && doc) {
+    const hasImages = (doc.image_progress_total ?? 0) > 0;
+    const imagesDone = hasImages && doc.image_progress_current === doc.image_progress_total;
+    if (hasImages && !imagesDone) return true;
+  }
+  return false;
 };
 
 const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
@@ -65,7 +74,20 @@ const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
   return File;
 };
 
-const getStatusConfig = (status: string) => {
+const getStatusConfig = (status: string, doc?: Document) => {
+  if (status === "completed" && doc) {
+    const hasImages = (doc.image_progress_total ?? 0) > 0;
+    const imagesDone = hasImages && doc.image_progress_current === doc.image_progress_total;
+    if (hasImages && !imagesDone) {
+      return {
+        icon: Loader2,
+        color: "text-muted-foreground",
+        bgColor: "bg-muted",
+        label: "Analyzing Images",
+        animate: true,
+      };
+    }
+  }
   switch (status) {
     case "completed":
       return {
@@ -139,7 +161,7 @@ export function DocumentCard({
 }: DocumentCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const FileIcon = getFileIcon(doc.file_type, doc.is_custom_input);
-  const status = getStatusConfig(doc.processing_status);
+  const status = getStatusConfig(doc.processing_status, doc);
   const StatusIcon = status.icon;
   const isCustomInput = doc.is_custom_input === true;
 
@@ -155,6 +177,14 @@ export function DocumentCard({
     doc.progress_current && doc.progress_total
       ? Math.round((doc.progress_current / doc.progress_total) * 100)
       : 0;
+
+  const imageProgressPercent =
+    doc.image_progress_current && doc.image_progress_total
+      ? Math.round((doc.image_progress_current / doc.image_progress_total) * 100)
+      : 0;
+
+  const hasImageProgress = (doc.image_progress_total ?? 0) > 0;
+  const imageAnalysisDone = hasImageProgress && doc.image_progress_current === doc.image_progress_total;
 
   return (
     <motion.div
@@ -228,7 +258,7 @@ export function DocumentCard({
           </div>
 
           {/* Progress bar for processing */}
-          {isProcessing(doc.processing_status) && doc.progress_total && doc.progress_total > 0 && (
+          {isProcessing(doc.processing_status, doc) && doc.processing_status !== "completed" && doc.progress_total && doc.progress_total > 0 && (
             <div className="mt-3">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span>{doc.progress_message || "Processing..."}</span>
@@ -243,6 +273,25 @@ export function DocumentCard({
             </div>
           )}
 
+          {/* Image analysis progress */}
+          {hasImageProgress && !imageAnalysisDone && (
+            <div className="mt-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                <span className="flex items-center gap-1">
+                  <FileImage className="w-3 h-3" />
+                  {doc.image_progress_message || "Analyzing images..."}
+                </span>
+                <span>{imageProgressPercent}%</span>
+              </div>
+              <div className="h-1 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500/70 transition-all duration-300"
+                  style={{ width: `${imageProgressPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Error message */}
           {doc.processing_status === "failed" && doc.error_message && (
             <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{doc.error_message}</p>
@@ -250,9 +299,21 @@ export function DocumentCard({
 
           {/* Chunk count for completed */}
           {doc.processing_status === "completed" && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {doc.chunk_count} chunk{doc.chunk_count !== 1 ? "s" : ""} indexed
-            </p>
+            <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+              <span>{doc.chunk_count} chunk{doc.chunk_count !== 1 ? "s" : ""} indexed</span>
+              {hasImageProgress && imageAnalysisDone && (
+                <span className="flex items-center gap-1">
+                  <FileImage className="w-3 h-3" />
+                  {doc.image_progress_total} image{doc.image_progress_total !== 1 ? "s" : ""} analyzed
+                </span>
+              )}
+              {hasImageProgress && !imageAnalysisDone && (
+                <span className="flex items-center gap-1 text-blue-500/70">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  {doc.image_progress_message}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

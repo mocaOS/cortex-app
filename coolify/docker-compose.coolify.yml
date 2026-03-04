@@ -39,6 +39,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
+      # Vision model for image analysis (optional - falls back to OpenAI settings if API base/key not set)
+      - VISION_MODEL=${VISION_MODEL:-}
+      - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
+      - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL}
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
       - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}

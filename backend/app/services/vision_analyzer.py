@@ -50,6 +50,17 @@ class ImageAnalysisResult:
     ocr_text: Optional[str] = None
 
 
+_vision_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_vision_semaphore(max_concurrent: int = 3) -> asyncio.Semaphore:
+    """Global semaphore shared across all documents to limit total concurrent vision API calls."""
+    global _vision_semaphore
+    if _vision_semaphore is None:
+        _vision_semaphore = asyncio.Semaphore(max_concurrent)
+    return _vision_semaphore
+
+
 class VisionAnalyzer:
     """Extract and analyze images from documents using vision models."""
 
@@ -207,16 +218,26 @@ class VisionAnalyzer:
         base64_data = self._pil_to_base64(pil_image, format)
         return f"data:{mime_type};base64,{base64_data}"
 
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create a shared async HTTP client for vision API calls."""
+        if not hasattr(self, "_http_client") or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=120.0)
+        return self._http_client
+
     async def analyze_image_with_vision_model(
         self,
         pil_image: Image.Image,
         prompt: Optional[str] = None,
+        max_retries: int = 3,
     ) -> Optional[str]:
         """Analyze an image using the configured vision model.
+
+        Includes retry logic with exponential backoff.
 
         Args:
             pil_image: PIL Image to analyze
             prompt: Custom prompt for analysis (optional)
+            max_retries: Number of retry attempts on failure
 
         Returns:
             Analysis text or None if analysis fails
@@ -231,7 +252,6 @@ class VisionAnalyzer:
             logger.error("No API key available for vision model")
             return None
 
-        # Default analysis prompt
         analysis_prompt = prompt or (
             "Analyze this image in detail for document retrieval purposes. "
             "Output ONLY the description, without any conversational filler.\n\n"
@@ -244,10 +264,8 @@ class VisionAnalyzer:
             "Format your response using clear markdown headings."
         )
 
-        # Convert image to base64 data URL
         image_url = self._pil_to_data_url(pil_image)
 
-        # Prepare request payload for OpenAI-compatible vision API
         payload = {
             "model": model,
             "messages": [
@@ -270,8 +288,10 @@ class VisionAnalyzer:
             "Content-Type": "application/json",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+        client = self._get_http_client()
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
                 response = await client.post(
                     f"{base_url}/chat/completions",
                     json=payload,
@@ -283,18 +303,30 @@ class VisionAnalyzer:
                     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                     logger.info(f"Successfully analyzed image with vision model: {model}")
                     return content
-                else:
-                    logger.error(
-                        f"Vision model API error: {response.status_code} - {response.text}"
-                    )
-                    return None
 
-        except httpx.TimeoutException:
-            logger.error("Vision model API request timed out")
-            return None
-        except Exception as e:
-            logger.error(f"Error calling vision model API: {e}")
-            return None
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                logger.warning(
+                    f"Vision model API error (attempt {attempt}/{max_retries}): {last_error}"
+                )
+
+            except httpx.TimeoutException:
+                last_error = "request timed out"
+                logger.warning(
+                    f"Vision model API timeout (attempt {attempt}/{max_retries})"
+                )
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(
+                    f"Vision model API error (attempt {attempt}/{max_retries}): {e}"
+                )
+
+            if attempt < max_retries:
+                backoff = 2 ** (attempt - 1)
+                logger.info(f"Retrying in {backoff}s...")
+                await asyncio.sleep(backoff)
+
+        logger.error(f"Vision model failed after {max_retries} attempts: {last_error}")
+        return None
 
     def analyze_image_with_docling(
         self, extracted_image: ExtractedImage
@@ -379,6 +411,11 @@ class VisionAnalyzer:
     ) -> list[ImageAnalysisResult]:
         """Extract and analyze all images from a document.
 
+        Uses a global semaphore (shared across all documents) to limit total
+        concurrent vision API calls. Images are processed sequentially within
+        each document to avoid creating hundreds of pending coroutines that
+        starve the event loop.
+
         Args:
             docling_doc: The converted DoclingDocument
             force_vision_model: Force using vision model for all images
@@ -387,7 +424,6 @@ class VisionAnalyzer:
         Returns:
             List of ImageAnalysisResult objects
         """
-        # Extract images
         extracted_images = await asyncio.get_event_loop().run_in_executor(
             self._executor,
             functools.partial(self.extract_images_from_document, docling_doc),
@@ -397,20 +433,24 @@ class VisionAnalyzer:
             logger.info("No images extracted from document - nothing to analyze")
             return []
 
+        total = len(extracted_images)
+        semaphore = _get_vision_semaphore()
         logger.info(
-            f"Analyzing {len(extracted_images)} images "
+            f"Analyzing {total} images "
             f"(force_vision_model={force_vision_model}, vision_available={self.is_vision_model_available})"
         )
 
-        # Analyze each image
         results = []
         for idx, img in enumerate(extracted_images):
-            logger.info(f"Analyzing image {idx + 1}/{len(extracted_images)}: {img.image_id} (page {img.page_number})")
-            result = await self.analyze_image(
-                img, force_vision_model=force_vision_model, custom_prompt=custom_prompt
-            )
-            logger.info(f"Image {idx + 1} result: method={result.analysis_method}, description_length={len(result.description)}")
-            results.append(result)
+            async with semaphore:
+                logger.info(f"Analyzing image {idx + 1}/{total}: {img.image_id} (page {img.page_number})")
+                result = await self.analyze_image(
+                    img, force_vision_model=force_vision_model, custom_prompt=custom_prompt
+                )
+                logger.info(f"Image {idx + 1} result: method={result.analysis_method}, description_length={len(result.description)}")
+                results.append(result)
+            # Yield control between images so the event loop can serve other requests
+            await asyncio.sleep(0)
 
         return results
 

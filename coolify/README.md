@@ -28,6 +28,16 @@ Set these in Coolify's environment configuration:
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No |
 | `USE_OPENAI_EMBEDDINGS` | Whether to use OpenAI embeddings | No |
 
+### Vision Model (Optional)
+
+Image extraction and analysis. If not set, Docling's built-in image description is used.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `VISION_MODEL` | Vision model for image analysis (e.g., `gpt-4o`, `claude-3-5-sonnet-20241022`) | No |
+| `VISION_MODEL_API_BASE` | API endpoint for vision model (defaults to `OPENAI_API_BASE` if not set) | No |
+| `VISION_MODEL_API_KEY` | API key for vision model (defaults to `OPENAI_API_KEY` if not set) | No |
+
 ### Admin Authentication
 
 | Variable | Description | Required |

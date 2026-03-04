@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -144,9 +145,17 @@ def _restore_urls(text: str, url_map: dict) -> str:
 # Thread pool for re-ranking (cross-encoder can be slow)
 _rerank_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reranker")
 
-# Thread pool for document processing (CPU-intensive operations like embeddings)
-# Initialized lazily to use config settings
+# Thread pool for document processing (Neo4j writes, embeddings, etc.)
+# Initialized lazily to use config settings.
 _processing_executor: Optional[ThreadPoolExecutor] = None
+
+# Semaphore to limit concurrent subprocess conversions (avoid OOM from
+# running too many Docling processes at once).
+_conversion_semaphore: Optional[asyncio.Semaphore] = None
+
+# Separate thread pool for background image analysis so it never competes
+# with the main processing pipeline for thread pool capacity.
+_image_executor: Optional[ThreadPoolExecutor] = None
 
 
 def _get_processing_executor() -> ThreadPoolExecutor:
@@ -161,6 +170,70 @@ def _get_processing_executor() -> ThreadPoolExecutor:
             f"Initialized processing executor with {settings.processing_thread_workers} workers"
         )
     return _processing_executor
+
+
+def _get_conversion_semaphore() -> asyncio.Semaphore:
+    """Get or create the semaphore that limits concurrent subprocess conversions."""
+    global _conversion_semaphore
+    if _conversion_semaphore is None:
+        _conversion_semaphore = asyncio.Semaphore(1)
+    return _conversion_semaphore
+
+
+async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict:
+    """Run Docling conversion in a subprocess to avoid GIL contention.
+
+    Returns dict with keys: markdown, filename, images, error.
+    """
+    import json as _json
+
+    sem = _get_conversion_semaphore()
+    async with sem:
+        logger.info(f"Starting subprocess conversion for {Path(file_path).name}")
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.services.docling_worker",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        request_data = _json.dumps({"file_path": file_path, "use_vision": use_vision}) + "\n"
+        stdout, stderr = await proc.communicate(request_data.encode())
+
+        if stderr:
+            for line in stderr.decode(errors="replace").strip().split("\n"):
+                if line.strip():
+                    logger.info(f"[docling-worker] {line.strip()}")
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Docling worker exited with code {proc.returncode}: "
+                f"{stderr.decode(errors='replace')[:500]}"
+            )
+
+        stdout_text = stdout.decode().strip()
+        if not stdout_text:
+            raise RuntimeError("Docling worker returned empty output")
+
+        result = _json.loads(stdout_text)
+        if result.get("error"):
+            raise RuntimeError(f"Docling worker error: {result['error']}")
+
+        logger.info(
+            f"Subprocess conversion complete for {result.get('filename', '?')} "
+            f"(md_len={len(result.get('markdown') or '')}, images={len(result.get('images', []))})"
+        )
+        return result
+
+
+def _get_image_executor() -> ThreadPoolExecutor:
+    """Get or create a dedicated thread pool for background image analysis."""
+    global _image_executor
+    if _image_executor is None:
+        _image_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="imgproc"
+        )
+    return _image_executor
 
 
 # =============================================================================
@@ -821,16 +894,22 @@ class DocumentProcessor:
         async def process_one(doc: dict):
             nonlocal completed, failed
             async with semaphore:
+                # Yield before starting so the event loop can process pending requests
+                await asyncio.sleep(0)
                 doc_id = doc["id"]
                 file_path = doc.get("file_path")
                 file_type = doc.get("file_type", "")
 
                 if not file_path or not os.path.exists(file_path):
                     logger.error(f"File not found for document {doc_id}: {file_path}")
-                    self.neo4j.update_document_status(
-                        doc_id,
-                        ProcessingStatus.FAILED,
-                        error_message=f"File not found: {file_path}",
+                    await asyncio.get_event_loop().run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.update_document_status,
+                            doc_id,
+                            ProcessingStatus.FAILED,
+                            error_message=f"File not found: {file_path}",
+                        ),
                     )
                     failed += 1
                     return
@@ -920,142 +999,47 @@ class DocumentProcessor:
             # Check for cancellation before conversion
             self._check_cancellation(doc_id)
 
-            # Convert file to Haystack document
-            converter = self._get_converter(file_type)
-            if not converter:
+            # Verify the file type is supported before launching subprocess
+            if file_type.lower() not in self.DOCLING_EXTENSIONS:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
-            # When vision model is configured, use the underlying DocumentConverter
-            # directly to get the native DoclingDocument (for image extraction) in a
-            # single pass, then export to markdown for the Haystack pipeline.
-            # This avoids a wasteful double-conversion.
-            docling_doc = None
             use_vision = self.vision_analyzer.is_vision_model_available
+            conversion_result = await _convert_document_subprocess(file_path, use_vision)
 
-            # Access the underlying DocumentConverter (stored as _converter in DoclingConverter)
-            native_converter = getattr(converter, "_converter", None)
-
-            if use_vision and native_converter:
-                # Single native conversion - get DoclingDocument + markdown
-                def _native_convert(conv, fp):
-                    native_result = conv.convert(fp)
-                    dl_doc = native_result.document
-                    md_text = dl_doc.export_to_markdown()
-                    haystack_doc = HaystackDocument(content=md_text, meta={"dl_meta": {"origin": {"filename": Path(fp).name}}})
-                    return dl_doc, [haystack_doc]
-
-                docling_doc, documents = await loop.run_in_executor(
-                    _get_processing_executor(),
-                    functools.partial(_native_convert, native_converter, file_path),
-                )
-                logger.info(f"Document {doc_id}: native conversion complete (vision model path)")
-            else:
-                # Standard path via DoclingConverter (includes OCR + SmolVLM)
-                result = await loop.run_in_executor(
-                    _get_processing_executor(),
-                    functools.partial(converter.run, paths=[Path(file_path)]),
-                )
-                documents = result.get("documents", [])
-
-                # Try to get native DoclingDocument for image extraction (fallback path)
-                if native_converter:
-                    try:
-                        native_result = native_converter.convert(file_path)
-                        docling_doc = native_result.document
-                    except Exception as e:
-                        logger.warning(f"Could not get native DoclingDocument for image extraction: {e}")
-
-            if not documents:
+            md_text = conversion_result["markdown"]
+            if not md_text:
                 raise ValueError("No content extracted from file")
+
+            filename = conversion_result.get("filename", Path(file_path).name)
+            documents = [
+                HaystackDocument(
+                    content=md_text,
+                    meta={"dl_meta": {"origin": {"filename": filename}}},
+                )
+            ]
 
             # Check for cancellation after conversion
             self._check_cancellation(doc_id)
 
             # =================================================================
-            # Image Extraction and Analysis
+            # Image Extraction and Analysis (runs in background)
             # =================================================================
-            image_analyses = []
-            try:
+            serialized_images = conversion_result.get("images", [])
+            if serialized_images and use_vision:
+                # Set initial image progress so frontend knows images were found
                 await loop.run_in_executor(
                     _get_processing_executor(),
                     functools.partial(
-                        self.neo4j.update_document_progress,
-                        doc_id,
-                        8,
-                        100,
-                        "Extracting and analyzing images...",
+                        self.neo4j.update_image_progress,
+                        doc_id, 0, len(serialized_images),
+                        f"Queued {len(serialized_images)} image{'s' if len(serialized_images) != 1 else ''} for analysis",
                     ),
                 )
-
-                if docling_doc:
-                    image_analyses = await self.vision_analyzer.analyze_all_images(
-                        docling_doc,
-                        force_vision_model=use_vision,
+                asyncio.ensure_future(
+                    self._analyze_images_background_from_serialized(
+                        doc_id, serialized_images, use_vision
                     )
-
-                    if image_analyses:
-                        logger.info(
-                            f"Document {doc_id}: analyzed {len(image_analyses)} images"
-                        )
-
-                        for idx, analysis in enumerate(image_analyses):
-                            image_chunk_id = f"{doc_id}_image_{idx}"
-                            image_content = (
-                                f"[Image {idx + 1}]\n{analysis.description}"
-                            )
-
-                            if analysis.analysis_method == "vision_model":
-                                image_content = f"[Image Analysis (Vision Model)]\n{analysis.description}"
-                            elif analysis.analysis_method == "docling":
-                                image_content = (
-                                    f"[Image Description]\n{analysis.description}"
-                                )
-
-                            image_chunk = DocumentChunk(
-                                id=image_chunk_id,
-                                document_id=doc_id,
-                                content=image_content,
-                                embedding=None,
-                                chunk_index=1000 + idx,
-                                metadata={
-                                    "type": "image_analysis",
-                                    "image_id": analysis.image_id,
-                                    "analysis_method": analysis.analysis_method,
-                                },
-                            )
-
-                            embed_result = await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.embedder.run,
-                                    documents=[
-                                        HaystackDocument(
-                                            content=image_content,
-                                            meta=image_chunk.metadata,
-                                        )
-                                    ],
-                                ),
-                            )
-                            embedded_docs = embed_result.get("documents", [])
-                            if embedded_docs:
-                                image_chunk.embedding = embedded_docs[0].embedding
-
-                            await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.store_chunk, image_chunk
-                                ),
-                            )
-                    else:
-                        logger.info(f"Document {doc_id}: no images found for analysis")
-                else:
-                    logger.warning(f"Document {doc_id}: no DoclingDocument available for image extraction")
-
-            except Exception as e:
-                logger.error(f"Image extraction/analysis failed for document {doc_id}: {e}", exc_info=True)
-
-            # Check for cancellation after image analysis
-            self._check_cancellation(doc_id)
+                )
 
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -1181,9 +1165,16 @@ class DocumentProcessor:
 
                 # Update progress for chunk storage (25-35%)
                 storage_progress = 25 + int((idx + 1) / len(embedded_chunks) * 10)
+                _store_interval = max(1, min(3, len(embedded_chunks) // 5))
                 if (
-                    idx % 5 == 0 or idx == len(embedded_chunks) - 1
-                ):  # Update every 5 chunks
+                    idx == 0
+                    or (idx + 1) % _store_interval == 0
+                    or idx == len(embedded_chunks) - 1
+                ):
+                    remaining = len(embedded_chunks) - (idx + 1)
+                    msg = f"Storing chunks: {idx + 1}/{len(embedded_chunks)} done"
+                    if remaining > 0:
+                        msg += f", {remaining} pending"
                     await loop.run_in_executor(
                         _get_processing_executor(),
                         functools.partial(
@@ -1191,12 +1182,12 @@ class DocumentProcessor:
                             doc_id,
                             storage_progress,
                             100,
-                            f"Stored chunk {idx + 1}/{len(embedded_chunks)}",
+                            msg,
                         ),
                     )
 
-                # Yield control every 10 chunks to keep API responsive
-                if idx % 10 == 0:
+                # Yield control every 3 chunks to keep API responsive
+                if idx % 3 == 0:
                     await asyncio.sleep(0)
 
             logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
@@ -1239,7 +1230,7 @@ class DocumentProcessor:
 
                 # Generate document summary for context
                 # Combine all chunk content for summary (limited to first ~5000 chars)
-                full_text = " ".join([c.content for c in embedded_chunks])[:5000]
+                full_text = " ".join([c.content for c in embedded_chunks if c.content])[:5000]
                 document_summary = (
                     await self.graph_extractor.generate_document_summary_async(
                         full_text
@@ -1258,7 +1249,7 @@ class DocumentProcessor:
                         doc_id,
                         40,
                         100,
-                        "Extracting entities and relationships...",
+                        f"Extracting 0/{len(embedded_chunks)} chunks...",
                     ),
                 )
 
@@ -1271,6 +1262,8 @@ class DocumentProcessor:
                 # Track active extractions for logging
                 active_extractions = 0
                 active_lock = asyncio.Lock()
+                # Update frequency: every 3 chunks or fewer for small documents
+                _progress_interval = max(1, min(3, len(embedded_chunks) // 5))
 
                 async def extract_chunk(idx: int, chunk, chunk_id: str):
                     """Extract from a single chunk with semaphore control."""
@@ -1290,13 +1283,16 @@ class DocumentProcessor:
                             )
 
                         try:
-                            extraction = (
-                                await self.graph_extractor.extract_from_text_async(
-                                    chunk.content, document_summary=document_summary
+                            extraction = None
+                            if not chunk.content:
+                                extraction_results[idx] = (chunk_id, None)
+                            else:
+                                extraction = (
+                                    await self.graph_extractor.extract_from_text_async(
+                                        chunk.content, document_summary=document_summary
+                                    )
                                 )
-                            )
-                            extraction_results[idx] = (chunk_id, extraction)
-                            # Count entities from extraction result for progress reporting
+                                extraction_results[idx] = (chunk_id, extraction)
                             if extraction and extraction.entities:
                                 total_entities += len(extraction.entities)
                         except CancellationRequested:
@@ -1310,44 +1306,63 @@ class DocumentProcessor:
                             async with active_lock:
                                 active_extractions -= 1
 
-                        # Update progress (run in executor)
                         completed_count += 1
-                        extraction_progress = 40 + int(
-                            completed_count / len(embedded_chunks) * 55
+
+                        should_update = (
+                            completed_count == 1
+                            or completed_count % _progress_interval == 0
+                            or completed_count == len(embedded_chunks)
                         )
-                        await loop.run_in_executor(
-                            _get_processing_executor(),
-                            functools.partial(
-                                self.neo4j.update_document_progress,
-                                doc_id,
-                                extraction_progress,
-                                100,
-                                f"Extracted {completed_count}/{len(embedded_chunks)} chunks ({total_entities} entities found)",
-                            ),
-                        )
+                        if should_update:
+                            extraction_progress = 40 + int(
+                                completed_count / len(embedded_chunks) * 55
+                            )
+                            pending_chunks = len(embedded_chunks) - completed_count
+                            msg = f"Extracted {completed_count}/{len(embedded_chunks)} chunks"
+                            if pending_chunks > 0:
+                                msg += f" ({pending_chunks} pending)"
+                            try:
+                                await asyncio.wait_for(
+                                    loop.run_in_executor(
+                                        _get_processing_executor(),
+                                        functools.partial(
+                                            self.neo4j.update_document_progress,
+                                            doc_id,
+                                            extraction_progress,
+                                            100,
+                                            msg,
+                                        ),
+                                    ),
+                                    timeout=10,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(f"Document {doc_id}: progress update timed out (executor may be saturated)")
 
-                        # Yield control periodically
-                        if completed_count % 5 == 0:
-                            await asyncio.sleep(0)
+                        # Yield control after every extraction to let API requests through
+                        await asyncio.sleep(0)
 
-                # Create extraction tasks for all chunks
-                extraction_tasks = [
-                    extract_chunk(idx, chunk, chunk_ids[idx])
-                    for idx, chunk in enumerate(embedded_chunks)
-                ]
-
+                total_chunks = len(embedded_chunks)
                 logger.info(
-                    f"Document {doc_id}: processing {len(extraction_tasks)} chunks "
+                    f"Document {doc_id}: processing {total_chunks} chunks "
                     f"with concurrency limit of {concurrent_limit}"
                 )
 
-                # Run all extractions concurrently (limited by semaphore)
-                # Use return_exceptions=True to collect results even if some fail
-                try:
-                    await asyncio.gather(*extraction_tasks, return_exceptions=True)
-                except CancellationRequested:
-                    logger.info(f"Document {doc_id}: extraction cancelled")
-                    raise
+                # Process extraction in small batches to avoid flooding the
+                # event loop with hundreds of pending coroutines at once.
+                batch_size = concurrent_limit * 2
+                for batch_start in range(0, total_chunks, batch_size):
+                    batch_end = min(batch_start + batch_size, total_chunks)
+                    batch_tasks = [
+                        extract_chunk(idx, embedded_chunks[idx], chunk_ids[idx])
+                        for idx in range(batch_start, batch_end)
+                    ]
+                    try:
+                        await asyncio.gather(*batch_tasks, return_exceptions=True)
+                    except CancellationRequested:
+                        logger.info(f"Document {doc_id}: extraction cancelled")
+                        raise
+                    # Yield between batches to let API requests through
+                    await asyncio.sleep(0)
 
                 # Check for cancellation after extraction phase
                 self._check_cancellation(doc_id)
@@ -1381,8 +1396,8 @@ class DocumentProcessor:
                             f"{counts['relationships']} relationships"
                         )
 
-                    # Yield control every 10 chunks
-                    if idx % 10 == 0:
+                    # Yield control every 3 chunks
+                    if idx % 3 == 0:
                         await asyncio.sleep(0)
 
                 # Update totals from stored counts for final reporting
@@ -1444,6 +1459,194 @@ class DocumentProcessor:
             )
         # NOTE: We no longer delete the file after processing.
         # Files are kept for reprocessing without needing re-upload.
+
+    async def _analyze_images_background_from_serialized(
+        self,
+        doc_id: str,
+        serialized_images: list,
+        force_vision_model: bool,
+    ):
+        """Analyze images received from the subprocess converter.
+
+        Images arrive as dicts with base64-encoded PNG data. We reconstruct
+        ExtractedImage objects and feed them through the vision analyzer.
+        """
+        import base64
+        import io
+
+        from app.services.vision_analyzer import ExtractedImage, _get_vision_semaphore
+        from PIL import Image
+
+        loop = asyncio.get_event_loop()
+        img_executor = _get_image_executor()
+        total = len(serialized_images)
+        semaphore = _get_vision_semaphore()
+        stored = 0
+
+        logger.info(f"Document {doc_id}: starting background analysis of {total} images")
+
+        # Set initial image progress
+        try:
+            await loop.run_in_executor(
+                img_executor,
+                functools.partial(
+                    self.neo4j.update_image_progress,
+                    doc_id, 0, total,
+                    f"Analyzing {total} image{'s' if total != 1 else ''}...",
+                ),
+            )
+        except Exception:
+            pass
+
+        for idx, img_data in enumerate(serialized_images):
+            try:
+                pil_image = Image.open(
+                    io.BytesIO(base64.b64decode(img_data["base64_png"]))
+                )
+                extracted = ExtractedImage(
+                    image_id=img_data.get("image_id", f"image_{idx}"),
+                    pil_image=pil_image,
+                    page_number=img_data.get("page_number"),
+                    bbox=img_data.get("bbox"),
+                    caption=img_data.get("caption"),
+                    existing_description=img_data.get("existing_description"),
+                )
+
+                async with semaphore:
+                    logger.info(
+                        f"Document {doc_id}: analyzing image {idx + 1}/{total}: "
+                        f"{extracted.image_id} (page {extracted.page_number})"
+                    )
+                    analysis = await self.vision_analyzer.analyze_image(
+                        extracted, force_vision_model=force_vision_model
+                    )
+
+                image_chunk_id = f"{doc_id}_image_{idx}"
+                if analysis.analysis_method == "vision_model":
+                    image_content = f"[Image Analysis (Vision Model)]\n{analysis.description}"
+                elif analysis.analysis_method == "docling":
+                    image_content = f"[Image Description]\n{analysis.description}"
+                else:
+                    image_content = f"[Image {idx + 1}]\n{analysis.description}"
+
+                image_chunk = DocumentChunk(
+                    id=image_chunk_id,
+                    document_id=doc_id,
+                    content=image_content,
+                    embedding=None,
+                    chunk_index=1000 + idx,
+                    metadata={
+                        "type": "image_analysis",
+                        "image_id": analysis.image_id,
+                        "analysis_method": analysis.analysis_method,
+                    },
+                )
+
+                embed_result = await loop.run_in_executor(
+                    img_executor,
+                    functools.partial(
+                        self.embedder.run,
+                        documents=[
+                            HaystackDocument(
+                                content=image_content,
+                                meta=image_chunk.metadata,
+                            )
+                        ],
+                    ),
+                )
+                embedded_docs = embed_result.get("documents", [])
+                if embedded_docs:
+                    image_chunk.embedding = embedded_docs[0].embedding
+
+                await loop.run_in_executor(
+                    img_executor,
+                    functools.partial(self.neo4j.store_chunk, image_chunk),
+                )
+                stored += 1
+                logger.info(
+                    f"Document {doc_id}: stored image {idx + 1}/{total} "
+                    f"(method={analysis.analysis_method}, len={len(analysis.description)})"
+                )
+
+                # Graph extraction for image content
+                if (
+                    self.graph_extractor.is_available
+                    and self.settings.enable_graph_extraction
+                    and image_content
+                ):
+                    try:
+                        extraction = await self.graph_extractor.extract_from_text_async(
+                            image_content
+                        )
+                        if extraction and (extraction.entities or extraction.relationships):
+                            await loop.run_in_executor(
+                                img_executor,
+                                functools.partial(
+                                    self.neo4j.store_graph_extraction,
+                                    image_chunk_id,
+                                    extraction,
+                                ),
+                            )
+                            logger.info(
+                                f"Document {doc_id}: image {idx + 1}/{total} "
+                                f"extracted {len(extraction.entities)} entities, "
+                                f"{len(extraction.relationships)} relationships"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Document {doc_id}: graph extraction failed for "
+                            f"image {idx + 1}: {e}"
+                        )
+
+                # Update image progress after each image
+                try:
+                    await loop.run_in_executor(
+                        img_executor,
+                        functools.partial(
+                            self.neo4j.update_image_progress,
+                            doc_id, stored, total,
+                            f"Analyzed {stored}/{total} image{'s' if total != 1 else ''}",
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.error(f"Document {doc_id}: failed to process image {idx + 1}/{total}: {e}")
+                # Still update progress on failure
+                try:
+                    await loop.run_in_executor(
+                        img_executor,
+                        functools.partial(
+                            self.neo4j.update_image_progress,
+                            doc_id, idx + 1, total,
+                            f"Analyzed {idx + 1}/{total} images ({stored} stored)",
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            await asyncio.sleep(0)
+
+        # Final image progress update + refresh chunk count to include image chunks
+        final_msg = f"Complete - {stored}/{total} image{'s' if total != 1 else ''} analyzed"
+        try:
+            await loop.run_in_executor(
+                img_executor,
+                functools.partial(
+                    self.neo4j.update_image_progress,
+                    doc_id, total, total, final_msg,
+                ),
+            )
+            if stored > 0:
+                await loop.run_in_executor(
+                    img_executor,
+                    functools.partial(self.neo4j.refresh_chunk_count, doc_id),
+                )
+        except Exception:
+            pass
+
+        logger.info(f"Document {doc_id}: background image analysis complete ({stored}/{total} stored)")
 
 
 class QueryProcessor:

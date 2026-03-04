@@ -312,7 +312,41 @@ class Neo4jService:
                 total=total,
                 message=message
             )
-    
+
+    def update_image_progress(
+        self,
+        doc_id: str,
+        current: int,
+        total: int,
+        message: str
+    ):
+        """Update the image analysis progress of a document."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.image_progress_current = $current,
+                    d.image_progress_total = $total,
+                    d.image_progress_message = $message
+            """,
+                id=doc_id,
+                current=current,
+                total=total,
+                message=message
+            )
+
+    def refresh_chunk_count(self, doc_id: str) -> int:
+        """Recount actual chunks from the graph and update the document's chunk_count."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                WITH d, count(c) as actual_count
+                SET d.chunk_count = actual_count
+                RETURN actual_count
+            """, id=doc_id)
+            record = result.single()
+            return record["actual_count"] if record else 0
+
     # =========================================================================
     # Custom Input Methods (for manually added Q&A, text, markdown)
     # =========================================================================
@@ -477,6 +511,9 @@ class Neo4jService:
                        coalesce(d.progress_current, 0) as progress_current,
                        coalesce(d.progress_total, 0) as progress_total,
                        coalesce(d.progress_message, '') as progress_message,
+                       coalesce(d.image_progress_current, 0) as image_progress_current,
+                       coalesce(d.image_progress_total, 0) as image_progress_total,
+                       coalesce(d.image_progress_message, '') as image_progress_message,
                        col.id as collection_id,
                        col.name as collection_name,
                        coalesce(d.is_custom_input, false) as is_custom_input,
@@ -504,6 +541,9 @@ class Neo4jService:
                        coalesce(d.progress_current, 0) as progress_current,
                        coalesce(d.progress_total, 0) as progress_total,
                        coalesce(d.progress_message, '') as progress_message,
+                       coalesce(d.image_progress_current, 0) as image_progress_current,
+                       coalesce(d.image_progress_total, 0) as image_progress_total,
+                       coalesce(d.image_progress_message, '') as image_progress_message,
                        collect(c.id) as chunk_ids
             """, id=doc_id)
             

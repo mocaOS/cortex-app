@@ -216,6 +216,8 @@ class GraphExtractor:
             self._client = OpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                timeout=120.0,
+                max_retries=2,
             )
             if config.is_turbo:
                 logger.info(f"Graph extractor using Turbo Mode: {config.base_url}")
@@ -234,6 +236,8 @@ class GraphExtractor:
             self._async_client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                timeout=120.0,
+                max_retries=2,
             )
             if config.is_turbo:
                 logger.info(f"Async graph extractor using Turbo Mode: {config.base_url}")
@@ -250,6 +254,33 @@ class GraphExtractor:
         """Check if graph extraction is available."""
         return self.client is not None
     
+    def _extract_response_content(self, response) -> Optional[str]:
+        """Extract usable text content from an LLM response.
+
+        Handles reasoning models (MiniMax-M2.1, DeepSeek-R1, etc.) that may
+        put output in ``reasoning_content`` or wrap it in ``<think>`` tags
+        instead of using the standard ``content`` field.
+        """
+        msg = response.choices[0].message
+        content = msg.content
+
+        if not content:
+            content = getattr(msg, "reasoning_content", None) or getattr(msg, "refusal", None)
+
+        if not content:
+            logger.warning(
+                f"LLM returned empty/None content "
+                f"(model={self.current_model}, finish_reason={response.choices[0].finish_reason}, "
+                f"has_tool_calls={bool(getattr(msg, 'tool_calls', None))}, "
+                f"keys={[k for k in vars(msg) if not k.startswith('_')]})"
+            )
+            return None
+
+        # Strip <think>…</think> blocks that reasoning models may prepend
+        content = re.sub(r"<think>[\s\S]*?</think>\s*", "", content, flags=re.IGNORECASE).strip()
+
+        return content or None
+
     def _extract_xml_entities(self, content: str) -> List[dict]:
         """
         Extract entities from XML-formatted LLM response.
@@ -417,19 +448,20 @@ class GraphExtractor:
         )
         
         try:
-            # Make API call
             response = self.client.chat.completions.create(
                 model=self.current_model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,  # Low temperature for consistent extraction
+                temperature=0.1,
                 max_tokens=3000,
             )
             
-            content = response.choices[0].message.content
-            
+            content = self._extract_response_content(response)
+            if not content:
+                return ExtractionResult()
+
             # Try XML parsing first
             xml_entities = self._extract_xml_entities(content)
             xml_relationships = self._extract_xml_relationships(content)
@@ -607,7 +639,6 @@ class GraphExtractor:
         )
         
         try:
-            # Make async API call - this is the key for true concurrency
             response = await self.async_client.chat.completions.create(
                 model=self.current_model,
                 messages=[
@@ -618,7 +649,7 @@ class GraphExtractor:
                 max_tokens=3000,
             )
             
-            content = response.choices[0].message.content
+            content = self._extract_response_content(response)
             
             # Parse response (reuse existing parsing logic)
             xml_entities = self._extract_xml_entities(content)
@@ -734,7 +765,9 @@ class GraphExtractor:
                 max_tokens=500,
             )
             
-            content = response.choices[0].message.content
+            content = self._extract_response_content(response)
+            if not content:
+                return []
             
             # Try XML parsing first
             entities = self._extract_xml_entity_names(content)
@@ -769,9 +802,8 @@ class GraphExtractor:
                 max_tokens=1000,
             )
 
-            content = response.choices[0].message.content
-            if content is None:
-                logger.warning("Document summary response content is None")
+            content = self._extract_response_content(response)
+            if not content:
                 return ""
             summary = content.strip()
             logger.info(f"Generated document summary: {len(summary)} chars")
@@ -805,8 +837,10 @@ class GraphExtractor:
                 max_tokens=500,
             )
             
-            content = response.choices[0].message.content
-            
+            content = self._extract_response_content(response)
+            if not content:
+                return []
+
             # Try XML parsing first
             entities = self._extract_xml_entity_names(content)
             
@@ -841,15 +875,14 @@ class GraphExtractor:
                 model=self.current_model,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
-                    {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}  # Limit input
+                    {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
                 ],
                 temperature=0.3,
                 max_tokens=1000,
             )
             
-            content = response.choices[0].message.content
-            if content is None:
-                logger.warning("Document summary response content is None")
+            content = self._extract_response_content(response)
+            if not content:
                 return ""
             summary = content.strip()
             logger.info(f"Generated document summary: {len(summary)} chars")
@@ -906,9 +939,8 @@ class GraphExtractor:
                 max_tokens=300,
             )
 
-            content = response.choices[0].message.content
-            if content is None:
-                logger.warning(f"Entity enrichment response content is None for {entity_name}")
+            content = self._extract_response_content(response)
+            if not content:
                 return entity_description
             enhanced = content.strip()
             logger.debug(f"Enhanced description for {entity_name}")
@@ -980,9 +1012,8 @@ Respond with ONLY the JSON object, no other text:
                 max_tokens=300,
             )
 
-            raw_content = response.choices[0].message.content
-            if raw_content is None:
-                logger.warning("Community summary response content is None")
+            raw_content = self._extract_response_content(response)
+            if not raw_content:
                 return {"name": f"Community ({len(entities)} entities)", "summary": ""}
             content = raw_content.strip()
 
@@ -1088,9 +1119,8 @@ Respond with ONLY the JSON object, no other text:
                 max_tokens=300,
             )
 
-            raw_content = response.choices[0].message.content
-            if raw_content is None:
-                logger.warning("Community summary async response content is None")
+            raw_content = self._extract_response_content(response)
+            if not raw_content:
                 return {"name": f"Community ({len(entities)} entities)", "summary": ""}
             content = raw_content.strip()
 
@@ -1150,9 +1180,8 @@ Respond with ONLY the community name, nothing else."""
                 max_tokens=50,
             )
 
-            content = response.choices[0].message.content
-            if content is None:
-                logger.warning("Community name response content is None")
+            content = self._extract_response_content(response)
+            if not content:
                 return f"Community ({len(entities)} entities)"
             name = content.strip().strip('"').strip("'")
             return name if name else f"Community ({len(entities)} entities)"
