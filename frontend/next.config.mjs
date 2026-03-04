@@ -2,6 +2,7 @@
 const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
+  middlewareClientMaxBodySize: "100mb",
   async rewrites() {
     return [
       {
