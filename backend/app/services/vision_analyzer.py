@@ -233,13 +233,15 @@ class VisionAnalyzer:
 
         # Default analysis prompt
         analysis_prompt = prompt or (
-            "Analyze this image in detail. Describe what you see, including:\n"
-            "1. Main objects, people, or elements visible\n"
-            "2. Text visible in the image (if any)\n"
-            "3. Charts, diagrams, or data visualizations (if any)\n"
-            "4. Overall context and purpose of the image\n"
-            "5. Any relevant details that would help understand the document\n\n"
-            "Provide a comprehensive description suitable for document retrieval and understanding."
+            "Analyze this image in detail for document retrieval purposes. "
+            "Output ONLY the description, without any conversational filler.\n\n"
+            "Provide a structured description including:\n"
+            "- Summary: A concise 1-2 sentence overview.\n"
+            "- Visual Elements: Describe the main objects, layout, or elements visible.\n"
+            "- Text content (OCR): Transcribe any visible text accurately.\n"
+            "- Data representation: For charts/graphs, explicitly describe axes, legends, trends, and key data points.\n"
+            "- Context: The overall purpose and any details that help understand the document.\n\n"
+            "Format your response using clear markdown headings."
         )
 
         # Convert image to base64 data URL
