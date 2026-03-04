@@ -391,12 +391,23 @@ class VisionAnalyzer:
             functools.partial(self.extract_images_from_document, docling_doc),
         )
 
+        if not extracted_images:
+            logger.info("No images extracted from document - nothing to analyze")
+            return []
+
+        logger.info(
+            f"Analyzing {len(extracted_images)} images "
+            f"(force_vision_model={force_vision_model}, vision_available={self.is_vision_model_available})"
+        )
+
         # Analyze each image
         results = []
-        for img in extracted_images:
+        for idx, img in enumerate(extracted_images):
+            logger.info(f"Analyzing image {idx + 1}/{len(extracted_images)}: {img.image_id} (page {img.page_number})")
             result = await self.analyze_image(
                 img, force_vision_model=force_vision_model, custom_prompt=custom_prompt
             )
+            logger.info(f"Image {idx + 1} result: method={result.analysis_method}, description_length={len(result.description)}")
             results.append(result)
 
         return results

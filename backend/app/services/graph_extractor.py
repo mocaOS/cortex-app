@@ -768,15 +768,19 @@ class GraphExtractor:
                 temperature=0.3,
                 max_tokens=1000,
             )
-            
-            summary = response.choices[0].message.content.strip()
+
+            content = response.choices[0].message.content
+            if content is None:
+                logger.warning("Document summary response content is None")
+                return ""
+            summary = content.strip()
             logger.info(f"Generated document summary: {len(summary)} chars")
             return summary
-            
+
         except Exception as e:
             logger.error(f"Error generating document summary: {e}")
             return ""
-    
+
     def extract_entities_from_query(self, query: str) -> List[str]:
         """
         Extract entity names from a user query for graph lookup.
@@ -843,14 +847,18 @@ class GraphExtractor:
                 max_tokens=1000,
             )
             
-            summary = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            if content is None:
+                logger.warning("Document summary response content is None")
+                return ""
+            summary = content.strip()
             logger.info(f"Generated document summary: {len(summary)} chars")
             return summary
-            
+
         except Exception as e:
             logger.error(f"Error generating document summary: {e}")
             return ""
-    
+
     def enrich_entity_description(
         self, 
         entity_name: str, 
@@ -897,15 +905,19 @@ class GraphExtractor:
                 temperature=0.3,
                 max_tokens=300,
             )
-            
-            enhanced = response.choices[0].message.content.strip()
+
+            content = response.choices[0].message.content
+            if content is None:
+                logger.warning(f"Entity enrichment response content is None for {entity_name}")
+                return entity_description
+            enhanced = content.strip()
             logger.debug(f"Enhanced description for {entity_name}")
             return enhanced
-            
+
         except Exception as e:
             logger.error(f"Error enriching entity description: {e}")
             return entity_description
-    
+
     # =========================================================================
     # Community Summarization
     # =========================================================================
@@ -967,12 +979,16 @@ Respond with ONLY the JSON object, no other text:
                 temperature=0.3,
                 max_tokens=300,
             )
-            
-            content = response.choices[0].message.content.strip()
-            
+
+            raw_content = response.choices[0].message.content
+            if raw_content is None:
+                logger.warning("Community summary response content is None")
+                return {"name": f"Community ({len(entities)} entities)", "summary": ""}
+            content = raw_content.strip()
+
             # Parse JSON response with multiple strategies
             import re
-            
+
             # Strategy 1: Direct JSON parse
             try:
                 result = json.loads(content)
@@ -981,7 +997,7 @@ Respond with ONLY the JSON object, no other text:
                     return result
             except json.JSONDecodeError:
                 pass
-            
+
             # Strategy 2: Extract JSON block from markdown code fence
             json_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
             if json_block_match:
@@ -1071,9 +1087,13 @@ Respond with ONLY the JSON object, no other text:
                 temperature=0.3,
                 max_tokens=300,
             )
-            
-            content = response.choices[0].message.content.strip()
-            
+
+            raw_content = response.choices[0].message.content
+            if raw_content is None:
+                logger.warning("Community summary async response content is None")
+                return {"name": f"Community ({len(entities)} entities)", "summary": ""}
+            content = raw_content.strip()
+
             # Parse JSON response
             try:
                 result = json.loads(content)
@@ -1082,7 +1102,7 @@ Respond with ONLY the JSON object, no other text:
                     return result
             except json.JSONDecodeError:
                 pass
-            
+
             # Try regex extraction
             import re
             name_match = re.search(r'"name"\s*:\s*"([^"]+)"', content)
@@ -1129,14 +1149,18 @@ Respond with ONLY the community name, nothing else."""
                 temperature=0.3,
                 max_tokens=50,
             )
-            
-            name = response.choices[0].message.content.strip().strip('"').strip("'")
+
+            content = response.choices[0].message.content
+            if content is None:
+                logger.warning("Community name response content is None")
+                return f"Community ({len(entities)} entities)"
+            name = content.strip().strip('"').strip("'")
             return name if name else f"Community ({len(entities)} entities)"
-            
+
         except Exception as e:
             logger.error(f"Error generating community name: {e}")
             return f"Community ({len(entities)} entities)"
-    
+
     # =========================================================================
     # Entity Embedding Generation (for Semantic Resolution)
     # =========================================================================

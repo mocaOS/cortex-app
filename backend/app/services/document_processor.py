@@ -89,6 +89,18 @@ URL_PATTERN = re.compile(
 URL_PLACEHOLDER_PREFIX = "§§URL_PLACEHOLDER_"
 URL_PLACEHOLDER_SUFFIX = "§§"
 
+# Docling inserts <!-- image --> HTML comments as placeholders for images in markdown.
+# These are noise when images are analyzed separately by a vision model.
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"<!--\s*image\s*-->", re.IGNORECASE)
+
+
+def _clean_image_placeholders(text: str) -> str:
+    """Remove Docling image placeholder comments and collapse resulting blank lines."""
+    cleaned = IMAGE_PLACEHOLDER_PATTERN.sub("", text)
+    # Collapse runs of 3+ newlines (left behind after removing placeholders) into 2
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
 
 def _protect_urls(text: str) -> Tuple[str, dict]:
     """
@@ -193,21 +205,23 @@ class DocumentProcessor:
 
         # Initialize Docling converter with enhanced OCR settings for better image text extraction
         # Configure pipeline options for maximum accuracy on scanned documents and images
+        # When vision model is set: skip local OCR and picture description - use vision model for images
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = True
+        pipeline_options.do_ocr = not self.vision_analyzer.is_vision_model_available
         pipeline_options.do_table_structure = True
-        pipeline_options.do_picture_description = True  # Enable Docling's built-in image description
+        pipeline_options.do_picture_description = not self.vision_analyzer.is_vision_model_available
         pipeline_options.table_structure_options = TableStructureOptions(
             do_cell_matching=True,
             mode=TableFormerMode.ACCURATE,  # Prioritize accuracy over speed
         )
 
-        # Configure EasyOCR for best image text recognition (80+ languages, GPU support)
-        pipeline_options.ocr_options = EasyOcrOptions(
-            lang=["en", "de"],
-            use_gpu=True,  # Enable GPU acceleration if available
-            confidence_threshold=0.2,  # Lower threshold = more aggressive text detection
-        )
+        # Configure EasyOCR only when no vision model - avoid local CPU/GPU processing when vision model is set
+        if not self.vision_analyzer.is_vision_model_available:
+            pipeline_options.ocr_options = EasyOcrOptions(
+                lang=["en", "de"],
+                use_gpu=True,  # Enable GPU acceleration if available
+                confidence_threshold=0.2,  # Lower threshold = more aggressive text detection
+            )
 
         # Alternative: Tesseract OCR (uncomment to use instead of EasyOCR)
         # pipeline_options.ocr_options = TesseractOcrOptions(
@@ -240,9 +254,15 @@ class DocumentProcessor:
             export_type=ExportType.MARKDOWN,
             converter=underlying_converter,
         )
-        logger.info(
-            "Docling converter initialized with enhanced OCR and image description (EasyOCR, 8 threads, 2x image scale)"
-        )
+        # Log initialization with image analysis and OCR method
+        if self.vision_analyzer.is_vision_model_available:
+            logger.info(
+                "Docling converter initialized (markdown only, no local OCR/VLM - image analysis via external vision model)"
+            )
+        else:
+            logger.info(
+                "Docling converter initialized with enhanced OCR and Docling SmolVLM (EasyOCR, 8 threads, 2x image scale)"
+            )
 
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
@@ -905,13 +925,45 @@ class DocumentProcessor:
             if not converter:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
-            # Run conversion in thread pool (CPU-bound)
-            # DoclingConverter.run() expects 'paths' parameter (not 'sources')
-            result = await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(converter.run, paths=[Path(file_path)]),
-            )
-            documents = result.get("documents", [])
+            # When vision model is configured, use the underlying DocumentConverter
+            # directly to get the native DoclingDocument (for image extraction) in a
+            # single pass, then export to markdown for the Haystack pipeline.
+            # This avoids a wasteful double-conversion.
+            docling_doc = None
+            use_vision = self.vision_analyzer.is_vision_model_available
+
+            # Access the underlying DocumentConverter (stored as _converter in DoclingConverter)
+            native_converter = getattr(converter, "_converter", None)
+
+            if use_vision and native_converter:
+                # Single native conversion - get DoclingDocument + markdown
+                def _native_convert(conv, fp):
+                    native_result = conv.convert(fp)
+                    dl_doc = native_result.document
+                    md_text = dl_doc.export_to_markdown()
+                    haystack_doc = HaystackDocument(content=md_text, meta={"dl_meta": {"origin": {"filename": Path(fp).name}}})
+                    return dl_doc, [haystack_doc]
+
+                docling_doc, documents = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(_native_convert, native_converter, file_path),
+                )
+                logger.info(f"Document {doc_id}: native conversion complete (vision model path)")
+            else:
+                # Standard path via DoclingConverter (includes OCR + SmolVLM)
+                result = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(converter.run, paths=[Path(file_path)]),
+                )
+                documents = result.get("documents", [])
+
+                # Try to get native DoclingDocument for image extraction (fallback path)
+                if native_converter:
+                    try:
+                        native_result = native_converter.convert(file_path)
+                        docling_doc = native_result.document
+                    except Exception as e:
+                        logger.warning(f"Could not get native DoclingDocument for image extraction: {e}")
 
             if not documents:
                 raise ValueError("No content extracted from file")
@@ -921,10 +973,8 @@ class DocumentProcessor:
 
             # =================================================================
             # Image Extraction and Analysis
-            # Extract images from documents and analyze with vision model or Docling fallback
             # =================================================================
             image_analyses = []
-            # Always extract images - analysis method (vision model or Docling) is determined in analyze_image()
             try:
                 await loop.run_in_executor(
                     _get_processing_executor(),
@@ -937,30 +987,10 @@ class DocumentProcessor:
                     ),
                 )
 
-                # Get the underlying DoclingDocument from the converter result
-                # The DoclingConverter wraps the result, we need to access the native document
-                # Check if converter has the native document available
-                docling_doc = None
-
-                # Try to get the native DoclingDocument from the first document
-                if hasattr(converter, "converter") and hasattr(
-                    converter.converter, "convert"
-                ):
-                    # Re-convert to get native DoclingDocument for image extraction
-                    # This is more efficient than storing both representations
-                    try:
-                        native_result = converter.converter.convert(file_path)
-                        docling_doc = native_result.document
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not get native DoclingDocument for image extraction: {e}"
-                        )
-
                 if docling_doc:
-                    # Extract and analyze images
                     image_analyses = await self.vision_analyzer.analyze_all_images(
                         docling_doc,
-                        force_vision_model=self.vision_analyzer.is_vision_model_available,
+                        force_vision_model=use_vision,
                     )
 
                     if image_analyses:
@@ -968,9 +998,7 @@ class DocumentProcessor:
                             f"Document {doc_id}: analyzed {len(image_analyses)} images"
                         )
 
-                        # Store image analysis as special chunks
                         for idx, analysis in enumerate(image_analyses):
-                            # Create a chunk for each image analysis
                             image_chunk_id = f"{doc_id}_image_{idx}"
                             image_content = (
                                 f"[Image {idx + 1}]\n{analysis.description}"
@@ -983,15 +1011,12 @@ class DocumentProcessor:
                                     f"[Image Description]\n{analysis.description}"
                                 )
 
-                            # Create a text chunk from the image analysis
-                            # This allows image content to be searchable via RAG
                             image_chunk = DocumentChunk(
                                 id=image_chunk_id,
                                 document_id=doc_id,
                                 content=image_content,
-                                embedding=None,  # Will be embedded below
-                                chunk_index=1000
-                                + idx,  # Use high index to separate from text chunks
+                                embedding=None,
+                                chunk_index=1000 + idx,
                                 metadata={
                                     "type": "image_analysis",
                                     "image_id": analysis.image_id,
@@ -999,7 +1024,6 @@ class DocumentProcessor:
                                 },
                             )
 
-                            # Embed the image description
                             embed_result = await loop.run_in_executor(
                                 _get_processing_executor(),
                                 functools.partial(
@@ -1016,17 +1040,19 @@ class DocumentProcessor:
                             if embedded_docs:
                                 image_chunk.embedding = embedded_docs[0].embedding
 
-                            # Store image chunk
                             await loop.run_in_executor(
                                 _get_processing_executor(),
                                 functools.partial(
                                     self.neo4j.store_chunk, image_chunk
                                 ),
                             )
+                    else:
+                        logger.info(f"Document {doc_id}: no images found for analysis")
+                else:
+                    logger.warning(f"Document {doc_id}: no DoclingDocument available for image extraction")
 
             except Exception as e:
-                logger.warning(f"Image extraction/analysis failed: {e}")
-                # Continue processing without image analysis
+                logger.error(f"Image extraction/analysis failed for document {doc_id}: {e}", exc_info=True)
 
             # Check for cancellation after image analysis
             self._check_cancellation(doc_id)
@@ -1044,6 +1070,13 @@ class DocumentProcessor:
 
             # Yield control
             await asyncio.sleep(0)
+
+            # =================================================================
+            # Clean image placeholders from markdown before chunking
+            # =================================================================
+            if use_vision:
+                for doc in documents:
+                    doc.content = _clean_image_placeholders(doc.content)
 
             # =================================================================
             # URL Protection: Prevent URLs from being split across chunks
