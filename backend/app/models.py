@@ -194,6 +194,10 @@ class DocumentMetadata(BaseModel):
     progress_current: int = Field(default=0, description="Current step in processing")
     progress_total: int = Field(default=0, description="Total steps in processing")
     progress_message: str = Field(default="", description="Human-readable progress message")
+    # Image analysis progress
+    image_progress_current: int = Field(default=0, description="Number of images analyzed so far")
+    image_progress_total: int = Field(default=0, description="Total images to analyze")
+    image_progress_message: str = Field(default="", description="Human-readable image analysis progress")
 
 
 class DocumentChunk(BaseModel):
@@ -711,6 +715,10 @@ class SystemConfigResponse(BaseModel):
     compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
     compute3_model: str = Field(..., description="Model for turbo mode")
     compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
+    
+    # Vision Model
+    vision_model_available: bool = Field(..., description="Whether a vision model is configured")
+    vision_model: str = Field(..., description="Vision model name for image analysis")
     
     class Config:
         json_schema_extra = {

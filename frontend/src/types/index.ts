@@ -12,6 +12,10 @@ export interface Document {
   progress_current?: number;
   progress_total?: number;
   progress_message?: string;
+  // Image analysis progress
+  image_progress_current?: number;
+  image_progress_total?: number;
+  image_progress_message?: string;
   // Collection info
   collection_id?: string | null;
   collection_name?: string | null;
@@ -576,4 +580,8 @@ export interface SystemConfig {
   compute3_gpu_count: number;
   compute3_model: string;
   compute3_default_runtime: number;
+  
+  // Vision Model
+  vision_model_available: boolean;
+  vision_model: string;
 }

@@ -312,7 +312,41 @@ class Neo4jService:
                 total=total,
                 message=message
             )
-    
+
+    def update_image_progress(
+        self,
+        doc_id: str,
+        current: int,
+        total: int,
+        message: str
+    ):
+        """Update the image analysis progress of a document."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.image_progress_current = $current,
+                    d.image_progress_total = $total,
+                    d.image_progress_message = $message
+            """,
+                id=doc_id,
+                current=current,
+                total=total,
+                message=message
+            )
+
+    def refresh_chunk_count(self, doc_id: str) -> int:
+        """Recount actual chunks from the graph and update the document's chunk_count."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                WITH d, count(c) as actual_count
+                SET d.chunk_count = actual_count
+                RETURN actual_count
+            """, id=doc_id)
+            record = result.single()
+            return record["actual_count"] if record else 0
+
     # =========================================================================
     # Custom Input Methods (for manually added Q&A, text, markdown)
     # =========================================================================
@@ -362,13 +396,13 @@ class Neo4jService:
                     )
                     OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
                     RETURN d.id as id,
-                           d.filename as filename,
-                           d.custom_input_type as input_type,
-                           d.custom_raw_content as content,
-                           d.custom_raw_answer as answer,
-                           d.custom_topic_hint as topic_hint,
-                           d.upload_date as created_at,
-                           d.processing_status as status,
+                           coalesce(d.filename, '') as filename,
+                           coalesce(d.custom_input_type, '') as input_type,
+                           coalesce(d.custom_raw_content, '') as content,
+                           coalesce(d.custom_raw_answer, '') as answer,
+                           coalesce(d.custom_topic_hint, '') as topic_hint,
+                           coalesce(d.upload_date, '') as created_at,
+                           coalesce(d.processing_status, 'pending') as status,
                            c.id as collection_id,
                            c.name as collection_name
                     ORDER BY d.upload_date DESC
@@ -380,13 +414,13 @@ class Neo4jService:
                     WHERE d.is_custom_input = true
                     OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
                     RETURN d.id as id,
-                           d.filename as filename,
-                           d.custom_input_type as input_type,
-                           d.custom_raw_content as content,
-                           d.custom_raw_answer as answer,
-                           d.custom_topic_hint as topic_hint,
-                           d.upload_date as created_at,
-                           d.processing_status as status,
+                           coalesce(d.filename, '') as filename,
+                           coalesce(d.custom_input_type, '') as input_type,
+                           coalesce(d.custom_raw_content, '') as content,
+                           coalesce(d.custom_raw_answer, '') as answer,
+                           coalesce(d.custom_topic_hint, '') as topic_hint,
+                           coalesce(d.upload_date, '') as created_at,
+                           coalesce(d.processing_status, 'pending') as status,
                            c.id as collection_id,
                            c.name as collection_name
                     ORDER BY d.upload_date DESC
@@ -403,13 +437,13 @@ class Neo4jService:
                 WHERE d.is_custom_input = true
                 OPTIONAL MATCH (c:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
-                       d.filename as filename,
-                       d.custom_input_type as input_type,
-                       d.custom_raw_content as content,
-                       d.custom_raw_answer as answer,
-                       d.custom_topic_hint as topic_hint,
-                       d.upload_date as created_at,
-                       d.processing_status as status,
+                       coalesce(d.filename, '') as filename,
+                       coalesce(d.custom_input_type, '') as input_type,
+                       coalesce(d.custom_raw_content, '') as content,
+                       coalesce(d.custom_raw_answer, '') as answer,
+                       coalesce(d.custom_topic_hint, '') as topic_hint,
+                       coalesce(d.upload_date, '') as created_at,
+                       coalesce(d.processing_status, 'pending') as status,
                        c.id as collection_id,
                        c.name as collection_name
             """, id=doc_id)
@@ -466,22 +500,25 @@ class Neo4jService:
                 MATCH (d:Document)
                 OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
-                       d.filename as filename,
-                       d.file_type as file_type,
-                       d.file_size as file_size,
-                       d.file_path as file_path,
-                       d.upload_date as upload_date,
-                       d.chunk_count as chunk_count,
-                       d.processing_status as processing_status,
-                       d.error_message as error_message,
+                       coalesce(d.filename, '') as filename,
+                       coalesce(d.file_type, '') as file_type,
+                       coalesce(d.file_size, 0) as file_size,
+                       coalesce(d.file_path, '') as file_path,
+                       coalesce(d.upload_date, '') as upload_date,
+                       coalesce(d.chunk_count, 0) as chunk_count,
+                       coalesce(d.processing_status, 'pending') as processing_status,
+                       coalesce(d.error_message, '') as error_message,
                        coalesce(d.progress_current, 0) as progress_current,
                        coalesce(d.progress_total, 0) as progress_total,
                        coalesce(d.progress_message, '') as progress_message,
+                       coalesce(d.image_progress_current, 0) as image_progress_current,
+                       coalesce(d.image_progress_total, 0) as image_progress_total,
+                       coalesce(d.image_progress_message, '') as image_progress_message,
                        col.id as collection_id,
                        col.name as collection_name,
                        coalesce(d.is_custom_input, false) as is_custom_input,
-                       d.custom_input_type as custom_input_type,
-                       d.custom_topic_hint as custom_topic_hint
+                       coalesce(d.custom_input_type, '') as custom_input_type,
+                       coalesce(d.custom_topic_hint, '') as custom_topic_hint
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -493,17 +530,20 @@ class Neo4jService:
                 MATCH (d:Document {id: $id})
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
                 RETURN d.id as id,
-                       d.filename as filename,
-                       d.file_type as file_type,
-                       d.file_size as file_size,
-                       d.file_path as file_path,
-                       d.upload_date as upload_date,
-                       d.chunk_count as chunk_count,
-                       d.processing_status as processing_status,
-                       d.error_message as error_message,
+                       coalesce(d.filename, '') as filename,
+                       coalesce(d.file_type, '') as file_type,
+                       coalesce(d.file_size, 0) as file_size,
+                       coalesce(d.file_path, '') as file_path,
+                       coalesce(d.upload_date, '') as upload_date,
+                       coalesce(d.chunk_count, 0) as chunk_count,
+                       coalesce(d.processing_status, 'pending') as processing_status,
+                       coalesce(d.error_message, '') as error_message,
                        coalesce(d.progress_current, 0) as progress_current,
                        coalesce(d.progress_total, 0) as progress_total,
                        coalesce(d.progress_message, '') as progress_message,
+                       coalesce(d.image_progress_current, 0) as image_progress_current,
+                       coalesce(d.image_progress_total, 0) as image_progress_total,
+                       coalesce(d.image_progress_message, '') as image_progress_message,
                        collect(c.id) as chunk_ids
             """, id=doc_id)
             
@@ -528,11 +568,11 @@ class Neo4jService:
                     chunk_index: c.chunk_index
                 }) as chunks
                 RETURN d.id as id,
-                       d.filename as filename,
-                       d.file_type as file_type,
-                       d.file_size as file_size,
-                       d.upload_date as upload_date,
-                       d.chunk_count as chunk_count,
+                       coalesce(d.filename, '') as filename,
+                       coalesce(d.file_type, '') as file_type,
+                       coalesce(d.file_size, 0) as file_size,
+                       coalesce(d.upload_date, '') as upload_date,
+                       coalesce(d.chunk_count, 0) as chunk_count,
                        chunks
             """, id=doc_id)
             
@@ -1415,7 +1455,7 @@ class Neo4jService:
             result = session.run("""
                 MATCH (d:Document)
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(d.file_size) as total_size
+                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size
                 
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
@@ -2337,7 +2377,7 @@ class Neo4jService:
             result = session.run("""
                 MATCH (d:Document)
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(d.file_size) as total_size
+                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size
                 
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
@@ -2351,7 +2391,8 @@ class Neo4jService:
                 OPTIONAL MATCH (col:Collection)
                 WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, count(col) as collection_count
                 
-                OPTIONAL MATCH (pending:Document {processing_status: 'pending'})
+                OPTIONAL MATCH (pending:Document)
+                WHERE coalesce(pending.processing_status, 'pending') = 'pending'
                 RETURN doc_count as document_count,
                        chunk_count,
                        total_size,
@@ -2440,13 +2481,13 @@ class Neo4jService:
             result = session.run("""
                 MATCH (k:APIKey {id: 'admin'})
                 RETURN k.id as id,
-                       k.name as name,
-                       k.key_prefix as key_prefix,
-                       k.permissions as permissions,
-                       k.is_active as is_active,
-                       k.created_at as created_at,
-                       k.created_by as created_by,
-                       k.total_requests as total_requests
+                       coalesce(k.name, '') as name,
+                       coalesce(k.key_prefix, '') as key_prefix,
+                       coalesce(k.permissions, []) as permissions,
+                       coalesce(k.is_active, true) as is_active,
+                       coalesce(k.created_at, '') as created_at,
+                       coalesce(k.created_by, '') as created_by,
+                       coalesce(k.total_requests, 0) as total_requests
             """)
             
             record = result.single()
@@ -2491,14 +2532,14 @@ class Neo4jService:
             result = session.run("""
                 MATCH (k:APIKey {id: $id})
                 RETURN k.id as id,
-                       k.name as name,
-                       k.key_prefix as key_prefix,
+                       coalesce(k.name, '') as name,
+                       coalesce(k.key_prefix, '') as key_prefix,
                        k.key_hash as key_hash,
-                       k.permissions as permissions,
-                       k.is_active as is_active,
-                       k.created_at as created_at,
+                       coalesce(k.permissions, []) as permissions,
+                       coalesce(k.is_active, true) as is_active,
+                       coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       k.created_by as created_by
+                       coalesce(k.created_by, '') as created_by
             """, id=key_id)
             
             record = result.single()
@@ -2509,16 +2550,16 @@ class Neo4jService:
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (k:APIKey)
-                WHERE k.key_prefix = $prefix AND k.is_active = true
+                WHERE k.key_prefix = $prefix AND coalesce(k.is_active, true) = true
                 RETURN k.id as id,
-                       k.name as name,
+                       coalesce(k.name, '') as name,
                        k.key_prefix as key_prefix,
                        k.key_hash as key_hash,
-                       k.permissions as permissions,
-                       k.is_active as is_active,
-                       k.created_at as created_at,
+                       coalesce(k.permissions, []) as permissions,
+                       coalesce(k.is_active, true) as is_active,
+                       coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       k.created_by as created_by
+                       coalesce(k.created_by, '') as created_by
             """, prefix=key_prefix)
             
             return [dict(record) for record in result]
@@ -2529,13 +2570,13 @@ class Neo4jService:
             result = session.run("""
                 MATCH (k:APIKey)
                 RETURN k.id as id,
-                       k.name as name,
-                       k.key_prefix as key_prefix,
-                       k.permissions as permissions,
-                       k.is_active as is_active,
-                       k.created_at as created_at,
+                       coalesce(k.name, '') as name,
+                       coalesce(k.key_prefix, '') as key_prefix,
+                       coalesce(k.permissions, []) as permissions,
+                       coalesce(k.is_active, true) as is_active,
+                       coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       k.created_by as created_by
+                       coalesce(k.created_by, '') as created_by
                 ORDER BY k.created_at DESC
             """)
             
@@ -2573,13 +2614,13 @@ class Neo4jService:
                 MATCH (k:APIKey {{id: $id}})
                 SET {set_clause}
                 RETURN k.id as id,
-                       k.name as name,
-                       k.key_prefix as key_prefix,
-                       k.permissions as permissions,
-                       k.is_active as is_active,
-                       k.created_at as created_at,
+                       coalesce(k.name, '') as name,
+                       coalesce(k.key_prefix, '') as key_prefix,
+                       coalesce(k.permissions, []) as permissions,
+                       coalesce(k.is_active, true) as is_active,
+                       coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       k.created_by as created_by
+                       coalesce(k.created_by, '') as created_by
             """, **params)
             
             record = result.single()
@@ -2783,11 +2824,11 @@ class Neo4jService:
                 OPTIONAL MATCH (k)-[:HAS_USAGE]->(all_log:APIKeyUsageLog)
                 
                 RETURN k.id as id,
-                       k.name as name,
+                       coalesce(k.name, '') as name,
                        COALESCE(k.total_requests, 0) as total_requests,
                        COALESCE(k.error_count, 0) as error_count,
                        k.last_error_at as last_error_at,
-                       k.last_error_message as last_error_message,
+                       coalesce(k.last_error_message, '') as last_error_message,
                        COALESCE(today_log.request_count, 0) as requests_today,
                        COALESCE(SUM(week_log.request_count), 0) as requests_this_week,
                        COALESCE(SUM(month_log.request_count), 0) as requests_this_month,

@@ -18,6 +18,7 @@ import {
   Network,
   Shield,
   Zap,
+  Eye,
   Check,
   X,
 } from "lucide-react";
@@ -97,7 +98,7 @@ function ConfigSection({
 }
 
 // Config section IDs for expand/collapse tracking
-type ConfigSectionId = "llm" | "embeddings" | "documents" | "search" | "graph" | "features" | "turbo";
+type ConfigSectionId = "llm" | "embeddings" | "documents" | "search" | "graph" | "features" | "turbo" | "vision";
 
 export default function AdminPage() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -119,8 +120,12 @@ export default function AdminPage() {
     });
   };
 
-  const allSectionIds: ConfigSectionId[] = ["llm", "embeddings", "documents", "search", "graph", "features", "turbo"];
-  const visibleSectionIds = config?.turbo_mode_available ? allSectionIds : allSectionIds.filter(id => id !== "turbo");
+  const allSectionIds: ConfigSectionId[] = ["llm", "embeddings", "documents", "search", "graph", "features", "turbo", "vision"];
+  const visibleSectionIds = allSectionIds.filter(id => {
+    if (id === "turbo" && !config?.turbo_mode_available) return false;
+    if (id === "vision" && !config?.vision_model_available) return false;
+    return true;
+  });
   const allExpanded = visibleSectionIds.every(id => openSections.has(id));
 
   const toggleAllSections = () => {
@@ -295,6 +300,14 @@ export default function AdminPage() {
                       <ConfigItem label="GPU Count" value={config.compute3_gpu_count} />
                       <ConfigItem label="Model" value={config.compute3_model} />
                       <ConfigItem label="Default Runtime" value={`${Math.round(config.compute3_default_runtime / 60)} min`} />
+                    </ConfigSection>
+                  )}
+
+                  {/* Vision Model - only show if available */}
+                  {config.vision_model_available && (
+                    <ConfigSection title="Vision Model" icon={Eye} isOpen={openSections.has("vision")} onToggle={() => toggleSection("vision")}>
+                      <ConfigItem label="Model" value={config.vision_model} />
+                      <ConfigItem label="Image Analysis" value={true} type="boolean" />
                     </ConfigSection>
                   )}
                 </div>

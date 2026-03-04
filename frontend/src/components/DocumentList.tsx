@@ -31,6 +31,9 @@ interface Document {
   progress_current?: number;
   progress_total?: number;
   progress_message?: string;
+  image_progress_current?: number;
+  image_progress_total?: number;
+  image_progress_message?: string;
   collection_id?: string | null;
   collection_name?: string | null;
   is_custom_input?: boolean;
@@ -41,6 +44,21 @@ interface Document {
 interface DocumentListProps {
   onDelete: () => void;
 }
+
+const hasUnfinishedImages = (doc: Document) => {
+  const total = doc.image_progress_total ?? 0;
+  return total > 0 && doc.image_progress_current !== total;
+};
+
+const effectiveStatus = (doc: Document): string => {
+  if (doc.processing_status === "completed" && hasUnfinishedImages(doc)) {
+    return "in_progress";
+  }
+  if (doc.processing_status === "processing" || doc.processing_status === "extracting") {
+    return "in_progress";
+  }
+  return doc.processing_status;
+};
 
 const isProcessing = (status: string) => {
   return status === "processing" || status === "extracting" || status === "pending";
@@ -162,10 +180,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     const matchesStatus = (() => {
       if (filterStatus === null) return true;
-      if (filterStatus === "in_progress") {
-        return doc.processing_status === "processing" || doc.processing_status === "extracting";
-      }
-      return doc.processing_status === filterStatus;
+      return effectiveStatus(doc) === filterStatus;
     })();
 
     const searchLower = searchQuery.toLowerCase().trim();
@@ -191,20 +206,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   }, [totalPages, currentPage, setCurrentPage]);
 
-  // Status counts
+  // Status counts (using effective status so image-analyzing docs count as in_progress)
   const statusCounts = {
-    completed: documents.filter((d) => d.processing_status === "completed").length,
-    in_progress: documents.filter((d) => ["processing", "extracting"].includes(d.processing_status)).length,
-    pending: documents.filter((d) => d.processing_status === "pending").length,
-    failed: documents.filter((d) => d.processing_status === "failed").length,
+    completed: documents.filter((d) => effectiveStatus(d) === "completed").length,
+    in_progress: documents.filter((d) => effectiveStatus(d) === "in_progress").length,
+    pending: documents.filter((d) => effectiveStatus(d) === "pending").length,
+    failed: documents.filter((d) => effectiveStatus(d) === "failed").length,
   };
 
   const availableTargetCollections = collections.filter(
     (c) => filterCollectionId === null || filterCollectionId === "none" || c.id !== filterCollectionId
   );
 
-  const failedDocuments = filteredDocuments.filter((d) => d.processing_status === "failed");
-  const inProgressDocuments = filteredDocuments.filter((d) => isProcessing(d.processing_status));
+  const failedDocuments = filteredDocuments.filter((d) => effectiveStatus(d) === "failed");
+  const inProgressDocuments = filteredDocuments.filter((d) => effectiveStatus(d) === "in_progress" || effectiveStatus(d) === "pending");
   const selectedInProgressCount = documents.filter(
     (d) => selectedIds.has(d.id) && isProcessing(d.processing_status) && d.file_path
   ).length;

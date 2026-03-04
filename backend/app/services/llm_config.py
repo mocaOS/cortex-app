@@ -51,8 +51,6 @@ def set_turbo_mode_state(
     
     if active:
         logger.info(f"Turbo Mode enabled - LLM calls will use: {base_url}")
-    else:
-        logger.info("Turbo Mode disabled - LLM calls will use default OpenAI settings")
 
 
 def get_turbo_mode_state() -> dict:

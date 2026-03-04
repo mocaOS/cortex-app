@@ -6,6 +6,7 @@ import asyncio
 import uuid
 import shutil
 import glob
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -93,13 +94,68 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+# Suppress Neo4j notification warnings about missing properties/relationships
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
+
+
+_api_executor: Optional[ThreadPoolExecutor] = None
+
+
+async def _event_loop_watchdog():
+    """Background task that monitors event loop health and dumps thread stacks
+    when the loop appears blocked."""
+    import time
+    import sys
+    import threading
+    
+    consecutive_blocks = 0
+    
+    while True:
+        start = time.monotonic()
+        await asyncio.sleep(5)
+        elapsed = time.monotonic() - start
+        
+        if elapsed > 7:
+            consecutive_blocks += 1
+            logger.warning(
+                f"Event loop was blocked for {elapsed - 5:.1f}s "
+                f"(heartbeat took {elapsed:.1f}s instead of 5s, "
+                f"consecutive: {consecutive_blocks})"
+            )
+            
+            # Dump all thread stacks to identify what's blocking
+            if consecutive_blocks >= 2:
+                logger.warning("=== THREAD DUMP (event loop blocked repeatedly) ===")
+                for thread_id, frame in sys._current_frames().items():
+                    thread_name = "unknown"
+                    for t in threading.enumerate():
+                        if t.ident == thread_id:
+                            thread_name = t.name
+                            break
+                    import traceback
+                    stack = "".join(traceback.format_stack(frame))
+                    logger.warning(f"Thread {thread_name} ({thread_id}):\n{stack}")
+                logger.warning("=== END THREAD DUMP ===")
+                consecutive_blocks = 0
+        else:
+            consecutive_blocks = 0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    global _api_executor
     settings = get_settings()
+
+    # Dedicated thread pool for API endpoint handlers (asyncio.to_thread).
+    # Kept separate from the document processing executor so blocking DB
+    # queries in request handlers never compete with processing workers.
+    _api_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="api_")
+    asyncio.get_event_loop().set_default_executor(_api_executor)
+
+    # Start event loop watchdog to detect GIL/blocking issues
+    watchdog_task = asyncio.create_task(_event_loop_watchdog())
     
     # Create upload directory
     os.makedirs(settings.upload_dir, exist_ok=True)
@@ -140,7 +196,10 @@ async def lifespan(app: FastAPI):
     yield
     
     # Cleanup
+    watchdog_task.cancel()
     neo4j.close()
+    if _api_executor:
+        _api_executor.shutdown(wait=False)
     logger.info("Application shutdown complete")
 
 
@@ -398,7 +457,7 @@ async def cleanup_tasks(max_age_hours: int = Query(default=24, ge=1, le=168)):
 async def health_check():
     """Health check endpoint."""
     neo4j = get_neo4j_service()
-    connected = neo4j.verify_connectivity()
+    connected = await asyncio.to_thread(neo4j.verify_connectivity)
     
     return HealthResponse(
         status="healthy" if connected else "degraded",
@@ -412,7 +471,7 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
     """Get knowledge base and knowledge graph statistics."""
     try:
         neo4j = get_neo4j_service()
-        stats = neo4j.get_stats()
+        stats = await asyncio.to_thread(neo4j.get_stats)
         return GraphStatsResponse(
             document_count=stats["document_count"],
             chunk_count=stats["chunk_count"],
@@ -446,7 +505,7 @@ async def upload_file(
     # Enforce file limit
     if settings.max_files > 0:
         neo4j = get_neo4j_service()
-        stats = neo4j.get_stats()
+        stats = await asyncio.to_thread(neo4j.get_stats)
         if stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
@@ -773,7 +832,7 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
     
     # Enforce file limit
     if settings.max_files > 0:
-        stats = neo4j.get_stats()
+        stats = await asyncio.to_thread(neo4j.get_stats)
         if stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
@@ -842,12 +901,13 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
             message = "Custom input saved. Call /api/documents/process-pending to start processing."
         
         # Store custom input metadata for later editing
-        neo4j.set_custom_input_metadata(
-            doc_id=doc_id,
-            input_type=request.input_type.value,
-            raw_content=request.content,
-            raw_answer=request.answer,
-            topic_hint=request.title
+        await asyncio.to_thread(
+            neo4j.set_custom_input_metadata,
+            doc_id,
+            request.input_type.value,
+            request.content,
+            request.answer,
+            request.title,
         )
         
         return CustomInputResponse(
@@ -875,7 +935,7 @@ async def list_custom_inputs(
     """
     try:
         neo4j = get_neo4j_service()
-        custom_inputs = neo4j.get_custom_inputs(search=search, limit=limit)
+        custom_inputs = await asyncio.to_thread(neo4j.get_custom_inputs, search, limit)
         return {"custom_inputs": custom_inputs, "total": len(custom_inputs)}
     except Exception as e:
         logger.error(f"Error listing custom inputs: {e}")
@@ -891,7 +951,7 @@ async def get_custom_input(document_id: str):
     """
     try:
         neo4j = get_neo4j_service()
-        custom_input = neo4j.get_custom_input(document_id)
+        custom_input = await asyncio.to_thread(neo4j.get_custom_input, document_id)
         if not custom_input:
             raise HTTPException(status_code=404, detail="Custom input not found")
         return custom_input
@@ -907,7 +967,7 @@ async def list_documents(auth: AuthResult = Depends(require_read_permission)):
     """List all documents in the knowledge base."""
     try:
         neo4j = get_neo4j_service()
-        documents = neo4j.get_all_documents()
+        documents = await asyncio.to_thread(neo4j.get_all_documents)
         return {"documents": documents, "total": len(documents)}
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
@@ -919,7 +979,7 @@ async def get_document(document_id: str, auth: AuthResult = Depends(require_read
     """Get a specific document."""
     try:
         neo4j = get_neo4j_service()
-        document = neo4j.get_document(document_id)
+        document = await asyncio.to_thread(neo4j.get_document, document_id)
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
         return document
@@ -941,7 +1001,7 @@ async def get_document_content(document_id: str):
     """
     try:
         neo4j = get_neo4j_service()
-        content = neo4j.get_document_content(document_id)
+        content = await asyncio.to_thread(neo4j.get_document_content, document_id)
         if not content:
             raise HTTPException(status_code=404, detail="Document not found")
         return content
@@ -972,7 +1032,7 @@ async def delete_document(document_id: str, auth: AuthResult = Depends(require_m
         
         # Then delete the document and clean up graph
         neo4j = get_neo4j_service()
-        result = neo4j.delete_document(document_id)
+        result = await asyncio.to_thread(neo4j.delete_document, document_id)
         if not result["deleted"]:
             raise HTTPException(status_code=404, detail="Document not found")
         
@@ -1008,7 +1068,7 @@ async def delete_documents(request: DeleteRequest, auth: AuthResult = Depends(re
         
         # Then delete the documents and clean up graph
         neo4j = get_neo4j_service()
-        result = neo4j.delete_documents(request.document_ids)
+        result = await asyncio.to_thread(neo4j.delete_documents, request.document_ids)
         
         return {
             "message": f"Successfully deleted {result['deleted_count']} document(s)",
@@ -1042,7 +1102,7 @@ async def delete_all_documents(auth: AuthResult = Depends(require_manage_permiss
         
         # Then delete everything
         neo4j = get_neo4j_service()
-        result = neo4j.delete_all_documents()
+        result = await asyncio.to_thread(neo4j.delete_all_documents)
         
         return {
             "message": f"Successfully deleted all {result['deleted_count']} document(s)",
@@ -1072,7 +1132,7 @@ async def reprocess_document(
     processor = get_document_processor()
     
     # Check document exists
-    document = neo4j.get_document(document_id)
+    document = await asyncio.to_thread(neo4j.get_document, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -1164,7 +1224,7 @@ async def reprocess_documents(
         queued_count = 0
         for doc_id in request.document_ids:
             try:
-                doc = neo4j.get_document(doc_id)
+                doc = await asyncio.to_thread(neo4j.get_document, doc_id)
                 if not doc:
                     results.append({
                         "document_id": doc_id,
@@ -1242,7 +1302,7 @@ async def get_pending_documents():
     """
     try:
         processor = get_document_processor()
-        pending = processor.get_pending_documents()
+        pending = await asyncio.to_thread(processor.get_pending_documents)
         return {
             "pending_count": len(pending),
             "documents": pending
@@ -1351,7 +1411,7 @@ async def cleanup_orphaned_entities():
     """
     try:
         neo4j = get_neo4j_service()
-        deleted_count = neo4j.cleanup_orphaned_entities()
+        deleted_count = await asyncio.to_thread(neo4j.cleanup_orphaned_entities)
         return {
             "message": "Cleanup completed",
             "orphaned_entities_removed": deleted_count
@@ -1829,7 +1889,7 @@ async def get_graph_visualization(
     """
     try:
         neo4j = get_neo4j_service()
-        data = neo4j.get_graph_visualization_data(limit=limit, include_neighbors=include_neighbors)
+        data = await asyncio.to_thread(neo4j.get_graph_visualization_data, limit, include_neighbors)
         return data
     except Exception as e:
         logger.error(f"Error getting graph visualization: {e}")
@@ -1850,7 +1910,7 @@ async def get_entity_relationships(
     """
     try:
         neo4j = get_neo4j_service()
-        data = neo4j.get_entity_relationships(entity_name, max_depth=max_depth, limit=limit)
+        data = await asyncio.to_thread(neo4j.get_entity_relationships, entity_name, max_depth, limit)
         if not data.get("entity"):
             raise HTTPException(status_code=404, detail=f"Entity '{entity_name}' not found")
         return data
@@ -1875,7 +1935,7 @@ async def get_graph_subgraph(
     """
     try:
         neo4j = get_neo4j_service()
-        data = neo4j.get_graph_subgraph(entity_names, include_connections=include_connections)
+        data = await asyncio.to_thread(neo4j.get_graph_subgraph, entity_names, include_connections)
         return data
     except Exception as e:
         logger.error(f"Error getting graph subgraph: {e}")
@@ -1888,7 +1948,7 @@ async def list_entities(
     limit: int = Query(default=50, ge=1, le=200)
 ):
     """List entities in the knowledge graph."""
-    try:
+    def _query():
         neo4j = get_neo4j_service()
         with neo4j.driver.session() as session:
             if entity_type:
@@ -1909,9 +1969,11 @@ async def list_entities(
                     ORDER BY mention_count DESC
                     LIMIT $limit
                 """, limit=limit)
-            
-            entities = [dict(record) for record in result]
-            return {"entities": entities, "total": len(entities)}
+            return [dict(record) for record in result]
+
+    try:
+        entities = await asyncio.to_thread(_query)
+        return {"entities": entities, "total": len(entities)}
     except Exception as e:
         logger.error(f"Error listing entities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1922,7 +1984,7 @@ async def get_entity_details(entity_name: str, max_hops: int = Query(default=2, 
     """Get details about a specific entity and its relationships."""
     try:
         neo4j = get_neo4j_service()
-        context = neo4j.traverse_from_entities([entity_name], max_hops=max_hops)
+        context = await asyncio.to_thread(neo4j.traverse_from_entities, [entity_name], max_hops)
         
         if not context["entities"]:
             raise HTTPException(status_code=404, detail="Entity not found")
@@ -1940,7 +2002,7 @@ async def search_entities(query: str = Query(..., min_length=1)):
     """Search for entities by name."""
     try:
         neo4j = get_neo4j_service()
-        results = neo4j.find_entities_by_name([query])
+        results = await asyncio.to_thread(neo4j.find_entities_by_name, [query])
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching entities: {e}")
@@ -1954,7 +2016,7 @@ async def get_graph_status():
         settings = get_settings()
         extractor = get_graph_extractor()
         neo4j = get_neo4j_service()
-        stats = neo4j.get_stats()
+        stats = await asyncio.to_thread(neo4j.get_stats)
         
         return {
             "graph_extraction_enabled": settings.enable_graph_extraction,
@@ -1964,7 +2026,6 @@ async def get_graph_status():
             "relationship_count": stats.get("relationship_count", 0),
             "community_count": stats.get("community_count", 0),
             "collection_count": stats.get("collection_count", 0),
-            # Advanced features
             "community_detection_enabled": settings.enable_community_detection,
             "graph_summarization_enabled": settings.enable_graph_summarization,
             "semantic_entity_resolution_enabled": settings.enable_semantic_entity_resolution,
@@ -1984,7 +2045,7 @@ async def list_collections():
     """List all collections."""
     try:
         neo4j = get_neo4j_service()
-        collections = neo4j.list_collections()
+        collections = await asyncio.to_thread(neo4j.list_collections)
         return {"collections": collections, "total": len(collections)}
     except Exception as e:
         logger.error(f"Error listing collections: {e}")
@@ -2000,14 +2061,14 @@ async def create_collection(request: CollectionCreate, auth: AuthResult = Depend
         # Enforce collection limit
         settings = get_settings()
         if settings.max_collections > 0:
-            stats = neo4j.get_stats()
+            stats = await asyncio.to_thread(neo4j.get_stats)
             if stats["collection_count"] >= settings.max_collections:
                 raise HTTPException(
                     status_code=403,
                     detail=f"Collection limit reached (max: {settings.max_collections}). Delete existing collections or increase MAX_COLLECTIONS."
                 )
         
-        collection = neo4j.create_collection(request.name, request.description)
+        collection = await asyncio.to_thread(neo4j.create_collection, request.name, request.description)
         if not collection:
             raise HTTPException(status_code=500, detail="Failed to create collection")
         return collection
@@ -2023,7 +2084,7 @@ async def get_collection(collection_id: str):
     """Get a specific collection with stats."""
     try:
         neo4j = get_neo4j_service()
-        collection = neo4j.get_collection(collection_id)
+        collection = await asyncio.to_thread(neo4j.get_collection, collection_id)
         if not collection:
             raise HTTPException(status_code=404, detail="Collection not found")
         return collection
@@ -2049,7 +2110,7 @@ async def delete_collection(collection_id: str, auth: AuthResult = Depends(requi
             raise HTTPException(status_code=400, detail="Cannot delete the default collection")
         
         neo4j = get_neo4j_service()
-        result = neo4j.delete_collection(collection_id)
+        result = await asyncio.to_thread(neo4j.delete_collection, collection_id)
         if not result.get("deleted"):
             raise HTTPException(status_code=404, detail="Collection not found")
         
@@ -2070,7 +2131,7 @@ async def add_document_to_collection(collection_id: str, document_id: str):
     """Add a document to a collection."""
     try:
         neo4j = get_neo4j_service()
-        success = neo4j.add_document_to_collection(document_id, collection_id)
+        success = await asyncio.to_thread(neo4j.add_document_to_collection, document_id, collection_id)
         if not success:
             raise HTTPException(status_code=404, detail="Collection or document not found")
         return {"message": "Document added to collection"}
@@ -2086,9 +2147,10 @@ async def move_documents_to_collection(request: MoveDocumentsRequest):
     """Move multiple documents to a collection."""
     try:
         neo4j = get_neo4j_service()
-        result = neo4j.move_documents_to_collection(
+        result = await asyncio.to_thread(
+            neo4j.move_documents_to_collection,
             request.document_ids, 
-            request.target_collection_id
+            request.target_collection_id,
         )
         return {
             "message": f"Successfully moved {result['moved_count']} document(s)",
@@ -2107,7 +2169,7 @@ async def get_collection_entities(
     """Get entities in a collection's knowledge graph."""
     try:
         neo4j = get_neo4j_service()
-        entities = neo4j.get_collection_entities(collection_id, limit)
+        entities = await asyncio.to_thread(neo4j.get_collection_entities, collection_id, limit)
         return {"entities": entities, "total": len(entities)}
     except Exception as e:
         logger.error(f"Error getting collection entities: {e}")
@@ -2341,7 +2403,7 @@ async def search_communities(
     """Search communities by their summary content."""
     try:
         neo4j = get_neo4j_service()
-        results = neo4j.search_communities_by_content(query, limit)
+        results = await asyncio.to_thread(neo4j.search_communities_by_content, query, limit)
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching communities: {e}")
@@ -2771,6 +2833,10 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         compute3_gpu_count=settings.compute3_gpu_count,
         compute3_model=settings.compute3_model,
         compute3_default_runtime=settings.compute3_default_runtime,
+        
+        # Vision Model
+        vision_model_available=settings.vision_model_available,
+        vision_model=settings.vision_model or "Not configured",
     )
 
 
@@ -2787,7 +2853,7 @@ async def list_api_keys(auth: AuthResult = Depends(require_admin)):
     """
     try:
         api_key_service = get_api_key_service()
-        keys = api_key_service.list_api_keys()
+        keys = await asyncio.to_thread(api_key_service.list_api_keys)
         return keys
     except Exception as e:
         logger.error(f"Error listing API keys: {e}")
@@ -2835,7 +2901,7 @@ async def list_api_keys_with_stats(auth: AuthResult = Depends(require_admin)):
     """
     try:
         usage_service = get_api_usage_service()
-        return usage_service.list_keys_with_stats()
+        return await asyncio.to_thread(usage_service.list_keys_with_stats)
     except Exception as e:
         logger.error(f"Error listing API keys with stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3106,7 +3172,7 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
         
         # Step 2: Delete documents from Neo4j (if requested)
         if request.delete_documents:
-            doc_result = neo4j.delete_all_documents()
+            doc_result = await asyncio.to_thread(neo4j.delete_all_documents)
             result.documents_deleted = doc_result.get("deleted_count", 0)
             result.entities_removed = doc_result.get("entities_removed", 0)
             result.communities_removed = doc_result.get("communities_removed", 0)
@@ -3145,12 +3211,12 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
         
         # Step 5: Delete collections (if requested)
         if request.delete_collections:
-            result.collections_deleted = neo4j.delete_all_collections()
+            result.collections_deleted = await asyncio.to_thread(neo4j.delete_all_collections)
             logger.info(f"System reset: Deleted {result.collections_deleted} collections")
         
         # Step 6: Delete API keys (if requested - dangerous!)
         if request.delete_api_keys:
-            result.api_keys_deleted = neo4j.delete_all_api_keys()
+            result.api_keys_deleted = await asyncio.to_thread(neo4j.delete_all_api_keys)
             logger.info(f"System reset: Deleted {result.api_keys_deleted} API keys")
         
         # Build summary message
