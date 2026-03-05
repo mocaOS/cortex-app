@@ -1517,8 +1517,15 @@ class DocumentProcessor:
                         f"Document {doc_id}: analyzing image {idx + 1}/{total}: "
                         f"{extracted.image_id} (page {extracted.page_number})"
                     )
-                    analysis = await self.vision_analyzer.analyze_image(
-                        extracted, force_vision_model=force_vision_model
+                    # Vision calls can take 10+ minutes - run in executor to not block event loop
+                    # create_task here results in a ~20 min HTTP request blocking the main event loop
+                    analysis = await loop.run_in_executor(
+                        img_executor,
+                        functools.partial(
+                            self.vision_analyzer.analyze_image_sync,
+                            extracted,
+                            force_vision_model,
+                        ),
                     )
 
                 image_chunk_id = f"{doc_id}_image_{idx}"

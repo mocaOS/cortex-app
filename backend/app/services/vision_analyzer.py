@@ -403,6 +403,31 @@ class VisionAnalyzer:
             analysis_method=analysis_method,
         )
 
+    def analyze_image_sync(
+        self,
+        extracted_image: ExtractedImage,
+        force_vision_model: bool = False,
+        custom_prompt: Optional[str] = None,
+    ) -> ImageAnalysisResult:
+        """Synchronous version of analyze_image for thread pool execution.
+
+        This runs the async analyze_image in a new event loop within the thread,
+        preventing the main event loop from being blocked by long HTTP calls.
+
+        IMPORTANT: This method must only be called from within a ThreadPoolExecutor
+        to avoid blocking the main event loop.
+        """
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                self.analyze_image(extracted_image, force_vision_model, custom_prompt)
+            )
+            return result
+        finally:
+            loop.close()
+
     async def analyze_all_images(
         self,
         docling_doc: DoclingDocument,
