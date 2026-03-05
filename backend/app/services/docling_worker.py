@@ -35,7 +35,7 @@ def _build_converter(use_vision: bool):
         TableFormerMode,
         TableStructureOptions,
     )
-    from docling.document_converter import DocumentConverter, InputFormat, PdfFormatOption
+    from docling.document_converter import DocumentConverter, InputFormat, PdfFormatOption, ImageFormatOption
 
     opts = PdfPipelineOptions()
     opts.do_ocr = not use_vision
@@ -63,7 +63,7 @@ def _build_converter(use_vision: bool):
     return DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(pipeline_options=opts),
-            InputFormat.IMAGE: PdfFormatOption(pipeline_options=opts),
+            InputFormat.IMAGE: ImageFormatOption(pipeline_options=opts),
         }
     )
 
