@@ -196,9 +196,10 @@ def _convert_chunk(
 ) -> tuple[str, list]:
     """Convert a page range. Returns (markdown, images).
 
-    Docling uses 0-based page indices. page_range=(start, end) is inclusive.
+    Docling uses 1-based page indices. page_range=(start, end) is inclusive.
+    We receive 0-based start/end, so convert: (page_start+1, page_end+1).
     """
-    page_range = (page_start, page_end)
+    page_range = (page_start + 1, page_end + 1)
     max_pages = page_end - page_start + 1
 
     convert_kwargs = {
