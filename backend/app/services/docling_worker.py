@@ -4,6 +4,13 @@ Runs document conversion in a separate process so that CPU-bound ML
 inference (layout detection, OCR, table structure) does NOT hold the
 GIL in the main FastAPI process, keeping the event loop responsive.
 
+Memory optimizations for large documents:
+- Chunked processing: PDFs with many pages are processed in smaller
+  page ranges to avoid OOM (exit code -9 from SIGKILL).
+- Backend unload: Releases internal caches after each conversion.
+- max_num_pages / max_file_size: Hard limits passed to Docling.
+- PyPdfium fallback: For very large files, uses memory-efficient backend.
+
 Protocol (stdin → stdout):
     Input  – JSON line: {"file_path": "...", "use_vision": true/false}
     Output – JSON line: {"markdown": "...", "images": [...], "error": null}
@@ -15,6 +22,7 @@ import base64
 import io
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -25,8 +33,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("docling_worker")
 
+# Memory limits for large document processing (env overridable)
+PAGE_CHUNK_SIZE = int(os.environ.get("DOCLING_PAGE_CHUNK_SIZE", "50"))
+MAX_PAGES_PER_CHUNK = int(os.environ.get("DOCLING_MAX_PAGES_PER_CHUNK", "50"))
+MAX_FILE_SIZE_BYTES = int(os.environ.get("DOCLING_MAX_FILE_SIZE_BYTES", "0"))  # 0 = use default
+USE_PYPDFIUM_FOR_LARGE_MB = float(os.environ.get("DOCLING_USE_PYPDFIUM_FOR_LARGE_MB", "0"))  # 0 = disabled
 
-def _build_converter(use_vision: bool):
+
+def _get_pdf_page_count(file_path: str):  # -> Optional[int]
+    """Get PDF page count using pypdf. Returns None if not a PDF or on error."""
+    path = Path(file_path)
+    if path.suffix.lower() != ".pdf":
+        return None
+    try:
+        from pypdf import PdfReader
+
+        with open(path, "rb") as f:
+            reader = PdfReader(f)
+            return len(reader.pages)
+    except Exception as exc:
+        logger.warning(f"Could not get PDF page count: {exc}")
+        return None
+
+
+def _build_converter(use_vision: bool, use_pypdfium: bool = False):
     from docling.datamodel.pipeline_options import (
         AcceleratorDevice,
         AcceleratorOptions,
@@ -35,7 +65,12 @@ def _build_converter(use_vision: bool):
         TableFormerMode,
         TableStructureOptions,
     )
-    from docling.document_converter import DocumentConverter, InputFormat, PdfFormatOption, ImageFormatOption
+    from docling.document_converter import (
+        DocumentConverter,
+        ImageFormatOption,
+        InputFormat,
+        PdfFormatOption,
+    )
 
     opts = PdfPipelineOptions()
     opts.do_ocr = not use_vision
@@ -60,12 +95,24 @@ def _build_converter(use_vision: bool):
     opts.generate_page_images = True
     opts.images_scale = 2.0
 
-    return DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=opts),
-            InputFormat.IMAGE: ImageFormatOption(pipeline_options=opts),
-        }
-    )
+    format_opts = {InputFormat.IMAGE: ImageFormatOption(pipeline_options=opts)}
+
+    if use_pypdfium:
+        try:
+            from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+
+            format_opts[InputFormat.PDF] = PdfFormatOption(
+                pipeline_options=opts,
+                backend=PyPdfiumDocumentBackend,
+            )
+            logger.info("Using PyPdfium backend for memory efficiency")
+        except ImportError:
+            logger.warning("PyPdfium backend not available, using default")
+            format_opts[InputFormat.PDF] = PdfFormatOption(pipeline_options=opts)
+    else:
+        format_opts[InputFormat.PDF] = PdfFormatOption(pipeline_options=opts)
+
+    return DocumentConverter(format_options=format_opts)
 
 
 def _extract_images(docling_doc):
@@ -139,9 +186,30 @@ def _extract_images(docling_doc):
     return images
 
 
-def convert(file_path: str, use_vision: bool):
-    converter = _build_converter(use_vision)
-    result = converter.convert(file_path)
+def _convert_chunk(
+    converter,
+    file_path: str,
+    use_vision: bool,
+    page_start: int,
+    page_end: int,
+    max_file_size: int,
+) -> tuple[str, list]:
+    """Convert a page range. Returns (markdown, images).
+
+    Docling uses 0-based page indices. page_range=(start, end) is inclusive.
+    """
+    page_range = (page_start, page_end)
+    max_pages = page_end - page_start + 1
+
+    convert_kwargs = {
+        "max_num_pages": max_pages,
+        "page_range": page_range,
+    }
+    if max_file_size > 0:
+        convert_kwargs["max_file_size"] = max_file_size
+
+    result = converter.convert(file_path, **convert_kwargs)
+
     dl_doc = result.document
     md_text = dl_doc.export_to_markdown()
     images = []
@@ -150,7 +218,81 @@ def convert(file_path: str, use_vision: bool):
             images = _extract_images(dl_doc)
         except Exception as exc:
             logger.error(f"Image extraction failed (markdown still returned): {exc}")
-    return {"markdown": md_text, "filename": Path(file_path).name, "images": images, "error": None}
+
+    # Release backend memory (Docling internal caches)
+    try:
+        if hasattr(result, "input") and result.input is not None:
+            backend = getattr(result.input, "_backend", None)
+            if backend is not None and hasattr(backend, "unload"):
+                backend.unload()
+    except Exception as exc:
+        logger.debug(f"Backend unload: {exc}")
+
+    return md_text, images
+
+
+def convert(file_path: str, use_vision: bool):
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    file_size = path.stat().st_size
+    use_pypdfium = (
+        USE_PYPDFIUM_FOR_LARGE_MB > 0
+        and file_size > USE_PYPDFIUM_FOR_LARGE_MB * 1024 * 1024
+    )
+
+    max_file_size = MAX_FILE_SIZE_BYTES if MAX_FILE_SIZE_BYTES > 0 else (2**31 - 1)
+
+    page_count = _get_pdf_page_count(file_path)
+    is_large_pdf = page_count is not None and page_count > MAX_PAGES_PER_CHUNK
+
+    if is_large_pdf:
+        logger.info(f"Large PDF ({page_count} pages), processing in chunks of {PAGE_CHUNK_SIZE}")
+        all_markdown = []
+        all_images = []
+        converter = _build_converter(use_vision, use_pypdfium)
+
+        try:
+            for start in range(0, page_count, PAGE_CHUNK_SIZE):
+                end = min(start + PAGE_CHUNK_SIZE - 1, page_count - 1)
+                logger.info(f"Converting pages {start + 1}-{end + 1} of {page_count}")
+                md, imgs = _convert_chunk(
+                    converter, file_path, use_vision, start, end, max_file_size
+                )
+                if md:
+                    all_markdown.append(md)
+                all_images.extend(imgs)
+        finally:
+            converter = None  # Allow GC
+
+        md_text = "\n\n".join(all_markdown) if all_markdown else ""
+        images = all_images
+    else:
+        converter = _build_converter(use_vision, use_pypdfium)
+        convert_kwargs = {"max_num_pages": 500}  # Safety limit
+        if max_file_size > 0 and max_file_size < (2**31 - 1):
+            convert_kwargs["max_file_size"] = max_file_size
+        result = converter.convert(file_path, **convert_kwargs)
+        dl_doc = result.document
+        md_text = dl_doc.export_to_markdown()
+        images = []
+        if use_vision:
+            try:
+                images = _extract_images(dl_doc)
+            except Exception as exc:
+                logger.error(f"Image extraction failed (markdown still returned): {exc}")
+
+        # Release backend memory
+        try:
+            if hasattr(result, "input") and result.input is not None:
+                backend = getattr(result.input, "_backend", None)
+                if backend is not None and hasattr(backend, "unload"):
+                    backend.unload()
+        except Exception as exc:
+            logger.debug(f"Backend unload: {exc}")
+
+    return {"markdown": md_text, "filename": path.name, "images": images, "error": None}
 
 
 def main():

@@ -11,6 +11,7 @@ sentence-transformers>=2.3.1
 
 # Document Processing - Docling (handles PDF, DOCX, XLSX, PPTX, HTML, images, audio, LaTeX)
 docling-haystack>=0.1.0
+pypdf>=4.0.0  # Lightweight PDF page counting for chunked Docling processing
 easyocr>=1.7.1  # OCR engine for image text extraction
 markdown==3.5.2
 markdown-it-py==3.0.0
