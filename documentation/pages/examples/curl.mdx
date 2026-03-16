@@ -96,7 +96,7 @@ curl -X POST "$MOCA_URL/api/documents/doc_abc123/reprocess" \
 ### Bulk Delete
 
 ```bash
-curl -X POST "$MOCA_URL/api/documents/bulk-delete" \
+curl -X POST "$MOCA_URL/api/documents/delete" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"document_ids": ["doc_1", "doc_2", "doc_3"]}'
@@ -204,71 +204,72 @@ curl -X POST "$MOCA_URL/api/search" \
 ### Ask a Question
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What are the main findings?"}'
+  -d '{"question": "What are the main findings?"}' \
+  --no-buffer
 ```
 
 ### Ask About a Collection
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Summarize the key points",
+    "question": "Summarize the key points",
     "collection_id": "research"
-  }'
+  }' --no-buffer
 ```
 
 ### Fast Mode
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What is the company mission?",
-    "fast_mode": true
-  }'
+    "question": "What is the company mission?",
+    "use_fast_search": true
+  }' --no-buffer
 ```
 
 ### Streaming Response
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag/stream" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "Explain GraphRAG in detail"}' \
+  -d '{"question": "Explain GraphRAG in detail"}' \
   --no-buffer
 ```
 
-### Agentic Mode
+### Deep Research (Agentic) Mode
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag/agentic" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Compare the methodologies in papers A and B",
-    "enable_reasoning": true
-  }'
+    "question": "Compare the methodologies in papers A and B",
+    "use_agentic": true
+  }' --no-buffer
 ```
 
 ### With Conversation History
 
 ```bash
-curl -X POST "$MOCA_URL/api/rag" \
+curl -X POST "$MOCA_URL/api/ask/stream" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Can you elaborate on the third point?",
+    "question": "Can you elaborate on the third point?",
     "conversation_history": [
       {"role": "user", "content": "What are the benefits?"},
       {"role": "assistant", "content": "The main benefits are: 1) ..."}
     ]
-  }'
+  }' --no-buffer
 ```
 
 ---
@@ -377,7 +378,7 @@ curl -X POST "$MOCA_URL/api/graph/subgraph" \
 ### Detect Communities
 
 ```bash
-curl -X POST "$MOCA_URL/api/communities/detect" \
+curl -X POST "$MOCA_URL/api/graph/communities/detect" \
   -H "X-API-Key: $MOCA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"min_community_size": 3}'
@@ -386,21 +387,21 @@ curl -X POST "$MOCA_URL/api/communities/detect" \
 ### List Communities
 
 ```bash
-curl "$MOCA_URL/api/communities" \
+curl "$MOCA_URL/api/graph/communities" \
   -H "X-API-Key: $MOCA_API_KEY"
 ```
 
 ### Get Community Details
 
 ```bash
-curl "$MOCA_URL/api/communities/comm_1" \
+curl "$MOCA_URL/api/graph/communities/comm_1" \
   -H "X-API-Key: $MOCA_API_KEY"
 ```
 
 ### Summarize Community
 
 ```bash
-curl -X POST "$MOCA_URL/api/communities/comm_1/summarize" \
+curl -X POST "$MOCA_URL/api/graph/communities/comm_1/summarize" \
   -H "X-API-Key: $MOCA_API_KEY"
 ```
 
@@ -494,11 +495,9 @@ curl -X POST "$MOCA_URL/api/turbo/stop" \
   -H "X-API-Key: $MOCA_API_KEY"
 ```
 
-### Ask with Turbo
+### Check Turbo Jobs
 
 ```bash
-curl -X POST "$MOCA_URL/api/turbo/ask" \
-  -H "X-API-Key: $MOCA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Summarize the findings"}'
+curl "$MOCA_URL/api/turbo/jobs" \
+  -H "X-API-Key: $MOCA_API_KEY"
 ```

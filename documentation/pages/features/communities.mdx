@@ -67,7 +67,7 @@ flowchart TD
 Start community detection (runs as a background task):
 
 ```bash
-curl -X POST "http://localhost:8000/api/communities/detect" \
+curl -X POST "http://localhost:8000/api/graph/communities/detect" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -106,7 +106,7 @@ curl "http://localhost:8000/api/tasks/task_abc123" \
 ### List Communities
 
 ```bash
-curl "http://localhost:8000/api/communities" \
+curl "http://localhost:8000/api/graph/communities" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -137,7 +137,7 @@ curl "http://localhost:8000/api/communities" \
 ### Get Community Details
 
 ```bash
-curl "http://localhost:8000/api/communities/comm_1" \
+curl "http://localhost:8000/api/graph/communities/comm_1" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -163,7 +163,7 @@ curl "http://localhost:8000/api/communities/comm_1" \
 ### Get Community Documents
 
 ```bash
-curl "http://localhost:8000/api/communities/comm_1/documents" \
+curl "http://localhost:8000/api/graph/communities/comm_1/documents" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -172,7 +172,7 @@ curl "http://localhost:8000/api/communities/comm_1/documents" \
 Generate an AI summary of a community's content:
 
 ```bash
-curl -X POST "http://localhost:8000/api/communities/comm_1/summarize" \
+curl -X POST "http://localhost:8000/api/graph/communities/comm_1/summarize" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -202,12 +202,12 @@ curl -X POST "http://localhost:8000/api/search" \
 ### Ask About a Community
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
+curl -X POST "http://localhost:8000/api/ask" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What are the key topics covered in this community?",
-    "community_id": "comm_1"
+    "question": "What are the key topics covered in this community?",
+    "collection_id": "comm_1"
   }'
 ```
 
@@ -216,7 +216,7 @@ curl -X POST "http://localhost:8000/api/rag" \
 Communities are **not** automatically updated when documents are added. To update:
 
 ```bash
-curl -X POST "http://localhost:8000/api/communities/detect" \
+curl -X POST "http://localhost:8000/api/graph/communities/detect" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{

@@ -42,7 +42,7 @@ COMPUTE3_GPU_COUNT=4          # Number of GPUs
 COMPUTE3_MODEL=MiniMaxAI/MiniMax-M2.1  # or meta-llama/Llama-3.1-70B-Instruct
 
 # Docker image for vLLM inference
-COMPUTE3_DOCKER_IMAGE=vllm/vllm-openai:latest
+COMPUTE3_DOCKER_IMAGE=vllm/vllm-openai:nightly
 
 # Default runtime in seconds (max job duration)
 COMPUTE3_DEFAULT_RUNTIME=3600
@@ -97,31 +97,22 @@ curl "http://localhost:8000/api/turbo/status" \
 }
 ```
 
-### Use Turbo Mode for Q&A
+### List Turbo Jobs
 
-Enable Turbo Mode for specific requests:
+Check active and past GPU jobs:
 
 ```bash
-curl -X POST "http://localhost:8000/api/rag" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Summarize the key findings",
-    "turbo_mode": true
-  }'
+curl "http://localhost:8000/api/turbo/jobs" \
+  -H "X-API-Key: your-api-key"
 ```
 
-### Turbo-Specific Endpoint
+### Check Balance
 
-Use the dedicated turbo endpoint (always uses Compute3):
+View your Compute3 balance:
 
 ```bash
-curl -X POST "http://localhost:8000/api/turbo/ask" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What are the main conclusions?"
-  }'
+curl "http://localhost:8000/api/turbo/balance" \
+  -H "X-API-Key: your-api-key"
 ```
 
 ### Stop Turbo Job
@@ -197,19 +188,16 @@ If Turbo Mode is unavailable, MOCA automatically falls back to the standard LLM 
 
 ## Monitoring
 
-Track Turbo Mode usage:
+Check the status of individual Turbo jobs:
 
 ```bash
-curl "http://localhost:8000/api/turbo/stats" \
+curl "http://localhost:8000/api/turbo/jobs/{job_id}" \
   -H "X-API-Key: your-api-key"
 ```
 
-```json
-{
-  "total_requests": 5432,
-  "avg_latency_ms": 412,
-  "total_tokens_processed": 2456789,
-  "uptime_hours": 24.5,
-  "estimated_cost_usd": 12.34
-}
+View job logs:
+
+```bash
+curl "http://localhost:8000/api/turbo/jobs/{job_id}/logs" \
+  -H "X-API-Key: your-api-key"
 ```

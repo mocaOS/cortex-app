@@ -164,58 +164,65 @@ class MOCAClient:
     # =========================================================================
     
     def ask(
-        self, 
+        self,
         question: str,
         collection_id: Optional[str] = None,
         conversation_history: Optional[List[Dict]] = None,
-        fast_mode: bool = False,
-        turbo_mode: bool = False
+        use_fast_search: bool = False,
+        use_agentic: bool = False
     ) -> Dict[str, Any]:
         """
         Ask a question using RAG.
-        
+
         Args:
             question: The question to ask
             collection_id: Optional collection to query
             conversation_history: Previous messages for context
-            fast_mode: Use faster/cheaper model
-            turbo_mode: Use Compute3 GPU acceleration
+            use_fast_search: Use fast vector-only search
+            use_agentic: Use deep research mode
         """
-        payload = {'query': question}
+        payload = {'question': question}
         if collection_id:
             payload['collection_id'] = collection_id
         if conversation_history:
             payload['conversation_history'] = conversation_history
-        if fast_mode:
-            payload['fast_mode'] = True
-        if turbo_mode:
-            payload['turbo_mode'] = True
-        return self._request('POST', '/api/rag', json=payload)
-    
+        if use_fast_search:
+            payload['use_fast_search'] = True
+        if use_agentic:
+            payload['use_agentic'] = True
+        return self._request('POST', '/api/ask', json=payload)
+
     def ask_streaming(
-        self, 
+        self,
         question: str,
-        collection_id: Optional[str] = None
-    ) -> Iterator[str]:
+        collection_id: Optional[str] = None,
+        use_agentic: bool = False,
+        use_fast_search: bool = False
+    ) -> Iterator[Dict[str, Any]]:
         """
-        Ask a question with streaming response.
-        
-        Yields chunks of the response as they arrive.
+        Ask a question with streaming SSE response.
+
+        Yields parsed event dicts as they arrive.
         """
-        payload = {'query': question}
+        import json
+        payload = {'question': question}
         if collection_id:
             payload['collection_id'] = collection_id
-        
+        if use_agentic:
+            payload['use_agentic'] = True
+        if use_fast_search:
+            payload['use_fast_search'] = True
+
         response = self.session.post(
-            f"{self.base_url}/api/rag/stream",
+            f"{self.base_url}/api/ask/stream",
             json=payload,
             stream=True
         )
         response.raise_for_status()
-        
-        for line in response.iter_lines():
-            if line:
-                yield line.decode('utf-8')
+
+        for line in response.iter_lines(decode_unicode=True):
+            if line and line.startswith("data: "):
+                yield json.loads(line[6:])
     
     # =========================================================================
     # Collections

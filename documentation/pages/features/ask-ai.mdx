@@ -1,248 +1,480 @@
 ---
 title: Ask AI
-description: AI-powered question answering with RAG, streaming, and agentic reasoning
+description: AI-powered question answering with RAG streaming, agentic reasoning, and real-time SSE events
 ---
 
 import { Mermaid } from "zudoku/mermaid";
 
-Ask questions about your documents and get intelligent answers with source citations. MOCA's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries.
+Ask questions about your documents and get intelligent answers with source citations. MOCA's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries. The primary interface is the **streaming endpoint**, which delivers results in real time via Server-Sent Events (SSE).
 
 ## How It Works
 
 <Mermaid chart={`
 flowchart TD
-    Q["❓ User Question"] --> SEARCH["🔍 Hybrid Search"]
-    SEARCH --> RERANK["📊 Cross-Encoder Re-ranking"]
-    RERANK --> GRAPH["🕸️ Graph Context"]
-    GRAPH --> LLM["🤖 LLM Generation"]
-    LLM --> ANS["✅ Answer + Sources"]
-    
-    SEARCH -.-> S1["Vector + Keyword + Graph"]
-    RERANK -.-> R1["Top candidates ranked"]
-    GRAPH -.-> G1["Entity relationships added"]
-    LLM -.-> L1["Generate with context"]
+    Q["User Question"] --> MODE{"Mode?"}
+    MODE -->|Standard| SEARCH["Hybrid Search"]
+    MODE -->|Fast| VECTOR["Vector Search Only"]
+    MODE -->|Deep Research| DECOMPOSE["Decompose into Sub-Questions"]
+
+    SEARCH --> RERANK["Cross-Encoder Re-ranking"]
+    RERANK --> GRAPH["Graph Context Enrichment"]
+    GRAPH --> LLM["LLM Generation"]
+
+    VECTOR --> FAST_LLM["LLM Generation (600 tokens)"]
+
+    DECOMPOSE --> MULTI["Multi-Step Retrieval"]
+    MULTI --> CONSOLIDATE["Consolidate Sources"]
+    CONSOLIDATE --> DEEP_LLM["LLM Synthesis (2000 tokens)"]
+
+    LLM --> STREAM["SSE Stream"]
+    FAST_LLM --> STREAM
+    DEEP_LLM --> STREAM
 `} />
 
-## Basic Usage
+## Streaming Endpoint
 
-### Ask a Question
-
-```bash
-curl -X POST "http://localhost:8000/api/ask" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the main benefits of knowledge graphs?"
-  }'
+```
+POST /api/ask/stream
 ```
 
-### Response
+This is the primary endpoint for asking questions. It returns a stream of Server-Sent Events containing sources, graph context, and answer tokens as they are generated.
+
+### Authentication
+
+All requests require the `X-API-Key` header:
+
+```bash
+curl -X POST "http://localhost:8000/api/ask/stream" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is GraphRAG?"}' \
+  --no-buffer
+```
+
+### Request Schema (RAGRequest)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `question` | `string` | **required** | The question to ask |
+| `top_k` | `integer` | `5` | Number of results to retrieve (1–20) |
+| `use_reranking` | `boolean` | `true` | Apply cross-encoder reranking to improve relevance |
+| `use_graph` | `boolean` | `true` | Include knowledge graph context in retrieval |
+| `max_hops` | `integer` | `2` | Graph traversal depth (1–3 hops) |
+| `use_agentic` | `boolean` | `false` | Enable deep research mode with multi-step reasoning |
+| `use_fast_search` | `boolean` | `false` | Use fast vector-only search (disables hybrid/reranking) |
+| `collection_id` | `string \| null` | `null` | Scope search to a specific collection |
+| `conversation_history` | `ConversationMessage[]` | `null` | Previous messages for multi-turn context |
+
+### ConversationMessage Schema
 
 ```json
 {
-  "answer": "Knowledge graphs provide several key benefits:\n\n1. **Structured Relationships** - They capture explicit connections between entities, enabling complex queries about how concepts relate.\n\n2. **Semantic Understanding** - Unlike simple keyword search, graphs understand meaning and context.\n\n3. **Discovery** - Graph traversal reveals hidden connections not apparent from individual documents.",
-  "sources": [
-    {
-      "document_id": "doc_abc123",
-      "document_title": "Knowledge Graph Overview.pdf",
-      "chunk_id": "chunk_456",
-      "content": "Knowledge graphs excel at representing...",
-      "relevance_score": 0.94
-    }
-  ],
-  "graph_context": {
-    "entities": ["Knowledge Graph", "Entity", "Relationship"],
-    "relationships_used": 3
-  },
-  "stats": {
-    "chunks_retrieved": 10,
-    "chunks_used": 5,
-    "tokens_used": 1247,
-    "response_time_ms": 2341
-  }
+  "role": "user" | "assistant",
+  "content": "Message text"
 }
 ```
 
-## Streaming Responses
+The backend keeps the most recent messages (configured by `MAX_CONVERSATION_HISTORY`, default 6).
 
-For real-time responses, use the streaming endpoint:
+## Three Streaming Modes
+
+### 1. Standard Mode (Hybrid + Reranking)
+
+The default mode. Performs hybrid search (vector + keyword + graph), applies cross-encoder reranking, enriches with graph context, then streams the LLM answer.
 
 ```bash
 curl -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "Explain GraphRAG in detail"
-  }' \
-  --no-buffer
+    "question": "What are the main benefits of knowledge graphs?",
+    "top_k": 5,
+    "use_reranking": true,
+    "use_graph": true
+  }' --no-buffer
 ```
 
-The response streams as Server-Sent Events (SSE):
+**Event sequence:** `sources` → `graph_context` → `content` (multiple) → `done`
 
 ```
-data: {"type": "chunk", "content": "GraphRAG "}
-data: {"type": "chunk", "content": "combines "}
-data: {"type": "chunk", "content": "knowledge graphs "}
-...
-data: {"type": "sources", "sources": [...]}
-data: {"type": "done"}
+data: {"sources": [{"document_id": "doc_abc", "chunk_id": "chunk_1", "content": "Knowledge graphs provide...", "score": 0.94, "metadata": {"document_title": "Overview.pdf"}}]}
+
+data: {"graph_context": {"entities": [...], "relationships": [...], "chunks": [...]}}
+
+data: {"content": "Knowledge graphs "}
+data: {"content": "provide several "}
+data: {"content": "key benefits..."}
+
+data: {"done": true}
 ```
 
-## Agentic Mode
+### 2. Fast Vector Search
 
-For complex questions requiring multi-step reasoning:
-
-<Mermaid chart={`
-flowchart TD
-    Q["Complex Question"] --> THINK["🧠 Analyze Question"]
-    THINK --> STEP1["Step 1: Search for A"]
-    STEP1 --> STEP2["Step 2: Search for B"]
-    STEP2 --> STEP3["Step 3: Compare A & B"]
-    STEP3 --> SYNTH["Synthesize Answer"]
-    SYNTH --> ANS["Final Answer"]
-    
-    THINK -.-> T1["Break down into sub-questions"]
-    STEP1 -.-> S1["Retrieve relevant context"]
-    STEP2 -.-> S2["Retrieve more context"]
-`} />
+Optimized for speed. Skips hybrid search and reranking — performs a simple vector search and streams a concise answer (max 600 tokens). For follow-up questions with conversation history, it skips retrieval entirely and uses the LLM with conversation context alone.
 
 ```bash
-curl -X POST "http://localhost:8000/api/ask" \
+curl -X POST "http://localhost:8000/api/ask/stream" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What is the company mission?",
+    "use_fast_search": true
+  }' --no-buffer
+```
+
+**Event sequence:** `content` (multiple) → `done`
+
+```
+data: {"content": "The company "}
+data: {"content": "mission is to..."}
+
+data: {"done": true, "fast_mode": true}
+```
+
+No `sources` or `graph_context` events are sent in fast mode.
+
+### 3. Deep Research (Agentic)
+
+For complex questions requiring multi-step reasoning. The system decomposes your question into sub-questions, researches each independently, then synthesizes a comprehensive answer (up to 2000 tokens).
+
+Requires `ENABLE_AGENTIC_RAG=true` on the server.
+
+```bash
+curl -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "Compare the methodologies used in papers A and B",
     "use_agentic": true
-  }'
+  }' --no-buffer
 ```
 
-Agentic mode:
-- Breaks down complex queries into sub-questions
-- Performs multiple search iterations
-- Synthesizes information across documents
-- Shows reasoning steps (when `STREAM_REASONING_STEPS=true`)
+**Event sequence:** `thinking` → `sub_questions` → (`thinking` + `retrieval`) per sub-question → `sources` → `graph_context` → `retrieval_stats` → `thinking` → `content` (multiple) → `done`
 
-### Reasoning Steps Example
+```
+data: {"thinking": "Analyzing question complexity..."}
+
+data: {"sub_questions": ["What methodology does Paper A use?", "What methodology does Paper B use?", "How do the two methodologies compare?"]}
+
+data: {"thinking": "Researching (1/3): What methodology does Paper A use?..."}
+data: {"retrieval": "Found 5 sources for sub-question 1"}
+
+data: {"thinking": "Researching (2/3): What methodology does Paper B use?..."}
+data: {"retrieval": "Found 4 sources for sub-question 2"}
+
+data: {"thinking": "Researching (3/3): How do the two methodologies compare?..."}
+data: {"retrieval": "Found 3 sources for sub-question 3"}
+
+data: {"thinking": "Consolidating and ranking sources..."}
+data: {"sources": [...]}
+data: {"graph_context": {"entities": [...], "relationships": [...], "communities": [...]}}
+data: {"retrieval_stats": {"total_sources": 12, "unique_sources": 9, "communities_used": 3}}
+
+data: {"thinking": "Synthesizing comprehensive answer..."}
+data: {"content": "Both papers "}
+data: {"content": "approach the problem "}
+data: {"content": "differently..."}
+
+data: {"done": true, "communities_used": [1, 4, 7]}
+```
+
+<Mermaid chart={`
+flowchart TD
+    Q["Complex Question"] --> THINK["Analyze Question"]
+    THINK --> DECOMPOSE["Decompose into Sub-Questions"]
+    DECOMPOSE --> R1["Research Sub-Q 1"]
+    DECOMPOSE --> R2["Research Sub-Q 2"]
+    DECOMPOSE --> R3["Research Sub-Q N"]
+    R1 --> CONSOLIDATE["Consolidate Sources"]
+    R2 --> CONSOLIDATE
+    R3 --> CONSOLIDATE
+    CONSOLIDATE --> SYNTH["Synthesize Answer"]
+    SYNTH --> STREAM["Stream Response"]
+`} />
+
+## SSE Event Reference
+
+Every event is a JSON object on a `data:` line. Each event contains exactly one of these keys:
+
+| Event Key | Type | Mode | Description |
+|-----------|------|------|-------------|
+| `content` | `string` | All | A token of the streamed answer |
+| `sources` | `SearchResult[]` | Standard, Agentic | Retrieved source documents with scores |
+| `graph_context` | `object` | Standard, Agentic | Knowledge graph entities, relationships, and community data |
+| `thinking` | `string` | Agentic | Status message describing the current reasoning step |
+| `sub_questions` | `string[]` | Agentic | The decomposed research sub-questions |
+| `retrieval` | `string` | Agentic | Per-sub-question retrieval progress |
+| `retrieval_stats` | `object` | Agentic | Summary: `total_sources`, `unique_sources`, `communities_used` |
+| `done` | `boolean` | All | `true` when the stream is complete |
+| `error` | `string` | All | Error message if something went wrong |
+| `fast_mode` | `boolean` | Fast | `true` in the final `done` event for fast mode |
+| `communities_used` | `number[]` | Agentic | Community IDs used, included in the `done` event |
+
+### Source Object Shape
 
 ```json
 {
-  "reasoning_steps": [
-    {
-      "step": 1,
-      "thought": "First, I need to find the methodology section of Paper A",
-      "action": "search",
-      "result": "Found 3 relevant chunks about Paper A's methodology"
-    },
-    {
-      "step": 2,
-      "thought": "Now I need to find Paper B's methodology for comparison",
-      "action": "search",
-      "result": "Found 4 relevant chunks about Paper B's methodology"
-    },
-    {
-      "step": 3,
-      "thought": "I can now compare both methodologies",
-      "action": "synthesize",
-      "result": "Generating comparative analysis..."
-    }
-  ],
-  "answer": "Both papers approach the problem differently..."
+  "document_id": "abc123",
+  "chunk_id": "chunk_456",
+  "content": "The relevant text from the document...",
+  "score": 0.94,
+  "metadata": {
+    "document_title": "Report.pdf",
+    "collection_id": "research"
+  }
 }
 ```
 
 ## Conversation History
 
-Maintain context across multiple questions:
+Maintain context across multiple questions by passing previous messages:
 
 ```bash
-curl -X POST "http://localhost:8000/api/ask" \
+curl -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "Can you elaborate on the third point?",
     "conversation_history": [
       {"role": "user", "content": "What are the benefits of knowledge graphs?"},
-      {"role": "assistant", "content": "Knowledge graphs provide: 1) Structured relationships..."}
+      {"role": "assistant", "content": "Knowledge graphs provide: 1) Structured relationships, 2) Semantic understanding, 3) Discovery of hidden connections."}
     ]
-  }'
+  }' --no-buffer
 ```
+
+The backend automatically trims conversation history to the most recent messages (default: 6, configurable via `MAX_CONVERSATION_HISTORY`).
+
+In **fast mode** with conversation history, the system skips retrieval entirely and responds using only the conversation context — ideal for quick follow-up questions.
 
 ## Collection-Scoped Questions
 
-Scope your questions to a specific collection so only its documents, chunks, and entities are searched. By default, Ask AI searches across all collections.
-
-**In the UI:** Open the Settings panel on the Ask AI page and use the **Collection Scope** dropdown to select a collection. Choose "All Collections" to search everything.
-
-**Via API:**
+Scope questions to a specific collection so only its documents, chunks, and entities are searched:
 
 ```bash
-curl -X POST "http://localhost:8000/api/ask" \
+curl -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What were the Q4 results?",
     "collection_id": "financial-reports"
-  }'
-```
-
-Collection scoping works with all modes — standard, streaming, deep research, and fast search:
-
-```bash
-# Streaming with collection scope
-curl -X POST "http://localhost:8000/api/ask/stream" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "Summarize the latest findings",
-    "collection_id": "research-papers"
   }' --no-buffer
-
-# Deep research with collection scope
-curl -X POST "http://localhost:8000/api/ask" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "Compare the approaches discussed in these papers",
-    "collection_id": "research-papers",
-    "use_agentic": true
-  }'
 ```
 
-When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to only include data from that collection's documents.
+Collection scoping works with all three modes. When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data.
 
-## Fast Mode
+**In the UI:** Open the Settings panel on the Ask AI page and use the **Collection Scope** dropdown.
 
-Use a faster (potentially cheaper) model for simpler questions:
+## Frontend Integration (JavaScript/TypeScript)
 
-```bash
-curl -X POST "http://localhost:8000/api/ask" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What is the company mission?",
-    "use_fast_search": true
-  }'
+Consume the SSE stream using `fetch` and `ReadableStream`:
+
+```typescript
+async function* askStream(
+  baseUrl: string,
+  apiKey: string,
+  question: string,
+  options: {
+    topK?: number;
+    useReranking?: boolean;
+    useGraph?: boolean;
+    useAgentic?: boolean;
+    useFastSearch?: boolean;
+    conversationHistory?: { role: string; content: string }[];
+    collectionId?: string;
+  } = {}
+) {
+  const res = await fetch(`${baseUrl}/api/ask/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey,
+    },
+    body: JSON.stringify({
+      question,
+      top_k: options.topK ?? 5,
+      use_reranking: options.useReranking ?? true,
+      use_graph: options.useGraph ?? true,
+      use_agentic: options.useAgentic ?? false,
+      use_fast_search: options.useFastSearch ?? false,
+      conversation_history: options.conversationHistory,
+      ...(options.collectionId
+        ? { collection_id: options.collectionId }
+        : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Stream failed" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try {
+          yield JSON.parse(line.slice(6));
+        } catch {
+          // skip malformed events
+        }
+      }
+    }
+  }
+}
+
+// Usage
+for await (const event of askStream("http://localhost:8000", "your-api-key", "What is GraphRAG?")) {
+  if (event.sources) console.log("Sources:", event.sources);
+  if (event.graph_context) console.log("Graph:", event.graph_context);
+  if (event.content) process.stdout.write(event.content);
+  if (event.thinking) console.log("[Thinking]", event.thinking);
+  if (event.done) console.log("\n--- Done ---");
+  if (event.error) console.error("Error:", event.error);
+}
 ```
 
-Configure the fast mode model:
+## Python Integration
 
-```bash
-OPENAI_MODEL_FAST_MODE=gpt-4o-mini
+### Using `httpx` (recommended)
+
+```python
+import httpx
+import json
+
+def ask_stream(base_url: str, api_key: str, question: str, **kwargs):
+    """Stream answers from MOCA's Ask AI endpoint."""
+    payload = {"question": question, **kwargs}
+
+    with httpx.stream(
+        "POST",
+        f"{base_url}/api/ask/stream",
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        json=payload,
+        timeout=60.0,
+    ) as response:
+        response.raise_for_status()
+        buffer = ""
+        for chunk in response.iter_text():
+            buffer += chunk
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    yield event
+
+# Standard mode
+for event in ask_stream("http://localhost:8000", "your-api-key", "What is GraphRAG?"):
+    if "content" in event:
+        print(event["content"], end="", flush=True)
+    elif "sources" in event:
+        print(f"\n[{len(event['sources'])} sources retrieved]")
+    elif "done" in event:
+        print("\n--- Complete ---")
+
+# Deep research mode
+for event in ask_stream(
+    "http://localhost:8000",
+    "your-api-key",
+    "Compare the approaches in these papers",
+    use_agentic=True,
+    top_k=10,
+):
+    if "thinking" in event:
+        print(f"  [{event['thinking']}]")
+    elif "sub_questions" in event:
+        for i, q in enumerate(event["sub_questions"], 1):
+            print(f"  Sub-Q {i}: {q}")
+    elif "retrieval" in event:
+        print(f"  {event['retrieval']}")
+    elif "content" in event:
+        print(event["content"], end="", flush=True)
+    elif "done" in event:
+        print("\n--- Complete ---")
+```
+
+### Using `requests`
+
+```python
+import requests
+import json
+
+def ask_stream(base_url: str, api_key: str, question: str, **kwargs):
+    payload = {"question": question, **kwargs}
+
+    with requests.post(
+        f"{base_url}/api/ask/stream",
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        json=payload,
+        stream=True,
+        timeout=60,
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines(decode_unicode=True):
+            if line and line.startswith("data: "):
+                yield json.loads(line[6:])
+```
+
+### Multi-Turn Conversation
+
+```python
+history = []
+
+def chat(question: str):
+    """Ask a follow-up question with conversation context."""
+    answer_parts = []
+    for event in ask_stream(
+        "http://localhost:8000",
+        "your-api-key",
+        question,
+        conversation_history=history,
+    ):
+        if "content" in event:
+            answer_parts.append(event["content"])
+            print(event["content"], end="", flush=True)
+        elif "done" in event:
+            print()
+
+    # Update history for next turn
+    answer = "".join(answer_parts)
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+
+chat("What are the main findings?")
+chat("Can you elaborate on the second point?")
+chat("How does that compare to the introduction?")
 ```
 
 ## Configuration
 
 ```bash
-# Agentic RAG settings
-ENABLE_AGENTIC_RAG=true
-MAX_AGENTIC_STEPS=3
+# Agentic RAG
+ENABLE_AGENTIC_RAG=true          # Enable deep research mode
+MAX_AGENTIC_STEPS=3              # Max sub-question decomposition steps
 
-# Conversation settings
-MAX_CONVERSATION_HISTORY=6
+# Conversation
+MAX_CONVERSATION_HISTORY=6       # Messages to keep for context
 
-# Visibility settings
-STREAM_REASONING_STEPS=true
-SHOW_RETRIEVAL_STATS=true
+# Visibility
+STREAM_REASONING_STEPS=true      # Show thinking steps in agentic mode
+SHOW_RETRIEVAL_STATS=true        # Include retrieval_stats events
+
+# Fast mode model
+OPENAI_MODEL_FAST_MODE=gpt-4o-mini
+
+# Prompt security
+PROMPT_SECURITY=true             # Sanitize input and filter harmful output
 ```
 
 ## Prompt Security
@@ -253,8 +485,8 @@ MOCA includes built-in protection against prompt injection attacks:
 PROMPT_SECURITY=true
 ```
 
-This:
+When enabled:
 - Validates and sanitizes user input
-- Injects anti-manipulation instructions
+- Injects anti-manipulation instructions into the system prompt
 - Filters potentially harmful outputs
 - Returns safe refusal messages when attacks are detected

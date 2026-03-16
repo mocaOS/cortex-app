@@ -350,7 +350,7 @@ def handle_ask(ack, respond, command):
     
     try:
         response = requests.post(
-            f"{MOCA_URL}/api/rag",
+            f"{MOCA_URL}/api/ask",
             headers={"X-API-Key": MOCA_KEY},
             json={"query": question}
         )
@@ -517,7 +517,7 @@ if __name__ == "__main__":
 Configure an HTTP Request node in n8n:
 
 **Method:** POST  
-**URL:** `{{$env.MOCA_URL}}/api/rag`  
+**URL:** `{{$env.MOCA_URL}}/api/ask`  
 **Headers:**
 ```json
 {
