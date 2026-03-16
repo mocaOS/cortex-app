@@ -7,6 +7,99 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## March 16, 2026
+
+### Ask AI API Endpoint Update
+
+- Renamed API endpoints from `/api/rag` to `/api/ask` across all examples and documentation for improved clarity and consistency
+- Updated configuration settings for document processing and community detection endpoints
+
+---
+
+## March 5, 2026
+
+### Large PDF Processing Improvements
+
+- Added memory optimizations for handling large PDF files, including chunked processing and backend unloading to prevent out-of-memory errors
+- Introduced `PAGE_CHUNK_SIZE` and `MAX_PAGES_PER_CHUNK` environment variables for configuring chunked PDF processing
+- Integrated pypdf for lightweight PDF page counting
+- Added fallback to PyPdfium for large files when the primary converter encounters memory constraints
+- Fixed page index conversion in the Docling worker to correctly handle 1-based page indices
+
+### Image Analysis Execution Optimization
+
+- Implemented a synchronous version of the image analysis method in VisionAnalyzer to allow thread pool execution, preventing the main event loop from being blocked
+- Updated document converter to support image format options for more flexible input handling
+- Updated Dockerfile with necessary system dependencies for PDF/image processing, including X11 libraries and Tesseract OCR
+
+---
+
+## March 4, 2026
+
+### Docling Integration and Advanced Document Processing
+
+- Integrated Docling as the primary document conversion engine, replacing the previous processing pipeline
+- Added a dedicated thread pool for image analysis to optimize performance and prevent competition with document processing tasks
+- Implemented subprocess-based document conversion for improved efficiency with large files
+- Added event loop watchdog to monitor and log potential blocking issues
+- Enhanced VisionAnalyzer with retry logic for API calls
+- New fields for image analysis progress in the Document model, with frontend components to display processing status
+- Added configuration options for vision models in the environment setup
+- Increased upload body size limit to 100MB
+
+### Logging and Robustness Improvements
+
+- Suppressed Neo4j notification warnings by adjusting the logging level
+- Added a function to clean image placeholders in document processing
+- Conditionally configured OCR and image description based on vision model availability
+- Enhanced GraphExtractor to handle potential `None` responses from document summary generation
+- Refactored Neo4jService queries to use `coalesce` for better handling of missing data
+- Refined default analysis prompt in VisionAnalyzer for improved clarity and document retrieval purposes
+
+---
+
+## March 2, 2026
+
+### Image Extraction and Vision Analysis
+
+- Added a new vision analyzer service that extracts images from documents (PDF, DOCX, PPTX) and analyzes them using configurable vision models
+- Supports OpenAI-compatible APIs with fallback to Docling's built-in image descriptions
+- Image analyses are integrated into the RAG pipeline for searchable visual content
+- Enabled Docling's built-in image description generation (`do_picture_description`) as an additional source
+- Added EasyOCR for enhanced image text extraction
+- Updated Dockerfile with Tesseract OCR and additional libraries for improved document processing
+
+### Enhanced File Upload Support
+
+- Expanded allowed file extensions to support a wider range of document types including additional document and media formats
+- Updated frontend FileUpload and UploadZone components to reflect the expanded file type support
+- Updated file type icons for better visual representation of supported formats
+
+---
+
+## February 27, 2026
+
+### Document Processing Engine Overhaul
+
+- Updated Dockerfile to include necessary system dependencies for Docling, enabling PDF and image processing
+- Added `docling-haystack` dependency for enhanced document handling
+- Expanded allowed file extensions in configuration to support a wider range of document types
+- Refactored document processor to utilize the new Docling converter, streamlining handling of various document formats
+
+---
+
+## February 25, 2026
+
+### Customizable Branding and Theming
+
+- Added support for custom logo configuration via the `CUSTOM_LOGO_URL` environment variable, allowing white-label deployments
+- Introduced custom accent color support via the `CUSTOM_ACCENT_COLOR` environment variable for theme customization
+- Added configurable branding options (site title, description) through environment variables
+- Increased logo dimensions for improved sharpness on high-DPI screens
+- Documented all frontend customization variables in the deployment guide
+
+---
+
 ## February 6, 2026
 
 ### API Key Usage Tracking and Analytics
