@@ -305,7 +305,7 @@ function RelationshipsPanel({ edges, onRefresh }: { edges: GraphEdge[]; onRefres
       const poll = async () => {
         try {
           const status = await api.getTaskStatus(taskId);
-          setTaskMessage(status.message || `Progress: ${status.progress}%`);
+          setTaskMessage(status.message || `Progress: ${status.progress_percent}%`);
           if (status.status === "completed") {
             setTaskMessage(null);
             setAnalyzing(false);
