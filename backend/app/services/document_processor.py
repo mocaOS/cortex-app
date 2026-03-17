@@ -951,6 +951,43 @@ class DocumentProcessor:
             f"Processing complete: {completed} succeeded, {failed} failed out of {total}"
         )
 
+        # Auto-trigger relationship analysis after batch processing
+        if self.settings.auto_relationship_analysis_after_batch and completed > 0:
+            logger.info("Auto-triggering relationship analysis after batch processing")
+            try:
+                await self.analyze_collection_relationships(
+                    collection_id=None,
+                    scope="full",
+                    progress_callback=progress_callback,
+                )
+            except Exception as e:
+                logger.error(f"Auto relationship analysis failed: {e}")
+
+        # Auto-trigger community detection after batch processing
+        if self.settings.auto_community_detection_after_batch and completed > 0:
+            logger.info("Auto-triggering community detection after batch processing")
+            try:
+                communities = await asyncio.to_thread(
+                    self.neo4j.detect_communities,
+                    self.settings.min_community_size,
+                )
+                if communities and self.settings.enable_graph_summarization:
+                    for community in communities:
+                        entity_names = [e.get("name") for e in community.get("entities", [])]
+                        rels = await asyncio.to_thread(
+                            self.neo4j.get_community_relationships, community["id"]
+                        )
+                        summary = await self.graph_extractor.generate_community_summary_async(
+                            community.get("entities", []), rels
+                        )
+                        await asyncio.to_thread(
+                            self.neo4j.store_community,
+                            community["id"], entity_names,
+                            summary.get("summary"), summary.get("name"),
+                        )
+            except Exception as e:
+                logger.error(f"Auto community detection failed: {e}")
+
         return {
             "processed": completed,
             "failed": failed,
@@ -1198,9 +1235,10 @@ class DocumentProcessor:
             self._check_cancellation(doc_id)
 
             # =================================================================
-            # GraphRAG: Extract entities and relationships from chunks
-            # Uses extraction with document summary for context
-            # Processes multiple chunks concurrently based on concurrent_extractions setting
+            # GraphRAG: Per-document entity extraction (Phase A)
+            # Extracts entities from the full document, then fuzzy-links
+            # them to individual chunks. Relationships are discovered
+            # separately via Phase B (POST /api/graph/relationships/analyze).
             # =================================================================
             if (
                 self.graph_extractor.is_available
@@ -1225,13 +1263,12 @@ class DocumentProcessor:
                         "Generating document summary...",
                     ),
                 )
-                logger.info(f"Document {doc_id}: starting graph extraction...")
+                logger.info(f"Document {doc_id}: starting per-document entity extraction...")
 
                 # Yield control before graph extraction
                 await asyncio.sleep(0)
 
                 # Generate document summary for context
-                # Combine all chunk content for summary (limited to first ~5000 chars)
                 full_text = " ".join([c.content for c in embedded_chunks if c.content])[:5000]
                 document_summary = (
                     await self.graph_extractor.generate_document_summary_async(
@@ -1251,164 +1288,74 @@ class DocumentProcessor:
                         doc_id,
                         40,
                         100,
-                        f"Extracting 0/{len(embedded_chunks)} chunks...",
+                        "Extracting entities from document...",
                     ),
                 )
 
-                # Use semaphore for concurrent extraction (controlled by config)
-                concurrent_limit = self.settings.concurrent_extractions
-                semaphore = asyncio.Semaphore(concurrent_limit)
-                extraction_results = {}  # Store results by index
-                completed_count = 0
-
-                # Track active extractions for logging
-                active_extractions = 0
-                active_lock = asyncio.Lock()
-                # Update frequency: every 3 chunks or fewer for small documents
-                _progress_interval = max(1, min(3, len(embedded_chunks) // 5))
-
-                async def extract_chunk(idx: int, chunk, chunk_id: str):
-                    """Extract from a single chunk with semaphore control."""
-                    nonlocal completed_count, active_extractions, total_entities
-                    async with semaphore:
-                        # Check for cancellation before starting extraction
-                        self._check_cancellation(doc_id)
-
-                        async with active_lock:
-                            active_extractions += 1
-                            current_active = active_extractions
-
-                        if idx < 5 or idx % 10 == 0:  # Log for first 5 and every 10th
-                            logger.info(
-                                f"Document {doc_id}: Starting chunk {idx + 1}/{len(embedded_chunks)} "
-                                f"(active: {current_active}/{concurrent_limit})"
-                            )
-
-                        try:
-                            extraction = None
-                            if not chunk.content:
-                                extraction_results[idx] = (chunk_id, None)
-                            else:
-                                extraction = (
-                                    await self.graph_extractor.extract_from_text_async(
-                                        chunk.content, document_summary=document_summary
-                                    )
-                                )
-                                extraction_results[idx] = (chunk_id, extraction)
-                            if extraction and extraction.entities:
-                                total_entities += len(extraction.entities)
-                        except CancellationRequested:
-                            raise  # Re-raise cancellation
-                        except Exception as e:
-                            logger.warning(
-                                f"Graph extraction failed for chunk {chunk_id}: {e}"
-                            )
-                            extraction_results[idx] = (chunk_id, None)
-                        finally:
-                            async with active_lock:
-                                active_extractions -= 1
-
-                        completed_count += 1
-
-                        should_update = (
-                            completed_count == 1
-                            or completed_count % _progress_interval == 0
-                            or completed_count == len(embedded_chunks)
-                        )
-                        if should_update:
-                            extraction_progress = 40 + int(
-                                completed_count / len(embedded_chunks) * 55
-                            )
-                            pending_chunks = len(embedded_chunks) - completed_count
-                            msg = f"Extracted {completed_count}/{len(embedded_chunks)} chunks"
-                            if pending_chunks > 0:
-                                msg += f" ({pending_chunks} pending)"
-                            try:
-                                await asyncio.wait_for(
-                                    loop.run_in_executor(
-                                        _get_processing_executor(),
-                                        functools.partial(
-                                            self.neo4j.update_document_progress,
-                                            doc_id,
-                                            extraction_progress,
-                                            100,
-                                            msg,
-                                        ),
-                                    ),
-                                    timeout=10,
-                                )
-                            except asyncio.TimeoutError:
-                                logger.warning(f"Document {doc_id}: progress update timed out (executor may be saturated)")
-
-                        # Yield control after every extraction to let API requests through
-                        await asyncio.sleep(0)
-
-                total_chunks = len(embedded_chunks)
-                logger.info(
-                    f"Document {doc_id}: processing {total_chunks} chunks "
-                    f"with concurrency limit of {concurrent_limit}"
-                )
-
-                # Process extraction in small batches to avoid flooding the
-                # event loop with hundreds of pending coroutines at once.
-                batch_size = concurrent_limit * 2
-                for batch_start in range(0, total_chunks, batch_size):
-                    batch_end = min(batch_start + batch_size, total_chunks)
-                    batch_tasks = [
-                        extract_chunk(idx, embedded_chunks[idx], chunk_ids[idx])
-                        for idx in range(batch_start, batch_end)
-                    ]
-                    try:
-                        await asyncio.gather(*batch_tasks, return_exceptions=True)
-                    except CancellationRequested:
-                        logger.info(f"Document {doc_id}: extraction cancelled")
-                        raise
-                    # Yield between batches to let API requests through
-                    await asyncio.sleep(0)
-
-                # Check for cancellation after extraction phase
+                # Check for cancellation before extraction
                 self._check_cancellation(doc_id)
 
-                # Yield control after all extractions
-                await asyncio.sleep(0)
+                # Per-document entity extraction (batched if needed)
+                chunk_contents = [c.content for c in embedded_chunks if c.content]
+                entities = await self.graph_extractor.extract_entities_from_document_async(
+                    chunks=chunk_contents,
+                    document_summary=document_summary or "",
+                    max_tokens=8192,
+                )
 
-                # Store results in order (run Neo4j operations in executor)
-                # Note: total_entities is already counted during extraction for progress reporting
-                # Here we track stored counts separately for accurate final logging
-                stored_entities = 0
-                stored_relationships = 0
-                for idx in sorted(extraction_results.keys()):
-                    # Check for cancellation BEFORE EVERY storage operation
-                    # This is critical to stop entity storage when deletion is requested
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        70,
+                        100,
+                        f"Storing {len(entities)} entities...",
+                    ),
+                )
+
+                # Store entities with provenance
+                for entity in entities:
                     self._check_cancellation(doc_id)
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.store_entity,
+                            entity,
+                            document_id=doc_id,
+                        ),
+                    )
+                    total_entities += 1
 
-                    chunk_id, extraction = extraction_results[idx]
-                    if extraction and (extraction.entities or extraction.relationships):
-                        counts = await loop.run_in_executor(
-                            _get_processing_executor(),
-                            functools.partial(
-                                self.neo4j.store_graph_extraction, chunk_id, extraction
-                            ),
-                        )
-                        stored_entities += counts["entities"]
-                        stored_relationships += counts["relationships"]
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        85,
+                        100,
+                        "Linking entities to chunks...",
+                    ),
+                )
 
-                        logger.debug(
-                            f"Chunk {idx}: stored {counts['entities']} entities, "
-                            f"{counts['relationships']} relationships"
-                        )
+                # Link entities to chunks via fuzzy string matching
+                chunk_entity_links = self._match_entities_to_chunks(entities, embedded_chunks)
+                for link_chunk_id, entity_name in chunk_entity_links:
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.link_entity_to_chunk,
+                            entity_name,
+                            link_chunk_id,
+                        ),
+                    )
 
-                    # Yield control every 3 chunks
-                    if idx % 3 == 0:
-                        await asyncio.sleep(0)
-
-                # Update totals from stored counts for final reporting
-                total_entities = stored_entities
-                total_relationships = stored_relationships
+                # Relationships are NOT extracted during upload (Phase B only)
+                total_relationships = 0
 
                 logger.info(
-                    f"Document {doc_id}: graph extraction complete - "
-                    f"{total_entities} entities, {total_relationships} relationships"
+                    f"Document {doc_id}: entity extraction complete - "
+                    f"{total_entities} entities, {len(chunk_entity_links)} chunk links"
                 )
 
             await loop.run_in_executor(
@@ -1461,6 +1408,107 @@ class DocumentProcessor:
             )
         # NOTE: We no longer delete the file after processing.
         # Files are kept for reprocessing without needing re-upload.
+
+    def _match_entities_to_chunks(
+        self,
+        entities,
+        chunks,
+    ) -> List[Tuple[str, str]]:
+        """Fuzzy match entities to chunks, return (chunk_id, entity_name) pairs."""
+        from rapidfuzz import fuzz
+
+        links = []
+        for chunk in chunks:
+            chunk_content_lower = chunk.content.lower() if chunk.content else ""
+            chunk_id = chunk.meta.get("chunk_id") or chunk.id if hasattr(chunk, "meta") else getattr(chunk, "id", None)
+            if not chunk_id or not chunk_content_lower:
+                continue
+            for entity in entities:
+                entity_name_lower = entity.name.lower()
+                # Exact substring (fast path)
+                if entity_name_lower in chunk_content_lower:
+                    links.append((chunk_id, entity.name))
+                    continue
+                # Fuzzy match for variations
+                if fuzz.partial_ratio(entity_name_lower, chunk_content_lower) >= 85:
+                    links.append((chunk_id, entity.name))
+        return links
+
+    async def analyze_collection_relationships(
+        self,
+        collection_id: Optional[str] = None,
+        scope: str = "full",
+        progress_callback: Optional[Callable] = None,
+    ) -> dict:
+        """Run Phase B relationship analysis for a collection.
+
+        Args:
+            collection_id: Scope to a specific collection (None = global)
+            scope: 'recent' = only entities from recent docs, 'full' = all entities
+            progress_callback: For progress reporting
+
+        Returns:
+            Dict with relationship counts and stats
+        """
+        # Fetch entities
+        entities = self.neo4j.get_all_entities_for_collection(collection_id)
+
+        if not entities:
+            return {
+                "relationships_discovered": 0,
+                "relationships_stored": 0,
+                "entities_analyzed": 0,
+                "collection_id": collection_id,
+            }
+
+        entity_names = [e.get("name") for e in entities if e.get("name")]
+
+        # Fetch existing relationships to avoid duplicates
+        existing_relationships = self.neo4j.get_existing_relationships_for_entities(
+            entity_names
+        )
+
+        if progress_callback:
+            progress_callback(0, len(entities), f"Analyzing relationships between {len(entities)} entities...")
+
+        # Run batched relationship analysis
+        batch_size = self.settings.relationship_analysis_batch_size
+        relationships = await self.graph_extractor.analyze_relationships_batched_async(
+            all_entities=entities,
+            context="",
+            batch_size=batch_size,
+            existing_relationships=existing_relationships,
+        )
+
+        if progress_callback:
+            progress_callback(
+                len(entities) // 2, len(entities),
+                f"Storing {len(relationships)} discovered relationships..."
+            )
+
+        # Store discovered relationships
+        stored = 0
+        for rel in relationships:
+            try:
+                if self.neo4j.store_relationship(
+                    rel,
+                    extraction_method="cross_collection",
+                ):
+                    stored += 1
+            except Exception as e:
+                logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
+
+        if progress_callback:
+            progress_callback(len(entities), len(entities), "Relationship analysis complete")
+
+        result = {
+            "relationships_discovered": len(relationships),
+            "relationships_stored": stored,
+            "entities_analyzed": len(entities),
+            "collection_id": collection_id,
+        }
+        logger.info(f"Relationship analysis complete: {result}")
+        return result
 
     async def _analyze_images_background_from_serialized(
         self,

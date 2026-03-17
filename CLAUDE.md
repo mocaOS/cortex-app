@@ -31,7 +31,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `lib/session.ts` — JWT session management
 - `components/` — UI components organized by feature
 
-**Document Processing Pipeline**: Upload → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction → semantic dedup (0.85 threshold) → relationship extraction → Neo4j storage → community detection (Louvain) → community summarization
+**Document Processing Pipeline**: Upload → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction (per-document, batched) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job) relationship analysis → community detection (Louvain) → community summarization
 
 **RAG Query Pipeline**: Query embedding → entity extraction → community search → hybrid search (vector 0.5 + fulltext 0.3 + graph 0.2, RRF) → cross-encoder reranking → context assembly → LLM generation. Agentic mode adds multi-step decomposition.
 
@@ -79,6 +79,9 @@ Copy `.env.example` to `.env`. Key variables:
 
 ## Key Patterns
 
+- Graph extraction uses `get_extraction_llm_config()` from `llm_config.py` (separate from Q&A model)
+- Turbo mode overrides both extraction and main model configs
+- Entity extraction is per-document (Phase A), relationship analysis is per-collection (Phase B)
 - Backend uses singleton service instances (Neo4jService, DocumentProcessor, etc.)
 - Background tasks via FastAPI's `BackgroundTasks` for document processing
 - Streaming responses for `/api/ask/stream` and `/api/ask/stream/thinking` endpoints

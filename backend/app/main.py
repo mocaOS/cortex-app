@@ -2177,6 +2177,100 @@ async def get_collection_entities(
 
 
 # =============================================================================
+# Relationship Analysis Endpoints (Phase B)
+# =============================================================================
+
+async def _run_relationship_analysis_task(
+    task_id: str,
+    collection_id: Optional[str],
+    scope: str,
+) -> None:
+    """Background task for relationship analysis with progress tracking."""
+    try:
+        processor = get_document_processor()
+        neo4j = get_neo4j_service()
+
+        # Count entities for progress
+        entities = await asyncio.to_thread(
+            neo4j.get_all_entities_for_collection, collection_id
+        )
+        total = len(entities)
+
+        if total == 0:
+            complete_task(task_id, {
+                "relationships_discovered": 0,
+                "entities_analyzed": 0,
+                "message": "No entities found to analyze",
+            })
+            return
+
+        update_task_progress(
+            task_id, 0, total,
+            f"Analyzing relationships between {total} entities...",
+        )
+
+        def progress_cb(current, total_count, msg):
+            update_task_progress(task_id, current, total_count, msg)
+
+        result = await processor.analyze_collection_relationships(
+            collection_id=collection_id,
+            scope=scope,
+            progress_callback=progress_cb,
+        )
+
+        complete_task(task_id, result)
+
+    except Exception as e:
+        logger.error(f"Error in relationship analysis task {task_id}: {e}")
+        fail_task(task_id, str(e))
+
+
+@app.post("/api/graph/relationships/analyze")
+async def analyze_relationships(
+    background_tasks: BackgroundTasks,
+    collection_id: Optional[str] = Query(
+        default=None, description="Scope to a specific collection (None = global)"
+    ),
+    scope: str = Query(
+        default="full", description="'recent' for new entities, 'full' for all"
+    ),
+):
+    """Analyze relationships between entities across documents.
+
+    This triggers Phase B of the extraction pipeline: the main (large) model
+    analyzes all entities and discovers cross-document relationships.
+    Run this after batch document processing to build the relationship graph.
+
+    Optionally followed by community detection: POST /api/graph/communities/detect
+    """
+    try:
+        settings = get_settings()
+        if not settings.enable_graph_extraction:
+            raise HTTPException(status_code=400, detail="Graph extraction is disabled")
+
+        task = create_task("relationship_analysis")
+        task.message = "Starting relationship analysis..."
+
+        background_tasks.add_task(
+            _run_relationship_analysis_task,
+            task.task_id,
+            collection_id,
+            scope,
+        )
+
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "message": f"Relationship analysis started. Poll /api/tasks/{task.task_id} for progress.",
+            "tip": "Run POST /api/graph/communities/detect after this completes for community detection.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # Community Detection Endpoints
 # =============================================================================
 

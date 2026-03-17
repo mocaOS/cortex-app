@@ -883,38 +883,71 @@ class Neo4jService:
     # GraphRAG: Entity and Relationship Storage
     # =========================================================================
     
-    def store_entity(self, entity: Entity, chunk_id: str) -> str:
+    def store_entity(self, entity: Entity, chunk_id: str = None, document_id: str = None) -> str:
         """
-        Store an entity and link it to the chunk where it was found.
-        Uses MERGE to avoid duplicates.
+        Store an entity with optional chunk and document provenance.
+        Uses MERGE to avoid duplicates. Links to chunk via MENTIONS if chunk_id provided.
         """
         with self.driver.session() as session:
             result = session.run("""
                 MERGE (e:Entity {name: $name})
-                ON CREATE SET 
+                ON CREATE SET
                     e.type = $type,
                     e.description = $description,
-                    e.created_at = datetime()
+                    e.created_at = datetime(),
+                    e.source_documents = CASE WHEN $doc_id IS NOT NULL THEN [$doc_id] ELSE [] END,
+                    e.extraction_count = 1,
+                    e.last_extracted_at = datetime()
                 ON MATCH SET
                     e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
-                    e.description = CASE WHEN size(e.description) < size($description) THEN $description ELSE e.description END
+                    e.description = CASE WHEN size(e.description) < size($description) THEN $description ELSE e.description END,
+                    e.source_documents = CASE
+                        WHEN $doc_id IS NOT NULL AND NOT $doc_id IN coalesce(e.source_documents, [])
+                        THEN coalesce(e.source_documents, []) + $doc_id
+                        ELSE coalesce(e.source_documents, [])
+                    END,
+                    e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                    e.last_extracted_at = datetime()
                 WITH e
-                MATCH (c:Chunk {id: $chunk_id})
-                MERGE (c)-[:MENTIONS]->(e)
+                OPTIONAL MATCH (c:Chunk {id: $chunk_id})
+                WHERE $chunk_id IS NOT NULL
+                FOREACH (_ IN CASE WHEN c IS NOT NULL THEN [1] ELSE [] END |
+                    MERGE (c)-[:MENTIONS]->(e)
+                )
                 RETURN e.name as name
             """,
                 name=entity.name,
                 type=entity.type,
                 description=entity.description,
-                chunk_id=chunk_id
+                chunk_id=chunk_id,
+                doc_id=document_id,
             )
             record = result.single()
             return record["name"] if record else entity.name
+
+    def link_entity_to_chunk(self, entity_name: str, chunk_id: str) -> bool:
+        """Create (Chunk)-[:MENTIONS]->(Entity) relationship."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (c:Chunk {id: $chunk_id})
+                MATCH (e:Entity {name: $entity_name})
+                MERGE (c)-[:MENTIONS]->(e)
+                RETURN e.name as name
+            """,
+                chunk_id=chunk_id,
+                entity_name=entity_name,
+            )
+            return result.single() is not None
     
-    def store_relationship(self, relationship: Relationship) -> bool:
+    def store_relationship(
+        self,
+        relationship: Relationship,
+        source_document_id: str = None,
+        extraction_method: str = "per_document",
+    ) -> bool:
         """
         Store a relationship between two entities.
-        Creates a dynamic relationship type with weight.
+        Creates a dynamic relationship type with weight and provenance.
         """
         with self.driver.session() as session:
             # Use APOC if available, otherwise use a workaround
@@ -923,13 +956,18 @@ class Neo4jService:
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
                     CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description, weight: $weight}, t) YIELD rel
+                    SET rel.extracted_at = datetime(),
+                        rel.extraction_method = $extraction_method,
+                        rel.source_document_id = $source_doc_id
                     RETURN type(rel) as rel_type
                 """,
                     source=relationship.source,
                     target=relationship.target,
                     rel_type=relationship.relationship_type,
                     description=relationship.description,
-                    weight=relationship.weight
+                    weight=relationship.weight,
+                    extraction_method=extraction_method,
+                    source_doc_id=source_document_id,
                 )
                 return result.single() is not None
             except Exception as e:
@@ -939,14 +977,19 @@ class Neo4jService:
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
                     MERGE (s)-[r:RELATED_TO {type: $rel_type}]->(t)
-                    SET r.description = $description, r.weight = $weight
+                    SET r.description = $description, r.weight = $weight,
+                        r.extracted_at = datetime(),
+                        r.extraction_method = $extraction_method,
+                        r.source_document_id = $source_doc_id
                     RETURN type(r) as rel_type
                 """,
                     source=relationship.source,
                     target=relationship.target,
                     rel_type=relationship.relationship_type,
                     description=relationship.description,
-                    weight=relationship.weight
+                    weight=relationship.weight,
+                    extraction_method=extraction_method,
+                    source_doc_id=source_document_id,
                 )
                 return result.single() is not None
     
@@ -977,7 +1020,83 @@ class Neo4jService:
                 logger.warning(f"Failed to store relationship {relationship.source} -> {relationship.target}: {e}")
         
         return {"entities": entity_count, "relationships": relationship_count}
-    
+
+    # =========================================================================
+    # Phase B: Collection-Level Entity/Relationship Queries
+    # =========================================================================
+
+    def get_all_entities_for_document(self, document_id: str) -> List[dict]:
+        """Get all entities linked to a document's chunks."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                RETURN DISTINCT e.name as name, e.type as type, e.description as description,
+                       e.community_id as community_id, count(DISTINCT c) as mention_count
+                ORDER BY mention_count DESC
+            """, doc_id=document_id)
+            return [dict(record) for record in result]
+
+    def get_all_entities_for_collection(
+        self,
+        collection_id: Optional[str] = None,
+        limit: int = 5000,
+    ) -> List[dict]:
+        """Get all entities in a collection (or globally if collection_id is None)."""
+        with self.driver.session() as session:
+            if collection_id:
+                result = session.run("""
+                    MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)
+                          -[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                    RETURN DISTINCT e.name as name, e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           count(DISTINCT d) as document_count
+                    ORDER BY document_count DESC
+                    LIMIT $limit
+                """, col_id=collection_id, limit=limit)
+            else:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    OPTIONAL MATCH (e)<-[:MENTIONS]-(c:Chunk)<-[:HAS_CHUNK]-(d:Document)
+                    RETURN DISTINCT e.name as name, e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           count(DISTINCT d) as document_count
+                    ORDER BY document_count DESC
+                    LIMIT $limit
+                """, limit=limit)
+            return [dict(record) for record in result]
+
+    def get_existing_relationships_for_entities(
+        self,
+        entity_names: List[str],
+        limit: int = 500,
+    ) -> List[dict]:
+        """Get existing relationships between the given entities."""
+        if not entity_names:
+            return []
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                WHERE s.name IN $names AND t.name IN $names
+                RETURN s.name as source, t.name as target,
+                       coalesce(r.type, type(r)) as type,
+                       r.description as description, r.weight as weight
+                LIMIT $limit
+            """, names=entity_names, limit=limit)
+            return [dict(record) for record in result]
+
+    def get_entities_without_relationships(self, limit: int = 500) -> List[dict]:
+        """Get entities that have no relationships (prime targets for Phase B analysis)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE NOT EXISTS { (e)-[]-(:Entity) }
+                RETURN e.name as name, e.type as type, e.description as description
+                LIMIT $limit
+            """, limit=limit)
+            return [dict(record) for record in result]
+
     # =========================================================================
     # GraphRAG: Graph Traversal and Retrieval
     # =========================================================================

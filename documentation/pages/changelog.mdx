@@ -7,6 +7,22 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## March 17, 2026
+
+### Two-Phase Graph Extraction Pipeline
+
+- Refactored entity extraction to work per-document instead of per-chunk, reducing LLM calls from N (one per chunk) to 1-4 (batched by token budget) per document
+- Added dedicated graph extraction model configuration (`GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY`) to allow using a smaller/faster model for entity extraction
+- Entity-to-chunk linking now uses fuzzy string matching (rapidfuzz) to create `MENTIONS` relationships
+- Added entity provenance tracking: `source_documents`, `extraction_count`, `last_extracted_at` properties on Entity nodes
+- New Phase B relationship analysis endpoint: `POST /api/graph/relationships/analyze` - discovers cross-document relationships using the main (large) model
+- Relationship analysis runs as a background task with progress tracking via `/api/tasks/{id}`
+- Added relationship provenance: `extracted_at`, `extraction_method`, `source_document_id` properties on relationships
+- New auto-trigger options: `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` and `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` for automated pipeline after batch processing
+- Turbo mode always overrides both extraction and main model configs for massive-scale ingestion
+
+---
+
 ## March 16, 2026
 
 ### Ask AI API Endpoint Update

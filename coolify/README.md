@@ -38,6 +38,28 @@ Image extraction and analysis. If not set, Docling's built-in image description 
 | `VISION_MODEL_API_BASE` | API endpoint for vision model (defaults to `OPENAI_API_BASE` if not set) | No |
 | `VISION_MODEL_API_KEY` | API key for vision model (defaults to `OPENAI_API_KEY` if not set) | No |
 
+### Graph Extraction (Optional)
+
+Use a smaller/faster model for entity extraction during document processing.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction (defaults to `OPENAI_MODEL`) | No |
+| `GRAPH_EXTRACTION_API_BASE` | API endpoint for extraction model (defaults to `OPENAI_API_BASE`) | No |
+| `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No |
+
+> **Tip:** Use the same small multimodal model for both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` to get fast extraction + image analysis from the same endpoint.
+
+### Relationship Analysis (Optional)
+
+Cross-document relationship discovery settings.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | Max entities per relationship analysis call (default: `100`) | No |
+| `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing (default: `false`) | No |
+| `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis (default: `false`) | No |
+
 ### Admin Authentication
 
 | Variable | Description | Required |

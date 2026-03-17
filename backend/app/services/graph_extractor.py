@@ -14,7 +14,7 @@ from openai import OpenAI, AsyncOpenAI
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
-from app.services.llm_config import get_llm_config, is_turbo_mode_active
+from app.services.llm_config import get_llm_config, get_extraction_llm_config, is_turbo_mode_active
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +175,102 @@ Output ONLY the XML format:
 </entities>"""
 
 
+# =============================================================================
+# Entity-Only Extraction Prompt (Phase A - per-document extraction)
+# =============================================================================
+
+ENTITY_EXTRACTION_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract entities from text to build a comprehensive knowledge graph.
+
+# Goal
+Given text and a document summary for context, identify all important entities and their types.
+
+# Steps
+1. Identify all entities in the text. For each entity, extract:
+   - entity: Name of the entity, properly capitalized
+   - entity_type: Type of the entity (use the provided entity types)
+   - entity_description: Comprehensive description of the entity based on the text
+
+   Format each entity in XML tags as follows:
+   <entity name="entity"><type>entity_type</type><description>entity_description</description></entity>
+
+2. Coverage Requirements:
+   - Extract ALL named entities (people, organizations, technologies, concepts, etc.)
+   - Use consistent naming (e.g., always "Neo4j" not "neo4j")
+   - Include entities that are referenced indirectly
+   - Provide rich descriptions that capture the entity's role and context
+
+IMPORTANT: Output ONLY the XML entities, no other text."""
+
+
+ENTITY_EXTRACTION_USER_PROMPT = """Extract all important entities from the following document section.
+
+Entity Types: {entity_types}
+
+Document Summary (for context):
+{document_summary}
+
+Text:
+{text}
+
+######################
+Example Output:
+<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
+<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
+
+######################
+Now extract all entities from the text above:"""
+
+
+# =============================================================================
+# Relationship Analysis Prompt (Phase B - cross-document relationship discovery)
+# =============================================================================
+
+RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph analyst. Your task is to identify meaningful relationships between entities in a knowledge graph.
+
+# Goal
+Given a list of entities (with their types and descriptions), identify all meaningful relationships between them.
+
+# Steps
+1. Analyze the entities and their descriptions to find connections.
+2. For each relationship found, extract:
+   - source_entity: name of the source entity (MUST be from the provided list)
+   - target_entity: name of the target entity (MUST be from the provided list)
+   - relation: relationship type (use the provided relation types)
+   - relationship_description: explanation of why these entities are related
+   - relationship_weight: strength score from 0-10 (10 = strongest/most direct)
+
+   Format each relationship in XML tags:
+   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type>
+   <description>relationship_description</description><weight>relationship_weight</weight></relationship>
+
+3. Requirements:
+   - ONLY use entity names from the provided list
+   - Focus on meaningful, well-supported relationships
+   - Infer relationships from entity descriptions and context
+   - Include both direct and indirect relationships
+   - Prioritize relationships that connect different entity types
+
+IMPORTANT: Output ONLY the XML relationships, no other text."""
+
+
+RELATIONSHIP_ANALYSIS_USER_PROMPT = """Analyze the following entities and identify all meaningful relationships between them.
+
+Relation Types: {relation_types}
+
+{context_section}
+
+=== Entities ===
+{entity_list}
+
+######################
+Example Output:
+<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type>
+<description>GPT-4 was developed by OpenAI as their flagship large language model.</description><weight>9</weight></relationship>
+
+######################
+Now identify all relationships between the entities listed above:"""
+
+
 class GraphExtractor:
     """Extract entities and relationships from text using LLM prompts."""
     
@@ -182,11 +278,14 @@ class GraphExtractor:
         self.settings = get_settings()
         self._client: Optional[OpenAI] = None
         self._async_client: Optional[AsyncOpenAI] = None
+        self._extraction_client: Optional[OpenAI] = None
+        self._async_extraction_client: Optional[AsyncOpenAI] = None
         self._async_embed_client: Optional[AsyncOpenAI] = None
         self._last_config_hash: Optional[str] = None  # Track config changes for turbo mode
+        self._last_extraction_config_hash: Optional[str] = None
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
-        
+
         if not self.settings.openai_api_key:
             logger.warning("OpenAI API key not configured - graph extraction will be disabled")
     
@@ -194,7 +293,12 @@ class GraphExtractor:
         """Get a hash of current LLM config to detect changes (e.g., turbo mode toggle)."""
         config = get_llm_config()
         return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
-    
+
+    def _get_extraction_config_hash(self) -> str:
+        """Get a hash of current extraction LLM config to detect changes."""
+        config = get_extraction_llm_config()
+        return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
+
     def _reset_clients_if_config_changed(self):
         """Reset clients if the LLM configuration has changed (e.g., turbo mode toggled)."""
         current_hash = self._get_config_hash()
@@ -203,6 +307,15 @@ class GraphExtractor:
             self._client = None
             self._async_client = None
         self._last_config_hash = current_hash
+
+    def _reset_extraction_clients_if_config_changed(self):
+        """Reset extraction clients if the extraction LLM config has changed."""
+        current_hash = self._get_extraction_config_hash()
+        if self._last_extraction_config_hash and self._last_extraction_config_hash != current_hash:
+            logger.info("Extraction LLM configuration changed, recreating extraction clients")
+            self._extraction_client = None
+            self._async_extraction_client = None
+        self._last_extraction_config_hash = current_hash
     
     @property
     def client(self) -> Optional[OpenAI]:
@@ -245,11 +358,59 @@ class GraphExtractor:
         return self._async_client
     
     @property
+    def extraction_client(self) -> Optional[OpenAI]:
+        """
+        Lazy initialization of synchronous OpenAI client for extraction.
+        Uses extraction-specific config (separate model/endpoint for entity extraction).
+        """
+        self._reset_extraction_clients_if_config_changed()
+
+        config = get_extraction_llm_config()
+        if self._extraction_client is None and config.api_key:
+            self._extraction_client = OpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                timeout=120.0,
+                max_retries=2,
+            )
+            if config.is_turbo:
+                logger.info(f"Extraction client using Turbo Mode: {config.base_url}")
+            else:
+                logger.info(f"Extraction client initialized: {config.base_url} / {config.model}")
+        return self._extraction_client
+
+    @property
+    def async_extraction_client(self) -> Optional[AsyncOpenAI]:
+        """
+        Lazy initialization of async OpenAI client for extraction.
+        Uses extraction-specific config (separate model/endpoint for entity extraction).
+        """
+        self._reset_extraction_clients_if_config_changed()
+
+        config = get_extraction_llm_config()
+        if self._async_extraction_client is None and config.api_key:
+            self._async_extraction_client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                timeout=120.0,
+                max_retries=2,
+            )
+            if config.is_turbo:
+                logger.info(f"Async extraction client using Turbo Mode: {config.base_url}")
+        return self._async_extraction_client
+
+    @property
+    def extraction_model_name(self) -> str:
+        """Get the current extraction model name."""
+        config = get_extraction_llm_config()
+        return config.model
+
+    @property
     def current_model(self) -> str:
         """Get the current model to use (turbo model if active, otherwise default)."""
         config = get_llm_config()
         return config.model
-    
+
     @property
     def is_available(self) -> bool:
         """Check if graph extraction is available."""
@@ -787,14 +948,17 @@ class GraphExtractor:
     
     async def generate_document_summary_async(self, document: str) -> str:
         """
-        Async version of generate_document_summary using AsyncOpenAI.
+        Async version of generate_document_summary using extraction client.
         """
-        if not self.async_client:
+        client = self.async_extraction_client or self.async_client
+        if not client:
             return ""
-        
+
+        model = self.extraction_model_name
+
         try:
-            response = await self.async_client.chat.completions.create(
-                model=self.current_model,
+            response = await client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
                     {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
@@ -1259,6 +1423,301 @@ Respond with ONLY the community name, nothing else."""
         except Exception as e:
             logger.warning(f"Failed to generate entity embedding: {e}")
             return None
+
+    # =========================================================================
+    # Phase A: Per-Document Entity Extraction
+    # =========================================================================
+
+    async def extract_entities_from_document_async(
+        self,
+        chunks: List[str],
+        document_summary: str,
+        max_tokens: int = 8192,
+    ) -> List[Entity]:
+        """Extract entities from an entire document (batched by token budget).
+
+        Processes all chunks as a single document rather than per-chunk.
+        Batches intelligently when exceeding context window, with 1-chunk
+        overlap between batches for continuity.
+
+        Args:
+            chunks: List of chunk text content strings
+            document_summary: Summary of the document for context
+            max_tokens: Approximate context window budget for the extraction model
+
+        Returns:
+            Deduplicated list of Entity objects
+        """
+        client = self.async_extraction_client or self.async_client
+        if not client:
+            logger.warning("No extraction client available - returning empty entities")
+            return []
+
+        model = self.extraction_model_name
+        e_types = self.entity_types
+
+        # Token estimation
+        try:
+            import tiktoken
+            enc = tiktoken.encoding_for_model(model)
+            def count_tokens(text: str) -> int:
+                return len(enc.encode(text))
+        except Exception:
+            def count_tokens(text: str) -> int:
+                return len(text) // 4
+
+        # Calculate prompt overhead
+        system_tokens = count_tokens(ENTITY_EXTRACTION_SYSTEM_PROMPT)
+        template_tokens = count_tokens(ENTITY_EXTRACTION_USER_PROMPT.format(
+            entity_types=", ".join(e_types),
+            document_summary=document_summary or "",
+            text="",
+        ))
+        prompt_overhead = system_tokens + template_tokens
+        output_reserve = 1500
+        available_tokens = int(max_tokens * 0.8) - prompt_overhead - output_reserve
+
+        if available_tokens < 200:
+            available_tokens = 2000  # Fallback minimum
+
+        # Batch chunks by token budget
+        batches: List[List[str]] = []
+        current_batch: List[str] = []
+        current_tokens = 0
+
+        for chunk in chunks:
+            chunk_tokens = count_tokens(chunk)
+            if current_batch and (current_tokens + chunk_tokens) > available_tokens:
+                batches.append(current_batch)
+                # 1-chunk overlap: include last chunk of previous batch
+                current_batch = [current_batch[-1]]
+                current_tokens = count_tokens(current_batch[0])
+            current_batch.append(chunk)
+            current_tokens += chunk_tokens
+
+        if current_batch:
+            batches.append(current_batch)
+
+        logger.info(
+            f"Entity extraction: {len(chunks)} chunks split into {len(batches)} batch(es) "
+            f"(model={model}, budget={max_tokens})"
+        )
+
+        # Extract entities from each batch
+        all_entities: List[Entity] = []
+
+        for batch_idx, batch in enumerate(batches):
+            batch_text = "\n\n".join(batch)
+            user_prompt = ENTITY_EXTRACTION_USER_PROMPT.format(
+                entity_types=", ".join(e_types),
+                document_summary=document_summary or "No summary available.",
+                text=batch_text,
+            )
+
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": ENTITY_EXTRACTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=3000,
+                )
+
+                content = self._extract_response_content(response)
+                if not content:
+                    logger.warning(f"Batch {batch_idx + 1}/{len(batches)}: empty response")
+                    continue
+
+                xml_entities = self._extract_xml_entities(content)
+                for e in xml_entities:
+                    try:
+                        all_entities.append(Entity(
+                            name=e["name"],
+                            type=e.get("type", "Concept"),
+                            description=e.get("description", ""),
+                        ))
+                    except Exception as ex:
+                        logger.warning(f"Failed to parse entity {e}: {ex}")
+
+                logger.info(
+                    f"Batch {batch_idx + 1}/{len(batches)}: extracted {len(xml_entities)} entities"
+                )
+
+            except Exception as e:
+                logger.error(f"Error in entity extraction batch {batch_idx + 1}: {e}")
+
+        # Deduplicate by name (case-insensitive), keep longest description
+        seen: dict[str, Entity] = {}
+        for entity in all_entities:
+            key = entity.name.lower()
+            if key not in seen or len(entity.description) > len(seen[key].description):
+                seen[key] = entity
+
+        deduplicated = list(seen.values())
+        logger.info(f"Entity extraction complete: {len(all_entities)} raw -> {len(deduplicated)} deduplicated")
+        return deduplicated
+
+    # =========================================================================
+    # Phase B: Cross-Document Relationship Analysis
+    # =========================================================================
+
+    async def analyze_relationships_async(
+        self,
+        entities: List[dict],
+        context: str = "",
+        existing_relationships: List[dict] = None,
+    ) -> List[Relationship]:
+        """Analyze entities and discover relationships using the main (large) model.
+
+        Args:
+            entities: List of {name, type, description} dicts
+            context: Optional collection/document summary context
+            existing_relationships: Optional list of already-known relationships to avoid duplicates
+
+        Returns:
+            List of discovered Relationship objects
+        """
+        if not self.async_client:
+            logger.warning("No async client available for relationship analysis")
+            return []
+
+        r_types = self.relation_types
+
+        # Format entity list
+        entity_list = "\n".join([
+            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:200]}"
+            for e in entities
+        ])
+
+        # Build context section
+        context_section = ""
+        if context:
+            context_section = f"Context:\n{context}\n"
+        if existing_relationships:
+            existing_text = "\n".join([
+                f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
+                for r in existing_relationships[:50]
+            ])
+            context_section += (
+                f"\nThe following relationships are already known — "
+                f"focus on discovering NEW relationships not listed here:\n{existing_text}\n"
+            )
+
+        user_prompt = RELATIONSHIP_ANALYSIS_USER_PROMPT.format(
+            relation_types=", ".join(r_types),
+            context_section=context_section,
+            entity_list=entity_list,
+        )
+
+        entity_name_set = {e.get("name", "").lower() for e in entities}
+
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=4000,
+            )
+
+            content = self._extract_response_content(response)
+            if not content:
+                return []
+
+            xml_relationships = self._extract_xml_relationships(content)
+
+            relationships = []
+            for r in xml_relationships:
+                source = r.get("source", "").strip()
+                target = r.get("target", "").strip()
+
+                # Only keep relationships where both entities are in the provided list
+                if source.lower() in entity_name_set and target.lower() in entity_name_set:
+                    relationships.append(Relationship(
+                        source=source,
+                        target=target,
+                        relationship_type=r.get("relationship_type", "RELATED_TO"),
+                        description=r.get("description", ""),
+                        weight=r.get("weight", 5.0),
+                    ))
+
+            logger.info(f"Relationship analysis: discovered {len(relationships)} relationships from {len(entities)} entities")
+            return relationships
+
+        except Exception as e:
+            logger.error(f"Error during relationship analysis: {e}")
+            return []
+
+    async def analyze_relationships_batched_async(
+        self,
+        all_entities: List[dict],
+        context: str = "",
+        batch_size: int = 100,
+        existing_relationships: List[dict] = None,
+    ) -> List[Relationship]:
+        """Analyze relationships in batches when entity count exceeds batch_size.
+
+        Splits entities into overlapping batches (10% overlap) grouped by type
+        to maximize intra-batch relationship discovery.
+        """
+        if len(all_entities) <= batch_size:
+            return await self.analyze_relationships_async(
+                all_entities, context, existing_relationships
+            )
+
+        # Group entities by type for better batch coherence
+        by_type: dict[str, List[dict]] = {}
+        for e in all_entities:
+            t = e.get("type", "Other")
+            by_type.setdefault(t, []).append(e)
+
+        # Flatten back but with type grouping preserved
+        sorted_entities = []
+        for entities_of_type in by_type.values():
+            sorted_entities.extend(entities_of_type)
+
+        overlap = max(1, batch_size // 10)
+        batches: List[List[dict]] = []
+        i = 0
+        while i < len(sorted_entities):
+            end = min(i + batch_size, len(sorted_entities))
+            batches.append(sorted_entities[i:end])
+            i = end - overlap
+            if i <= (end - batch_size):
+                break  # Prevent infinite loop on very small overlap
+
+        logger.info(
+            f"Relationship analysis: {len(all_entities)} entities split into "
+            f"{len(batches)} batch(es) (batch_size={batch_size}, overlap={overlap})"
+        )
+
+        # Process batches and collect results
+        all_relationships: List[Relationship] = []
+        for batch_idx, batch in enumerate(batches):
+            rels = await self.analyze_relationships_async(
+                batch, context, existing_relationships
+            )
+            all_relationships.extend(rels)
+            logger.info(f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} relationships")
+
+        # Deduplicate by (source, target, type)
+        seen: set[tuple] = set()
+        deduplicated: List[Relationship] = []
+        for rel in all_relationships:
+            key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(rel)
+
+        logger.info(
+            f"Relationship analysis complete: {len(all_relationships)} raw -> "
+            f"{len(deduplicated)} deduplicated"
+        )
+        return deduplicated
 
 
 # Singleton instance

@@ -113,11 +113,34 @@ ENABLE_GRAPH_EXTRACTION=true
 # Model for entity extraction (defaults to OPENAI_MODEL)
 # GRAPH_EXTRACTION_MODEL=gpt-4o-mini
 
+# API base/key for extraction model (defaults to OPENAI_API_BASE / OPENAI_API_KEY)
+# GRAPH_EXTRACTION_API_BASE=http://localhost:11434/v1
+# GRAPH_EXTRACTION_API_KEY=ollama
+
+# Tip: Use a small multimodal model (e.g. 8B) for both GRAPH_EXTRACTION_MODEL
+# and VISION_MODEL to get fast extraction + image analysis from the same endpoint.
+
 # Maximum graph hops for context retrieval
 MAX_GRAPH_HOPS=2
 
 # Concurrent extraction operations
 CONCURRENT_EXTRACTIONS=3
+```
+
+### Relationship Analysis
+
+Cross-document relationship discovery (Phase B). Run after document processing
+to build the relationship graph:
+
+```bash
+# Max entities per relationship analysis LLM call
+# RELATIONSHIP_ANALYSIS_BATCH_SIZE=100
+
+# Auto-trigger relationship analysis after batch processing
+# AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
+
+# Auto-trigger community detection after relationship analysis
+# AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
 ```
 
 ### Semantic Entity Resolution
@@ -320,6 +343,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `CHUNK_SIZE` | No | `500` | Tokens per chunk |
 | `CHUNK_OVERLAP` | No | `50` | Overlap tokens |
 | `ENABLE_GRAPH_EXTRACTION` | No | `true` | Enable GraphRAG |
+| `GRAPH_EXTRACTION_MODEL` | No | `OPENAI_MODEL` | Model for entity extraction |
+| `GRAPH_EXTRACTION_API_BASE` | No | `OPENAI_API_BASE` | API base for extraction model |
+| `GRAPH_EXTRACTION_API_KEY` | No | `OPENAI_API_KEY` | API key for extraction model |
+| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | No | `100` | Max entities per relationship analysis call |
+| `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | No | `false` | Auto-analyze after batch processing |
+| `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |

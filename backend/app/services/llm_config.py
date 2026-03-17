@@ -106,6 +106,34 @@ def get_llm_config(fast_mode: bool = False) -> LLMConfig:
     )
 
 
+def get_extraction_llm_config() -> LLMConfig:
+    """
+    Get LLM config for graph extraction operations.
+
+    Turbo mode ALWAYS takes priority — designed for massive-scale ingestion.
+    Otherwise falls back to dedicated extraction config, then main OpenAI config.
+    """
+    settings = get_settings()
+
+    # Turbo mode ALWAYS overrides — even if dedicated extraction endpoint is set
+    if _turbo_state["active"] and _turbo_state["base_url"]:
+        api_key = _turbo_state["api_key"] or settings.compute3_api_key
+        return LLMConfig(
+            api_key=api_key,
+            base_url=_turbo_state["base_url"],
+            model=settings.compute3_model,
+            is_turbo=True,
+        )
+
+    # Use dedicated extraction config (properties fall back to main config if empty)
+    return LLMConfig(
+        api_key=settings.extraction_api_key,
+        base_url=settings.extraction_api_base,
+        model=settings.extraction_model,
+        is_turbo=False,
+    )
+
+
 def get_llm_config_tuple() -> Tuple[str, str, str]:
     """
     Get LLM configuration as a tuple for backward compatibility.

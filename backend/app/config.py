@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     graph_extraction_model: str = Field(
         default=""
     )  # Model for extraction (defaults to openai_model if empty)
+    graph_extraction_api_base: str = Field(
+        default=""
+    )  # API base for extraction model (defaults to openai_api_base if empty)
+    graph_extraction_api_key: str = Field(
+        default=""
+    )  # API key for extraction model (defaults to openai_api_key if empty)
     max_graph_hops: int = Field(
         default=2
     )  # Maximum hops for graph traversal in queries
@@ -138,6 +144,17 @@ class Settings(BaseSettings):
     processing_thread_workers: int = Field(
         default=4
     )  # Thread pool workers for CPU-intensive operations
+
+    # Relationship Analysis (Phase B - cross-document relationship discovery)
+    relationship_analysis_batch_size: int = Field(
+        default=100
+    )  # Max entities per relationship analysis LLM call
+    auto_relationship_analysis_after_batch: bool = Field(
+        default=False
+    )  # Auto-trigger relationship analysis after batch processing completes
+    auto_community_detection_after_batch: bool = Field(
+        default=False
+    )  # Auto-trigger community detection after relationship analysis
 
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking
@@ -279,6 +296,16 @@ class Settings(BaseSettings):
     def extraction_model(self) -> str:
         """Get the model to use for graph extraction."""
         return self.graph_extraction_model or self.openai_model
+
+    @property
+    def extraction_api_base(self) -> str:
+        """Get the API base URL for graph extraction."""
+        return self.graph_extraction_api_base or self.openai_api_base
+
+    @property
+    def extraction_api_key(self) -> str:
+        """Get the API key for graph extraction."""
+        return self.graph_extraction_api_key or self.openai_api_key
 
     @property
     def summary_model(self) -> str:

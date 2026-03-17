@@ -244,6 +244,12 @@ npm run dev
 | POST | `/api/collections/{id}/documents/{doc_id}` | Add document to collection |
 | GET | `/api/collections/{id}/entities` | Get entities in collection's graph |
 
+### Relationship Analysis Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/graph/relationships/analyze` | Analyze cross-document relationships (Phase B) |
+
 ### Community Detection Endpoints
 
 | Method | Endpoint | Description |
@@ -542,6 +548,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
 | `GRAPH_EXTRACTION_MODEL` | Model for extraction (defaults to `OPENAI_MODEL`) | No | - |
+| `GRAPH_EXTRACTION_API_BASE` | API base for extraction model (defaults to `OPENAI_API_BASE`) | No | - |
+| `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for extraction | No | `20` |
 | `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
@@ -564,6 +572,14 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 |----------|-------------|----------|---------|
 | `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `10` |
 | `PROCESSING_THREAD_WORKERS` | Thread pool workers for CPU operations | No | `4` |
+
+#### Relationship Analysis
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | Max entities per relationship analysis call | No | `100` |
+| `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
+| `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 
 #### Community Detection & Graph Summarization
 
