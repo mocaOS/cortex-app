@@ -137,6 +137,14 @@ class Settings(BaseSettings):
         default=3
     )  # Number of chunks to process concurrently for graph extraction
 
+    # Extraction Context Window Configuration
+    extraction_max_context: int = Field(
+        default=32768
+    )  # Max context window tokens for entity extraction batching
+    relationship_max_context: int = Field(
+        default=65536
+    )  # Max context window tokens for relationship analysis
+
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(
         default=2

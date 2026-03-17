@@ -202,7 +202,7 @@ Given text and a document summary for context, identify all important entities a
 IMPORTANT: Output ONLY the XML entities, no other text."""
 
 
-ENTITY_EXTRACTION_USER_PROMPT = """Extract all important entities from the following document section.
+ENTITY_EXTRACTION_USER_PROMPT = """Extract ALL named entities from the following document section. Be thorough - extract every person, organization, technology, concept, location, event, and any other named entity you can identify. Do not limit yourself to only the most important ones.
 
 Entity Types: {entity_types}
 
@@ -451,7 +451,7 @@ class GraphExtractor:
         entities = []
         
         # Pattern for XML entity format
-        entity_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*</entity>'
+        entity_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*<description>([\s\S]*?)</description>\s*</entity>'
         
         matches = re.findall(entity_pattern, content, re.IGNORECASE | re.DOTALL)
         for name, etype, description in matches:
@@ -1522,7 +1522,7 @@ Respond with ONLY the community name, nothing else."""
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=3000,
+                    max_tokens=8000,
                 )
 
                 content = self._extract_response_content(response)
@@ -1568,6 +1568,7 @@ Respond with ONLY the community name, nothing else."""
         entities: List[dict],
         context: str = "",
         existing_relationships: List[dict] = None,
+        max_output_tokens: int = 8000,
     ) -> List[Relationship]:
         """Analyze entities and discover relationships using the main (large) model.
 
@@ -1575,6 +1576,7 @@ Respond with ONLY the community name, nothing else."""
             entities: List of {name, type, description} dicts
             context: Optional collection/document summary context
             existing_relationships: Optional list of already-known relationships to avoid duplicates
+            max_output_tokens: Max output tokens for the LLM response
 
         Returns:
             List of discovered Relationship objects
@@ -1621,7 +1623,7 @@ Respond with ONLY the community name, nothing else."""
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,
-                max_tokens=4000,
+                max_tokens=max_output_tokens,
             )
 
             content = self._extract_response_content(response)
@@ -1658,6 +1660,7 @@ Respond with ONLY the community name, nothing else."""
         context: str = "",
         batch_size: int = 100,
         existing_relationships: List[dict] = None,
+        max_output_tokens: int = 8000,
     ) -> List[Relationship]:
         """Analyze relationships in batches when entity count exceeds batch_size.
 
@@ -1666,7 +1669,7 @@ Respond with ONLY the community name, nothing else."""
         """
         if len(all_entities) <= batch_size:
             return await self.analyze_relationships_async(
-                all_entities, context, existing_relationships
+                all_entities, context, existing_relationships, max_output_tokens
             )
 
         # Group entities by type for better batch coherence
@@ -1699,7 +1702,7 @@ Respond with ONLY the community name, nothing else."""
         all_relationships: List[Relationship] = []
         for batch_idx, batch in enumerate(batches):
             rels = await self.analyze_relationships_async(
-                batch, context, existing_relationships
+                batch, context, existing_relationships, max_output_tokens
             )
             all_relationships.extend(rels)
             logger.info(f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} relationships")

@@ -125,6 +125,10 @@ MAX_GRAPH_HOPS=2
 
 # Concurrent extraction operations
 CONCURRENT_EXTRACTIONS=3
+
+# Max context window tokens for entity extraction batching
+# Increase if your extraction model supports a larger context window
+# EXTRACTION_MAX_CONTEXT=32768
 ```
 
 ### Relationship Analysis
@@ -135,6 +139,10 @@ to build the relationship graph:
 ```bash
 # Max entities per relationship analysis LLM call
 # RELATIONSHIP_ANALYSIS_BATCH_SIZE=100
+
+# Max context window tokens for relationship analysis output
+# Increase if your main model supports a larger context window
+# RELATIONSHIP_MAX_CONTEXT=65536
 
 # Auto-trigger relationship analysis after batch processing
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
@@ -346,7 +354,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `GRAPH_EXTRACTION_MODEL` | No | `OPENAI_MODEL` | Model for entity extraction |
 | `GRAPH_EXTRACTION_API_BASE` | No | `OPENAI_API_BASE` | API base for extraction model |
 | `GRAPH_EXTRACTION_API_KEY` | No | `OPENAI_API_KEY` | API key for extraction model |
+| `EXTRACTION_MAX_CONTEXT` | No | `32768` | Max context window tokens for entity extraction batching |
 | `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | No | `100` | Max entities per relationship analysis call |
+| `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max context window tokens for relationship analysis |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | No | `false` | Auto-analyze after batch processing |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |

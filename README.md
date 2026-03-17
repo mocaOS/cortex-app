@@ -554,6 +554,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for extraction | No | `20` |
+| `EXTRACTION_MAX_CONTEXT` | Max context window tokens for entity extraction batching | No | `32768` |
 | `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
 | `CHUNK_OVERLAP` | Overlap between chunks | No | `50` |
 | `CHUNK_BY` | Chunking strategy: `word` or `sentence` | No | `sentence` |
@@ -580,6 +581,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | Max entities per relationship analysis call | No | `100` |
+| `RELATIONSHIP_MAX_CONTEXT` | Max context window tokens for relationship analysis | No | `65536` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 

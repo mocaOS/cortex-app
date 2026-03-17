@@ -278,8 +278,10 @@ function EntitiesPanel({ onExploreEntity, selectedEntities }: EntitiesPanelProps
   );
 }
 
-function RelationshipsPanel({ edges }: { edges: GraphEdge[] }) {
+function RelationshipsPanel({ edges, onRefresh }: { edges: GraphEdge[]; onRefresh?: () => void }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [taskMessage, setTaskMessage] = useState<string | null>(null);
 
   const filteredEdges = useMemo(() => {
     if (!searchQuery) return edges;
@@ -291,6 +293,41 @@ function RelationshipsPanel({ edges }: { edges: GraphEdge[] }) {
         e.type.toLowerCase().includes(query)
     );
   }, [edges, searchQuery]);
+
+  const handleAnalyzeRelationships = async () => {
+    try {
+      setAnalyzing(true);
+      setTaskMessage("Starting relationship analysis...");
+      const result = await api.analyzeRelationships();
+      const taskId = result.task_id;
+
+      // Poll task status
+      const poll = async () => {
+        try {
+          const status = await api.getTaskStatus(taskId);
+          setTaskMessage(status.message || `Progress: ${status.progress}%`);
+          if (status.status === "completed") {
+            setTaskMessage(null);
+            setAnalyzing(false);
+            onRefresh?.();
+          } else if (status.status === "failed") {
+            setTaskMessage(`Failed: ${status.message}`);
+            setAnalyzing(false);
+          } else {
+            setTimeout(poll, 3000);
+          }
+        } catch {
+          setTaskMessage(null);
+          setAnalyzing(false);
+        }
+      };
+      setTimeout(poll, 2000);
+    } catch (error) {
+      console.error("Failed to analyze relationships:", error);
+      setTaskMessage(null);
+      setAnalyzing(false);
+    }
+  };
 
   return (
     <div className="p-6">
@@ -305,37 +342,73 @@ function RelationshipsPanel({ edges }: { edges: GraphEdge[] }) {
             className="w-full pl-10 pr-4 py-2 bg-muted border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
+        <button
+          onClick={handleAnalyzeRelationships}
+          disabled={analyzing}
+          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+        >
+          {analyzing ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Share2 className="w-4 h-4" />
+          )}
+          {analyzing ? "Analyzing..." : "Analyze Relationships"}
+        </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left py-3 px-4 font-medium text-muted-foreground">Source</th>
-              <th className="text-left py-3 px-4 font-medium text-muted-foreground">Relationship</th>
-              <th className="text-left py-3 px-4 font-medium text-muted-foreground">Target</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredEdges.map((edge, idx) => (
-              <tr key={idx} className="border-b border-border/50 hover:bg-muted/50">
-                <td className="py-3 px-4">{edge.source}</td>
-                <td className="py-3 px-4">
-                  <span className="px-2 py-1 bg-accent/20 text-accent rounded-full text-xs font-medium">
-                    {edge.type}
-                  </span>
-                </td>
-                <td className="py-3 px-4">{edge.target}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {filteredEdges.length === 0 && (
-        <div className="text-center py-12 text-muted-foreground">
-          No relationships found.
+      {taskMessage && (
+        <div className="mb-4 p-3 bg-accent/10 border border-accent/20 rounded-lg text-sm text-accent">
+          {taskMessage}
         </div>
+      )}
+
+      {edges.length === 0 && !analyzing ? (
+        <div className="text-center py-12">
+          <Share2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <h3 className="text-lg font-medium mb-2">No Relationships Found</h3>
+          <p className="text-muted-foreground mb-4">
+            Run relationship analysis to discover connections between entities across your documents.
+          </p>
+          <button
+            onClick={handleAnalyzeRelationships}
+            className="px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            Analyze Relationships
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Source</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Relationship</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredEdges.map((edge, idx) => (
+                  <tr key={idx} className="border-b border-border/50 hover:bg-muted/50">
+                    <td className="py-3 px-4">{edge.source}</td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-1 bg-accent/20 text-accent rounded-full text-xs font-medium">
+                        {edge.type}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">{edge.target}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {filteredEdges.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              No relationships found matching your search.
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -885,7 +958,7 @@ export default function ExplorePage() {
                 selectedEntities={selectedEntities}
               />
             )}
-            {activeTab === "relationships" && <RelationshipsPanel edges={edges} />}
+            {activeTab === "relationships" && <RelationshipsPanel edges={edges} onRefresh={fetchGraphData} />}
             {activeTab === "communities" && <CommunitiesPanel />}
           </>
         )}

@@ -552,9 +552,19 @@ class ApiClient {
   async detectCommunities(minSize = 3, collectionId?: string): Promise<TaskStartResponse> {
     const params = new URLSearchParams({ min_size: String(minSize) });
     if (collectionId) params.set("collection_id", collectionId);
-    
+
     return this.request<TaskStartResponse>(
       `/api/graph/communities/detect?${params}`,
+      { method: "POST" }
+    );
+  }
+
+  async analyzeRelationships(collectionId?: string, scope = "full"): Promise<TaskStartResponse> {
+    const params = new URLSearchParams({ scope });
+    if (collectionId) params.set("collection_id", collectionId);
+
+    return this.request<TaskStartResponse>(
+      `/api/graph/relationships/analyze?${params}`,
       { method: "POST" }
     );
   }

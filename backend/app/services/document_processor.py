@@ -1300,7 +1300,7 @@ class DocumentProcessor:
                 entities = await self.graph_extractor.extract_entities_from_document_async(
                     chunks=chunk_contents,
                     document_summary=document_summary or "",
-                    max_tokens=8192,
+                    max_tokens=self.settings.extraction_max_context,
                 )
 
                 await loop.run_in_executor(
@@ -1478,6 +1478,7 @@ class DocumentProcessor:
             context="",
             batch_size=batch_size,
             existing_relationships=existing_relationships,
+            max_output_tokens=self.settings.relationship_max_context,
         )
 
         if progress_callback:
