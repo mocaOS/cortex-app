@@ -7,27 +7,41 @@ import { Mermaid } from "zudoku/mermaid";
 
 Ask questions about your documents and get intelligent answers with source citations. MOCA's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries. The primary interface is the **streaming endpoint**, which delivers results in real time via Server-Sent Events (SSE).
 
+## Frontend UI
+
+In the MOCA frontend, Ask AI is accessed via the **Explore** section with two dedicated tabs:
+
+| Tab | Description | Best For |
+|-----|-------------|----------|
+| **Deep Research** | Multi-step agentic reasoning that breaks down complex questions into sub-queries | Complex questions requiring thorough analysis |
+| **Chat** | Quick hybrid search with knowledge graph context | Fast lookups and straightforward questions |
+
+Both modes share a simplified input interface with:
+- A text input field (placeholder varies by mode)
+- A **Settings** button (cog icon) to configure collection scope and streaming
+- A **Send** button that activates when you type
+
+The settings dropdown allows you to:
+- Toggle **Stream responses** on/off (for debugging)
+- Select a **Collection Scope** to limit search to specific documents
+
 ## How It Works
 
 <Mermaid chart={`
 flowchart TD
     Q["User Question"] --> MODE{"Mode?"}
-    MODE -->|Standard| SEARCH["Hybrid Search"]
-    MODE -->|Fast| VECTOR["Vector Search Only"]
+    MODE -->|Chat| SEARCH["Hybrid Search"]
     MODE -->|Deep Research| DECOMPOSE["Decompose into Sub-Questions"]
 
     SEARCH --> RERANK["Cross-Encoder Re-ranking"]
     RERANK --> GRAPH["Graph Context Enrichment"]
     GRAPH --> LLM["LLM Generation"]
 
-    VECTOR --> FAST_LLM["LLM Generation (600 tokens)"]
-
     DECOMPOSE --> MULTI["Multi-Step Retrieval"]
     MULTI --> CONSOLIDATE["Consolidate Sources"]
     CONSOLIDATE --> DEEP_LLM["LLM Synthesis (2000 tokens)"]
 
     LLM --> STREAM["SSE Stream"]
-    FAST_LLM --> STREAM
     DEEP_LLM --> STREAM
 `} />
 
@@ -76,11 +90,11 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
 
 The backend keeps the most recent messages (configured by `MAX_CONVERSATION_HISTORY`, default 6).
 
-## Three Streaming Modes
+## Two Modes
 
-### 1. Standard Mode (Hybrid + Reranking)
+### 1. Chat Mode (Hybrid + Reranking)
 
-The default mode. Performs hybrid search (vector + keyword + graph), applies cross-encoder reranking, enriches with graph context, then streams the LLM answer.
+The default mode for quick questions. Performs hybrid search (vector + keyword + graph), applies cross-encoder reranking, enriches with graph context, then streams the LLM answer.
 
 ```bash
 curl -X POST "http://localhost:8000/api/ask/stream" \
@@ -108,32 +122,7 @@ data: {"content": "key benefits..."}
 data: {"done": true}
 ```
 
-### 2. Fast Vector Search
-
-Optimized for speed. Skips hybrid search and reranking — performs a simple vector search and streams a concise answer (max 600 tokens). For follow-up questions with conversation history, it skips retrieval entirely and uses the LLM with conversation context alone.
-
-```bash
-curl -X POST "http://localhost:8000/api/ask/stream" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What is the company mission?",
-    "use_fast_search": true
-  }' --no-buffer
-```
-
-**Event sequence:** `content` (multiple) → `done`
-
-```
-data: {"content": "The company "}
-data: {"content": "mission is to..."}
-
-data: {"done": true, "fast_mode": true}
-```
-
-No `sources` or `graph_context` events are sent in fast mode.
-
-### 3. Deep Research (Agentic)
+### 2. Deep Research Mode (Agentic)
 
 For complex questions requiring multi-step reasoning. The system decomposes your question into sub-questions, researches each independently, then synthesizes a comprehensive answer (up to 2000 tokens).
 
@@ -199,16 +188,15 @@ Every event is a JSON object on a `data:` line. Each event contains exactly one 
 | Event Key | Type | Mode | Description |
 |-----------|------|------|-------------|
 | `content` | `string` | All | A token of the streamed answer |
-| `sources` | `SearchResult[]` | Standard, Agentic | Retrieved source documents with scores |
-| `graph_context` | `object` | Standard, Agentic | Knowledge graph entities, relationships, and community data |
-| `thinking` | `string` | Agentic | Status message describing the current reasoning step |
-| `sub_questions` | `string[]` | Agentic | The decomposed research sub-questions |
-| `retrieval` | `string` | Agentic | Per-sub-question retrieval progress |
-| `retrieval_stats` | `object` | Agentic | Summary: `total_sources`, `unique_sources`, `communities_used` |
+| `sources` | `SearchResult[]` | All | Retrieved source documents with scores |
+| `graph_context` | `object` | All | Knowledge graph entities, relationships, and community data |
+| `thinking` | `string` | Deep Research | Status message describing the current reasoning step |
+| `sub_questions` | `string[]` | Deep Research | The decomposed research sub-questions |
+| `retrieval` | `string` | Deep Research | Per-sub-question retrieval progress |
+| `retrieval_stats` | `object` | Deep Research | Summary: `total_sources`, `unique_sources`, `communities_used` |
 | `done` | `boolean` | All | `true` when the stream is complete |
 | `error` | `string` | All | Error message if something went wrong |
-| `fast_mode` | `boolean` | Fast | `true` in the final `done` event for fast mode |
-| `communities_used` | `number[]` | Agentic | Community IDs used, included in the `done` event |
+| `communities_used` | `number[]` | Deep Research | Community IDs used, included in the `done` event |
 
 ### Source Object Shape
 
@@ -244,8 +232,6 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
 
 The backend automatically trims conversation history to the most recent messages (default: 6, configurable via `MAX_CONVERSATION_HISTORY`).
 
-In **fast mode** with conversation history, the system skips retrieval entirely and responds using only the conversation context — ideal for quick follow-up questions.
-
 ## Collection-Scoped Questions
 
 Scope questions to a specific collection so only its documents, chunks, and entities are searched:
@@ -260,9 +246,9 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
   }' --no-buffer
 ```
 
-Collection scoping works with all three modes. When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data.
+Collection scoping works with both modes. When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data.
 
-**In the UI:** Open the Settings panel on the Ask AI page and use the **Collection Scope** dropdown.
+**In the UI:** Click the Settings (cog) icon next to the send button and use the **Collection Scope** dropdown.
 
 ## Frontend Integration (JavaScript/TypeScript)
 
@@ -459,7 +445,7 @@ chat("How does that compare to the introduction?")
 ## Configuration
 
 ```bash
-# Agentic RAG
+# Agentic RAG (Deep Research)
 ENABLE_AGENTIC_RAG=true          # Enable deep research mode
 MAX_AGENTIC_STEPS=3              # Max sub-question decomposition steps
 
@@ -467,11 +453,8 @@ MAX_AGENTIC_STEPS=3              # Max sub-question decomposition steps
 MAX_CONVERSATION_HISTORY=6       # Messages to keep for context
 
 # Visibility
-STREAM_REASONING_STEPS=true      # Show thinking steps in agentic mode
+STREAM_REASONING_STEPS=true      # Show thinking steps in deep research mode
 SHOW_RETRIEVAL_STATS=true        # Include retrieval_stats events
-
-# Fast mode model
-OPENAI_MODEL_FAST_MODE=gpt-4o-mini
 
 # Prompt security
 PROMPT_SECURITY=true             # Sanitize input and filter harmful output

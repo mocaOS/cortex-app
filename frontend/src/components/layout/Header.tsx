@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation";
 import {
   Database,
   Compass,
-  BrainCircuit,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,22 +21,16 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
-    label: "Data",
+    label: "Manage",
     icon: Database,
     href: "/",
-    basePaths: ["/", "/documents", "/collections", "/add"],
+    basePaths: ["/", "/documents", "/collections", "/add", "/entities", "/relationships", "/communities"],
   },
   {
     label: "Explore",
     icon: Compass,
     href: "/explore",
     basePaths: ["/explore"],
-  },
-  {
-    label: "Ask AI",
-    icon: BrainCircuit,
-    href: "/ask",
-    basePaths: ["/ask"],
   },
 ];
 

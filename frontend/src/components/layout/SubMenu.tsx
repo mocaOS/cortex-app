@@ -35,6 +35,9 @@ const menuSections: MenuSection[] = [
       { href: "/", label: "Upload", icon: Upload },
       { href: "/documents", label: "Documents", icon: FileText },
       { href: "/collections", label: "Collections", icon: FolderOpen },
+      { href: "/entities", label: "Entities", icon: Layers },
+      { href: "/relationships", label: "Relationships", icon: Share2 },
+      { href: "/communities", label: "Communities", icon: Users },
       { href: "/add", label: "Add", icon: PenLine },
     ],
   },
@@ -42,22 +45,14 @@ const menuSections: MenuSection[] = [
     basePath: "/explore",
     items: [
       { href: "/explore", label: "Knowledge Graph", icon: Network, param: { key: "tab", value: "graph" } },
-      { href: "/explore", label: "Entities", icon: Layers, param: { key: "tab", value: "entities" } },
-      { href: "/explore", label: "Relationships", icon: Share2, param: { key: "tab", value: "relationships" } },
-      { href: "/explore", label: "Communities", icon: Users, param: { key: "tab", value: "communities" } },
-    ],
-  },
-  {
-    basePath: "/ask",
-    items: [
-      { href: "/ask", label: "Deep Research", icon: Sparkles, param: { key: "mode", value: "research" } },
-      { href: "/ask", label: "Chat", icon: MessageSquare, param: { key: "mode", value: "chat" } },
+      { href: "/explore", label: "Deep Research", icon: Sparkles, param: { key: "tab", value: "research" } },
+      { href: "/explore", label: "Chat", icon: MessageSquare, param: { key: "tab", value: "chat" } },
     ],
   },
 ];
 
 // Routes that belong to the "Data" section
-const dataRoutes = ["/", "/documents", "/collections", "/add"];
+const dataRoutes = ["/", "/documents", "/collections", "/add", "/entities", "/relationships", "/communities"];
 
 export default function SubMenu() {
   const pathname = usePathname();
@@ -120,7 +115,7 @@ export default function SubMenu() {
 
   return (
     <div className="max-w-7xl mx-auto px-6 w-full">
-      <nav className="flex items-center gap-1 py-2 border-b border-border/50">
+      <nav className="flex items-center gap-1 py-2">
         {currentSection.items.map((item) => (
           <Link
             key={`${item.href}-${item.param?.value || item.label}`}

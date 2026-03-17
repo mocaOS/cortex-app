@@ -27,9 +27,8 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 
 **Frontend** (`frontend/src/`):
 - Next.js App Router with unified navigation structure:
-  - **Data** section: Upload (`/`), Documents, Collections, Add
-  - **Explore** section: Knowledge Graph, Entities, Relationships, Communities (tab-based on `/explore`)
-  - **Ask AI** section: Deep Research (default), Chat (mode-based on `/ask`)
+  - **Manage** section: Upload (`/`), Documents, Collections, Entities (`/entities`), Relationships (`/relationships`), Communities (`/communities`), Add
+  - **Explore** section: Knowledge Graph, Deep Research, Chat (tab-based on `/explore` with `?tab=graph|research|chat`)
   - **Settings**: Admin page with Turbo Mode configuration
 - `lib/api.ts` — API client with auth headers
 - `lib/session.ts` — JWT session management

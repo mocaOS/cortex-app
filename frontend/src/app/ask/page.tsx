@@ -1,34 +1,30 @@
 "use client";
 
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import { PageTransition } from "@/components/layout";
-import AskPanel from "@/components/AskPanel";
+import { useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 
-type AskMode = "research" | "chat";
-
-function getValidMode(param: string | null): AskMode {
-  if (param === "research" || param === "chat") {
-    return param;
-  }
-  return "research"; // Default to deep research mode
-}
-
-function AskPageContent() {
+function AskPageRedirect() {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const mode = getValidMode(searchParams.get("mode"));
+  const mode = searchParams.get("mode");
+
+  useEffect(() => {
+    // Redirect to explore page with appropriate tab
+    const tab = mode === "chat" ? "chat" : "research";
+    router.replace(`/explore?tab=${tab}`);
+  }, [router, mode]);
 
   return (
-    <PageTransition>
-      <AskPanel initialMode={mode} />
-    </PageTransition>
+    <div className="py-6 flex items-center justify-center h-96">
+      <p className="text-muted-foreground">Redirecting...</p>
+    </div>
   );
 }
 
 export default function AskPage() {
   return (
-    <Suspense fallback={<div className="py-6">Loading...</div>}>
-      <AskPageContent />
+    <Suspense fallback={<div className="py-6">Redirecting...</div>}>
+      <AskPageRedirect />
     </Suspense>
   );
 }

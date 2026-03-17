@@ -2,10 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Zap, Gauge } from "lucide-react";
+import { Loader2, Zap, Settings2, FolderOpen, RotateCcw, ArrowUp } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConversationMessage, GraphContext } from "@/types";
-import { ChatMessage, AskSettings, AskInput, EmptyChat } from "./ask";
+import { ChatMessage, EmptyChat } from "./ask";
+import CollectionSelector from "./CollectionSelector";
+import { cn } from "@/lib/utils";
 
 interface Source {
   document_id: string;
@@ -31,30 +33,16 @@ interface Message {
   reranked?: boolean;
 }
 
-// Strip <think>...</think> tags from content (used in fast mode)
-function stripThinkingTags(content: string): string {
-  // Remove complete <think>...</think> blocks (including multiline)
-  return content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-}
-
 // =========================================================================
-// LocalStorage persistence for Ask AI settings
+// LocalStorage persistence for collection setting only
 // =========================================================================
-const ASK_SETTINGS_KEY = "moca-ask-settings";
+const ASK_SETTINGS_KEY = "moca-ask-collection";
 
-interface PersistedAskSettings {
-  useStreaming: boolean;
-  useAgentic: boolean;
-  useFastSearch: boolean;
+interface PersistedSettings {
   selectedCollectionId?: string;
   selectedCollectionName?: string;
+  useStreaming?: boolean;
 }
-
-const DEFAULT_SETTINGS: PersistedAskSettings = {
-  useStreaming: true,
-  useAgentic: false,
-  useFastSearch: false,
-};
 
 export type AskMode = "research" | "chat";
 
@@ -62,85 +50,60 @@ interface AskPanelProps {
   initialMode?: AskMode;
 }
 
-function loadSettings(): PersistedAskSettings {
-  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+function loadSettings(): PersistedSettings {
+  if (typeof window === "undefined") return {};
   try {
     const stored = localStorage.getItem(ASK_SETTINGS_KEY);
-    if (!stored) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(stored) as Partial<PersistedAskSettings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    if (!stored) return {};
+    return JSON.parse(stored) as PersistedSettings;
   } catch {
-    return DEFAULT_SETTINGS;
+    return {};
   }
 }
 
-function saveSettings(settings: PersistedAskSettings): void {
+function saveSettings(settings: PersistedSettings): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(ASK_SETTINGS_KEY, JSON.stringify(settings));
   } catch {
-    // Silently ignore storage errors (quota exceeded, etc.)
+    // Silently ignore storage errors
   }
 }
 
-export default function AskPanel({ initialMode }: AskPanelProps) {
+export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
 
-  // Determine initial mode settings
-  // "research" mode = agentic ON, fast search OFF
-  // "chat" mode = agentic OFF, fast search ON (for quick responses)
-  const getInitialSettings = () => {
-    const stored = loadSettings();
-    if (initialMode === "research") {
-      return {
-        ...stored,
-        useAgentic: true,
-        useFastSearch: false,
-      };
-    } else if (initialMode === "chat") {
-      return {
-        ...stored,
-        useAgentic: false,
-        useFastSearch: false, // Standard chat, not fast search
-      };
-    }
-    return stored;
-  };
+  // Mode determines if agentic (deep research) is enabled
+  const useAgentic = initialMode === "research";
 
-  // Initialize settings from localStorage, overridden by initialMode if provided
-  const [useStreaming, setUseStreaming] = useState(() => getInitialSettings().useStreaming);
-  const [useAgentic, setUseAgentic] = useState(() => getInitialSettings().useAgentic);
-  const [useFastSearch, setUseFastSearch] = useState(() => getInitialSettings().useFastSearch);
+  // Persisted settings
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | undefined>(
-    () => getInitialSettings().selectedCollectionId
+    () => loadSettings().selectedCollectionId
   );
   const [selectedCollectionName, setSelectedCollectionName] = useState<string | undefined>(
-    () => getInitialSettings().selectedCollectionName
+    () => loadSettings().selectedCollectionName
+  );
+  const [useStreaming, setUseStreaming] = useState<boolean>(
+    () => loadSettings().useStreaming ?? true
   );
 
-  // Persist settings to localStorage whenever they change
+  // Persist settings
   useEffect(() => {
-    saveSettings({
-      useStreaming,
-      useAgentic,
-      useFastSearch,
-      selectedCollectionId,
-      selectedCollectionName,
-    });
-  }, [useStreaming, useAgentic, useFastSearch, selectedCollectionId, selectedCollectionName]);
+    saveSettings({ selectedCollectionId, selectedCollectionName, useStreaming });
+  }, [selectedCollectionId, selectedCollectionName, useStreaming]);
 
-  // Resolve collection name on mount if a collection was persisted
+  // Resolve collection name on mount
   useEffect(() => {
     if (selectedCollectionId) {
       api.getCollection(selectedCollectionId).then((col) => {
         setSelectedCollectionName(col.name);
       }).catch(() => {
-        // Collection may have been deleted - clear the stale selection
         setSelectedCollectionId(undefined);
         setSelectedCollectionName(undefined);
       });
@@ -148,12 +111,24 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Close settings when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setShowSettings(false);
+      }
+    }
+    if (showSettings) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showSettings]);
+
   const handleCollectionChange = useCallback((collectionId: string | undefined) => {
     setSelectedCollectionId(collectionId);
     if (!collectionId) {
       setSelectedCollectionName(undefined);
     } else {
-      // Fetch collection name for display
       api.getCollection(collectionId).then((col) => {
         setSelectedCollectionName(col.name);
       }).catch(() => {
@@ -161,14 +136,6 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
       });
     }
   }, []);
-
-  // When fast search is enabled, disable agentic mode
-  const handleFastSearchChange = (value: boolean) => {
-    setUseFastSearch(value);
-    if (value) {
-      setUseAgentic(false);
-    }
-  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -195,12 +162,13 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
     const conversationHistory = getConversationHistory();
 
     if (useStreaming) {
+      // Streaming mode
       const assistantMessage: Message = {
         role: "assistant",
         content: "",
         isStreaming: true,
-        thinkingSteps: useAgentic && !useFastSearch ? [] : undefined,
-        subQuestions: useAgentic && !useFastSearch ? [] : undefined,
+        thinkingSteps: useAgentic ? [] : undefined,
+        subQuestions: useAgentic ? [] : undefined,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -213,10 +181,10 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
 
         for await (const event of api.askStream(question, {
           conversationHistory,
-          useReranking: !useFastSearch,
-          useGraph: !useFastSearch,
-          useAgentic: useAgentic && !useFastSearch,
-          useFastSearch,
+          useReranking: true,
+          useGraph: true,
+          useAgentic,
+          useFastSearch: false,
           collectionId: selectedCollectionId,
         })) {
           if (event.thinking) {
@@ -254,24 +222,20 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
           }
           if (event.content) {
             content += event.content;
-            // In fast mode, strip <think>...</think> tags from the response
-            const displayContent = useFastSearch ? stripThinkingTags(content) : content;
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], content: displayContent };
+              updated[lastIdx] = { ...updated[lastIdx], content };
               return updated;
             });
           }
           if (event.done) {
-            // In fast mode, strip <think>...</think> tags from the final response
-            const finalContent = useFastSearch ? stripThinkingTags(content) : content;
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                content: finalContent,
+                content,
                 sources,
                 graphContext,
                 thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
@@ -308,22 +272,20 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
         });
       }
     } else {
+      // Non-streaming mode
       try {
         const data = await api.ask(question, {
           conversationHistory,
-          useReranking: !useFastSearch,
-          useAgentic: useAgentic && !useFastSearch,
-          useGraph: !useFastSearch,
-          useFastSearch,
+          useReranking: true,
+          useAgentic,
+          useGraph: true,
+          useFastSearch: false,
           collectionId: selectedCollectionId,
         });
 
-        // In fast mode, strip <think>...</think> tags from the response
-        const answerContent = useFastSearch ? stripThinkingTags(data.answer) : data.answer;
-
         const assistantMessage: Message = {
           role: "assistant",
-          content: answerContent,
+          content: data.answer,
           sources: data.sources as Source[],
           graphContext: data.graph_context,
           reasoningSteps: data.reasoning_steps,
@@ -358,29 +320,14 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
     });
   };
 
+  const hasInput = question.trim().length > 0;
+
   return (
     <div className="space-y-6">
-      {/* Settings Bar */}
-      <AskSettings
-        showSettings={showSettings}
-        onToggleSettings={() => setShowSettings(!showSettings)}
-        hasMessages={messages.length > 0}
-        onClearConversation={clearConversation}
-        useStreaming={useStreaming}
-        onStreamingChange={setUseStreaming}
-        useAgentic={useAgentic}
-        onAgenticChange={setUseAgentic}
-        useFastSearch={useFastSearch}
-        onFastSearchChange={handleFastSearchChange}
-        selectedCollectionId={selectedCollectionId}
-        onCollectionChange={handleCollectionChange}
-        selectedCollectionName={selectedCollectionName}
-      />
-
       {/* Chat History */}
       <div className="glass rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto">
         {messages.length === 0 ? (
-          <EmptyChat />
+          <EmptyChat mode={initialMode} />
         ) : (
           <div className="p-6 space-y-6">
             <AnimatePresence initial={false}>
@@ -407,14 +354,7 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
                 <div className="flex-1">
                   <div className="inline-block rounded-lg p-4 bg-muted">
                     <div className="flex items-center gap-2">
-                      {useFastSearch ? (
-                        <>
-                          <Gauge className="w-4 h-4 text-amber-500 animate-pulse" />
-                          <span className="text-sm text-muted-foreground">
-                            Fast search...
-                          </span>
-                        </>
-                      ) : useAgentic ? (
+                      {useAgentic ? (
                         <>
                           <Zap className="w-4 h-4 text-foreground animate-pulse" />
                           <span className="text-sm text-muted-foreground">
@@ -440,13 +380,129 @@ export default function AskPanel({ initialMode }: AskPanelProps) {
       </div>
 
       {/* Input */}
-      <AskInput
-        question={question}
-        onQuestionChange={setQuestion}
-        onSubmit={handleAsk}
-        isLoading={isLoading}
-        useAgentic={useAgentic}
-      />
+      <form onSubmit={handleAsk}>
+        <div className="relative glass rounded-lg p-2 flex items-center gap-2">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder={
+              useAgentic
+                ? "Ask a complex question for deep research..."
+                : "Ask anything..."
+            }
+            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground py-2 px-3"
+          />
+
+          <div className="flex items-center gap-1.5">
+            {/* Clear button - only show when there are messages */}
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={clearConversation}
+                className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors text-muted-foreground hover:text-foreground hover:bg-muted"
+                title="Clear conversation"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Settings button */}
+            <div className="relative" ref={settingsRef}>
+              <button
+                type="button"
+                onClick={() => setShowSettings(!showSettings)}
+                className={cn(
+                  "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                  showSettings
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+                title="Settings"
+              >
+                <Settings2 className="w-4 h-4" />
+              </button>
+
+              {/* Settings dropdown */}
+              <AnimatePresence>
+                {showSettings && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute bottom-full right-0 mb-2 w-72 bg-popover border border-border rounded-lg shadow-lg p-4 z-50"
+                  >
+                    <div className="space-y-4">
+                      {/* Stream responses toggle */}
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm text-muted-foreground">Stream responses</label>
+                        <button
+                          type="button"
+                          onClick={() => setUseStreaming(!useStreaming)}
+                          className={cn(
+                            "relative w-11 h-6 rounded-full transition-colors",
+                            useStreaming ? "bg-accent" : "bg-muted"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                              useStreaming && "translate-x-5"
+                            )}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="border-t border-border pt-4">
+                        <label className="text-sm text-foreground flex items-center gap-1.5 mb-2">
+                          <FolderOpen className="w-3.5 h-3.5 text-blue-500" />
+                          Collection Scope
+                        </label>
+                        <CollectionSelector
+                          value={selectedCollectionId}
+                          onChange={handleCollectionChange}
+                          allowCreate={false}
+                          placeholder="All Collections"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Limit search to a specific collection
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Send button */}
+            <button
+              type="submit"
+              disabled={isLoading || !hasInput}
+              className={cn(
+                "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                hasInput && !isLoading
+                  ? "bg-accent text-accent-foreground"
+                  : "bg-border text-muted-foreground opacity-30"
+              )}
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowUp className="w-4 h-4" strokeWidth={2.5} />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Active collection indicator */}
+        {selectedCollectionId && selectedCollectionName && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <FolderOpen className="w-3 h-3 text-blue-500" />
+            <span>Searching in: <span className="text-blue-500">{selectedCollectionName}</span></span>
+          </div>
+        )}
+      </form>
     </div>
   );
 }

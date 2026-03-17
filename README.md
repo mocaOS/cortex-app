@@ -42,9 +42,8 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Data**: Upload, Documents, Collections, Add
-  - **Explore**: Knowledge Graph, Entities, Relationships, Communities
-  - **Ask AI**: Deep Research (default), Chat modes
+  - **Manage**: Upload, Documents, Collections, Entities, Relationships, Communities, Add
+  - **Explore**: Knowledge Graph, Deep Research, Chat
 
 ### GraphRAG Features
 - **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction
@@ -63,7 +62,6 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
-- **⚡ Fast Search Mode**: Optimized vector-only search for quick responses
 - **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
