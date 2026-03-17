@@ -41,7 +41,10 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
-- **🎨 Modern UI**: Beautiful, responsive interface built with Next.js
+- **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
+  - **Data**: Upload, Documents, Collections, Add
+  - **Explore**: Knowledge Graph, Entities, Relationships, Communities
+  - **Ask AI**: Deep Research (default), Chat modes
 
 ### GraphRAG Features
 - **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction
@@ -81,7 +84,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Frontend | Next.js 15 + React 19 + TypeScript | File upload, search, Q&A interface |
+| Frontend | Next.js 15 + React 19 + TypeScript | Document management, graph exploration, Q&A interface |
 | Backend | FastAPI + Haystack 2.0 | Document processing, embeddings, RAG |
 | Database | Neo4j 5.x | Graph storage + vector similarity search |
 | Embeddings | OpenAI / sentence-transformers | Convert text to semantic vectors |
@@ -859,7 +862,7 @@ Turbo Mode enables GPU-accelerated inference using [Compute3](https://compute3.a
 - H100 (recommended for larger models)
 - A100
 
-The navigation bar shows Turbo Mode status when configured, allowing quick access to start/stop GPU jobs.
+The header shows a Turbo Mode status indicator when configured (green when ready, yellow when warming up). Turbo Mode settings are accessible from the Settings page.
 
 ## 🛠️ Tech Stack
 

@@ -26,9 +26,14 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/prompt_security.py` — Prompt injection detection
 
 **Frontend** (`frontend/src/`):
-- Next.js App Router with pages for search, ask (chat), documents, collections, explore (graph viz), admin, turbo
+- Next.js App Router with unified navigation structure:
+  - **Data** section: Upload (`/`), Documents, Collections, Add
+  - **Explore** section: Knowledge Graph, Entities, Relationships, Communities (tab-based on `/explore`)
+  - **Ask AI** section: Deep Research (default), Chat (mode-based on `/ask`)
+  - **Settings**: Admin page with Turbo Mode configuration
 - `lib/api.ts` — API client with auth headers
 - `lib/session.ts` — JWT session management
+- `components/layout/` — Header (top nav), SubMenu (contextual tabs below stats), StatsBar (KPI grid)
 - `components/` — UI components organized by feature
 
 **Document Processing Pipeline**: Upload → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction (per-document, batched) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job) relationship analysis → community detection (Louvain) → community summarization
