@@ -103,6 +103,12 @@ class Settings(BaseSettings):
         default=1536
     )  # text-embedding-3-small native dimension
     use_openai_embeddings: bool = Field(default=True)
+    embedding_api_base: str = Field(
+        default=""
+    )  # API base URL for embeddings (defaults to openai_api_base if empty)
+    embedding_api_key: str = Field(
+        default=""
+    )  # API key for embeddings (defaults to openai_api_key if empty)
 
     # Chunking Configuration
     chunk_size: int = Field(default=500)
@@ -275,6 +281,16 @@ class Settings(BaseSettings):
     def summary_model(self) -> str:
         """Get the model to use for community summarization."""
         return self.community_summary_model or self.openai_model
+
+    @property
+    def embed_api_base(self) -> str:
+        """Get the API base URL for embeddings."""
+        return self.embedding_api_base or self.openai_api_base
+
+    @property
+    def embed_api_key(self) -> str:
+        """Get the API key for embeddings."""
+        return self.embedding_api_key or self.openai_api_key
 
     @property
     def entity_embed_model(self) -> str:

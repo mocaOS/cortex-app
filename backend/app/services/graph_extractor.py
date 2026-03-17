@@ -182,6 +182,7 @@ class GraphExtractor:
         self.settings = get_settings()
         self._client: Optional[OpenAI] = None
         self._async_client: Optional[AsyncOpenAI] = None
+        self._async_embed_client: Optional[AsyncOpenAI] = None
         self._last_config_hash: Optional[str] = None  # Track config changes for turbo mode
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
@@ -1200,18 +1201,18 @@ Respond with ONLY the community name, nothing else."""
         
         Combines entity name, type, and description for rich embedding.
         """
-        if not self.settings.openai_api_key:
+        if not self.settings.embed_api_key:
             return None
-        
+
         # Create rich text for embedding
         text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
-        
+
         try:
             from openai import OpenAI
-            
+
             client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_api_base,
+                api_key=self.settings.embed_api_key,
+                base_url=self.settings.embed_api_base,
             )
             
             response = client.embeddings.create(
@@ -1233,14 +1234,23 @@ Respond with ONLY the community name, nothing else."""
         description: str
     ) -> Optional[List[float]]:
         """Async version of generate_entity_embedding using AsyncOpenAI."""
-        if not self.async_client:
+        if not self.settings.embed_api_key:
             return None
-        
+
+        # Lazy-init dedicated async embedding client
+        if self._async_embed_client is None:
+            self._async_embed_client = AsyncOpenAI(
+                api_key=self.settings.embed_api_key,
+                base_url=self.settings.embed_api_base,
+                timeout=120.0,
+                max_retries=2,
+            )
+
         # Create rich text for embedding
         text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
-        
+
         try:
-            response = await self.async_client.embeddings.create(
+            response = await self._async_embed_client.embeddings.create(
                 model=self.settings.entity_embed_model,
                 input=text,
                 dimensions=self.settings.embedding_dimension

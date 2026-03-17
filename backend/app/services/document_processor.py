@@ -359,13 +359,13 @@ class DocumentProcessor:
             )
 
         # Initialize embedder based on configuration
-        if self.settings.use_openai_embeddings and self.settings.openai_api_key:
+        if self.settings.use_openai_embeddings and self.settings.embed_api_key:
             from haystack.components.embedders import OpenAIDocumentEmbedder
             from haystack.utils import Secret
 
             self.embedder = OpenAIDocumentEmbedder(
-                api_key=Secret.from_token(self.settings.openai_api_key),
-                api_base_url=self.settings.openai_api_base,
+                api_key=Secret.from_token(self.settings.embed_api_key),
+                api_base_url=self.settings.embed_api_base,
                 model=self.settings.embedding_model,
                 dimensions=self.settings.embedding_dimension,
             )
@@ -1666,13 +1666,13 @@ class QueryProcessor:
         self._reranker = None  # Lazy load cross-encoder
 
         # Initialize text embedder based on configuration
-        if self.settings.use_openai_embeddings and self.settings.openai_api_key:
+        if self.settings.use_openai_embeddings and self.settings.embed_api_key:
             from haystack.components.embedders import OpenAITextEmbedder
             from haystack.utils import Secret
 
             self.text_embedder = OpenAITextEmbedder(
-                api_key=Secret.from_token(self.settings.openai_api_key),
-                api_base_url=self.settings.openai_api_base,
+                api_key=Secret.from_token(self.settings.embed_api_key),
+                api_base_url=self.settings.embed_api_base,
                 model=self.settings.embedding_model,
                 dimensions=self.settings.embedding_dimension,
             )

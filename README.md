@@ -537,6 +537,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
 | `USE_OPENAI_EMBEDDINGS` | Use OpenAI API for embeddings | No | `true` |
+| `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
+| `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
 | `GRAPH_EXTRACTION_MODEL` | Model for extraction (defaults to `OPENAI_MODEL`) | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
