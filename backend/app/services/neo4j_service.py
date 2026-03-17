@@ -1742,7 +1742,8 @@ class Neo4jService:
             stats_result = session.run("""
                 MATCH (e:Entity) 
                 WITH count(e) as entity_count
-                OPTIONAL MATCH ()-[r:RELATED_TO]->()
+                OPTIONAL MATCH (:Entity)-[r]->(:Entity)
+                WHERE type(r) <> 'MENTIONS'
                 RETURN entity_count, count(r) as rel_count
             """)
             stats_record = stats_result.single()
@@ -2419,6 +2420,25 @@ class Neo4jService:
             logger.info(f"Deleted {deleted} communities, unlinked {unlinked} entities")
             return {"communities_deleted": deleted, "entities_unlinked": unlinked}
 
+    def delete_all_relationships(self) -> dict:
+        """Delete ALL relationships between entities (excluding MENTIONS from chunks).
+
+        Returns:
+            Dict with count of deleted relationships.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE type(r) <> 'MENTIONS'
+                WITH count(r) as total, collect(r) as rels
+                FOREACH (r IN rels | DELETE r)
+                RETURN total as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} relationships")
+            return {"relationships_deleted": deleted}
+
     def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
         """Search communities by their summary content."""
         with self.driver.session() as session:
@@ -2548,7 +2568,8 @@ class Neo4jService:
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
                 
-                OPTIONAL MATCH ()-[r:RELATED_TO]->()
+                OPTIONAL MATCH (:Entity)-[r]->(:Entity)
+                WHERE type(r) <> 'MENTIONS'
                 WITH doc_count, chunk_count, total_size, entity_count, count(r) as relationship_count
                 
                 OPTIONAL MATCH (com:Community)

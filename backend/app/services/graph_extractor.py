@@ -350,7 +350,7 @@ class GraphExtractor:
             self._async_client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=120.0,
+                timeout=600.0,
                 max_retries=2,
             )
             if config.is_turbo:
@@ -479,42 +479,46 @@ class GraphExtractor:
         """
         Extract relationships from XML-formatted LLM response.
         Handles format: <relationship><source>...</source><target>...</target><type>...</type><description>...</description><weight>...</weight></relationship>
+        Also handles flexible element ordering within <relationship> tags.
         """
         relationships = []
+        existing = set()
         
-        # Pattern for full XML relationship format
-        rel_pattern = r'<relationship>\s*<source>([^<]+)</source>\s*<target>([^<]+)</target>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*<weight>([^<]*)</weight>\s*</relationship>'
+        # First, find all <relationship>...</relationship> blocks
+        rel_blocks = re.findall(r'<relationship>([\s\S]*?)</relationship>', content, re.IGNORECASE)
         
-        matches = re.findall(rel_pattern, content, re.IGNORECASE | re.DOTALL)
-        for source, target, rtype, description, weight in matches:
-            try:
-                weight_val = float(weight.strip()) if weight.strip() else 5.0
-            except ValueError:
-                weight_val = 5.0
+        for block in rel_blocks:
+            # Extract individual fields from the block (order-independent)
+            source_match = re.search(r'<source>([^<]+)</source>', block, re.IGNORECASE)
+            target_match = re.search(r'<target>([^<]+)</target>', block, re.IGNORECASE)
+            type_match = re.search(r'<type>([^<]+)</type>', block, re.IGNORECASE)
+            desc_match = re.search(r'<description>([^<]*)</description>', block, re.IGNORECASE)
+            weight_match = re.search(r'<weight>([^<]*)</weight>', block, re.IGNORECASE)
             
-            relationships.append({
-                "source": source.strip(),
-                "target": target.strip(),
-                "relationship_type": rtype.strip().upper().replace(" ", "_"),
-                "description": description.strip(),
-                "weight": min(10.0, max(0.0, weight_val))
-            })
-        
-        # Also try without weight
-        simple_pattern = r'<relationship>\s*<source>([^<]+)</source>\s*<target>([^<]+)</target>\s*<type>([^<]+)</type>\s*<description>([^<]*)</description>\s*</relationship>'
-        simple_matches = re.findall(simple_pattern, content, re.IGNORECASE | re.DOTALL)
-        existing = {(r["source"].lower(), r["target"].lower(), r["relationship_type"]) for r in relationships}
-        
-        for source, target, rtype, description in simple_matches:
-            key = (source.strip().lower(), target.strip().lower(), rtype.strip().upper().replace(" ", "_"))
-            if key not in existing:
-                relationships.append({
-                    "source": source.strip(),
-                    "target": target.strip(),
-                    "relationship_type": rtype.strip().upper().replace(" ", "_"),
-                    "description": description.strip(),
-                    "weight": 5.0
-                })
+            # source, target, and type are required
+            if source_match and target_match and type_match:
+                source = source_match.group(1).strip()
+                target = target_match.group(1).strip()
+                rtype = type_match.group(1).strip().upper().replace(" ", "_")
+                description = desc_match.group(1).strip() if desc_match else ""
+                
+                weight_val = 5.0
+                if weight_match and weight_match.group(1).strip():
+                    try:
+                        weight_val = float(weight_match.group(1).strip())
+                    except ValueError:
+                        pass
+                
+                key = (source.lower(), target.lower(), rtype)
+                if key not in existing:
+                    existing.add(key)
+                    relationships.append({
+                        "source": source,
+                        "target": target,
+                        "relationship_type": rtype,
+                        "description": description,
+                        "weight": min(10.0, max(0.0, weight_val))
+                    })
         
         return relationships
     
@@ -1634,9 +1638,24 @@ Respond with ONLY the community name, nothing else."""
 
             content = self._extract_response_content(response)
             if not content:
+                logger.warning(
+                    f"Relationship analysis: LLM returned empty content after extraction "
+                    f"(finish_reason={response.choices[0].finish_reason})"
+                )
                 return []
 
             xml_relationships = self._extract_xml_relationships(content)
+
+            # Log if parsing failed to extract any relationships
+            if not xml_relationships and content:
+                # Check if there are ANY relationship tags in the content
+                has_rel_tags = "<relationship>" in content.lower()
+                # Log beginning and end to help debug
+                logger.warning(
+                    f"Relationship analysis: no XML relationships parsed from response. "
+                    f"Content length={len(content)}, has_relationship_tags={has_rel_tags}, "
+                    f"start: {content[:500]!r}, end: {content[-500:]!r}"
+                )
 
             relationships = []
             for r in xml_relationships:
