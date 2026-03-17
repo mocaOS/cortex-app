@@ -583,8 +583,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | Max entities per relationship analysis call | No | `100` |
-| `RELATIONSHIP_MAX_CONTEXT` | Max context window tokens for relationship analysis | No | `65536` |
+| `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `8000` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 

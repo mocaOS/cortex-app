@@ -56,7 +56,8 @@ Cross-document relationship discovery settings.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | Max entities per relationship analysis call (default: `100`) | No |
+| `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship batching (default: `65536`) | No |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship LLM responses (default: `8000`) | No |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing (default: `false`) | No |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis (default: `false`) | No |
 

@@ -79,7 +79,7 @@ Copy `.env.example` to `.env`. Key variables:
 - `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `USE_OPENAI_EMBEDDINGS` — embedding config
 - `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
 - `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
-- `EXTRACTION_MAX_CONTEXT` (default: 32768), `RELATIONSHIP_MAX_CONTEXT` (default: 65536) — context window budgets for graph extraction
+- `EXTRACTION_MAX_CONTEXT` (default: 32768), `RELATIONSHIP_MAX_CONTEXT` (default: 65536), `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 8000) — context window and output budgets for graph extraction
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing
 

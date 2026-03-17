@@ -143,7 +143,10 @@ class Settings(BaseSettings):
     )  # Max context window tokens for entity extraction batching
     relationship_max_context: int = Field(
         default=65536
-    )  # Max context window tokens for relationship analysis
+    )  # Max context window tokens for relationship analysis INPUT batching
+    relationship_max_output_tokens: int = Field(
+        default=8000
+    )  # Max output tokens for relationship analysis LLM responses
 
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(

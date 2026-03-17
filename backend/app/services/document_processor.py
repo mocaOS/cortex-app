@@ -1442,6 +1442,9 @@ class DocumentProcessor:
     ) -> dict:
         """Run Phase B relationship analysis for a collection.
 
+        Uses token-based batching to maximize context utilization and
+        incremental storage to minimize memory usage.
+
         Args:
             collection_id: Scope to a specific collection (None = global)
             scope: 'recent' = only entities from recent docs, 'full' = all entities
@@ -1471,40 +1474,49 @@ class DocumentProcessor:
         if progress_callback:
             progress_callback(0, len(entities), f"Analyzing relationships between {len(entities)} entities...")
 
-        # Run batched relationship analysis
-        batch_size = self.settings.relationship_analysis_batch_size
+        # Track storage stats for incremental callback
+        storage_stats = {"stored": 0, "discovered": 0}
+
+        async def store_batch_relationships(batch_rels: list):
+            """Callback to store relationships incrementally as each batch completes."""
+            nonlocal storage_stats
+            storage_stats["discovered"] += len(batch_rels)
+
+            for rel in batch_rels:
+                try:
+                    if self.neo4j.store_relationship(
+                        rel,
+                        extraction_method="cross_collection",
+                    ):
+                        storage_stats["stored"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
+
+            # Update progress after each batch
+            if progress_callback:
+                progress_callback(
+                    storage_stats["discovered"],
+                    len(entities),  # Use entity count as rough progress indicator
+                    f"Stored {storage_stats['stored']} relationships..."
+                )
+
+        # Run batched relationship analysis with incremental storage
+        # Uses token-based batching (not entity count) for optimal context utilization
         relationships = await self.graph_extractor.analyze_relationships_batched_async(
             all_entities=entities,
             context="",
-            batch_size=batch_size,
+            max_context_tokens=self.settings.relationship_max_context,
+            max_output_tokens=self.settings.relationship_max_output_tokens,
             existing_relationships=existing_relationships,
-            max_output_tokens=self.settings.relationship_max_context,
+            on_batch_complete=store_batch_relationships,
         )
-
-        if progress_callback:
-            progress_callback(
-                len(entities) // 2, len(entities),
-                f"Storing {len(relationships)} discovered relationships..."
-            )
-
-        # Store discovered relationships
-        stored = 0
-        for rel in relationships:
-            try:
-                if self.neo4j.store_relationship(
-                    rel,
-                    extraction_method="cross_collection",
-                ):
-                    stored += 1
-            except Exception as e:
-                logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
 
         if progress_callback:
             progress_callback(len(entities), len(entities), "Relationship analysis complete")
 
         result = {
             "relationships_discovered": len(relationships),
-            "relationships_stored": stored,
+            "relationships_stored": storage_stats["stored"],
             "entities_analyzed": len(entities),
             "collection_id": collection_id,
         }

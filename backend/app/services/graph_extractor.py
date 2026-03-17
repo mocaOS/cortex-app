@@ -4,7 +4,7 @@ High-quality knowledge graph extraction using XML-formatted prompts.
 """
 
 import logging
-from typing import Optional, List
+from typing import Optional, List, Callable, Awaitable
 import json
 import re
 import asyncio
@@ -1563,6 +1563,13 @@ Respond with ONLY the community name, nothing else."""
     # Phase B: Cross-Document Relationship Analysis
     # =========================================================================
 
+    def _format_entity_for_prompt(self, entity: dict, max_desc_len: int = 200) -> str:
+        """Format a single entity for inclusion in a prompt."""
+        name = entity.get("name", "Unknown")
+        etype = entity.get("type", "Unknown")
+        desc = (entity.get("description") or "")[:max_desc_len]
+        return f"- {name} ({etype}): {desc}"
+
     async def analyze_relationships_async(
         self,
         entities: List[dict],
@@ -1587,10 +1594,9 @@ Respond with ONLY the community name, nothing else."""
 
         r_types = self.relation_types
 
-        # Format entity list
+        # Format entity list with truncated descriptions
         entity_list = "\n".join([
-            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:200]}"
-            for e in entities
+            self._format_entity_for_prompt(e) for e in entities
         ])
 
         # Build context section
@@ -1658,69 +1664,153 @@ Respond with ONLY the community name, nothing else."""
         self,
         all_entities: List[dict],
         context: str = "",
-        batch_size: int = 100,
-        existing_relationships: List[dict] = None,
+        max_context_tokens: int = 65536,
         max_output_tokens: int = 8000,
+        existing_relationships: List[dict] = None,
+        on_batch_complete: Optional[Callable[[List[Relationship]], Awaitable[None]]] = None,
     ) -> List[Relationship]:
-        """Analyze relationships in batches when entity count exceeds batch_size.
+        """Analyze relationships in batches using token-based context window management.
 
-        Splits entities into overlapping batches (10% overlap) grouped by type
-        to maximize intra-batch relationship discovery.
+        Splits entities into batches based on token count (like entity extraction),
+        with 10% entity overlap between batches for relationship continuity.
+
+        Args:
+            all_entities: List of {name, type, description} dicts
+            context: Optional collection/document summary context
+            max_context_tokens: Max INPUT context window tokens for batching
+            max_output_tokens: Max OUTPUT tokens for LLM responses
+            existing_relationships: Optional list of already-known relationships
+            on_batch_complete: Optional callback(batch_relationships) called after each batch
+                               for incremental storage. Receives list of Relationship objects.
+
+        Returns:
+            Deduplicated list of all discovered Relationship objects
         """
-        if len(all_entities) <= batch_size:
-            return await self.analyze_relationships_async(
-                all_entities, context, existing_relationships, max_output_tokens
-            )
+        if not all_entities:
+            return []
 
-        # Group entities by type for better batch coherence
+        # Token estimation (same approach as entity extraction)
+        model = self.current_model
+        try:
+            import tiktoken
+            enc = tiktoken.encoding_for_model(model)
+            def count_tokens(text: str) -> int:
+                return len(enc.encode(text))
+        except Exception:
+            def count_tokens(text: str) -> int:
+                return len(text) // 4
+
+        r_types = self.relation_types
+
+        # Calculate prompt overhead
+        system_tokens = count_tokens(RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT)
+        template_tokens = count_tokens(RELATIONSHIP_ANALYSIS_USER_PROMPT.format(
+            relation_types=", ".join(r_types),
+            context_section=context or "",
+            entity_list="",
+        ))
+        # Account for existing relationships context (up to 50)
+        existing_context_tokens = 0
+        if existing_relationships:
+            existing_text = "\n".join([
+                f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
+                for r in existing_relationships[:50]
+            ])
+            existing_context_tokens = count_tokens(existing_text) + 100  # Extra for header text
+
+        prompt_overhead = system_tokens + template_tokens + existing_context_tokens
+        output_reserve = max_output_tokens
+        available_tokens = int(max_context_tokens * 0.8) - prompt_overhead - output_reserve
+
+        if available_tokens < 500:
+            available_tokens = 2000  # Fallback minimum
+            logger.warning(f"Very limited context budget ({available_tokens} tokens), using minimum")
+
+        # Group entities by type for better batch coherence (related entities together)
         by_type: dict[str, List[dict]] = {}
         for e in all_entities:
             t = e.get("type", "Other")
             by_type.setdefault(t, []).append(e)
 
-        # Flatten back but with type grouping preserved
+        # Flatten with type grouping preserved
         sorted_entities = []
         for entities_of_type in by_type.values():
             sorted_entities.extend(entities_of_type)
 
-        overlap = max(1, batch_size // 10)
+        # Pre-compute token count for each entity
+        entity_tokens = []
+        for e in sorted_entities:
+            formatted = self._format_entity_for_prompt(e)
+            entity_tokens.append((e, count_tokens(formatted)))
+
+        # Batch entities by token budget (not count)
         batches: List[List[dict]] = []
-        i = 0
-        while i < len(sorted_entities):
-            end = min(i + batch_size, len(sorted_entities))
-            batches.append(sorted_entities[i:end])
-            i = end - overlap
-            if i <= (end - batch_size):
-                break  # Prevent infinite loop on very small overlap
+        current_batch: List[dict] = []
+        current_tokens = 0
+
+        for entity, tokens in entity_tokens:
+            if current_batch and (current_tokens + tokens) > available_tokens:
+                batches.append(current_batch)
+                # 10% overlap: keep last ~10% of entities for continuity
+                overlap_count = max(1, len(current_batch) // 10)
+                overlap_entities = current_batch[-overlap_count:]
+                overlap_tokens = sum(
+                    count_tokens(self._format_entity_for_prompt(e))
+                    for e in overlap_entities
+                )
+                current_batch = overlap_entities.copy()
+                current_tokens = overlap_tokens
+
+            current_batch.append(entity)
+            current_tokens += tokens
+
+        if current_batch:
+            batches.append(current_batch)
 
         logger.info(
             f"Relationship analysis: {len(all_entities)} entities split into "
-            f"{len(batches)} batch(es) (batch_size={batch_size}, overlap={overlap})"
+            f"{len(batches)} batch(es) (context_budget={max_context_tokens}, "
+            f"available={available_tokens} tokens)"
         )
 
-        # Process batches and collect results
+        # Process batches with optional incremental callback
         all_relationships: List[Relationship] = []
+        seen_keys: set[tuple] = set()  # For deduplication
+
         for batch_idx, batch in enumerate(batches):
             rels = await self.analyze_relationships_async(
                 batch, context, existing_relationships, max_output_tokens
             )
-            all_relationships.extend(rels)
-            logger.info(f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} relationships")
 
-        # Deduplicate by (source, target, type)
-        seen: set[tuple] = set()
-        deduplicated: List[Relationship] = []
-        for rel in all_relationships:
-            key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
-            if key not in seen:
-                seen.add(key)
-                deduplicated.append(rel)
+            # Deduplicate as we go (memory efficient)
+            batch_unique: List[Relationship] = []
+            for rel in rels:
+                key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    batch_unique.append(rel)
+                    all_relationships.append(rel)
+
+            logger.info(
+                f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} discovered, "
+                f"{len(batch_unique)} unique ({len(batch)} entities)"
+            )
+
+            # Call incremental storage callback if provided
+            if on_batch_complete and batch_unique:
+                try:
+                    await on_batch_complete(batch_unique)
+                except Exception as e:
+                    logger.error(f"Error in on_batch_complete callback: {e}")
+
+            # Clear batch reference to help GC
+            del batch_unique
+            del rels
 
         logger.info(
-            f"Relationship analysis complete: {len(all_relationships)} raw -> "
-            f"{len(deduplicated)} deduplicated"
+            f"Relationship analysis complete: {len(all_relationships)} unique relationships"
         )
-        return deduplicated
+        return all_relationships
 
 
 # Singleton instance
