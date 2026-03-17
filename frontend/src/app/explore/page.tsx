@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { GraphData, GraphNode, GraphEdge } from "@/types";
 import { KnowledgeGraph } from "@/components/explore";
 import { Loader2, RefreshCw, Search, Filter, Share2, Users, Network, Layers, ChevronDown, Check, X, Sparkles, Trash2 } from "lucide-react";
+// Note: Share2, Users, Layers are used in sub-panels (EntitiesPanel, RelationshipsPanel, CommunitiesPanel)
 import { cn } from "@/lib/utils";
 
 type TabType = "graph" | "entities" | "relationships" | "communities";
+
+const validTabs: TabType[] = ["graph", "entities", "relationships", "communities"];
 
 // Search result from entity search
 interface EntitySearchResult {
@@ -84,41 +88,12 @@ function Dropdown<T extends string | number>({
   );
 }
 
-interface TabProps {
-  active: TabType;
-  onChange: (tab: TabType) => void;
-}
-
-function TabNav({ active, onChange }: TabProps) {
-  const tabs: { id: TabType; label: string; icon: React.ElementType }[] = [
-    { id: "graph", label: "Knowledge Graph", icon: Network },
-    { id: "entities", label: "Entities", icon: Layers },
-    { id: "relationships", label: "Relationships", icon: Share2 },
-    { id: "communities", label: "Communities", icon: Users },
-  ];
-
-  return (
-    <div className="flex border-b border-border">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          onClick={() => onChange(tab.id)}
-          className={cn(
-            "flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors relative",
-            active === tab.id
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <tab.icon className="w-4 h-4" />
-          {tab.label}
-          {active === tab.id && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent" />
-          )}
-        </button>
-      ))}
-    </div>
-  );
+// Helper to parse and validate tab from URL
+function getTabFromUrl(param: string | null): TabType {
+  if (param && validTabs.includes(param as TabType)) {
+    return param as TabType;
+  }
+  return "graph";
 }
 
 interface Entity {
@@ -559,13 +534,25 @@ function CommunitiesPanel() {
   );
 }
 
-export default function ExplorePage() {
+function ExplorePageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>("graph");
   const [nodeLimit, setNodeLimit] = useState(100);
   const [includeNeighbors, setIncludeNeighbors] = useState(true);
+  
+  // Get active tab from URL params
+  const activeTab = getTabFromUrl(searchParams.get("tab"));
+  
+  // Update URL when tab changes
+  const setActiveTab = useCallback((tab: TabType) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    router.push(`/explore?${params.toString()}`, { scroll: false });
+  }, [searchParams, router]);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -881,7 +868,6 @@ export default function ExplorePage() {
       </div>
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <TabNav active={activeTab} onChange={setActiveTab} />
 
         {isGraphLoading && activeTab === "graph" ? (
           <div className="flex items-center justify-center h-[600px]">
@@ -964,5 +950,24 @@ export default function ExplorePage() {
         )}
       </div>
     </div>
+  );
+}
+
+// Loading fallback for Suspense
+function ExplorePageLoading() {
+  return (
+    <div className="py-6">
+      <div className="flex items-center justify-center h-96">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    </div>
+  );
+}
+
+export default function ExplorePage() {
+  return (
+    <Suspense fallback={<ExplorePageLoading />}>
+      <ExplorePageContent />
+    </Suspense>
   );
 }

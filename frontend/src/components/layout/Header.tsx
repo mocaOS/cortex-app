@@ -5,27 +5,40 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
-  Upload,
-  Search,
-  MessageSquare,
-  FileText,
-  FolderOpen,
-  Network,
-  Zap,
-  PenLine,
+  Database,
+  Compass,
+  BrainCircuit,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 
-const baseNavItems = [
-  { href: "/", label: "Upload", icon: Upload },
-  { href: "/add", label: "Add", icon: PenLine },
-  { href: "/search", label: "Search", icon: Search },
-  { href: "/ask", label: "Ask AI", icon: MessageSquare },
-  { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/collections", label: "Collections", icon: FolderOpen },
-  { href: "/explore", label: "Explore", icon: Network },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ElementType;
+  basePaths: string[];
+}
+
+const navItems: NavItem[] = [
+  {
+    label: "Data",
+    icon: Database,
+    href: "/",
+    basePaths: ["/", "/documents", "/collections", "/add"],
+  },
+  {
+    label: "Explore",
+    icon: Compass,
+    href: "/explore",
+    basePaths: ["/explore"],
+  },
+  {
+    label: "Ask AI",
+    icon: BrainCircuit,
+    href: "/ask",
+    basePaths: ["/ask"],
+  },
 ];
 
 export default function Header() {
@@ -36,7 +49,7 @@ export default function Header() {
 
   // Helper to extract file extension from URL
   const getLogoExtension = (url: string): string => {
-    const urlPath = url.split("?")[0]; // Remove query parameters
+    const urlPath = url.split("?")[0];
     const ext = urlPath.split(".").pop() || "svg";
     return ext;
   };
@@ -50,30 +63,29 @@ export default function Header() {
         setTurboActive(status.active);
         setTurboReady(status.ready ?? false);
       } catch {
-        // Turbo mode not available
         setTurboAvailable(false);
       }
     };
 
     checkTurboStatus();
 
-    // Poll for status updates every 30 seconds (or more frequently if warming up)
     const pollInterval = turboActive && !turboReady ? 5000 : 30000;
     const interval = setInterval(checkTurboStatus, pollInterval);
     return () => clearInterval(interval);
   }, [turboActive, turboReady]);
 
-  const isActive = (href: string) => {
-    if (href === "/") {
-      return pathname === "/";
+  // Check if a nav item is active
+  const isNavActive = (item: NavItem): boolean => {
+    if (item.basePaths.includes("/")) {
+      if (pathname === "/") return true;
+      return item.basePaths.some(
+        (path) => path !== "/" && pathname.startsWith(path)
+      );
     }
-    return pathname.startsWith(href);
+    return item.basePaths.some((path) => pathname.startsWith(path));
   };
 
-  // Build nav items dynamically based on turbo mode availability
-  const navItems = turboAvailable
-    ? [...baseNavItems, { href: "/turbo", label: "Turbo", icon: Zap }]
-    : baseNavItems;
+  const isSettingsActive = pathname.startsWith("/admin");
 
   return (
     <header className="border-b border-border backdrop-blur-xl bg-background/80 sticky top-0 z-50">
@@ -99,56 +111,52 @@ export default function Header() {
             <nav className="flex items-center gap-1 glass rounded-full p-1">
               {navItems.map((item) => (
                 <Link
-                  key={item.href}
+                  key={item.label}
                   href={item.href}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300",
-                    isActive(item.href)
+                    isNavActive(item)
                       ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                    // Special styling for Turbo when ready (green) or warming up (yellow)
-                    item.href === "/turbo" && turboReady && !isActive(item.href)
-                      ? "text-green-400 hover:text-green-300"
-                      : item.href === "/turbo" &&
-                          turboActive &&
-                          !isActive(item.href)
-                        ? "text-yellow-400 hover:text-yellow-300"
-                        : "",
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                 >
-                  <item.icon
-                    className={cn(
-                      "w-4 h-4",
-                      // Green for ready, yellow pulsing for warming up
-                      item.href === "/turbo" && turboReady && "text-green-400",
-                      item.href === "/turbo" &&
-                        turboActive &&
-                        !turboReady &&
-                        "animate-pulse text-yellow-400",
-                    )}
-                  />
-                  <span className="text-sm font-medium hidden sm:inline">
-                    {item.label}
-                  </span>
-                  {/* Show indicator dot: green when ready, yellow pulsing when warming up */}
-                  {item.href === "/turbo" && turboReady && (
-                    <span className="w-2 h-2 bg-green-400 rounded-full" />
-                  )}
-                  {item.href === "/turbo" && turboActive && !turboReady && (
-                    <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
-                  )}
+                  <item.icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{item.label}</span>
                 </Link>
               ))}
             </nav>
+
+            {/* Turbo Status Indicator */}
+            {turboAvailable && (turboActive || turboReady) && (
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-all",
+                  turboReady
+                    ? "bg-green-500/10 text-green-400"
+                    : "bg-yellow-500/10 text-yellow-400"
+                )}
+                title={turboReady ? "Turbo Mode Ready" : "Turbo Mode Warming Up"}
+              >
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full",
+                    turboReady ? "bg-green-400" : "bg-yellow-400 animate-pulse"
+                  )}
+                />
+                <span className="hidden sm:inline">
+                  {turboReady ? "Turbo" : "Warming"}
+                </span>
+              </div>
+            )}
 
             {/* Settings */}
             <Link
               href="/admin"
               className={cn(
                 "flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 glass",
-                isActive("/admin")
+                isSettingsActive
                   ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
               )}
               title="Settings"
             >

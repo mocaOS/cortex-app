@@ -1,10 +1,20 @@
 "use client";
 
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
-import { Header, Footer, StatsBar } from "@/components/layout";
+import { Header, Footer, StatsBar, SubMenu } from "@/components/layout";
 
 // Routes that should not show the header, footer, or stats bar
 const authRoutes = ["/login"];
+
+// SubMenu wrapped in Suspense for useSearchParams
+function SubMenuWithSuspense() {
+  return (
+    <Suspense fallback={<div className="h-[52px]" />}>
+      <SubMenu />
+    </Suspense>
+  );
+}
 
 export default function LayoutWrapper({
   children,
@@ -21,12 +31,13 @@ export default function LayoutWrapper({
     return <>{children}</>;
   }
 
-  // Regular pages get the full layout with header, stats, and footer
+  // Regular pages get the full layout with header, stats, submenu, and footer
   return (
     <>
       <Header />
       <StatsBar />
-      <main className="max-w-7xl mx-auto px-6 pb-12 w-full flex-1">
+      <SubMenuWithSuspense />
+      <main className="max-w-7xl mx-auto px-6 pt-6 pb-12 w-full flex-1">
         {children}
       </main>
       <Footer />

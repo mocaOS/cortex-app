@@ -56,6 +56,12 @@ const DEFAULT_SETTINGS: PersistedAskSettings = {
   useFastSearch: false,
 };
 
+export type AskMode = "research" | "chat";
+
+interface AskPanelProps {
+  initialMode?: AskMode;
+}
+
 function loadSettings(): PersistedAskSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
@@ -77,7 +83,7 @@ function saveSettings(settings: PersistedAskSettings): void {
   }
 }
 
-export default function AskPanel() {
+export default function AskPanel({ initialMode }: AskPanelProps) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,15 +91,36 @@ export default function AskPanel() {
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize settings from localStorage
-  const [useStreaming, setUseStreaming] = useState(() => loadSettings().useStreaming);
-  const [useAgentic, setUseAgentic] = useState(() => loadSettings().useAgentic);
-  const [useFastSearch, setUseFastSearch] = useState(() => loadSettings().useFastSearch);
+  // Determine initial mode settings
+  // "research" mode = agentic ON, fast search OFF
+  // "chat" mode = agentic OFF, fast search ON (for quick responses)
+  const getInitialSettings = () => {
+    const stored = loadSettings();
+    if (initialMode === "research") {
+      return {
+        ...stored,
+        useAgentic: true,
+        useFastSearch: false,
+      };
+    } else if (initialMode === "chat") {
+      return {
+        ...stored,
+        useAgentic: false,
+        useFastSearch: false, // Standard chat, not fast search
+      };
+    }
+    return stored;
+  };
+
+  // Initialize settings from localStorage, overridden by initialMode if provided
+  const [useStreaming, setUseStreaming] = useState(() => getInitialSettings().useStreaming);
+  const [useAgentic, setUseAgentic] = useState(() => getInitialSettings().useAgentic);
+  const [useFastSearch, setUseFastSearch] = useState(() => getInitialSettings().useFastSearch);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | undefined>(
-    () => loadSettings().selectedCollectionId
+    () => getInitialSettings().selectedCollectionId
   );
   const [selectedCollectionName, setSelectedCollectionName] = useState<string | undefined>(
-    () => loadSettings().selectedCollectionName
+    () => getInitialSettings().selectedCollectionName
   );
 
   // Persist settings to localStorage whenever they change
