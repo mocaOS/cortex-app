@@ -569,6 +569,10 @@ class ApiClient {
     );
   }
 
+  async deleteAllRelationships(): Promise<{ relationships_deleted: number }> {
+    return this.request("/api/graph/relationships", { method: "DELETE" });
+  }
+
   // ===========================================================================
   // Task API (Background Task Tracking)
   // ===========================================================================

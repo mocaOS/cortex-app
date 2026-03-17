@@ -1,15 +1,11 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { FolderOpen } from "lucide-react";
+import { X, FolderOpen } from "lucide-react";
 import { api } from "@/lib/api";
-import CollectionSelector from "./CollectionSelector";
-import { UploadZone, UploadProgress } from "./upload";
-
-interface FileUploadProps {
-  onUpload: () => void;
-}
+import CollectionSelector from "../CollectionSelector";
+import UploadZone from "./UploadZone";
+import UploadProgress from "./UploadProgress";
 
 type UploadStatus = "pending" | "uploading" | "uploaded" | "processing" | "extracting" | "success" | "error";
 
@@ -24,115 +20,37 @@ interface UploadingFile {
 }
 
 const ALLOWED_TYPES = [
-  // Office documents
   ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-  // Web pages
   ".html", ".htm",
-  // Text files
   ".txt", ".md", ".markdown", ".rst",
-  // Images (OCR)
   ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
-  // Audio (ASR)
   ".wav", ".mp3", ".webvtt", ".vtt",
-  // LaTeX
   ".tex", ".latex",
-  // XML schemas
   ".xml",
 ];
 
-export default function FileUpload({ onUpload }: FileUploadProps) {
-  const router = useRouter();
+interface UploadModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onUploadComplete: () => void;
+}
+
+export default function UploadModal({ isOpen, onClose, onUploadComplete }: UploadModalProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [selectedCollection, setSelectedCollection] = useState<string | undefined>(undefined);
   const [isStartingProcessing, setIsStartingProcessing] = useState(false);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
-  const documentIdsToPolRef = useRef<Map<string, boolean>>(new Map());
 
+  // Close on Escape
   useEffect(() => {
-    const newMap = new Map<string, boolean>();
-    uploadingFiles.forEach((uf) => {
-      if ((uf.status === "processing" || uf.status === "extracting") && uf.documentId) {
-        newMap.set(uf.documentId, true);
-      }
-    });
-    documentIdsToPolRef.current = newMap;
-  }, [uploadingFiles]);
-
-  useEffect(() => {
-    const poll = async () => {
-      const docIds = Array.from(documentIdsToPolRef.current.keys());
-      if (docIds.length === 0) return;
-
-      const results = await Promise.all(
-        docIds.map(async (docId) => {
-          try {
-            return await api.getDocument(docId);
-          } catch {
-            return null;
-          }
-        })
-      );
-
-      setUploadingFiles((prev) =>
-        prev.map((f) => {
-          if (!f.documentId) return f;
-          const docIndex = docIds.indexOf(f.documentId);
-          if (docIndex === -1) return f;
-          const doc = results[docIndex];
-          if (!doc) return f;
-
-          if (doc.processing_status === "completed") {
-            documentIdsToPolRef.current.delete(f.documentId);
-            return {
-              ...f,
-              status: "success" as const,
-              message: `Completed! ${doc.chunk_count} chunks, ready for search`,
-              progressCurrent: 100,
-              progressTotal: 100,
-              progressMessage: "Complete!",
-            };
-          } else if (doc.processing_status === "failed") {
-            documentIdsToPolRef.current.delete(f.documentId);
-            return {
-              ...f,
-              status: "error" as const,
-              message: doc.error_message || "Processing failed",
-            };
-          } else {
-            return {
-              ...f,
-              status: doc.processing_status as "processing" | "extracting",
-              progressCurrent: doc.progress_current || 0,
-              progressTotal: doc.progress_total || 100,
-              progressMessage: doc.progress_message || "Processing...",
-            };
-          }
-        })
-      );
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-
-    pollingRef.current = setInterval(poll, 20000);
-    const initialPollTimeout = setTimeout(poll, 500);
-
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-      clearTimeout(initialPollTimeout);
-    };
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  }, []);
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+      return () => document.removeEventListener("keydown", handleKeyDown);
+    }
+  }, [isOpen, onClose]);
 
   const uploadFile = useCallback(async (file: File) => {
     try {
@@ -151,7 +69,8 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     try {
       const result = await api.processPendingDocuments();
       if (result.task_id) {
-        router.push("/documents");
+        onUploadComplete();
+        onClose();
       }
     } catch (error) {
       console.error("Failed to start processing:", error);
@@ -160,8 +79,6 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
       setIsStartingProcessing(false);
     }
   };
-
-
 
   const processFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -222,8 +139,17 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
     }
 
     await Promise.all(activeUploads);
-    onUpload();
-  }, [uploadFile, onUpload]);
+  }, [uploadFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -257,42 +183,67 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
   const hasFilesToProcess = uploadedButNotProcessed.length > 0;
   const isUploading = uploadingFiles.some((f) => f.status === "pending" || f.status === "uploading");
 
+  if (!isOpen) return null;
+
   return (
-    <div className="space-y-6">
-      {/* Collection Selector */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FolderOpen className="w-4 h-4" />
-          <span>Upload to:</span>
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto mx-4 bg-card border border-border rounded-2xl shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-border">
+          <h2 className="text-lg font-semibold text-foreground">Upload Documents</h2>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <CollectionSelector
-          value={selectedCollection}
-          onChange={setSelectedCollection}
-          allowCreate={true}
-          className="w-64"
-        />
+
+        {/* Content */}
+        <div className="p-6 space-y-6">
+          {/* Collection Selector */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <FolderOpen className="w-4 h-4" />
+              <span>Upload to:</span>
+            </div>
+            <CollectionSelector
+              value={selectedCollection}
+              onChange={setSelectedCollection}
+              allowCreate={true}
+              className="w-64"
+            />
+          </div>
+
+          {/* Upload Zone */}
+          <UploadZone
+            isDragging={isDragging}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onFileSelect={handleFileSelect}
+          />
+
+          {/* Upload Progress */}
+          <UploadProgress
+            uploadingFiles={uploadingFiles}
+            processingTask={null}
+            hasFilesToProcess={hasFilesToProcess}
+            isUploading={isUploading}
+            isStartingProcessing={isStartingProcessing}
+            onStartProcessing={startProcessing}
+            onRemoveFile={removeFile}
+            onClearCompleted={clearCompleted}
+          />
+        </div>
       </div>
-
-      {/* Upload Zone */}
-      <UploadZone
-        isDragging={isDragging}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onFileSelect={handleFileSelect}
-      />
-
-      {/* Upload Progress */}
-      <UploadProgress
-        uploadingFiles={uploadingFiles}
-        processingTask={null}
-        hasFilesToProcess={hasFilesToProcess}
-        isUploading={isUploading}
-        isStartingProcessing={isStartingProcessing}
-        onStartProcessing={startProcessing}
-        onRemoveFile={removeFile}
-        onClearCompleted={clearCompleted}
-      />
     </div>
   );
 }

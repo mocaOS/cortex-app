@@ -1,12 +1,5 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { PageTransition } from "@/components/layout";
-import FileUpload from "@/components/FileUpload";
-
-export default function UploadPage() {
-  return (
-    <PageTransition>
-      <FileUpload onUpload={() => {}} />
-    </PageTransition>
-  );
+export default function RootPage() {
+  redirect("/documents");
 }

@@ -27,12 +27,14 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 
 **Frontend** (`frontend/src/`):
 - Next.js App Router with unified navigation structure:
-  - **Manage** section: Upload (`/`), Documents, Collections, Entities (`/entities`), Relationships (`/relationships`), Communities (`/communities`), Add
+  - **Manage** section: Documents (`/documents`, default), Collections, Entities (`/entities`), Relationships (`/relationships`), Communities (`/communities`), Add
   - **Explore** section: Knowledge Graph, Deep Research, Chat (tab-based on `/explore` with `?tab=graph|research|chat`)
   - **Settings**: Admin page with Turbo Mode configuration
+  - `/` redirects to `/documents`
 - `lib/api.ts` — API client with auth headers
 - `lib/session.ts` — JWT session management
 - `components/layout/` — Header (top nav), SubMenu (contextual tabs below stats), StatsBar (KPI grid)
+- `components/upload/UploadModal.tsx` — Upload modal (drag-and-drop + collection selector), opened from Documents page
 - `components/` — UI components organized by feature
 
 **Document Processing Pipeline**: Upload → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction (per-document, batched) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job) relationship analysis → community detection (Louvain) → community summarization

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Upload,
   FileText,
   FolderOpen,
   PenLine,
@@ -32,7 +31,6 @@ const menuSections: MenuSection[] = [
   {
     basePath: "/",
     items: [
-      { href: "/", label: "Upload", icon: Upload },
       { href: "/documents", label: "Documents", icon: FileText },
       { href: "/collections", label: "Collections", icon: FolderOpen },
       { href: "/entities", label: "Entities", icon: Layers },
@@ -123,7 +121,7 @@ export default function SubMenu() {
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200",
               isActive(item)
-                ? "bg-accent text-accent-foreground"
+                ? "bg-white text-black"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
             )}
           >

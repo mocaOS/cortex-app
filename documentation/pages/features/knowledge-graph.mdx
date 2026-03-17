@@ -308,6 +308,23 @@ Response:
 
 The StatsBar in the UI also shows a cleanup banner when it detects orphaned graph data (entities exist but no documents).
 
+### Relationship Management
+
+Delete all entity relationships (useful before re-running relationship analysis):
+
+```bash
+# Delete ALL relationships between entities
+curl -X DELETE "http://localhost:8000/api/graph/relationships" \
+  -H "X-API-Key: your-api-key"
+```
+
+Response:
+```json
+{
+  "relationships_deleted": 142
+}
+```
+
 ### Community Management
 
 Delete individual or all communities:

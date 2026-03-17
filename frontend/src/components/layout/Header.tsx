@@ -23,7 +23,7 @@ const navItems: NavItem[] = [
   {
     label: "Manage",
     icon: Database,
-    href: "/",
+    href: "/documents",
     basePaths: ["/", "/documents", "/collections", "/add", "/entities", "/relationships", "/communities"],
   },
   {
@@ -84,7 +84,7 @@ export default function Header() {
     <header className="border-b border-border backdrop-blur-xl bg-background/80 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
+          <Link href="/documents" className="flex items-center gap-3">
             <Image
               src={
                 process.env.NEXT_PUBLIC_LOGO_URL

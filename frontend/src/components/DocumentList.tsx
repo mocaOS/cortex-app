@@ -12,10 +12,12 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Upload,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Collection } from "@/types";
 import { DocumentCard, DocumentFilters, DocumentBulkActions } from "./documents";
+import { UploadModal } from "./upload";
 import { cn } from "@/lib/utils";
 
 interface Document {
@@ -83,6 +85,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   
   // Track last clicked index for shift-click range selection
   const lastClickedIndex = useRef<number | null>(null);
@@ -479,17 +482,31 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   // Empty state
   if (documents.length === 0) {
     return (
-      <div className="glass rounded-lg p-12 text-center">
-        <div className="w-16 h-16 mx-auto rounded-lg bg-accent/20 flex items-center justify-center mb-6">
-          <FileText className="w-8 h-8 text-accent" />
+      <>
+        <div className="glass rounded-lg p-12 text-center">
+          <div className="w-16 h-16 mx-auto rounded-lg bg-accent/20 flex items-center justify-center mb-6">
+            <FileText className="w-8 h-8 text-accent" />
+          </div>
+          <h3 className="text-lg font-medium text-foreground mb-2">
+            No Documents Yet
+          </h3>
+          <p className="text-muted-foreground max-w-md mx-auto mb-6">
+            Upload your first document to start building your knowledge base.
+          </p>
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Upload Documents
+          </button>
         </div>
-        <h3 className="text-lg font-medium text-foreground mb-2">
-          No Documents Yet
-        </h3>
-        <p className="text-muted-foreground max-w-md mx-auto">
-          Upload your first document to start building your knowledge base.
-        </p>
-      </div>
+        <UploadModal
+          isOpen={showUploadModal}
+          onClose={() => setShowUploadModal(false)}
+          onUploadComplete={fetchDocuments}
+        />
+      </>
     );
   }
 
@@ -497,18 +514,27 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
   return (
     <div className="space-y-3">
-      {/* Search bar */}
-      <div className="glass rounded-lg">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by filename or topic..."
-            className="w-full pl-11 pr-4 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-          />
+      {/* Search bar + Upload button */}
+      <div className="flex items-center gap-3">
+        <div className="glass rounded-lg flex-1">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by filename or topic..."
+              className="w-full pl-11 pr-4 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            />
+          </div>
         </div>
+        <button
+          onClick={() => setShowUploadModal(true)}
+          className="flex items-center gap-2 px-4 py-3 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors shrink-0"
+        >
+          <Upload className="w-4 h-4" />
+          Upload
+        </button>
       </div>
 
       {/* Unified toolbar with filters and actions */}
@@ -736,6 +762,13 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           </div>
         </div>
       )}
+
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onUploadComplete={fetchDocuments}
+      />
     </div>
   );
 }

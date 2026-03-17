@@ -42,7 +42,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Upload, Documents, Collections, Entities, Relationships, Communities, Add
+  - **Manage**: Documents, Collections, Entities, Relationships, Communities, Add
   - **Explore**: Knowledge Graph, Deep Research, Chat
 
 ### GraphRAG Features
@@ -250,6 +250,7 @@ npm run dev
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/graph/relationships/analyze` | Analyze cross-document relationships (Phase B) |
+| DELETE | `/api/graph/relationships` | Delete ALL entity relationships |
 
 ### Community Detection Endpoints
 

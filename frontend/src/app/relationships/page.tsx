@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import type { GraphEdge } from "@/types";
-import { Loader2, Search, Share2 } from "lucide-react";
+import { Loader2, Search, Share2, Trash2 } from "lucide-react";
 
 export default function RelationshipsPage() {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
@@ -11,16 +11,20 @@ export default function RelationshipsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [taskMessage, setTaskMessage] = useState<string | null>(null);
+  const [discoveredCount, setDiscoveredCount] = useState(0);
+  const initialEdgeCount = useRef(0);
 
-  const fetchRelationships = useCallback(async () => {
-    setLoading(true);
+  const fetchRelationships = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getGraphVisualization(1000, false);
       setEdges(data.edges || []);
+      return data.edges?.length || 0;
     } catch (error) {
       console.error("Failed to fetch relationships:", error);
+      return 0;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -39,34 +43,63 @@ export default function RelationshipsPage() {
     );
   }, [edges, searchQuery]);
 
+  const handleDeleteRelationships = async () => {
+    if (!confirm("Delete all relationships? This cannot be undone.")) return;
+    try {
+      const result = await api.deleteAllRelationships();
+      setTaskMessage(`Deleted ${result.relationships_deleted} relationships.`);
+      await fetchRelationships();
+      setTimeout(() => setTaskMessage(null), 3000);
+    } catch (error) {
+      console.error("Failed to delete relationships:", error);
+    }
+  };
+
   const handleAnalyzeRelationships = async () => {
     try {
       setAnalyzing(true);
+      setDiscoveredCount(0);
+      initialEdgeCount.current = edges.length;
       setTaskMessage("Starting relationship analysis...");
       const result = await api.analyzeRelationships();
       const taskId = result.task_id;
 
-      // Poll task status
+      // Poll task status and fetch relationships for live updates
       const poll = async () => {
         try {
           const status = await api.getTaskStatus(taskId);
-          setTaskMessage(status.message || `Progress: ${status.progress_percent}%`);
+          
+          // Fetch relationships to show live progress
+          const currentCount = await fetchRelationships(true);
+          const newlyDiscovered = currentCount - initialEdgeCount.current;
+          setDiscoveredCount(newlyDiscovered);
+          
+          // Update message with discovered count
+          const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
+          const countMsg = newlyDiscovered > 0 ? ` (${newlyDiscovered} new relationships found)` : "";
+          setTaskMessage(progressMsg + countMsg);
+          
           if (status.status === "completed") {
-            setTaskMessage(null);
-            setAnalyzing(false);
-            fetchRelationships();
+            const finalCount = await fetchRelationships(true);
+            const totalNew = finalCount - initialEdgeCount.current;
+            setTaskMessage(`Completed! ${totalNew} relationships discovered.`);
+            setTimeout(() => {
+              setTaskMessage(null);
+              setAnalyzing(false);
+              setDiscoveredCount(0);
+            }, 3000);
           } else if (status.status === "failed") {
             setTaskMessage(`Failed: ${status.message}`);
             setAnalyzing(false);
           } else {
-            setTimeout(poll, 3000);
+            setTimeout(poll, 2000);
           }
         } catch {
           setTaskMessage(null);
           setAnalyzing(false);
         }
       };
-      setTimeout(poll, 2000);
+      setTimeout(poll, 1500);
     } catch (error) {
       console.error("Failed to analyze relationships:", error);
       setTaskMessage(null);
@@ -109,11 +142,28 @@ export default function RelationshipsPage() {
           )}
           {analyzing ? "Analyzing..." : "Analyze Relationships"}
         </button>
+        {edges.length > 0 && !analyzing && (
+          <button
+            onClick={handleDeleteRelationships}
+            className="flex items-center gap-1.5 px-4 py-2 bg-destructive text-destructive-foreground rounded-lg text-sm font-medium hover:bg-destructive/90 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete All
+          </button>
+        )}
       </div>
 
       {taskMessage && (
-        <div className="mb-4 p-3 bg-accent/10 border border-accent/20 rounded-lg text-sm text-accent">
-          {taskMessage}
+        <div className="mb-4 p-4 bg-accent/10 border border-accent/20 rounded-lg">
+          <div className="flex items-center gap-3">
+            {analyzing && <Loader2 className="w-4 h-4 animate-spin text-accent" />}
+            <span className="text-sm text-accent">{taskMessage}</span>
+          </div>
+          {analyzing && discoveredCount > 0 && (
+            <div className="mt-2 text-xs text-muted-foreground">
+              Relationships are being added to the table below in real-time.
+            </div>
+          )}
         </div>
       )}
 
@@ -121,15 +171,9 @@ export default function RelationshipsPage() {
         <div className="text-center py-12">
           <Share2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h3 className="text-lg font-medium mb-2">No Relationships Found</h3>
-          <p className="text-muted-foreground mb-4">
-            Run relationship analysis to discover connections between entities across your documents.
+          <p className="text-muted-foreground">
+            Click &quot;Analyze Relationships&quot; above to discover connections between entities across your documents.
           </p>
-          <button
-            onClick={handleAnalyzeRelationships}
-            className="px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
-          >
-            Analyze Relationships
-          </button>
         </div>
       ) : (
         <>
