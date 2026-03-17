@@ -581,6 +581,14 @@ class ApiClient {
     return this.request<TaskProgress>(`/api/tasks/${taskId}`);
   }
 
+  async listTasks(status?: string, taskType?: string): Promise<{ tasks: TaskProgress[]; total: number }> {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (taskType) params.set("task_type", taskType);
+    const query = params.toString();
+    return this.request(`/api/tasks${query ? `?${query}` : ""}`);
+  }
+
   async getTaskResult<T = Record<string, unknown>>(taskId: string): Promise<T | null> {
     const url = `${API_BASE}/api/tasks/${taskId}/result`;
     const apiKey = getAdminApiKey();

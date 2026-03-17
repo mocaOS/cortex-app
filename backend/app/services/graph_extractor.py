@@ -225,27 +225,25 @@ Now extract all entities from the text above:"""
 # Relationship Analysis Prompt (Phase B - cross-document relationship discovery)
 # =============================================================================
 
-RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph analyst. Your task is to identify meaningful relationships between entities in a knowledge graph.
+RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract relationships between entities to build a comprehensive knowledge graph.
 
 # Goal
-Given a list of entities (with their types and descriptions), identify all meaningful relationships between them.
+Given a list of entities (with their types and descriptions), identify all relationships among them.
 
 # Steps
-1. Analyze the entities and their descriptions to find connections.
-2. For each relationship found, extract:
+1. From the entities below, identify all related entity pairs and extract:
    - source_entity: name of the source entity (MUST be from the provided list)
    - target_entity: name of the target entity (MUST be from the provided list)
    - relation: relationship type (use the provided relation types)
-   - relationship_description: explanation of why these entities are related
+   - relationship_description: justification and context for the relationship
    - relationship_weight: strength score from 0-10 (10 = strongest/most direct)
 
-   Format each relationship in XML tags:
-   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type>
-   <description>relationship_description</description><weight>relationship_weight</weight></relationship>
+   Format each relationship in XML tags as follows:
+   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type><description>relationship_description</description><weight>relationship_weight</weight></relationship>
 
-3. Requirements:
+2. Coverage Requirements:
    - ONLY use entity names from the provided list
-   - Focus on meaningful, well-supported relationships
+   - Focus on the most significant and well-supported relationships
    - Infer relationships from entity descriptions and context
    - Include both direct and indirect relationships
    - Prioritize relationships that connect different entity types
@@ -253,7 +251,7 @@ Given a list of entities (with their types and descriptions), identify all meani
 IMPORTANT: Output ONLY the XML relationships, no other text."""
 
 
-RELATIONSHIP_ANALYSIS_USER_PROMPT = """Analyze the following entities and identify all meaningful relationships between them.
+RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract relationships from the following entities.
 
 Relation Types: {relation_types}
 
@@ -263,12 +261,13 @@ Relation Types: {relation_types}
 {entity_list}
 
 ######################
-Example Output:
-<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type>
-<description>GPT-4 was developed by OpenAI as their flagship large language model.</description><weight>9</weight></relationship>
+Example Output (for reference):
+<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
+<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
+<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
 
 ######################
-Now identify all relationships between the entities listed above:"""
+Now extract relationships from the entities above:"""
 
 
 class GraphExtractor:
@@ -1155,7 +1154,7 @@ class GraphExtractor:
             for r in relationships[:20]
         ]) if relationships else "No explicit relationships."
         
-        prompt = f"""Analyze this community of related entities from a knowledge graph.
+        prompt = f"""Given these related entities and relationships, generate a JSON object with a short name and summary.
 
 === Entities ===
 {entity_info}
@@ -1163,18 +1162,18 @@ class GraphExtractor:
 === Relationships ===
 {rel_info}
 
-Generate a JSON object with:
-- "name": A short descriptive name (3-5 words)
-- "summary": A 2-3 sentence explanation of what connects these entities
+######################
+Example Output (for reference):
+{{"name": "Stable Diffusion AI Ecosystem", "summary": "These entities form the core ecosystem around Stable Diffusion, an AI image generation model. LoRA is a fine-tuning technique that customizes models, while Kohya provides training tools."}}
 
-Respond with ONLY the JSON object, no other text:
-{{"name": "...", "summary": "..."}}"""
+######################
+Now generate the JSON for the entities above:"""
         
         try:
             response = self.client.chat.completions.create(
                 model=self.current_model,
                 messages=[
-                    {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
+                    {"role": "system", "content": "You are a knowledge graph builder. Extract a short name and summary for groups of related entities. Output ONLY a JSON object with \"name\" and \"summary\" keys, no other text."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -1262,7 +1261,7 @@ Respond with ONLY the JSON object, no other text:
             for r in relationships[:20]
         ]) if relationships else "No explicit relationships."
         
-        prompt = f"""Analyze this community of related entities from a knowledge graph.
+        prompt = f"""Given these related entities and relationships, generate a JSON object with a short name and summary.
 
 === Entities ===
 {entity_info}
@@ -1270,18 +1269,18 @@ Respond with ONLY the JSON object, no other text:
 === Relationships ===
 {rel_info}
 
-Generate a JSON object with:
-- "name": A short descriptive name (3-5 words)
-- "summary": A 2-3 sentence explanation of what connects these entities
+######################
+Example Output (for reference):
+{{"name": "Stable Diffusion AI Ecosystem", "summary": "These entities form the core ecosystem around Stable Diffusion, an AI image generation model. LoRA is a fine-tuning technique that customizes models, while Kohya provides training tools."}}
 
-Respond with ONLY the JSON object, no other text:
-{{"name": "...", "summary": "..."}}"""
+######################
+Now generate the JSON for the entities above:"""
         
         try:
             response = await self.async_client.chat.completions.create(
                 model=self.current_model,
                 messages=[
-                    {"role": "system", "content": "You analyze knowledge graph communities and generate concise summaries. Always respond with valid JSON."},
+                    {"role": "system", "content": "You are a knowledge graph builder. Extract a short name and summary for groups of related entities. Output ONLY a JSON object with \"name\" and \"summary\" keys, no other text."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,

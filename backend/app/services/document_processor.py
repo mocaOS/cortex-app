@@ -1188,6 +1188,8 @@ class DocumentProcessor:
 
                 chunk_id = f"{doc_id}_chunk_{idx}"
                 chunk_ids.append(chunk_id)
+                # Store chunk_id in meta so fuzzy entity linking can find the correct ID
+                chunk.meta["chunk_id"] = chunk_id
                 chunk_model = DocumentChunk(
                     id=chunk_id,
                     document_id=doc_id,

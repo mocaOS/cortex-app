@@ -28,8 +28,55 @@ export default function RelationshipsPage() {
     }
   }, []);
 
+  // On mount, fetch relationships and check for any running analysis task
   useEffect(() => {
     fetchRelationships();
+
+    const checkRunningTask = async () => {
+      try {
+        const { tasks } = await api.listTasks("running", "relationship_analysis");
+        if (tasks.length > 0) {
+          const task = tasks[0];
+          setAnalyzing(true);
+          initialEdgeCount.current = 0;
+          setTaskMessage(task.message || "Relationship analysis in progress...");
+
+          // Start polling
+          const poll = async () => {
+            try {
+              const status = await api.getTaskStatus(task.task_id);
+              const currentCount = await fetchRelationships(true);
+
+              const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
+              setTaskMessage(progressMsg);
+
+              if (status.status === "completed") {
+                setTaskMessage(`Completed! Analysis finished.`);
+                await fetchRelationships(true);
+                setTimeout(() => {
+                  setTaskMessage(null);
+                  setAnalyzing(false);
+                  setDiscoveredCount(0);
+                }, 3000);
+              } else if (status.status === "failed") {
+                setTaskMessage(`Failed: ${status.message}`);
+                setAnalyzing(false);
+              } else {
+                setTimeout(poll, 2000);
+              }
+            } catch {
+              setTaskMessage(null);
+              setAnalyzing(false);
+            }
+          };
+          poll();
+        }
+      } catch {
+        // No running tasks, that's fine
+      }
+    };
+
+    checkRunningTask();
   }, [fetchRelationships]);
 
   const filteredEdges = useMemo(() => {

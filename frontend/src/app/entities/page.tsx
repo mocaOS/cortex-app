@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { api } from "@/lib/api";
-import { Loader2, Search, Filter, Network, ChevronDown, Check } from "lucide-react";
+import { Loader2, Search, Filter, Network, ChevronDown, Check, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Entity {
@@ -192,7 +193,23 @@ export default function EntitiesPage() {
         ))}
       </div>
 
-      {filteredEntities.length === 0 && (
+      {filteredEntities.length === 0 && entities.length === 0 && !searchQuery && !typeFilter && (
+        <div className="text-center py-12">
+          <Network className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <h3 className="text-lg font-medium mb-2">No Entities Yet</h3>
+          <p className="text-muted-foreground mb-4">
+            Entities are automatically extracted when documents are processed. Upload and process documents to get started.
+          </p>
+          <Link
+            href="/documents"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            <FileText className="w-4 h-4" />
+            Go to Documents
+          </Link>
+        </div>
+      )}
+      {filteredEntities.length === 0 && (entities.length > 0 || searchQuery || typeFilter) && (
         <div className="text-center py-12 text-muted-foreground">
           No entities found matching your criteria.
         </div>

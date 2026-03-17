@@ -2162,17 +2162,17 @@ class Neo4jService:
                     CALL gds.graph.project.cypher(
                         $graph_name,
                         'MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity) RETURN id(e) as id',
-                        'MATCH (e1:Entity)-[r:RELATED_TO]->(e2:Entity) RETURN id(e1) as source, id(e2) as target',
+                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target',
                         {parameters: {col_id: $col_id}}
                     )
                 """, graph_name=graph_name, col_id=collection_id)
             else:
-                # Global graph
+                # Global graph - project all entity-to-entity relationships
                 session.run("""
-                    CALL gds.graph.project(
+                    CALL gds.graph.project.cypher(
                         $graph_name,
-                        'Entity',
-                        {RELATED_TO: {orientation: 'UNDIRECTED'}}
+                        'MATCH (e:Entity) RETURN id(e) as id',
+                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target'
                     )
                 """, graph_name=graph_name)
             
@@ -2224,14 +2224,16 @@ class Neo4jService:
                 MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)
                 MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                 WITH collect(DISTINCT e.name) as entity_names
-                MATCH (e1:Entity)-[:RELATED_TO]-(e2:Entity)
+                MATCH (e1:Entity)-[r]-(e2:Entity)
                 WHERE e1.name IN entity_names AND e2.name IN entity_names
-                RETURN e1.name as source, e2.name as target
+                  AND type(r) <> 'MENTIONS'
+                RETURN DISTINCT e1.name as source, e2.name as target
             """, col_id=collection_id)
         else:
             result = session.run("""
-                MATCH (e1:Entity)-[:RELATED_TO]-(e2:Entity)
-                RETURN e1.name as source, e2.name as target
+                MATCH (e1:Entity)-[r]-(e2:Entity)
+                WHERE type(r) <> 'MENTIONS'
+                RETURN DISTINCT e1.name as source, e2.name as target
             """)
         
         # Build adjacency list

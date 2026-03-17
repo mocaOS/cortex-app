@@ -8,8 +8,6 @@ import {
   Link2,
   Users,
   FolderOpen,
-  Database,
-  Clock,
   Trash2,
   Loader2,
 } from "lucide-react";
@@ -101,7 +99,13 @@ export default function StatsBar() {
           </button>
         </div>
       )}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <StatsCard
+          label="Collections"
+          value={stats?.collection_count ?? 0}
+          icon={FolderOpen}
+          loading={statsLoading}
+        />
         <StatsCard
           label="Documents"
           value={stats?.document_count ?? 0}
@@ -130,25 +134,6 @@ export default function StatsBar() {
           label="Communities"
           value={stats?.community_count ?? 0}
           icon={Users}
-          loading={statsLoading}
-        />
-        <StatsCard
-          label="Collections"
-          value={stats?.collection_count ?? 0}
-          icon={FolderOpen}
-          loading={statsLoading}
-        />
-        <StatsCard
-          label="Storage"
-          value={formatBytes(stats?.total_size ?? 0)}
-          icon={Database}
-          isText
-          loading={statsLoading}
-        />
-        <StatsCard
-          label="Pending"
-          value={stats?.pending_count ?? 0}
-          icon={Clock}
           loading={statsLoading}
         />
       </div>
