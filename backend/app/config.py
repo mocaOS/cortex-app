@@ -103,6 +103,9 @@ class Settings(BaseSettings):
         default=1536
     )  # text-embedding-3-small native dimension
     use_openai_embeddings: bool = Field(default=True)
+    embedding_send_dimensions: bool = Field(
+        default=True
+    )  # Send dimensions param to embedding API. Set False for models with fixed output dim (e.g. qwen3-vl-embedding-2b)
     embedding_api_base: str = Field(
         default=""
     )  # API base URL for embeddings (defaults to openai_api_base if empty)

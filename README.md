@@ -536,6 +536,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
+| `EMBEDDING_SEND_DIMENSIONS` | Send `dimensions` param to embedding API. Set `false` for models with fixed output dim (e.g. qwen3-vl-embedding-2b) | No | `true` |
 | `USE_OPENAI_EMBEDDINGS` | Use OpenAI API for embeddings | No | `true` |
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |

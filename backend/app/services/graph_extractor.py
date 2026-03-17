@@ -1215,11 +1215,10 @@ Respond with ONLY the community name, nothing else."""
                 base_url=self.settings.embed_api_base,
             )
             
-            response = client.embeddings.create(
-                model=self.settings.entity_embed_model,
-                input=text,
-                dimensions=self.settings.embedding_dimension
-            )
+            embed_kwargs = dict(model=self.settings.entity_embed_model, input=text)
+            if self.settings.embedding_send_dimensions:
+                embed_kwargs["dimensions"] = self.settings.embedding_dimension
+            response = client.embeddings.create(**embed_kwargs)
             
             return response.data[0].embedding
             
@@ -1250,11 +1249,10 @@ Respond with ONLY the community name, nothing else."""
         text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
 
         try:
-            response = await self._async_embed_client.embeddings.create(
-                model=self.settings.entity_embed_model,
-                input=text,
-                dimensions=self.settings.embedding_dimension
-            )
+            embed_kwargs = dict(model=self.settings.entity_embed_model, input=text)
+            if self.settings.embedding_send_dimensions:
+                embed_kwargs["dimensions"] = self.settings.embedding_dimension
+            response = await self._async_embed_client.embeddings.create(**embed_kwargs)
             
             return response.data[0].embedding
             

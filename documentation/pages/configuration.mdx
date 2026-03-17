@@ -56,6 +56,7 @@ OPENAI_MODEL_FAST_MODE=gpt-4o-mini
 ```bash
 EMBEDDING_MODEL=openai/text-embedding-3-small
 EMBEDDING_DIMENSION=1536
+EMBEDDING_SEND_DIMENSIONS=true        # Set to false for models with fixed output dimensions
 USE_OPENAI_EMBEDDINGS=true
 # EMBEDDING_API_BASE=            # API base URL for embeddings (defaults to OPENAI_API_BASE)
 # EMBEDDING_API_KEY=             # API key for embeddings (defaults to OPENAI_API_KEY)
@@ -313,6 +314,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `OPENAI_MODEL` | No | `gpt-4o-mini` | LLM model |
 | `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |
 | `EMBEDDING_DIMENSION` | No | `1536` | Embedding dimensions |
+| `EMBEDDING_SEND_DIMENSIONS` | No | `true` | Send `dimensions` param to embedding API. Set `false` for fixed-dim models |
 | `EMBEDDING_API_BASE` | No | `OPENAI_API_BASE` | API base URL for embeddings |
 | `EMBEDDING_API_KEY` | No | `OPENAI_API_KEY` | API key for embeddings |
 | `CHUNK_SIZE` | No | `500` | Tokens per chunk |

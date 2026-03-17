@@ -363,12 +363,14 @@ class DocumentProcessor:
             from haystack.components.embedders import OpenAIDocumentEmbedder
             from haystack.utils import Secret
 
-            self.embedder = OpenAIDocumentEmbedder(
+            embedder_kwargs = dict(
                 api_key=Secret.from_token(self.settings.embed_api_key),
                 api_base_url=self.settings.embed_api_base,
                 model=self.settings.embedding_model,
-                dimensions=self.settings.embedding_dimension,
             )
+            if self.settings.embedding_send_dimensions:
+                embedder_kwargs["dimensions"] = self.settings.embedding_dimension
+            self.embedder = OpenAIDocumentEmbedder(**embedder_kwargs)
             logger.info(
                 f"Using OpenAI embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})"
             )
@@ -1670,12 +1672,14 @@ class QueryProcessor:
             from haystack.components.embedders import OpenAITextEmbedder
             from haystack.utils import Secret
 
-            self.text_embedder = OpenAITextEmbedder(
+            text_embedder_kwargs = dict(
                 api_key=Secret.from_token(self.settings.embed_api_key),
                 api_base_url=self.settings.embed_api_base,
                 model=self.settings.embedding_model,
-                dimensions=self.settings.embedding_dimension,
             )
+            if self.settings.embedding_send_dimensions:
+                text_embedder_kwargs["dimensions"] = self.settings.embedding_dimension
+            self.text_embedder = OpenAITextEmbedder(**text_embedder_kwargs)
             logger.info(
                 f"Using OpenAI text embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})"
             )
