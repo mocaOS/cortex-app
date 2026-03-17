@@ -1,0 +1,118 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in MOCA Library
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill out the sections below to help us reproduce and fix it.
+
+  - type: dropdown
+    id: feature-area
+    attributes:
+      label: Feature Area
+      description: Which part of the system is affected?
+      multiple: true
+      options:
+        - Document Processing (upload, conversion, chunking, embedding)
+        - Knowledge Graph (entity extraction, relationships, community detection)
+        - Search & RAG (hybrid search, agentic RAG, reranking)
+        - Ask AI / Chat (streaming responses, extended thinking)
+        - Collections (grouping, collection-level graphs)
+        - Turbo Mode (Compute3, vLLM, GPU inference)
+        - Admin & Auth (API keys, login, usage analytics)
+        - Vision / OCR (image analysis, Docling)
+        - Graph Visualization (Explore page)
+        - Frontend UI (general)
+        - API (backend endpoints)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: service
+    attributes:
+      label: Service(s) Affected
+      description: Which service(s) exhibit the problem?
+      multiple: true
+      options:
+        - Frontend (Next.js)
+        - Backend (FastAPI)
+        - Neo4j (database)
+        - Nginx (reverse proxy)
+        - LLM Provider (OpenAI / LiteLLM)
+        - Embedding Provider
+        - Compute3 / vLLM
+        - Docling (document conversion)
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      description: How are you running MOCA Library?
+      options:
+        - Docker Compose (dev)
+        - Docker Compose (prod with Nginx)
+        - Coolify
+        - Local development (no Docker)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of the bug.
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Paste any relevant log output (docker compose logs backend, browser console, etc.)
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Configuration
+      description: |
+        Relevant environment variables (DO NOT include API keys or passwords).
+        Example: ENABLE_GRAPH_EXTRACTION=true, CHUNK_BY=sentence, OPENAI_MODEL=gpt-4o-mini
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      description: Git commit hash or release tag
+      placeholder: "e.g., e1b6089 or v1.2.0"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser, Docker version, Node/Python versions if relevant
+      placeholder: |
+        - OS: macOS 15.1 / Ubuntu 24.04
+        - Browser: Chrome 130
+        - Docker: 27.x

@@ -1,0 +1,105 @@
+name: Deployment Issue
+description: Report problems with Docker, Coolify, Nginx, or configuration
+title: "[Deployment]: "
+labels: ["deployment", "infrastructure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for deployment, infrastructure, or configuration issues.
+
+  - type: dropdown
+    id: deployment-method
+    attributes:
+      label: Deployment Method
+      options:
+        - Docker Compose dev (docker-compose.yml)
+        - Docker Compose prod (docker-compose.prod.yml)
+        - Coolify (docker-compose.coolify.yml)
+        - Local development (no Docker)
+        - Custom setup
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      options:
+        - Container fails to start
+        - Container crashes / OOM
+        - Service connectivity (504, 502, connection refused)
+        - Neo4j connection or health check failure
+        - Nginx / Traefik proxy issue
+        - SSL / HTTPS configuration
+        - Environment variable / configuration issue
+        - Volume / data persistence issue
+        - Build failure (Dockerfile)
+        - Performance / resource usage
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: services-affected
+    attributes:
+      label: Service(s) Affected
+      multiple: true
+      options:
+        - neo4j
+        - backend (FastAPI)
+        - frontend (Next.js)
+        - nginx
+        - Traefik (Coolify)
+        - All services
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: Describe the deployment problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Container / Service Logs
+      description: |
+        Paste relevant logs. Use `docker compose logs <service>` to get them.
+      render: shell
+
+  - type: textarea
+    id: docker-info
+    attributes:
+      label: Docker Environment
+      description: Output of `docker version` and `docker compose version`
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: |
+        Relevant .env settings (DO NOT include API keys, passwords, or secrets).
+        Include any docker-compose overrides you've made.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Host Environment
+      placeholder: |
+        - OS: Ubuntu 24.04 / macOS 15 / etc.
+        - Architecture: x86_64 / arm64
+        - RAM: 16 GB
+        - Docker: 27.x
+        - Coolify version (if applicable): 4.x
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      placeholder: "e.g., e1b6089"

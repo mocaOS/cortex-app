@@ -1,0 +1,125 @@
+name: Document Processing Issue
+description: Report problems with document upload, conversion, chunking, or ingestion
+title: "[Document Processing]: "
+labels: ["bug", "document-processing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for issues with the document ingestion pipeline: upload, Docling conversion, chunking, embedding, entity extraction, or graph storage.
+
+  - type: dropdown
+    id: pipeline-stage
+    attributes:
+      label: Pipeline Stage
+      description: Where in the pipeline does the issue occur?
+      multiple: true
+      options:
+        - Upload (file transfer to backend)
+        - Docling Conversion (document parsing)
+        - Chunking (sentence/word splitting)
+        - Embedding Generation
+        - Entity Extraction (LLM-based)
+        - Relationship Extraction
+        - Semantic Entity Resolution (deduplication)
+        - Graph Storage (Neo4j write)
+        - Community Detection (Louvain)
+        - Community Summarization
+        - Unknown / Full pipeline failure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: file-type
+    attributes:
+      label: Document Type
+      description: What file type(s) are affected?
+      multiple: true
+      options:
+        - PDF
+        - DOCX / DOC
+        - XLSX / XLS
+        - PPTX / PPT
+        - HTML
+        - TXT / Markdown / RST
+        - Image (PNG, JPG, TIFF, BMP)
+        - Audio (WAV, MP3, WebVTT)
+        - LaTeX
+        - XML
+        - Custom Input (manual text entry)
+    validations:
+      required: true
+
+  - type: input
+    id: file-size
+    attributes:
+      label: File Size
+      description: Approximate size of the problematic file(s)
+      placeholder: "e.g., 15 MB, 200 pages"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: What goes wrong during processing?
+      placeholder: |
+        Describe the issue. Examples:
+        - Processing hangs after 50% completion
+        - Entity extraction produces incorrect entities
+        - Chunks are too large / too small
+        - OOM crash during large PDF processing
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Processing Configuration
+      description: |
+        Relevant processing settings from your .env (no secrets).
+      placeholder: |
+        CHUNK_BY=sentence
+        SENTENCES_PER_CHUNK=5
+        CHUNK_SIZE=500
+        CHUNK_OVERLAP=50
+        ENABLE_GRAPH_EXTRACTION=true
+        CONCURRENT_EXTRACTIONS=3
+        EMBEDDING_MODEL=openai/text-embedding-3-small
+        OPENAI_MODEL=gpt-4o-mini
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Backend Logs
+      description: Paste relevant logs from `docker compose logs backend` or uvicorn output.
+      render: shell
+
+  - type: dropdown
+    id: batch-or-single
+    attributes:
+      label: Processing Mode
+      options:
+        - Single document upload
+        - Batch upload (multiple documents)
+        - Reprocessing existing document
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      options:
+        - Docker Compose (dev)
+        - Docker Compose (prod)
+        - Coolify
+        - Local development
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      placeholder: "e.g., e1b6089"

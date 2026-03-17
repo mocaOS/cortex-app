@@ -1,0 +1,108 @@
+name: Search & RAG Quality Issue
+description: Report poor search results, inaccurate RAG answers, or retrieval problems
+title: "[Search/RAG]: "
+labels: ["search-quality", "rag"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report issues with search result relevance, RAG answer quality, or retrieval behavior.
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      options:
+        - Irrelevant search results
+        - Missing expected results
+        - Poor RAG answer quality
+        - Hallucinated / incorrect answer
+        - Slow response time
+        - Streaming / extended thinking issue
+        - Agentic RAG multi-step failure
+        - Reranking issue
+        - Graph context not contributing
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: search-mode
+    attributes:
+      label: Search / Query Mode
+      description: Which mode were you using?
+      options:
+        - Search page (document search)
+        - Ask AI (standard mode)
+        - Ask AI (fast mode)
+        - Ask AI (agentic / deep mode)
+        - Ask AI with extended thinking
+        - API direct call
+    validations:
+      required: true
+
+  - type: textarea
+    id: query
+    attributes:
+      label: Query / Question
+      description: The exact query or question that produced poor results.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Result
+      description: What answer or results did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Result
+      description: What did you actually get? Include the response if possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: corpus
+    attributes:
+      label: Corpus Description
+      description: |
+        Describe the documents in your knowledge base relevant to this query.
+        How many documents? What topics? Which collection?
+      placeholder: |
+        - 50 documents about climate science
+        - Collection: "research-papers"
+        - The answer should be in document "IPCC_2023_Report.pdf"
+
+  - type: textarea
+    id: config
+    attributes:
+      label: RAG Configuration
+      description: Relevant settings (no secrets).
+      placeholder: |
+        ENABLE_HYBRID_SEARCH=true
+        VECTOR_WEIGHT=0.5
+        KEYWORD_WEIGHT=0.3
+        GRAPH_WEIGHT=0.2
+        ENABLE_RERANKING=true
+        ENABLE_AGENTIC_RAG=true
+        MAX_AGENTIC_STEPS=3
+        ENABLE_GRAPH_EXTRACTION=true
+        OPENAI_MODEL=gpt-4o-mini
+      render: shell
+
+  - type: textarea
+    id: retrieval-stats
+    attributes:
+      label: Retrieval Statistics
+      description: If SHOW_RETRIEVAL_STATS=true, paste the retrieval stats from the response.
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      placeholder: "e.g., e1b6089"
