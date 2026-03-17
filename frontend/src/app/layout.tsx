@@ -33,7 +33,7 @@ export default function RootLayout({
       <head>
         <style
           dangerouslySetInnerHTML={{
-            __html: `:root,.dark{--accent:${process.env.NEXT_PUBLIC_ACCENT_COLOR || "oklch(0.6619 0.1787 268.72)"}}`,
+            __html: `:root,.dark{--accent:${process.env.NEXT_PUBLIC_ACCENT_COLOR || "oklch(0.79 0.18 70.67)"}}`,
           }}
         />
       </head>
