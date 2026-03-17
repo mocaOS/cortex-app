@@ -731,6 +731,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/EntityList'
 
+  /api/graph/relationships/analyze:
+    post:
+      tags: [Knowledge Graph]
+      summary: Analyze cross-document relationships
+      description: >
+        Triggers Phase B of the extraction pipeline. The main (large) model
+        analyzes all entities and discovers cross-document relationships.
+        Run this after batch document processing to build the relationship graph.
+      parameters:
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+          description: Scope to a specific collection (None = global)
+        - name: scope
+          in: query
+          schema:
+            type: string
+            default: full
+            enum: [recent, full]
+          description: "'recent' for new entities, 'full' for all"
+      responses:
+        '200':
+          description: Analysis task started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  tip:
+                    type: string
+
   /api/graph/communities:
     get:
       tags: [Communities]
@@ -747,6 +785,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CommunityList'
+    delete:
+      tags: [Communities]
+      summary: Delete ALL communities
+      description: Deletes all communities and unlinks their member entities. Entities are preserved.
+      responses:
+        '200':
+          description: All communities deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  communities_deleted:
+                    type: integer
+                  entities_unlinked:
+                    type: integer
 
   /api/graph/communities/detect:
     post:
@@ -793,6 +847,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CommunityDetails'
+    delete:
+      tags: [Communities]
+      summary: Delete a specific community
+      description: Deletes the community and unlinks its member entities. Entities are preserved.
+      parameters:
+        - name: community_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Community deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                  community_id:
+                    type: integer
+                  entities_unlinked:
+                    type: integer
+        '404':
+          description: Community not found
 
   /api/graph/communities/summarize:
     post:
@@ -844,8 +924,11 @@ paths:
   /api/cleanup/orphaned-entities:
     post:
       tags: [Knowledge Graph]
-      summary: Clean up orphaned entities
-      description: Remove entities not connected to any documents
+      summary: Clean up orphaned entities and communities
+      description: >
+        Remove entities not connected to any document chunks and communities
+        with no member entities. Use this after bulk document deletion to
+        clean up stale graph data.
       responses:
         '200':
           description: Cleanup completed
@@ -854,7 +937,11 @@ paths:
               schema:
                 type: object
                 properties:
-                  entities_removed:
+                  message:
+                    type: string
+                  orphaned_entities_removed:
+                    type: integer
+                  orphaned_communities_removed:
                     type: integer
 
   /api/tasks:

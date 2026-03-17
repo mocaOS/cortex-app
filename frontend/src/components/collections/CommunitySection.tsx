@@ -8,6 +8,7 @@ import {
   Loader2,
   ChevronRight,
   ChevronDown,
+  Trash2,
 } from "lucide-react";
 import type { Community, TaskProgress } from "@/types";
 
@@ -21,6 +22,9 @@ interface CommunitySectionProps {
   onToggleShow: () => void;
   onDetect: () => void;
   onSummarize: () => void;
+  onDelete?: (id: number) => void;
+  onDeleteAll?: () => void;
+  isDeleting?: number | null;
 }
 
 export default function CommunitySection({
@@ -33,6 +37,9 @@ export default function CommunitySection({
   onToggleShow,
   onDetect,
   onSummarize,
+  onDelete,
+  onDeleteAll,
+  isDeleting,
 }: CommunitySectionProps) {
   return (
     <div className="pt-6 border-t border-border">
@@ -76,6 +83,15 @@ export default function CommunitySection({
             )}
             Summarize
           </button>
+          {onDeleteAll && communities.length > 0 && (
+            <button
+              onClick={onDeleteAll}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete All
+            </button>
+          )}
         </div>
       </div>
 
@@ -153,9 +169,25 @@ export default function CommunitySection({
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-foreground">
-                          {community.name || `Community ${community.id}`}
-                        </h4>
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium text-foreground">
+                            {community.name || `Community ${community.id}`}
+                          </h4>
+                          {onDelete && (
+                            <button
+                              onClick={() => onDelete(community.id)}
+                              disabled={isDeleting === community.id}
+                              className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-50"
+                              title="Delete community"
+                            >
+                              {isDeleting === community.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {community.entity_count} entities
                         </p>

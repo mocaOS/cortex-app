@@ -29,6 +29,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState<TaskProgress | null>(null);
+  const [deletingCommunityId, setDeletingCommunityId] = useState<number | null>(null);
 
   const TASK_STORAGE_KEY = "moca_community_detection_task";
 
@@ -81,6 +82,32 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       setCommunities(data.communities);
     } catch (error) {
       console.error("Failed to fetch communities:", error);
+    } finally {
+      setIsLoadingCommunities(false);
+    }
+  };
+
+  const handleDeleteCommunity = async (id: number) => {
+    if (!confirm("Delete this community? Entities will be unlinked but not deleted.")) return;
+    setDeletingCommunityId(id);
+    try {
+      await api.deleteCommunity(id);
+      setCommunities((prev) => prev.filter((c) => c.id !== id));
+    } catch (error) {
+      console.error("Failed to delete community:", error);
+    } finally {
+      setDeletingCommunityId(null);
+    }
+  };
+
+  const handleDeleteAllCommunities = async () => {
+    if (!confirm(`Delete all ${communities.length} communities? Entities will be unlinked but not deleted.`)) return;
+    setIsLoadingCommunities(true);
+    try {
+      await api.deleteAllCommunities();
+      setCommunities([]);
+    } catch (error) {
+      console.error("Failed to delete all communities:", error);
     } finally {
       setIsLoadingCommunities(false);
     }
@@ -267,6 +294,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
         onToggleShow={() => setShowCommunities(!showCommunities)}
         onDetect={handleDetectCommunities}
         onSummarize={handleSummarizeCommunities}
+        onDelete={handleDeleteCommunity}
+        onDeleteAll={handleDeleteAllCommunities}
+        isDeleting={deletingCommunityId}
       />
     </div>
   );

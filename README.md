@@ -209,7 +209,7 @@ npm run dev
 | POST | `/api/documents/{id}/reprocess` | Reprocess a single document |
 | POST | `/api/documents/reprocess` | Bulk reprocess multiple documents |
 | POST | `/api/documents/move` | Move documents to a different collection |
-| POST | `/api/cleanup/orphaned-entities` | Clean up orphaned entities from graph |
+| POST | `/api/cleanup/orphaned-entities` | Clean up orphaned entities and communities from graph |
 
 ### Background Task Endpoints
 
@@ -257,6 +257,8 @@ npm run dev
 | GET | `/api/graph/communities` | List detected communities |
 | POST | `/api/graph/communities/detect` | Run community detection algorithm |
 | GET | `/api/graph/communities/{id}` | Get community details |
+| DELETE | `/api/graph/communities/{id}` | Delete a specific community (unlinks entities) |
+| DELETE | `/api/graph/communities` | Delete ALL communities (unlinks entities) |
 | POST | `/api/graph/communities/summarize` | Generate community summaries |
 | GET | `/api/graph/communities/search` | Search communities by content |
 

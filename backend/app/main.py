@@ -1404,17 +1404,20 @@ async def process_pending_documents(
 @app.post("/api/cleanup/orphaned-entities")
 async def cleanup_orphaned_entities():
     """
-    Clean up orphaned entities from the knowledge graph.
-    
+    Clean up orphaned entities and communities from the knowledge graph.
+
     Orphaned entities are those not connected to any document chunk.
+    Orphaned communities are those with no member entities.
     This can happen from previous deletions or data inconsistencies.
     """
     try:
         neo4j = get_neo4j_service()
-        deleted_count = await asyncio.to_thread(neo4j.cleanup_orphaned_entities)
+        entities_deleted = await asyncio.to_thread(neo4j.cleanup_orphaned_entities)
+        communities_deleted = await asyncio.to_thread(neo4j.cleanup_orphaned_communities)
         return {
             "message": "Cleanup completed",
-            "orphaned_entities_removed": deleted_count
+            "orphaned_entities_removed": entities_deleted,
+            "orphaned_communities_removed": communities_deleted,
         }
     except Exception as e:
         logger.error(f"Error cleaning up orphaned entities: {e}")
@@ -2418,6 +2421,34 @@ async def get_community(community_id: int):
         raise
     except Exception as e:
         logger.error(f"Error getting community: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/graph/communities/{community_id}")
+async def delete_community(community_id: int):
+    """Delete a specific community. Entities are unlinked but not deleted."""
+    try:
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(neo4j.delete_community, community_id)
+        if not result.get("deleted"):
+            raise HTTPException(status_code=404, detail="Community not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting community {community_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/graph/communities")
+async def delete_all_communities():
+    """Delete ALL communities. Entities are unlinked but not deleted."""
+    try:
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(neo4j.delete_all_communities)
+        return result
+    except Exception as e:
+        logger.error(f"Error deleting all communities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

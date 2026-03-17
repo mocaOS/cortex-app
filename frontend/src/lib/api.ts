@@ -627,6 +627,14 @@ class ApiClient {
     return this.request<Community>(`/api/graph/communities/${id}`);
   }
 
+  async deleteCommunity(id: number): Promise<{ deleted: boolean; community_id: number; entities_unlinked: number }> {
+    return this.request(`/api/graph/communities/${id}`, { method: "DELETE" });
+  }
+
+  async deleteAllCommunities(): Promise<{ communities_deleted: number; entities_unlinked: number }> {
+    return this.request("/api/graph/communities", { method: "DELETE" });
+  }
+
   async summarizeCommunities(communityIds?: number[], forceRegenerate = false): Promise<{ results: Array<{ id: number; status: string; name?: string; summary?: string }>; total_processed: number }> {
     return this.request<{ results: Array<{ id: number; status: string; name?: string; summary?: string }>; total_processed: number }>(
       "/api/graph/communities/summarize",
@@ -638,6 +646,14 @@ class ApiClient {
         }),
       }
     );
+  }
+
+  // ===========================================================================
+  // Cleanup API
+  // ===========================================================================
+
+  async cleanupOrphanedEntities(): Promise<{ message: string; orphaned_entities_removed: number; orphaned_communities_removed: number }> {
+    return this.request("/api/cleanup/orphaned-entities", { method: "POST" });
   }
 
   // ===========================================================================

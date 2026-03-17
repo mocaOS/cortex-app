@@ -288,8 +288,33 @@ flowchart TD
 Clean up orphaned data manually:
 
 ```bash
-# Clean orphaned entities
+# Clean orphaned entities and communities
 curl -X POST "http://localhost:8000/api/cleanup/orphaned-entities" \
+  -H "X-API-Key: your-api-key"
+```
+
+Response:
+```json
+{
+  "message": "Cleanup completed",
+  "orphaned_entities_removed": 42,
+  "orphaned_communities_removed": 3
+}
+```
+
+The StatsBar in the UI also shows a cleanup banner when it detects orphaned graph data (entities exist but no documents).
+
+### Community Management
+
+Delete individual or all communities:
+
+```bash
+# Delete a specific community (entities are unlinked, not deleted)
+curl -X DELETE "http://localhost:8000/api/graph/communities/5" \
+  -H "X-API-Key: your-api-key"
+
+# Delete ALL communities
+curl -X DELETE "http://localhost:8000/api/graph/communities" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -300,3 +325,4 @@ curl -X POST "http://localhost:8000/api/cleanup/orphaned-entities" \
 3. **Tune Threshold** - Adjust `ENTITY_SIMILARITY_THRESHOLD` based on your domain
 4. **Use Communities** - Enable community detection for large graphs
 5. **Safe Deletion** - Delete documents safely knowing the graph will be cleaned automatically
+6. **Clean Up After Bulk Deletion** - After deleting many documents, run cleanup or use the UI banner to remove orphaned graph data

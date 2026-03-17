@@ -21,6 +21,15 @@ All notable changes to MOCA Library are documented here, organized by date.
 - New auto-trigger options: `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` and `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` for automated pipeline after batch processing
 - Turbo mode always overrides both extraction and main model configs for massive-scale ingestion
 
+### Community Deletion and Graph Cleanup
+
+- Added `DELETE /api/graph/communities/{id}` endpoint to delete a specific community (entities are unlinked but preserved)
+- Added `DELETE /api/graph/communities` endpoint to delete all communities at once
+- Enhanced `POST /api/cleanup/orphaned-entities` to also clean orphaned communities in one call
+- Added delete buttons (individual and "Delete All") to the Explore page communities panel and the Collections page community section
+- StatsBar now shows an orphaned data warning banner with a cleanup button when entities/relationships exist but no documents are present
+- Frontend API client now includes `deleteCommunity()`, `deleteAllCommunities()`, and `cleanupOrphanedEntities()` methods
+
 ---
 
 ## March 16, 2026

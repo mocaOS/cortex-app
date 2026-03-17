@@ -2372,6 +2372,53 @@ class Neo4jService:
             """, id=community_id, limit=limit)
             return [dict(record) for record in result]
     
+    def delete_community(self, community_id: int) -> dict:
+        """Delete a single community and unlink its member entities.
+
+        Removes the Community node, its HAS_MEMBER relationships, and clears
+        community_id from member entities.  Entities themselves are NOT deleted.
+
+        Returns:
+            Dict with deleted community id and count of unlinked entities.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (com:Community {id: $id})
+                OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                WITH com, collect(e) as members
+                FOREACH (e IN members | SET e.community_id = null)
+                WITH com, size(members) as unlinked
+                DETACH DELETE com
+                RETURN unlinked
+            """, id=community_id)
+            record = result.single()
+            if record is None:
+                return {"deleted": False, "community_id": community_id, "entities_unlinked": 0}
+            logger.info(f"Deleted community {community_id}, unlinked {record['unlinked']} entities")
+            return {"deleted": True, "community_id": community_id, "entities_unlinked": record["unlinked"]}
+
+    def delete_all_communities(self) -> dict:
+        """Delete ALL communities and unlink all member entities.
+
+        Returns:
+            Dict with count of deleted communities and unlinked entities.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (com:Community)
+                OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                WITH com, collect(e) as members
+                FOREACH (e IN members | SET e.community_id = null)
+                WITH com, size(members) as unlinked
+                DETACH DELETE com
+                RETURN count(com) as deleted, sum(unlinked) as total_unlinked
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            unlinked = record["total_unlinked"] if record else 0
+            logger.info(f"Deleted {deleted} communities, unlinked {unlinked} entities")
+            return {"communities_deleted": deleted, "entities_unlinked": unlinked}
+
     def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
         """Search communities by their summary content."""
         with self.driver.session() as session:
