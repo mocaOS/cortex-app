@@ -31,17 +31,11 @@ export default function RootLayout({
       className={`dark ${inter.variable} ${jetbrainsMono.variable}`}
     >
       <head>
-        {process.env.NEXT_PUBLIC_ACCENT_COLOR && (
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `
-                :root, .dark {
-                  --accent: ${process.env.NEXT_PUBLIC_ACCENT_COLOR};
-                }
-              `,
-            }}
-          />
-        )}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `:root,.dark{--accent:${process.env.NEXT_PUBLIC_ACCENT_COLOR || "oklch(0.6619 0.1787 268.72)"}}`,
+          }}
+        />
       </head>
       <body className="font-sans antialiased">
         <div className="min-h-screen bg-background flex flex-col">
