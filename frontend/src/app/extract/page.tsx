@@ -43,6 +43,8 @@ export default function ExtractAnalyzePage() {
   // Staleness detection
   const [newDocsSinceAnalysis, setNewDocsSinceAnalysis] = useState(0);
   const [communitiesStale, setCommunitiesStale] = useState(false);
+  const [communitiesStaleFromMerge, setCommunitiesStaleFromMerge] = useState(false);
+  const [step2Skipped, setStep2Skipped] = useState(false);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -122,26 +124,36 @@ export default function ExtractAnalyzePage() {
     setNewDocsSinceAnalysis(newDocs.length);
   }, [documents, stats]);
 
-  // Detect if communities are stale (relationship analysis ran after last community detection)
+  // Detect if communities are stale (relationship analysis or entity merge ran after last community detection)
   useEffect(() => {
     const communityCount = stats?.community_count ?? 0;
     const lastAnalysis = stats?.last_relationship_analysis_at;
     const lastDetection = stats?.last_community_detection_at;
+    const lastMerge = stats?.last_entity_merge_at;
 
-    if (communityCount === 0 || !lastAnalysis) {
+    if (communityCount === 0) {
       setCommunitiesStale(false);
+      setCommunitiesStaleFromMerge(false);
       return;
     }
 
-    // No detection timestamp means communities pre-date tracking — treat as stale
-    if (!lastDetection) {
-      setCommunitiesStale(true);
-      return;
+    const detectionDate = lastDetection ? new Date(lastDetection).getTime() : 0;
+
+    // Relationship analysis staleness
+    if (lastAnalysis) {
+      const analysisDate = new Date(lastAnalysis).getTime();
+      setCommunitiesStale(analysisDate > detectionDate);
+    } else {
+      setCommunitiesStale(false);
     }
 
-    const analysisDate = new Date(lastAnalysis).getTime();
-    const detectionDate = new Date(lastDetection).getTime();
-    setCommunitiesStale(analysisDate > detectionDate);
+    // Entity merge staleness (independent of relationship analysis)
+    if (lastMerge) {
+      const mergeDate = new Date(lastMerge).getTime();
+      setCommunitiesStaleFromMerge(mergeDate > detectionDate);
+    } else {
+      setCommunitiesStaleFromMerge(false);
+    }
   }, [stats]);
 
   // Auto-refresh stats while tasks are running
@@ -301,8 +313,9 @@ export default function ExtractAnalyzePage() {
         : "pending";
 
   // Step 3: Community Detection
-  const step3Blocked = step2Blocked || step2Status !== "complete";
-  const step3Stale = !step3Blocked && communityCount > 0 && communitiesStale && !detectingCommunities;
+  const step2EffectivelyComplete = step2Status === "complete" || (step2Skipped && relationshipCount > 0);
+  const step3Blocked = step2Blocked || !step2EffectivelyComplete;
+  const step3Stale = !step3Blocked && communityCount > 0 && (communitiesStale || communitiesStaleFromMerge) && !detectingCommunities;
   const step3Status: StepStatus = step3Blocked
     ? "pending"
     : detectingCommunities
@@ -460,7 +473,7 @@ export default function ExtractAnalyzePage() {
                     step2Status === "in_progress" ? "bg-accent/20 text-accent" :
                     "bg-muted text-muted-foreground"
                   )}>
-                    {step2Blocked ? "Waiting" : step2Stale ? "Needs Update" : step2Status === "complete" ? "Complete" : step2Status === "in_progress" ? "Analyzing" : "Pending"}
+                    {step2Blocked ? "Waiting" : step2Skipped && step2Stale ? "Skipped" : step2Stale ? "Needs Update" : step2Status === "complete" ? "Complete" : step2Status === "in_progress" ? "Analyzing" : "Pending"}
                   </span>
                 </div>
                 {relationshipCount > 0 && (
@@ -483,13 +496,15 @@ export default function ExtractAnalyzePage() {
                       Entities have been extracted but relationships haven&apos;t been analyzed yet. Analyze to discover how entities connect across your documents.
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleAnalyzeRelationships()}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors shrink-0 ml-4"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    Analyze Relationships
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 ml-4">
+                    <button
+                      onClick={() => handleAnalyzeRelationships()}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+                    >
+                      <Share2 className="w-4 h-4" />
+                      Analyze Relationships
+                    </button>
+                  </div>
                 </div>
               ) : entityCount === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -522,6 +537,12 @@ export default function ExtractAnalyzePage() {
                       >
                         <AlertCircle className="w-3 h-3" />
                         Rebuild
+                      </button>
+                      <button
+                        onClick={() => setStep2Skipped(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-muted-foreground"
+                      >
+                        Skip
                       </button>
                     </div>
                   </div>
@@ -633,7 +654,11 @@ export default function ExtractAnalyzePage() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <p className="text-sm text-yellow-200">
-                      Relationships have been updated since communities were last detected. Re-detect to update community groupings.
+                      {communitiesStaleFromMerge && !communitiesStale
+                        ? "Entities have been deduplicated since communities were last detected. Re-detect to update community groupings."
+                        : communitiesStaleFromMerge && communitiesStale
+                          ? "Relationships and entity deduplication have changed since communities were last detected. Re-detect to update community groupings."
+                          : "Relationships have been updated since communities were last detected. Re-detect to update community groupings."}
                     </p>
                   </div>
                   <button

@@ -371,6 +371,32 @@ curl -X POST "$MOCA_URL/api/graph/subgraph" \
   }'
 ```
 
+### Find Duplicate Entities
+
+```bash
+curl "$MOCA_URL/api/entities/duplicates?threshold=0.85&limit=50" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
+### Merge Duplicate Entities
+
+```bash
+curl -X POST "$MOCA_URL/api/entities/merge" \
+  -H "X-API-Key: $MOCA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "canonical": "Machine Learning",
+    "merge": ["machine learning", "ML"]
+  }'
+```
+
+### View Merge History
+
+```bash
+curl "$MOCA_URL/api/entities/merge-history?limit=20" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
 ---
 
 ## Communities

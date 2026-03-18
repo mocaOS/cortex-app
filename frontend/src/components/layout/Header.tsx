@@ -24,7 +24,7 @@ const navItems: NavItem[] = [
     label: "Manage",
     icon: Database,
     href: "/documents",
-    basePaths: ["/", "/documents", "/collections", "/add", "/extract", "/entities", "/relationships", "/communities"],
+    basePaths: ["/", "/documents", "/collections", "/add", "/extract", "/deduplicate", "/entities", "/relationships", "/communities"],
   },
   {
     label: "Explore",

@@ -1104,13 +1104,20 @@ class Neo4jService:
     def find_entities_by_name(self, names: List[str]) -> List[dict]:
         """
         Find entities by their names (case-insensitive fuzzy match).
+        Appends wildcard for prefix matching (e.g. "pol" finds "Polygon").
         """
         if not names:
             return []
-        
+
         with self.driver.session() as session:
-            # Use fulltext search for fuzzy matching
-            search_query = " OR ".join(names)
+            # Use fulltext search with wildcard prefix matching
+            # "pol" -> "pol*" so Lucene matches "polygon", "policy", etc.
+            terms = []
+            for name in names:
+                sanitized = name.replace('"', '\\"').replace('~', '\\~').replace('*', '').strip()
+                if sanitized:
+                    terms.append(f"{sanitized}*")
+            search_query = " OR ".join(terms) if terms else " OR ".join(names)
             try:
                 result = session.run("""
                     CALL db.index.fulltext.queryNodes('entity_name_fulltext', $search_query)
@@ -1808,6 +1815,446 @@ class Neo4jService:
                 }
             }
     
+    # =========================================================================
+    # Entity Merge & Deduplication
+    # =========================================================================
+
+    def get_entity_descriptions(self, entity_names: List[str]) -> dict:
+        """Get the name, type, and description for a list of entity names."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE e.name IN $names
+                RETURN e.name as name, e.type as type, coalesce(e.description, '') as description
+            """, names=entity_names)
+            return {r["name"]: {"type": r["type"], "description": r["description"]} for r in result}
+
+    def merge_entities(self, canonical_name: str, merge_names: List[str], merged_description: Optional[str] = None) -> dict:
+        """
+        Merge multiple entities into one canonical entity.
+
+        For each entity being merged:
+        1. Retarget all inbound relationships to point to canonical
+        2. Retarget all outbound relationships to point from canonical
+        3. Deduplicate relationships (same source+target+type -> keep highest weight)
+        4. Transfer MENTIONS links (Chunk->Entity) to canonical
+        5. Add merged entity names as aliases on canonical
+        6. Merge source_documents lists
+        7. Set merged_description if provided, otherwise keep the longer description
+        8. Delete the merged entity
+
+        Returns: { canonical, merged, relationships_retargeted, aliases_added, chunks_relinked }
+        """
+        if not merge_names:
+            return {"canonical": canonical_name, "merged": [], "relationships_retargeted": 0, "aliases_added": 0, "chunks_relinked": 0}
+
+        total_rels_retargeted = 0
+        total_aliases_added = 0
+        total_chunks_relinked = 0
+        merged_successfully = []
+
+        with self.driver.session() as session:
+            # Verify canonical exists
+            check = session.run(
+                "MATCH (e:Entity {name: $name}) RETURN e.name as name",
+                name=canonical_name
+            )
+            if not check.single():
+                raise ValueError(f"Canonical entity '{canonical_name}' not found")
+
+            # Collect pre-merge data for history before entities are deleted
+            all_names = [canonical_name] + [n for n in merge_names if n != canonical_name]
+            pre_merge_result = session.run("""
+                MATCH (e:Entity)
+                WHERE e.name IN $names
+                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                WITH e, count(DISTINCT c) as mentions
+                OPTIONAL MATCH (e)-[r]-(:Entity)
+                RETURN e.name as name, e.type as type,
+                       coalesce(e.description, '') as description,
+                       mentions, count(DISTINCT r) as rels
+            """, names=all_names)
+            pre_merge_data = {r["name"]: dict(r) for r in pre_merge_result}
+
+            for merge_name in merge_names:
+                if merge_name == canonical_name:
+                    continue
+
+                # Check if merge entity exists
+                check = session.run(
+                    "MATCH (e:Entity {name: $name}) RETURN e.name as name",
+                    name=merge_name
+                )
+                if not check.single():
+                    logger.warning(f"Entity '{merge_name}' not found, skipping")
+                    continue
+
+                # 1. Retarget inbound relationships (source -> old becomes source -> canonical)
+                result = session.run("""
+                    MATCH (source:Entity)-[r]->(old:Entity {name: $merge_name})
+                    WHERE source.name <> $canonical_name
+                      AND NOT type(r) = 'MENTIONS'
+                    WITH source, r, type(r) as rel_type, properties(r) as rel_props
+                    WITH source, r, rel_type, rel_props,
+                         coalesce(rel_props.weight, 5.0) as rw,
+                         coalesce(rel_props.description, '') as rd
+                    DELETE r
+                    WITH source, rel_type, rw, rd
+                    MATCH (canon:Entity {name: $canonical_name})
+                    // Skip self-referencing
+                    WHERE source.name <> canon.name
+                    MERGE (source)-[nr:RELATED_TO]->(canon)
+                    ON CREATE SET nr.type = rel_type, nr.weight = rw, nr.description = rd
+                    ON MATCH SET nr.weight = CASE WHEN rw > nr.weight THEN rw ELSE nr.weight END,
+                                 nr.description = CASE WHEN size(rd) > size(coalesce(nr.description, '')) THEN rd ELSE nr.description END
+                    RETURN count(*) as retargeted
+                """, merge_name=merge_name, canonical_name=canonical_name)
+                record = result.single()
+                inbound = record["retargeted"] if record else 0
+
+                # 2. Retarget outbound relationships (old -> target becomes canonical -> target)
+                result = session.run("""
+                    MATCH (old:Entity {name: $merge_name})-[r]->(target:Entity)
+                    WHERE target.name <> $canonical_name
+                      AND NOT type(r) = 'MENTIONS'
+                    WITH target, r, type(r) as rel_type, properties(r) as rel_props
+                    WITH target, r, rel_type, rel_props,
+                         coalesce(rel_props.weight, 5.0) as rw,
+                         coalesce(rel_props.description, '') as rd
+                    DELETE r
+                    WITH target, rel_type, rw, rd
+                    MATCH (canon:Entity {name: $canonical_name})
+                    WHERE target.name <> canon.name
+                    MERGE (canon)-[nr:RELATED_TO]->(target)
+                    ON CREATE SET nr.type = rel_type, nr.weight = rw, nr.description = rd
+                    ON MATCH SET nr.weight = CASE WHEN rw > nr.weight THEN rw ELSE nr.weight END,
+                                 nr.description = CASE WHEN size(rd) > size(coalesce(nr.description, '')) THEN rd ELSE nr.description END
+                    RETURN count(*) as retargeted
+                """, merge_name=merge_name, canonical_name=canonical_name)
+                record = result.single()
+                outbound = record["retargeted"] if record else 0
+
+                total_rels_retargeted += inbound + outbound
+
+                # 3. Transfer chunk MENTIONS links
+                result = session.run("""
+                    MATCH (c:Chunk)-[m:MENTIONS]->(old:Entity {name: $merge_name})
+                    WITH c, m
+                    MATCH (canon:Entity {name: $canonical_name})
+                    MERGE (c)-[:MENTIONS]->(canon)
+                    DELETE m
+                    RETURN count(*) as relinked
+                """, merge_name=merge_name, canonical_name=canonical_name)
+                record = result.single()
+                chunks_relinked = record["relinked"] if record else 0
+                total_chunks_relinked += chunks_relinked
+
+                # 4. Transfer aliases and metadata, then delete
+                # On the first merge iteration, apply the LLM-generated description if provided
+                desc_clause = (
+                    "canon.description = $merged_description"
+                    if merged_description and merge_name == merge_names[0]
+                    else """canon.description = CASE
+                            WHEN size(coalesce(old.description, '')) > size(coalesce(canon.description, ''))
+                            THEN old.description ELSE canon.description
+                        END"""
+                )
+                result = session.run(f"""
+                    MATCH (old:Entity {{name: $merge_name}}), (canon:Entity {{name: $canonical_name}})
+                    SET canon.aliases = apoc.coll.toSet(
+                            coalesce(canon.aliases, []) + $merge_name + coalesce(old.aliases, [])
+                        ),
+                        canon.source_documents = apoc.coll.toSet(
+                            coalesce(canon.source_documents, []) + coalesce(old.source_documents, [])
+                        ),
+                        {desc_clause},
+                        canon.extraction_count = coalesce(canon.extraction_count, 0) + coalesce(old.extraction_count, 0)
+                    // Clear community_id since graph topology changed
+                    REMOVE canon.community_id
+                    DETACH DELETE old
+                    RETURN 1 as done
+                """, merge_name=merge_name, canonical_name=canonical_name,
+                     merged_description=merged_description or "")
+                record = result.single()
+                if record:
+                    total_aliases_added += 1
+                    merged_successfully.append(merge_name)
+
+        if merged_successfully:
+            from datetime import timezone
+            now_iso = datetime.now(timezone.utc).isoformat()
+            self.set_meta("last_entity_merge_at", now_iso)
+
+            # Store merge history record
+            self._store_merge_history(
+                canonical_name=canonical_name,
+                merged_names=merged_successfully,
+                entity_data=pre_merge_data,
+                rels_retargeted=total_rels_retargeted,
+                chunks_relinked=total_chunks_relinked,
+                merged_description=merged_description,
+                timestamp=now_iso,
+            )
+
+        logger.info(f"Merged {len(merged_successfully)} entities into '{canonical_name}': "
+                     f"{total_rels_retargeted} rels retargeted, {total_chunks_relinked} chunks relinked")
+
+        return {
+            "canonical": canonical_name,
+            "merged": merged_successfully,
+            "relationships_retargeted": total_rels_retargeted,
+            "aliases_added": total_aliases_added,
+            "chunks_relinked": total_chunks_relinked,
+        }
+
+    def _store_merge_history(
+        self,
+        canonical_name: str,
+        merged_names: List[str],
+        entity_data: dict,
+        rels_retargeted: int,
+        chunks_relinked: int,
+        merged_description: Optional[str],
+        timestamp: str,
+    ):
+        """Store a merge history record as a MergeHistory node."""
+        import json as _json
+        merge_id = f"merge_{uuid.uuid4().hex[:12]}"
+
+        # Build entity snapshots from pre-merge data
+        entities = []
+        for name in [canonical_name] + merged_names:
+            data = entity_data.get(name, {})
+            entities.append({
+                "name": name,
+                "type": data.get("type", ""),
+                "description": data.get("description", ""),
+                "mention_count": data.get("mentions", 0),
+                "relationship_count": data.get("rels", 0),
+                "is_canonical": name == canonical_name,
+            })
+
+        with self.driver.session() as session:
+            session.run("""
+                CREATE (h:MergeHistory {
+                    id: $id,
+                    canonical_name: $canonical,
+                    merged_names: $merged,
+                    merged_count: $count,
+                    relationships_retargeted: $rels,
+                    chunks_relinked: $chunks,
+                    merged_description: $desc,
+                    entities_snapshot: $snapshot,
+                    merged_at: $ts
+                })
+            """,
+                id=merge_id,
+                canonical=canonical_name,
+                merged=merged_names,
+                count=len(merged_names),
+                rels=rels_retargeted,
+                chunks=chunks_relinked,
+                desc=merged_description or "",
+                snapshot=_json.dumps(entities),
+                ts=timestamp,
+            )
+
+    def get_merge_history(self, limit: int = 50) -> List[dict]:
+        """Get merge history records, most recent first."""
+        import json as _json
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (h:MergeHistory)
+                RETURN h.id as id,
+                       h.canonical_name as canonical_name,
+                       h.merged_names as merged_names,
+                       h.merged_count as merged_count,
+                       h.relationships_retargeted as relationships_retargeted,
+                       h.chunks_relinked as chunks_relinked,
+                       h.merged_description as merged_description,
+                       h.entities_snapshot as entities_snapshot,
+                       h.merged_at as merged_at
+                ORDER BY h.merged_at DESC
+                LIMIT $limit
+            """, limit=limit)
+            records = []
+            for r in result:
+                entry = dict(r)
+                # Parse JSON snapshot
+                try:
+                    entry["entities_snapshot"] = _json.loads(entry["entities_snapshot"])
+                except Exception:
+                    entry["entities_snapshot"] = []
+                records.append(entry)
+            return records
+
+    def suggest_duplicate_entities(self, threshold: float = 0.75, limit: int = 100) -> List[dict]:
+        """
+        Find candidate duplicate entities using multiple similarity strategies.
+
+        Fetches all entities from Neo4j and compares in Python using rapidfuzz:
+        - ratio: catches typos ("Colborn" vs "Colbornne")
+        - token_sort_ratio: catches word reordering ("Bell Colborn" vs "Colborn Bell")
+        - partial_ratio: only for same-type entities with reasonable length ratio,
+          catches name variants ("Colborn" vs "Colborn Bell" when both are Person)
+
+        partial_ratio is restricted to same-type + length ratio >= 0.5 to prevent
+        brand-name pollution ("Google" matching "Google Pay", "Google Chrome", etc.)
+
+        Uses star clustering instead of BFS to prevent transitive chain explosions:
+        each group is centered on one canonical entity, and only entities directly
+        similar to it are included.
+
+        Returns grouped candidates with suggested canonical (most connected entity).
+        """
+        from rapidfuzz import fuzz
+
+        # Fetch all entities with their connectivity stats
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                WITH e, count(DISTINCT c) as mention_count
+                OPTIONAL MATCH (e)-[r]-(:Entity)
+                RETURN e.name as name, e.type as type,
+                       e.description as description,
+                       mention_count,
+                       count(DISTINCT r) as relationship_count
+            """)
+            all_entities = [dict(record) for record in result]
+
+        if len(all_entities) < 2:
+            return []
+
+        # Build entity info lookup
+        entity_info = {}
+        for e in all_entities:
+            entity_info[e['name']] = {
+                'name': e['name'],
+                'type': e['type'] or '',
+                'description': e['description'] or '',
+                'mention_count': e['mention_count'],
+                'relationship_count': e['relationship_count'],
+            }
+
+        # Pre-compute lowercased names and types
+        names = [e['name'] for e in all_entities]
+        names_lower = [n.lower() for n in names]
+        types = [e['type'] or '' for e in all_entities]
+        n = len(names)
+
+        # Compute pairwise similarity — store as {name: {other_name: score}}
+        direct_matches = {}  # name -> [(other_name, score)]
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_lower = names_lower[i]
+                b_lower = names_lower[j]
+
+                # Skip if both are very short (<=2 chars) — too many false positives
+                if len(a_lower) <= 2 and len(b_lower) <= 2:
+                    continue
+
+                # Core metrics: ratio (typos) and token_sort_ratio (reordering)
+                score_ratio = fuzz.ratio(a_lower, b_lower)
+                score_token_sort = fuzz.token_sort_ratio(a_lower, b_lower)
+                best_score = max(score_ratio, score_token_sort)
+
+                # partial_ratio only for same-type entities with reasonable
+                # length ratio — prevents "Google" matching "Google Chrome"
+                # More lenient for Person type (first name → full name is common)
+                same_type = types[i] and types[j] and types[i] == types[j]
+                len_ratio = min(len(a_lower), len(b_lower)) / max(len(a_lower), len(b_lower))
+                is_person = same_type and types[i] == 'Person'
+                min_len_ratio = 0.35 if is_person else 0.5
+                if same_type and len_ratio >= min_len_ratio:
+                    score_partial = fuzz.partial_ratio(a_lower, b_lower)
+                    best_score = max(best_score, score_partial)
+
+                best_score = best_score / 100.0
+
+                # Higher threshold for short names to reduce noise
+                effective_threshold = threshold
+                if min(len(a_lower), len(b_lower)) <= 3:
+                    effective_threshold = max(threshold, 0.85)
+
+                if best_score >= effective_threshold:
+                    a_name = names[i]
+                    b_name = names[j]
+                    if a_name not in direct_matches:
+                        direct_matches[a_name] = []
+                    if b_name not in direct_matches:
+                        direct_matches[b_name] = []
+                    direct_matches[a_name].append((b_name, best_score))
+                    direct_matches[b_name].append((a_name, best_score))
+
+        if not direct_matches:
+            return []
+
+        # Star clustering: greedily form groups around the most-connected entities.
+        # Each group is centered on one canonical — only its direct matches join.
+        # No transitive chains: "Google" ~ "Google Pay" won't pull in "Chrome".
+        assigned = set()
+        groups = []
+
+        # Sort candidates: entities with the most direct matches first,
+        # then by connectivity (relationships + mentions) as tiebreaker
+        candidates = sorted(
+            direct_matches.keys(),
+            key=lambda name: (
+                len(direct_matches[name]),
+                entity_info[name]['relationship_count'],
+                entity_info[name]['mention_count'],
+            ),
+            reverse=True,
+        )
+
+        for canonical_candidate in candidates:
+            if canonical_candidate in assigned:
+                continue
+
+            # Gather unassigned entities directly similar to this one
+            members = []
+            max_sim = 0.0
+            for other_name, score in direct_matches[canonical_candidate]:
+                if other_name not in assigned:
+                    members.append(other_name)
+                    max_sim = max(max_sim, score)
+
+            if not members:
+                continue
+
+            # The group is: canonical_candidate + its direct matches
+            group_names = [canonical_candidate] + members
+            group_entities = [entity_info[name] for name in group_names]
+
+            # Pick the most connected entity as the actual canonical
+            group_entities.sort(
+                key=lambda e: (e['relationship_count'], e['mention_count']),
+                reverse=True,
+            )
+            canonical = group_entities[0]['name']
+
+            groups.append({
+                'suggested_canonical': canonical,
+                'entities': group_entities,
+                'similarity': round(max_sim, 3),
+                'method': 'name',
+            })
+
+            # Mark all group members as assigned
+            for name in group_names:
+                assigned.add(name)
+
+        # Sort: Person groups first (highest dedup accuracy), then by similarity
+        TYPE_PRIORITY = {'Person': 0, 'Organization': 1}
+        def _group_sort_key(g):
+            types = {e['type'] for e in g['entities'] if e['type']}
+            best_type = min((TYPE_PRIORITY.get(t, 99) for t in types), default=99)
+            return (best_type, -g['similarity'])
+        groups.sort(key=_group_sort_key)
+        return groups[:limit]
+
     def get_entity_relationships(self, entity_name: str, max_depth: int = 2, limit: int = 50) -> dict:
         """
         Get an entity and all its relationships up to max_depth hops.
@@ -2731,6 +3178,7 @@ class Neo4jService:
                 "avg_entity_mentions": avg_entity_mentions,
                 "last_relationship_analysis_at": self._get_or_seed_analysis_timestamp(record["relationship_count"]),
                 "last_community_detection_at": self._get_or_seed_detection_timestamp(record["community_count"]),
+                "last_entity_merge_at": self._get_meta("last_entity_merge_at"),
             }
 
     def _get_or_seed_analysis_timestamp(self, relationship_count: int) -> str | None:

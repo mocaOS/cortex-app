@@ -42,7 +42,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Documents, Generate Graph (3-step pipeline: extract entities → analyze relationships → detect communities), Collections, Add
+  - **Manage**: Documents, Generate Graph (3-step pipeline: extract entities → analyze relationships → detect communities), Entity Deduplication, Collections, Add
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
@@ -59,8 +59,9 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Levenshtein fuzzy deduplication (85% threshold) during entity extraction with alias tracking
+- **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz), with LLM-generated combined descriptions, review-and-merge UI, inline entity search to manually add entities to merge groups, and full merge history with audit trail
 - **🔄 Incremental & Rebuild Modes**: Relationship analysis supports building on existing relationships or full rebuild from scratch
-- **📊 Paginated Explore Views**: Entities, relationships, and communities browsers with search, type filters, detail modals, and pagination
+- **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 
 ### Security & Performance Features
@@ -236,7 +237,15 @@ npm run dev
 | GET | `/api/graph/entity/{name}` | Get entity details and relationships |
 | GET | `/api/graph/entity/{name}/relationships` | Get entity relationships up to N hops |
 | POST | `/api/graph/subgraph` | Get subgraph for specific entities |
-| GET | `/api/graph/search` | Search entities by name |
+| GET | `/api/graph/search` | Search entities by name (supports prefix matching with wildcard) |
+
+### Entity Deduplication Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/entities/duplicates` | Scan for duplicate entities using multi-strategy fuzzy matching |
+| POST | `/api/entities/merge` | Merge duplicate entities with LLM-generated combined description |
+| GET | `/api/entities/merge-history` | Get merge history with audit trail |
 
 ### Collection Endpoints
 

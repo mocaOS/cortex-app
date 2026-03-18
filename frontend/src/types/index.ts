@@ -153,6 +153,7 @@ export interface Stats {
   avg_entity_mentions?: number;
   last_relationship_analysis_at?: string | null;
   last_community_detection_at?: string | null;
+  last_entity_merge_at?: string | null;
 }
 
 export interface HealthResponse {
@@ -492,6 +493,69 @@ export interface AdminStatsOverview {
   total_errors: number;
   most_active_key?: string | null;
   endpoint_breakdown: Record<string, number>;
+}
+
+// =============================================================================
+// Entity Deduplication Types
+// =============================================================================
+
+export interface DuplicateEntityInfo {
+  name: string;
+  type: string;
+  description: string;
+  mention_count: number;
+  relationship_count: number;
+}
+
+export interface DuplicateGroup {
+  suggested_canonical: string;
+  entities: DuplicateEntityInfo[];
+  similarity: number;
+  method: string;
+}
+
+export interface DuplicateSuggestionsResponse {
+  groups: DuplicateGroup[];
+  total_groups: number;
+}
+
+export interface MergeEntitiesRequest {
+  canonical: string;
+  merge: string[];
+}
+
+export interface MergeEntitiesResponse {
+  canonical: string;
+  merged: string[];
+  relationships_retargeted: number;
+  aliases_added: number;
+  chunks_relinked: number;
+}
+
+export interface MergeHistoryEntitySnapshot {
+  name: string;
+  type: string;
+  description: string;
+  mention_count: number;
+  relationship_count: number;
+  is_canonical: boolean;
+}
+
+export interface MergeHistoryEntry {
+  id: string;
+  canonical_name: string;
+  merged_names: string[];
+  merged_count: number;
+  relationships_retargeted: number;
+  chunks_relinked: number;
+  merged_description: string;
+  entities_snapshot: MergeHistoryEntitySnapshot[];
+  merged_at: string;
+}
+
+export interface MergeHistoryResponse {
+  history: MergeHistoryEntry[];
+  total: number;
 }
 
 // =============================================================================

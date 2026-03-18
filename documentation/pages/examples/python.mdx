@@ -262,8 +262,8 @@ class MOCAClient:
         return self._request('GET', '/api/graph/visualization', params=params)
     
     def search_entities(
-        self, 
-        search: str, 
+        self,
+        search: str,
         entity_type: Optional[str] = None,
         limit: int = 20
     ) -> List[Dict[str, Any]]:
@@ -272,6 +272,40 @@ class MOCAClient:
         if entity_type:
             params['type'] = entity_type
         return self._request('GET', '/api/graph/entities', params=params)
+
+    def find_duplicate_entities(
+        self,
+        threshold: float = 0.85,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Find duplicate entity candidates.
+
+        Args:
+            threshold: Similarity threshold (0.5 to 1.0)
+            limit: Maximum number of duplicate groups to return
+        """
+        params = {'threshold': threshold, 'limit': limit}
+        return self._request('GET', '/api/entities/duplicates', params=params)
+
+    def merge_entities(
+        self,
+        canonical: str,
+        merge: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Merge duplicate entities into a canonical entity.
+
+        Args:
+            canonical: Name of the entity to keep
+            merge: List of entity names to merge into canonical
+        """
+        payload = {'canonical': canonical, 'merge': merge}
+        return self._request('POST', '/api/entities/merge', json=payload)
+
+    def get_merge_history(self, limit: int = 50) -> Dict[str, Any]:
+        """Get entity merge history."""
+        return self._request('GET', '/api/entities/merge-history', params={'limit': limit})
 ```
 
 ## Usage Examples
@@ -356,6 +390,33 @@ response = client.ask(
 for chunk in client.ask_streaming("Explain knowledge graphs"):
     print(chunk, end='', flush=True)
 print()
+```
+
+### Entity Deduplication
+
+```python
+# Find potential duplicate entities
+duplicates = client.find_duplicate_entities(threshold=0.85)
+print(f"Found {duplicates['total_groups']} duplicate groups")
+
+for group in duplicates['groups']:
+    canonical = group['canonical']
+    dupes = [d['name'] for d in group['duplicates']]
+    print(f"  {canonical} <- {dupes}")
+
+# Merge confirmed duplicates
+result = client.merge_entities(
+    canonical="Machine Learning",
+    merge=["machine learning", "ML"]
+)
+print(f"Merged {len(result['merged'])} entities")
+print(f"  Relationships transferred: {result['relationships_transferred']}")
+print(f"  Mentions transferred: {result['mentions_transferred']}")
+
+# Review merge history
+history = client.get_merge_history(limit=10)
+for entry in history['entries']:
+    print(f"  {entry['merged_at']}: {entry['merged']} -> {entry['canonical']}")
 ```
 
 ### Error Handling

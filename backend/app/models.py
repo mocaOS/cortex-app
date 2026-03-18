@@ -297,6 +297,7 @@ class GraphStatsResponse(BaseModel):
     avg_entity_mentions: float = Field(default=0.0, description="Average mention count per entity")
     last_relationship_analysis_at: Optional[str] = Field(default=None, description="ISO timestamp of last relationship analysis")
     last_community_detection_at: Optional[str] = Field(default=None, description="ISO timestamp of last community detection")
+    last_entity_merge_at: Optional[str] = Field(default=None, description="ISO timestamp of last entity merge/deduplication")
 
 
 class UploadResponse(BaseModel):

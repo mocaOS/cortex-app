@@ -80,11 +80,13 @@ function Pagination({
   totalPages,
   totalItems,
   onPageChange,
+  compact = false,
 }: {
   currentPage: number;
   totalPages: number;
   totalItems: number;
   onPageChange: (page: number) => void;
+  compact?: boolean;
 }) {
   if (totalPages <= 1) return null;
 
@@ -92,10 +94,15 @@ function Pagination({
   const endItem = Math.min(currentPage * ITEMS_PER_PAGE, totalItems);
 
   return (
-    <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-      <span className="text-sm text-muted-foreground">
-        {startItem}-{endItem} of {totalItems}
-      </span>
+    <div className={cn(
+      "flex items-center",
+      compact ? "ml-auto" : "justify-between mt-4"
+    )}>
+      {!compact && (
+        <span className="text-sm text-muted-foreground">
+          {startItem}-{endItem} of {totalItems}
+        </span>
+      )}
       <div className="flex items-center gap-1">
         <button
           onClick={() => onPageChange(currentPage - 1)}
@@ -180,12 +187,22 @@ export default function RelationshipsBrowser() {
     }
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      result = result.filter(
-        (e) =>
-          e.source.toLowerCase().includes(query) ||
-          e.target.toLowerCase().includes(query) ||
-          (e.description || "").toLowerCase().includes(query)
-      );
+      result = result
+        .filter(
+          (e) =>
+            e.source.toLowerCase().includes(query) ||
+            e.target.toLowerCase().includes(query) ||
+            (e.description || "").toLowerCase().includes(query)
+        )
+        .sort((a, b) => {
+          const aTitle = a.source.toLowerCase().includes(query) || a.target.toLowerCase().includes(query);
+          const bTitle = b.source.toLowerCase().includes(query) || b.target.toLowerCase().includes(query);
+          if (aTitle !== bTitle) return aTitle ? -1 : 1;
+          const aDesc = (a.description || "").toLowerCase().includes(query);
+          const bDesc = (b.description || "").toLowerCase().includes(query);
+          if (aDesc !== bDesc) return aDesc ? -1 : 1;
+          return 0;
+        });
     }
     return result;
   }, [edges, searchQuery, typeFilter]);
@@ -233,17 +250,13 @@ export default function RelationshipsBrowser() {
         <span className="text-sm text-muted-foreground whitespace-nowrap">
           {filteredEdges.length} relationship{filteredEdges.length !== 1 ? "s" : ""}
         </span>
-        {totalPages > 1 && (
-          <div className="flex items-center gap-1">
-            <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs text-muted-foreground w-12 text-center">{currentPage}/{totalPages}</span>
-            <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredEdges.length}
+          onPageChange={setCurrentPage}
+          compact
+        />
       </div>
 
       <div className="grid gap-3">

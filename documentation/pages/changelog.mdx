@@ -7,6 +7,19 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## March 18, 2026
+
+### Entity Deduplication
+
+- Added `GET /api/entities/duplicates` endpoint to find duplicate entity candidates using fuzzy name similarity, with configurable threshold (0.5-1.0) and limit parameters
+- Added `POST /api/entities/merge` endpoint to merge duplicate entities into a canonical entity, transferring all relationships, chunk mentions, and community memberships; merged entity names are stored as aliases on the canonical entity
+- Added `GET /api/entities/merge-history` endpoint to view a chronological log of past merge operations
+- Updated Python client class with `find_duplicate_entities()`, `merge_entities()`, and `get_merge_history()` methods
+- Added cURL examples for all three entity deduplication endpoints
+- Updated OpenAPI specification with new endpoints and schemas
+
+---
+
 ## March 17, 2026
 
 ### Two-Phase Graph Extraction Pipeline

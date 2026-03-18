@@ -208,6 +208,120 @@ ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 ENTITY_SIMILARITY_THRESHOLD=0.85
 ```
 
+## Entity Deduplication
+
+While MOCA automatically resolves many duplicates during extraction (via Levenshtein 85% fuzzy matching), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
+
+### Find Duplicate Candidates
+
+Scan the knowledge graph for groups of entities that appear to refer to the same thing:
+
+```bash
+curl "http://localhost:8000/api/entities/duplicates?threshold=0.85&limit=50" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "groups": [
+    {
+      "canonical": "Machine Learning",
+      "duplicates": [
+        {"name": "machine learning", "type": "Concept", "similarity": 0.95, "mention_count": 12},
+        {"name": "ML", "type": "Concept", "similarity": 0.87, "mention_count": 5}
+      ],
+      "similarity": 0.91
+    },
+    {
+      "canonical": "OpenAI",
+      "duplicates": [
+        {"name": "Open AI", "type": "Organization", "similarity": 0.92, "mention_count": 3}
+      ],
+      "similarity": 0.92
+    }
+  ],
+  "total_groups": 2,
+  "threshold": 0.85
+}
+```
+
+The `threshold` parameter (0.5 to 1.0) controls how similar entity names must be to be considered duplicates. Lower values return more candidates but may include false positives.
+
+### Merge Entities
+
+Once you have identified true duplicates, merge them into a single canonical entity:
+
+```bash
+curl -X POST "http://localhost:8000/api/entities/merge" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "canonical": "Machine Learning",
+    "merge": ["machine learning", "ML"]
+  }'
+```
+
+```json
+{
+  "canonical": "Machine Learning",
+  "merged": ["machine learning", "ML"],
+  "relationships_transferred": 8,
+  "mentions_transferred": 17,
+  "aliases_added": ["machine learning", "ML"]
+}
+```
+
+When entities are merged:
+- All relationships from the merged entities are transferred to the canonical entity
+- All chunk mentions (MENTIONS links) are moved to the canonical entity
+- The merged entity names are added as **aliases** on the canonical entity for future resolution
+- The merged entities are removed from the graph
+
+### View Merge History
+
+Review past merge operations:
+
+```bash
+curl "http://localhost:8000/api/entities/merge-history?limit=20" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "entries": [
+    {
+      "canonical": "Machine Learning",
+      "merged": ["machine learning", "ML"],
+      "relationships_transferred": 8,
+      "mentions_transferred": 17,
+      "merged_at": "2026-03-18T14:30:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### Deduplication Workflow
+
+<Mermaid chart={`
+flowchart TD
+    A["1. Find Duplicates"] --> B["GET /api/entities/duplicates"]
+    B --> C["2. Review Candidates"]
+    C --> D{"True duplicates?"}
+    D -->|Yes| E["3. Merge Entities"]
+    D -->|No| F["Skip / Adjust threshold"]
+    E --> G["POST /api/entities/merge"]
+    G --> H["4. Verify Results"]
+    H --> I["GET /api/entities/merge-history"]
+    F --> A
+`} />
+
+**Tips for effective deduplication:**
+- Start with a high threshold (0.90+) to find obvious duplicates first
+- Lower the threshold gradually to catch more subtle variants
+- Always review candidates before merging -- false positives at low thresholds can incorrectly combine unrelated entities
+- After merging, re-run community detection to reflect the updated graph structure
+
 ## Graph in Search
 
 During search, MOCA uses the knowledge graph to:
@@ -367,6 +481,7 @@ curl -X DELETE "http://localhost:8000/api/graph/communities" \
 1. **Quality Documents** - Better source documents = better entities
 2. **Review Entities** - Periodically review extracted entities for accuracy
 3. **Tune Threshold** - Adjust `ENTITY_SIMILARITY_THRESHOLD` based on your domain
-4. **Use Communities** - Enable community detection for large graphs
-5. **Safe Deletion** - Delete documents safely knowing the graph will be cleaned automatically
-6. **Clean Up After Bulk Deletion** - After deleting many documents, run cleanup or use the UI banner to remove orphaned graph data
+4. **Deduplicate Periodically** - After large ingestion batches, use `GET /api/entities/duplicates` to find and merge remaining duplicates that automatic resolution missed
+5. **Use Communities** - Enable community detection for large graphs
+6. **Safe Deletion** - Delete documents safely knowing the graph will be cleaned automatically
+7. **Clean Up After Bulk Deletion** - After deleting many documents, run cleanup or use the UI banner to remove orphaned graph data

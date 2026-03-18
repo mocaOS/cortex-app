@@ -13,6 +13,7 @@ import {
   Sparkles,
   MessageSquare,
   FlaskConical,
+  Merge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,7 @@ const menuSections: MenuSection[] = [
     items: [
       { href: "/documents", label: "Documents", icon: FileText },
       { href: "/extract", label: "Generate Graph", icon: FlaskConical },
+      { href: "/deduplicate", label: "Deduplicate", icon: Merge },
       { href: "/collections", label: "Collections", icon: FolderOpen },
       { href: "/add", label: "Add", icon: PenLine },
     ],
@@ -52,7 +54,7 @@ const menuSections: MenuSection[] = [
 ];
 
 // Routes that belong to the "Data" section
-const dataRoutes = ["/", "/documents", "/collections", "/add", "/extract"];
+const dataRoutes = ["/", "/documents", "/collections", "/add", "/extract", "/deduplicate"];
 
 export default function SubMenu() {
   const pathname = usePathname();

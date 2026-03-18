@@ -489,6 +489,7 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
             avg_entity_mentions=stats.get("avg_entity_mentions", 0.0),
             last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
             last_community_detection_at=stats.get("last_community_detection_at"),
+            last_entity_merge_at=stats.get("last_entity_merge_at"),
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -1986,7 +1987,7 @@ async def get_graph_subgraph(
 @app.get("/api/graph/entities")
 async def list_entities(
     entity_type: Optional[str] = Query(default=None, description="Filter by entity type"),
-    limit: int = Query(default=50, ge=1, le=200)
+    limit: int = Query(default=50, ge=1, le=1000000)
 ):
     """List entities in the knowledge graph."""
     def _query():
@@ -2047,6 +2048,123 @@ async def search_entities(query: str = Query(..., min_length=1)):
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================================================================
+# Entity Merge & Deduplication
+# =========================================================================
+
+
+class MergeEntitiesRequest(BaseModel):
+    canonical: str = Field(..., description="Name of the entity to keep")
+    merge: List[str] = Field(..., description="Names of entities to merge into canonical")
+
+
+async def _generate_merged_description(canonical: str, all_names: List[str], entity_data: dict) -> Optional[str]:
+    """Generate a combined description for merged entities using the main LLM."""
+    from openai import AsyncOpenAI
+    from app.services.llm_config import get_llm_config
+
+    # Collect non-empty descriptions
+    entries = []
+    for name in all_names:
+        data = entity_data.get(name, {})
+        desc = data.get("description", "")
+        etype = data.get("type", "")
+        if desc:
+            entries.append(f'- "{name}" ({etype}): {desc}')
+
+    if not entries:
+        return None
+    # If only one description exists, just use it
+    if len(entries) == 1:
+        return entity_data[all_names[0]].get("description") or next(
+            (entity_data[n].get("description") for n in all_names if entity_data.get(n, {}).get("description")), None
+        )
+
+    try:
+        config = get_llm_config()
+        client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=30.0,
+            max_retries=1,
+        )
+        prompt = (
+            f'The following duplicate entities are being merged into one entity named "{canonical}".\n'
+            f"Write a comprehensive unified description that preserves ALL specific details, "
+            f"technical specifications, facts, and context from every description below. "
+            f"Do not omit any concrete information (model numbers, specs, features, relationships, use cases). "
+            f"Be thorough rather than brief — it is better to be complete than concise. "
+            f"Output only the description text, nothing else.\n\n"
+            + "\n".join(entries)
+        )
+        response = await client.chat.completions.create(
+            model=config.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=1000,
+        )
+        content = response.choices[0].message.content
+        return content.strip() if content else None
+    except Exception as e:
+        logger.warning(f"Failed to generate merged description, falling back to longest: {e}")
+        return None
+
+
+@app.post("/api/entities/merge")
+async def merge_entities(request: MergeEntitiesRequest):
+    """Merge duplicate entities into a canonical entity."""
+    try:
+        neo4j = get_neo4j_service()
+
+        # Collect descriptions from all entities for LLM merging
+        all_names = [request.canonical] + request.merge
+        entity_data = await asyncio.to_thread(neo4j.get_entity_descriptions, all_names)
+
+        # Generate a combined description via LLM
+        merged_description = await _generate_merged_description(
+            request.canonical, all_names, entity_data
+        )
+
+        result = await asyncio.to_thread(
+            neo4j.merge_entities, request.canonical, request.merge, merged_description
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error merging entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/entities/merge-history")
+async def get_merge_history(
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Get entity merge history."""
+    try:
+        neo4j = get_neo4j_service()
+        history = await asyncio.to_thread(neo4j.get_merge_history, limit)
+        return {"history": history, "total": len(history)}
+    except Exception as e:
+        logger.error(f"Error getting merge history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/entities/duplicates")
+async def suggest_duplicates(
+    threshold: float = Query(default=0.75, ge=0.5, le=1.0),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Suggest duplicate entity groups for user review."""
+    try:
+        neo4j = get_neo4j_service()
+        groups = await asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit)
+        return {"groups": groups, "total_groups": len(groups)}
+    except Exception as e:
+        logger.error(f"Error suggesting duplicates: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2344,7 +2462,7 @@ async def delete_all_relationships():
 # =============================================================================
 
 @app.get("/api/graph/communities")
-async def list_communities(limit: int = Query(default=50, ge=1, le=200)):
+async def list_communities(limit: int = Query(default=50, ge=1, le=1000000)):
     """List all detected communities."""
     try:
         neo4j = get_neo4j_service()

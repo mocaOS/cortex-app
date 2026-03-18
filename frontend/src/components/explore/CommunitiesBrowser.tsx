@@ -15,12 +15,14 @@ function Pagination({
   totalItems,
   itemsPerPage,
   onPageChange,
+  compact = false,
 }: {
   currentPage: number;
   totalPages: number;
   totalItems: number;
   itemsPerPage: number;
   onPageChange: (page: number) => void;
+  compact?: boolean;
 }) {
   if (totalPages <= 1) return null;
 
@@ -28,10 +30,15 @@ function Pagination({
   const endItem = Math.min(currentPage * itemsPerPage, totalItems);
 
   return (
-    <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-      <span className="text-sm text-muted-foreground">
-        {startItem}-{endItem} of {totalItems}
-      </span>
+    <div className={cn(
+      "flex items-center",
+      compact ? "ml-auto" : "justify-between mt-4"
+    )}>
+      {!compact && (
+        <span className="text-sm text-muted-foreground">
+          {startItem}-{endItem} of {totalItems}
+        </span>
+      )}
       <div className="flex items-center gap-1">
         <button
           onClick={() => onPageChange(currentPage - 1)}
@@ -110,7 +117,7 @@ export default function CommunitiesBrowser() {
 
   const fetchCommunities = useCallback(async () => {
     try {
-      const response = await api.getCommunities(200);
+      const response = await api.getCommunities(1000000);
       setCommunities(response.communities);
     } catch (error) {
       console.error("Failed to fetch communities:", error);
@@ -131,11 +138,22 @@ export default function CommunitiesBrowser() {
   const filteredCommunities = useMemo(() => {
     if (!searchQuery) return communities;
     const query = searchQuery.toLowerCase();
-    return communities.filter(
-      (c) =>
-        (c.name || "").toLowerCase().includes(query) ||
-        (c.summary || "").toLowerCase().includes(query) ||
-        (c.sample_entities || []).some((e) => e.toLowerCase().includes(query))
+    return communities
+      .filter(
+        (c) =>
+          (c.name || "").toLowerCase().includes(query) ||
+          (c.summary || "").toLowerCase().includes(query) ||
+          (c.sample_entities || []).some((e) => e.toLowerCase().includes(query))
+      )
+      .sort((a, b) => {
+        const aName = (a.name || "").toLowerCase().includes(query);
+        const bName = (b.name || "").toLowerCase().includes(query);
+        if (aName !== bName) return aName ? -1 : 1;
+        const aSummary = (a.summary || "").toLowerCase().includes(query);
+        const bSummary = (b.summary || "").toLowerCase().includes(query);
+        if (aSummary !== bSummary) return aSummary ? -1 : 1;
+        return 0;
+      }
     );
   }, [communities, searchQuery]);
 
@@ -201,17 +219,14 @@ export default function CommunitiesBrowser() {
         <span className="text-sm text-muted-foreground whitespace-nowrap">
           {filteredCommunities.length} communit{filteredCommunities.length !== 1 ? "ies" : "y"}
         </span>
-        {totalPages > 1 && (
-          <div className="flex items-center gap-1">
-            <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs text-muted-foreground w-12 text-center">{currentPage}/{totalPages}</span>
-            <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredCommunities.length}
+          itemsPerPage={ITEMS_PER_PAGE}
+          onPageChange={setCurrentPage}
+          compact
+        />
       </div>
 
       <div className="grid gap-3">

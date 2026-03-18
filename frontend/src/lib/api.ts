@@ -36,6 +36,10 @@ import type {
   SystemResetRequest,
   SystemResetResponse,
   SystemConfig,
+  DuplicateSuggestionsResponse,
+  MergeEntitiesRequest,
+  MergeEntitiesResponse,
+  MergeHistoryResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -1047,6 +1051,38 @@ class ApiClient {
    */
   async getSystemConfig(): Promise<SystemConfig> {
     return this.request<SystemConfig>("/api/admin/config");
+  }
+
+  // ===========================================================================
+  // Entity Deduplication
+  // ===========================================================================
+
+  /**
+   * Suggest duplicate entity groups for review.
+   */
+  async suggestDuplicates(threshold = 0.75, limit = 100): Promise<DuplicateSuggestionsResponse> {
+    const params = new URLSearchParams({
+      threshold: String(threshold),
+      limit: String(limit),
+    });
+    return this.request<DuplicateSuggestionsResponse>(`/api/entities/duplicates?${params}`);
+  }
+
+  /**
+   * Get entity merge history.
+   */
+  async getMergeHistory(limit = 50): Promise<MergeHistoryResponse> {
+    return this.request<MergeHistoryResponse>(`/api/entities/merge-history?limit=${limit}`);
+  }
+
+  /**
+   * Merge duplicate entities into a canonical entity.
+   */
+  async mergeEntities(request: MergeEntitiesRequest): Promise<MergeEntitiesResponse> {
+    return this.request<MergeEntitiesResponse>("/api/entities/merge", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
   }
 
   // ===========================================================================

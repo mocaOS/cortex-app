@@ -636,6 +636,85 @@ paths:
               schema:
                 $ref: '#/components/schemas/EntityList'
 
+  /api/entities/duplicates:
+    get:
+      tags: [Knowledge Graph]
+      summary: Find duplicate entity candidates
+      description: >
+        Returns groups of entities that are potential duplicates based on name similarity.
+        Uses fuzzy string matching to identify entities that likely refer to the same thing
+        but were not caught by automatic resolution during extraction.
+      parameters:
+        - name: threshold
+          in: query
+          schema:
+            type: number
+            default: 0.85
+            minimum: 0.5
+            maximum: 1.0
+          description: Similarity threshold for duplicate detection (0.5 to 1.0)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of duplicate groups to return
+      responses:
+        '200':
+          description: Duplicate candidates retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateCandidates'
+
+  /api/entities/merge:
+    post:
+      tags: [Knowledge Graph]
+      summary: Merge duplicate entities
+      description: >
+        Merges one or more duplicate entities into a canonical entity. All relationships,
+        chunk mentions, and community memberships from the merged entities are transferred
+        to the canonical entity. Merged entities are removed from the graph.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntityMergeRequest'
+      responses:
+        '200':
+          description: Entities merged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityMergeResponse'
+        '404':
+          description: Canonical entity not found
+        '400':
+          description: Invalid merge request (e.g., merging entity into itself)
+
+  /api/entities/merge-history:
+    get:
+      tags: [Knowledge Graph]
+      summary: Get entity merge history
+      description: >
+        Returns a chronological log of entity merge operations, including which entities
+        were merged into which canonical entity and when.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of history entries to return
+      responses:
+        '200':
+          description: Merge history retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeHistoryResponse'
+
   /api/collections:
     get:
       tags: [Collections]
@@ -1876,3 +1955,114 @@ components:
           format: date-time
         runtime_remaining:
           type: integer
+
+    DuplicateGroup:
+      type: object
+      properties:
+        canonical:
+          type: string
+          description: The entity name with the highest mention count in this group
+        duplicates:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Entity name
+              type:
+                type: string
+                description: Entity type
+              similarity:
+                type: number
+                description: Similarity score relative to the canonical name
+              mention_count:
+                type: integer
+                description: Number of chunk mentions for this entity
+          description: List of entities similar to the canonical entity
+        similarity:
+          type: number
+          description: Average similarity score within this group
+
+    DuplicateCandidates:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/DuplicateGroup'
+        total_groups:
+          type: integer
+          description: Total number of duplicate groups found
+        threshold:
+          type: number
+          description: Similarity threshold used for detection
+
+    EntityMergeRequest:
+      type: object
+      required:
+        - canonical
+        - merge
+      properties:
+        canonical:
+          type: string
+          description: The name of the entity to keep (canonical/primary entity)
+        merge:
+          type: array
+          items:
+            type: string
+          description: List of entity names to merge into the canonical entity
+
+    EntityMergeResponse:
+      type: object
+      properties:
+        canonical:
+          type: string
+          description: The canonical entity name that was kept
+        merged:
+          type: array
+          items:
+            type: string
+          description: Entity names that were merged and removed
+        relationships_transferred:
+          type: integer
+          description: Number of relationships moved to the canonical entity
+        mentions_transferred:
+          type: integer
+          description: Number of chunk mentions moved to the canonical entity
+        aliases_added:
+          type: array
+          items:
+            type: string
+          description: Aliases added to the canonical entity from merged entities
+
+    MergeHistoryEntry:
+      type: object
+      properties:
+        canonical:
+          type: string
+          description: The canonical entity name
+        merged:
+          type: array
+          items:
+            type: string
+          description: Entity names that were merged
+        relationships_transferred:
+          type: integer
+        mentions_transferred:
+          type: integer
+        merged_at:
+          type: string
+          format: date-time
+          description: When the merge was performed
+
+    MergeHistoryResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MergeHistoryEntry'
+        total:
+          type: integer
+          description: Total number of merge history entries
