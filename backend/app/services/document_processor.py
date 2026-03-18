@@ -1545,6 +1545,7 @@ class DocumentProcessor:
             on_batch_complete=store_batch_relationships,
             get_batch_context=get_batch_context,
             progress_stats=storage_stats,
+            parallel_batches=self.settings.parallel_relationship_batches,
         )
 
         if progress_callback:
@@ -2869,7 +2870,7 @@ Comprehensive Answer:""",
         )
 
         async for chunk in stream:
-            if chunk.choices[0].delta.content:
+            if chunk.choices and chunk.choices[0].delta.content:
                 yield {"content": chunk.choices[0].delta.content}
 
         yield {"done": True, "communities_used": list(communities_used)}

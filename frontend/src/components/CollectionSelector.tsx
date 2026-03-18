@@ -19,8 +19,6 @@ interface CollectionSelectorProps {
   onChange: (collectionId: string | undefined) => void;
   allowCreate?: boolean;
   className?: string;
-  /** Label shown when no collection is selected (default: "Default Collection") */
-  placeholder?: string;
 }
 
 export default function CollectionSelector({
@@ -28,7 +26,6 @@ export default function CollectionSelector({
   onChange,
   allowCreate = true,
   className,
-  placeholder = "Default Collection",
 }: CollectionSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -60,6 +57,13 @@ export default function CollectionSelector({
     try {
       const data = await api.getCollections();
       setCollections(data.collections);
+      // Auto-select the default collection if no value is set
+      if (!value) {
+        const defaultCol = data.collections.find((c: Collection) => c.id === "default");
+        if (defaultCol) {
+          onChange(defaultCol.id);
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch collections:", error);
     } finally {
@@ -109,7 +113,7 @@ export default function CollectionSelector({
           ) : selectedCollection ? (
             selectedCollection.name
           ) : (
-            <span className="text-muted-foreground">{placeholder}</span>
+            <span className="text-muted-foreground">Select collection...</span>
           )}
         </span>
         <ChevronDown
@@ -126,7 +130,7 @@ export default function CollectionSelector({
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="absolute z-50 top-full left-0 right-0 mt-1 glass rounded-lg border border-border shadow-xl overflow-hidden"
+            className="absolute z-50 top-full left-0 mt-1 min-w-full w-max max-w-xs glass rounded-lg border border-border shadow-xl overflow-hidden"
           >
             {allowCreate && (
               <div className="p-2 border-b border-border">
@@ -181,21 +185,6 @@ export default function CollectionSelector({
             )}
 
             <div className="max-h-48 overflow-y-auto">
-              <button
-                type="button"
-                onClick={() => handleSelect(undefined)}
-                className={cn(
-                  "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
-                  !value
-                    ? "bg-muted text-foreground"
-                    : "text-foreground hover:bg-muted"
-                )}
-              >
-                <FolderOpen className="w-4 h-4" />
-                <span className="flex-1 text-left">{placeholder}</span>
-                {!value && <Check className="w-4 h-4" />}
-              </button>
-
               {isLoading ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 className="w-5 h-5 text-accent animate-spin" />

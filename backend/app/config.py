@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     relationship_analysis_batch_size: int = Field(
         default=100
     )  # Max entities per relationship analysis LLM call
+    parallel_relationship_batches: int = Field(
+        default=1
+    )  # Number of relationship analysis batches to process in parallel (1 = sequential)
     auto_relationship_analysis_after_batch: bool = Field(
         default=False
     )  # Auto-trigger relationship analysis after batch processing completes

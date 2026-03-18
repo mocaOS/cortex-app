@@ -1780,6 +1780,7 @@ Respond with ONLY the community name, nothing else."""
         on_batch_complete: Optional[Callable[[List[Relationship]], Awaitable[None]]] = None,
         get_batch_context: Optional[Callable[[List[dict]], Awaitable[str]]] = None,
         progress_stats: Optional[dict] = None,
+        parallel_batches: int = 1,
     ) -> List[Relationship]:
         """Analyze relationships in batches using token-based context window management.
 
@@ -1899,11 +1900,13 @@ Respond with ONLY the community name, nothing else."""
         if progress_stats is not None:
             progress_stats["total_batches"] = len(batches)
 
-        # Process batches sequentially
+        # Process batches (sequentially or in parallel)
         all_relationships: List[Relationship] = []
         seen_keys: set[tuple] = set()  # For deduplication
+        parallel_batches = max(1, parallel_batches)
 
-        for batch_idx, batch in enumerate(batches):
+        async def process_single_batch(batch_idx: int, batch: List[dict]) -> List[Relationship]:
+            """Process a single batch and return unique relationships."""
             # Fetch per-batch source text context if callback provided
             if get_batch_context:
                 try:
@@ -1928,30 +1931,64 @@ Respond with ONLY the community name, nothing else."""
                 batch, batch_context, batch_existing, max_output_tokens
             )
 
-            # Deduplicate as we go (memory efficient)
-            batch_unique: List[Relationship] = []
-            for rel in rels:
-                key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    batch_unique.append(rel)
-                    all_relationships.append(rel)
-
             logger.info(
-                f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} discovered, "
-                f"{len(batch_unique)} unique ({len(batch)} entities)"
+                f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} discovered "
+                f"({len(batch)} entities)"
             )
+            return rels
 
-            # Call incremental storage callback if provided
-            if on_batch_complete and batch_unique:
-                try:
-                    await on_batch_complete(batch_unique)
-                except Exception as e:
-                    logger.error(f"Error in on_batch_complete callback: {e}")
+        if parallel_batches <= 1:
+            # Sequential processing (original behavior)
+            for batch_idx, batch in enumerate(batches):
+                rels = await process_single_batch(batch_idx, batch)
 
-            # Clear batch reference to help GC
-            del batch_unique
-            del rels
+                batch_unique: List[Relationship] = []
+                for rel in rels:
+                    key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        batch_unique.append(rel)
+                        all_relationships.append(rel)
+
+                if on_batch_complete and batch_unique:
+                    try:
+                        await on_batch_complete(batch_unique)
+                    except Exception as e:
+                        logger.error(f"Error in on_batch_complete callback: {e}")
+
+                del batch_unique
+                del rels
+        else:
+            # Parallel processing with semaphore
+            import asyncio as _asyncio
+            semaphore = _asyncio.Semaphore(parallel_batches)
+            logger.info(f"Processing {len(batches)} batches with parallelism={parallel_batches}")
+
+            async def sem_process(batch_idx: int, batch: List[dict]) -> tuple[int, List[Relationship]]:
+                async with semaphore:
+                    rels = await process_single_batch(batch_idx, batch)
+                    return (batch_idx, rels)
+
+            tasks = [sem_process(i, b) for i, b in enumerate(batches)]
+            results = await _asyncio.gather(*tasks)
+
+            # Process results in batch order for deterministic dedup
+            for batch_idx, rels in sorted(results, key=lambda x: x[0]):
+                batch_unique: List[Relationship] = []
+                for rel in rels:
+                    key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        batch_unique.append(rel)
+                        all_relationships.append(rel)
+
+                if on_batch_complete and batch_unique:
+                    try:
+                        await on_batch_complete(batch_unique)
+                    except Exception as e:
+                        logger.error(f"Error in on_batch_complete callback: {e}")
+
+                del batch_unique
 
         logger.info(
             f"Relationship analysis complete: {len(all_relationships)} unique relationships"

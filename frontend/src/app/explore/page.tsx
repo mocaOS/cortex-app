@@ -19,6 +19,7 @@ interface EntitySearchResult {
   type: string;
   description: string;
   score: number;
+  connection_count?: number;
 }
 
 // Custom dropdown component matching project style
@@ -358,7 +359,7 @@ function ExplorePageContent() {
                     )}
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {(result.score * 100).toFixed(0)}%
+                    {result.connection_count ?? 0} links
                   </span>
                 </button>
               ))}

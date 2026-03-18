@@ -528,10 +528,19 @@ async def upload_file(
             status_code=400,
             detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
         )
-    
+
     # Read file content
     content = await file.read()
     file_size = len(content)
+
+    # Check for duplicate document (same filename and file size)
+    neo4j = get_neo4j_service()
+    existing = await asyncio.to_thread(neo4j.find_document_by_filename_and_size, file.filename, file_size)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A document with the same name and size already exists: '{file.filename}' ({file_size} bytes)"
+        )
     
     # Validate file size
     max_size = settings.max_file_size_mb * 1024 * 1024
@@ -1708,10 +1717,10 @@ Question: {request.question}"""
                 stream = await client.chat.completions.create(**request_kwargs)
                 
                 async for chunk in stream:
-                    if chunk.choices[0].delta.content:
+                    if chunk.choices and chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
                         yield f"data: {json.dumps({'content': content})}\n\n"
-                
+
                 yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
                 
             except Exception as e:
@@ -1887,10 +1896,10 @@ Response Style:
             )
             
             async for chunk in stream:
-                if chunk.choices[0].delta.content:
+                if chunk.choices and chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     yield f"data: {json.dumps({'content': content})}\n\n"
-            
+
             yield f"data: {json.dumps({'done': True})}\n\n"
             
         except Exception as e:

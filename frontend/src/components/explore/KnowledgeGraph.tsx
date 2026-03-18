@@ -71,9 +71,10 @@ interface EntityPanelProps {
   details: EntityDetails | null;
   loading: boolean;
   onClose: () => void;
+  onEntityNavigate?: (entityName: string) => void;
 }
 
-function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
+function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: EntityPanelProps) {
   if (!entity) return null;
 
   return (
@@ -126,13 +127,14 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
                 <h4 className="text-sm font-medium mb-2">Related Entities</h4>
                 <div className="flex flex-wrap gap-1.5">
                   {details.entities.slice(0, 10).map((e, i) => (
-                    <span
+                    <button
                       key={i}
-                      className="px-2 py-1 text-xs rounded-lg bg-muted text-muted-foreground"
-                      title={e.description}
+                      onClick={() => onEntityNavigate?.(e.name)}
+                      className="px-2 py-1 text-xs rounded-lg bg-muted text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer"
+                      title={e.description || `Navigate to ${e.name}`}
                     >
                       {e.name}
-                    </span>
+                    </button>
                   ))}
                   {details.entities.length > 10 && (
                     <span className="px-2 py-1 text-xs rounded-lg bg-muted text-muted-foreground">
@@ -152,11 +154,21 @@ function EntityPanel({ entity, details, loading, onClose }: EntityPanelProps) {
                       key={i}
                       className="text-xs text-muted-foreground flex items-center gap-1 font-mono"
                     >
-                      <span className="truncate max-w-[120px]">{r.source}</span>
+                      <button
+                        onClick={() => onEntityNavigate?.(r.source)}
+                        className="truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer"
+                      >
+                        {r.source}
+                      </button>
                       <span className="text-accent">→</span>
                       <span className="text-accent font-medium">{r.type}</span>
                       <span className="text-accent">→</span>
-                      <span className="truncate max-w-[120px]">{r.target}</span>
+                      <button
+                        onClick={() => onEntityNavigate?.(r.target)}
+                        className="truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer"
+                      >
+                        {r.target}
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -283,7 +295,7 @@ export default function KnowledgeGraph({
       type: n.type,
       description: n.description,
       community_id: n.community_id,
-      mention_count: n.mention_count,
+      mention_count: Math.max(n.mention_count || 1, 1),
     }));
     
     const forceLinks: ForceGraphLink[] = edges.map((e) => ({
@@ -430,23 +442,15 @@ export default function KnowledgeGraph({
     [hoveredNode, selectedNode]
   );
 
-  // Define pointer area for click/drag detection
-  const nodePointerAreaPaint = useCallback(
-    (node: ForceGraphNode, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const baseNodeSize = getBaseNodeSize(node.mention_count || 1);
-      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
-      const nodeSize = baseNodeSize / zoomFactor;
-      const x = node.x ?? 0;
-      const y = node.y ?? 0;
-      
-      // Slightly larger area for easier clicking
-      ctx.beginPath();
-      ctx.arc(x, y, nodeSize + 4, 0, 2 * Math.PI, false);
-      ctx.fillStyle = color;
-      ctx.fill();
-    },
-    []
-  );
+  // Navigate to entity by name (used by EntityPanel clicks)
+  const handleEntityNavigate = useCallback((entityName: string) => {
+    const node = graphData.nodes.find(
+      (n) => n.label.toLowerCase() === entityName.toLowerCase()
+    );
+    if (node) {
+      handleNodeClick(node);
+    }
+  }, [graphData.nodes, handleNodeClick]);
 
   // Custom link rendering
   const linkCanvasObject = useCallback(
@@ -549,8 +553,9 @@ export default function KnowledgeGraph({
         height={dimensions.height}
         nodeId="id"
         nodeLabel=""
+        nodeVal="mention_count"
+        nodeRelSize={8}
         nodeCanvasObject={nodeCanvasObject}
-        nodePointerAreaPaint={nodePointerAreaPaint}
         linkCanvasObject={linkCanvasObject}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
@@ -566,6 +571,7 @@ export default function KnowledgeGraph({
         enablePanInteraction={true}
         minZoom={0.1}
         maxZoom={10}
+        autoPauseRedraw={false}
       />
 
       <Legend types={entityTypes} />
@@ -575,6 +581,7 @@ export default function KnowledgeGraph({
         details={entityDetails}
         loading={detailsLoading}
         onClose={() => setSelectedNode(null)}
+        onEntityNavigate={handleEntityNavigate}
       />
 
       {/* Zoom controls */}

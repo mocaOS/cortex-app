@@ -523,6 +523,18 @@ class Neo4jService:
             """)
             return [dict(record) for record in result]
     
+    def find_document_by_filename_and_size(self, filename: str, file_size: int) -> Optional[dict]:
+        """Check if a document with the same filename and file size already exists."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE d.filename = $filename AND d.file_size = $file_size
+                RETURN d.id as id, d.filename as filename, d.file_size as file_size
+                LIMIT 1
+            """, filename=filename, file_size=file_size)
+            record = result.single()
+            return dict(record) if record else None
+
     def get_document(self, doc_id: str) -> Optional[dict]:
         """Get a single document by ID."""
         with self.driver.session() as session:
@@ -1122,11 +1134,14 @@ class Neo4jService:
                 result = session.run("""
                     CALL db.index.fulltext.queryNodes('entity_name_fulltext', $search_query)
                     YIELD node, score
+                    OPTIONAL MATCH (node)-[r]-()
+                    WITH node, score, count(r) as connection_count
                     RETURN node.name as name,
                            node.type as type,
                            node.description as description,
-                           score
-                    ORDER BY score DESC
+                           score,
+                           connection_count
+                    ORDER BY connection_count DESC, score DESC
                     LIMIT 20
                 """, search_query=search_query)
                 return [dict(record) for record in result]
@@ -1136,10 +1151,14 @@ class Neo4jService:
                 result = session.run("""
                     MATCH (e:Entity)
                     WHERE e.name IN $names
+                    OPTIONAL MATCH (e)-[r]-()
+                    WITH e, count(r) as connection_count
                     RETURN e.name as name,
                            e.type as type,
                            e.description as description,
-                           1.0 as score
+                           1.0 as score,
+                           connection_count
+                    ORDER BY connection_count DESC
                 """, names=names)
                 return [dict(record) for record in result]
     

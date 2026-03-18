@@ -283,8 +283,6 @@ export default function ExtractAnalyzePage() {
   const entityCount = stats?.entity_count ?? 0;
   const relationshipCount = stats?.relationship_count ?? 0;
   const communityCount = stats?.community_count ?? 0;
-  const pendingCount = stats?.pending_count ?? 0;
-
   const processingDocs = documents.filter(
     (d) => d.processing_status === "processing" || d.processing_status === "extracting"
   );
@@ -392,7 +390,7 @@ export default function ExtractAnalyzePage() {
                   <p className="text-xs text-muted-foreground">Processing</p>
                 </div>
                 <div className="p-3 bg-muted/50 rounded-lg">
-                  <p className="text-lg font-semibold">{pendingDocs.length + pendingCount}</p>
+                  <p className="text-lg font-semibold">{pendingDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Pending</p>
                 </div>
                 <div className="p-3 bg-muted/50 rounded-lg">
