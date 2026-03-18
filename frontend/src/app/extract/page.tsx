@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Network,
   ArrowRight,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -75,9 +76,22 @@ export default function ExtractAnalyzePage() {
       } catch {
         // No running tasks
       }
+
+      try {
+        const { tasks } = await api.listTasks("running", "community_detection");
+        if (tasks.length > 0) {
+          const task = tasks[0];
+          setDetectingCommunities(true);
+          setCommunityTaskMessage(task.message || "Community detection in progress...");
+          pollCommunityTask(task.task_id);
+        }
+      } catch {
+        // No running tasks
+      }
     };
 
     checkRunningTasks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData]);
 
   // Compute how many docs were completed after the last relationship analysis
@@ -147,9 +161,11 @@ export default function ExtractAnalyzePage() {
       const newlyDiscovered = currentRels - initialRelCount.current;
       if (newlyDiscovered > 0) setDiscoveredRelCount(newlyDiscovered);
 
-      const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
-      const countMsg = newlyDiscovered > 0 ? ` (${newlyDiscovered} new relationships found)` : "";
-      setRelationshipTaskMessage(progressMsg + countMsg);
+      const backendMsg = status.message || `Progress: ${status.progress_percent}%`;
+      const countMsg = newlyDiscovered > 0
+        ? `${newlyDiscovered} new relationships found, still connecting the dots... (${backendMsg})`
+        : backendMsg;
+      setRelationshipTaskMessage(countMsg);
 
       if (status.status === "completed") {
         setRelationshipTaskMessage(`Analysis complete! ${currentRels - initialRelCount.current} relationships discovered.`);
@@ -172,13 +188,13 @@ export default function ExtractAnalyzePage() {
     }
   }, [fetchData]);
 
-  const handleAnalyzeRelationships = async () => {
+  const handleAnalyzeRelationships = async (rebuild = false) => {
     try {
       setAnalyzingRelationships(true);
       setDiscoveredRelCount(0);
-      initialRelCount.current = stats?.relationship_count ?? 0;
-      setRelationshipTaskMessage("Starting relationship analysis...");
-      const result = await api.analyzeRelationships();
+      initialRelCount.current = rebuild ? 0 : (stats?.relationship_count ?? 0);
+      setRelationshipTaskMessage(rebuild ? "Starting full rebuild..." : "Starting relationship analysis...");
+      const result = await api.analyzeRelationships(undefined, "full", rebuild);
       setTimeout(() => pollRelationshipTask(result.task_id), 1500);
     } catch (error) {
       console.error("Failed to analyze relationships:", error);
@@ -187,18 +203,40 @@ export default function ExtractAnalyzePage() {
     }
   };
 
+  const pollCommunityTask = useCallback(async (taskId: string) => {
+    try {
+      const status = await api.getTaskStatus(taskId);
+
+      const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
+      setCommunityTaskMessage(progressMsg);
+
+      if (status.status === "completed") {
+        const communityCount = (status.result as Record<string, unknown>)?.total ?? 0;
+        setCommunityTaskMessage(`Communities detected successfully! ${communityCount} communities found.`);
+        setCommunitiesStale(false);
+        await fetchData(true);
+        setTimeout(() => {
+          setCommunityTaskMessage(null);
+          setDetectingCommunities(false);
+        }, 3000);
+      } else if (status.status === "failed") {
+        setCommunityTaskMessage(`Failed: ${status.message}`);
+        setDetectingCommunities(false);
+      } else {
+        setTimeout(() => pollCommunityTask(taskId), 2000);
+      }
+    } catch {
+      setCommunityTaskMessage(null);
+      setDetectingCommunities(false);
+    }
+  }, [fetchData]);
+
   const handleDetectCommunities = async () => {
     try {
       setDetectingCommunities(true);
       setCommunityTaskMessage("Detecting communities...");
-      await api.detectCommunities(3);
-      await fetchData(true);
-      setCommunityTaskMessage("Communities detected successfully!");
-      setCommunitiesStale(false);
-      setTimeout(() => {
-        setCommunityTaskMessage(null);
-        setDetectingCommunities(false);
-      }, 3000);
+      const result = await api.detectCommunities(3);
+      setTimeout(() => pollCommunityTask(result.task_id), 1500);
     } catch (error) {
       console.error("Failed to detect communities:", error);
       setCommunityTaskMessage("Failed to detect communities.");
@@ -306,17 +344,25 @@ export default function ExtractAnalyzePage() {
               {step1Stale ? <AlertCircle className="w-6 h-6 text-yellow-400" /> : getStepIcon(step1Status)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-lg font-semibold">Step 1: Entity Extraction</h3>
-                <span className={cn(
-                  "px-2 py-0.5 text-xs rounded-full font-medium",
-                  step1Stale ? "bg-yellow-500/20 text-yellow-400" :
-                  step1Status === "complete" ? "bg-green-500/20 text-green-400" :
-                  step1Status === "in_progress" ? "bg-accent/20 text-accent" :
-                  "bg-muted text-muted-foreground"
-                )}>
-                  {step1Stale ? "Needs Update" : step1Status === "complete" ? "Complete" : step1Status === "in_progress" ? "In Progress" : "Pending"}
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold">Step 1: Entity Extraction</h3>
+                  <span className={cn(
+                    "px-2 py-0.5 text-xs rounded-full font-medium",
+                    step1Stale ? "bg-yellow-500/20 text-yellow-400" :
+                    step1Status === "complete" ? "bg-green-500/20 text-green-400" :
+                    step1Status === "in_progress" ? "bg-accent/20 text-accent" :
+                    "bg-muted text-muted-foreground"
+                  )}>
+                    {step1Stale ? "Needs Update" : step1Status === "complete" ? "Complete" : step1Status === "in_progress" ? "In Progress" : "Pending"}
+                  </span>
+                </div>
+                {entityCount > 0 && (
+                  <Link href="/explore?tab=entities" className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors">
+                    <ExternalLink className="w-3 h-3" />
+                    Inspect
+                  </Link>
+                )}
               </div>
               <p className="text-sm text-muted-foreground mb-4">
                 Entities are automatically extracted when documents are processed. Upload documents and process them to extract entities like people, organizations, concepts, and more.
@@ -346,7 +392,7 @@ export default function ExtractAnalyzePage() {
                 <div className="flex items-center gap-2 mb-3 p-3 bg-accent/10 border border-accent/20 rounded-lg">
                   <Loader2 className="w-4 h-4 animate-spin text-accent" />
                   <span className="text-sm text-accent">
-                    Processing {processingDocs.length} document{processingDocs.length !== 1 ? "s" : ""}... Entities are being extracted automatically.
+                    Processing {processingDocs.length} document{processingDocs.length !== 1 ? "s" : ""} in parallel... Entities are being extracted... {processingDocs.length + pendingDocs.length} document{processingDocs.length + pendingDocs.length !== 1 ? "s" : ""} remaining...
                   </span>
                 </div>
               )}
@@ -404,17 +450,25 @@ export default function ExtractAnalyzePage() {
               {step2Stale ? <AlertCircle className="w-6 h-6 text-yellow-400" /> : getStepIcon(step2Status)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-lg font-semibold">Step 2: Relationship Analysis</h3>
-                <span className={cn(
-                  "px-2 py-0.5 text-xs rounded-full font-medium",
-                  step2Stale ? "bg-yellow-500/20 text-yellow-400" :
-                  step2Status === "complete" ? "bg-green-500/20 text-green-400" :
-                  step2Status === "in_progress" ? "bg-accent/20 text-accent" :
-                  "bg-muted text-muted-foreground"
-                )}>
-                  {step2Blocked ? "Waiting" : step2Stale ? "Needs Update" : step2Status === "complete" ? "Complete" : step2Status === "in_progress" ? "Analyzing" : "Pending"}
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold">Step 2: Relationship Analysis</h3>
+                  <span className={cn(
+                    "px-2 py-0.5 text-xs rounded-full font-medium",
+                    step2Stale ? "bg-yellow-500/20 text-yellow-400" :
+                    step2Status === "complete" ? "bg-green-500/20 text-green-400" :
+                    step2Status === "in_progress" ? "bg-accent/20 text-accent" :
+                    "bg-muted text-muted-foreground"
+                  )}>
+                    {step2Blocked ? "Waiting" : step2Stale ? "Needs Update" : step2Status === "complete" ? "Complete" : step2Status === "in_progress" ? "Analyzing" : "Pending"}
+                  </span>
+                </div>
+                {relationshipCount > 0 && (
+                  <Link href="/explore?tab=relationships" className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors">
+                    <ExternalLink className="w-3 h-3" />
+                    Inspect
+                  </Link>
+                )}
               </div>
 
               {step2Blocked ? (
@@ -430,7 +484,7 @@ export default function ExtractAnalyzePage() {
                     </p>
                   </div>
                   <button
-                    onClick={handleAnalyzeRelationships}
+                    onClick={() => handleAnalyzeRelationships()}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors shrink-0 ml-4"
                   >
                     <Share2 className="w-4 h-4" />
@@ -442,20 +496,35 @@ export default function ExtractAnalyzePage() {
                   Waiting for entities to be extracted first. Process your documents in Step 1 to extract entities, then come back here to analyze relationships.
                 </p>
               ) : relationshipCount > 0 && newDocsSinceAnalysis > 0 && !analyzingRelationships ? (
-                <div className="flex items-center justify-between mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm text-yellow-200">
-                      {newDocsSinceAnalysis} new document{newDocsSinceAnalysis !== 1 ? "s have" : " has"} been processed since the last analysis. New entities are not yet connected in the knowledge graph.
-                    </p>
+                <div className="mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-yellow-200">
+                        {newDocsSinceAnalysis} new document{newDocsSinceAnalysis !== 1 ? "s have" : " has"} been processed since the last analysis. New entities are not yet connected in the knowledge graph.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-4">
+                      <button
+                        onClick={() => handleAnalyzeRelationships()}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+                      >
+                        <Share2 className="w-4 h-4" />
+                        Analyze Relationships
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm("This will delete all existing relationships and rebuild from scratch. Continue?")) {
+                            handleAnalyzeRelationships(true);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-yellow-400"
+                      >
+                        <AlertCircle className="w-3 h-3" />
+                        Rebuild
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={handleAnalyzeRelationships}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors shrink-0 ml-4"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    Analyze Relationships
-                  </button>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mb-4">
@@ -477,11 +546,22 @@ export default function ExtractAnalyzePage() {
                     {relationshipCount} relationships discovered.
                   </p>
                   <button
-                    onClick={handleAnalyzeRelationships}
+                    onClick={() => handleAnalyzeRelationships(false)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors"
                   >
                     <RefreshCw className="w-3 h-3" />
                     Re-analyze
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm("This will delete all existing relationships and rebuild from scratch. Continue?")) {
+                        handleAnalyzeRelationships(true);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-yellow-400"
+                  >
+                    <AlertCircle className="w-3 h-3" />
+                    Rebuild from scratch
                   </button>
                 </div>
               )}
@@ -507,17 +587,25 @@ export default function ExtractAnalyzePage() {
               {step3Stale ? <AlertCircle className="w-6 h-6 text-yellow-400" /> : getStepIcon(step3Status)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1">
-                <h3 className="text-lg font-semibold">Step 3: Community Detection</h3>
-                <span className={cn(
-                  "px-2 py-0.5 text-xs rounded-full font-medium",
-                  step3Stale ? "bg-yellow-500/20 text-yellow-400" :
-                  step3Status === "complete" ? "bg-green-500/20 text-green-400" :
-                  step3Status === "in_progress" ? "bg-accent/20 text-accent" :
-                  "bg-muted text-muted-foreground"
-                )}>
-                  {step3Blocked ? "Waiting" : step3Stale ? "Needs Update" : step3Status === "complete" ? "Complete" : step3Status === "in_progress" ? "Detecting" : "Pending"}
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold">Step 3: Community Detection</h3>
+                  <span className={cn(
+                    "px-2 py-0.5 text-xs rounded-full font-medium",
+                    step3Stale ? "bg-yellow-500/20 text-yellow-400" :
+                    step3Status === "complete" ? "bg-green-500/20 text-green-400" :
+                    step3Status === "in_progress" ? "bg-accent/20 text-accent" :
+                    "bg-muted text-muted-foreground"
+                  )}>
+                    {step3Blocked ? "Waiting" : step3Stale ? "Needs Update" : step3Status === "complete" ? "Complete" : step3Status === "in_progress" ? "Detecting" : "Pending"}
+                  </span>
+                </div>
+                {communityCount > 0 && (
+                  <Link href="/explore?tab=communities" className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors">
+                    <ExternalLink className="w-3 h-3" />
+                    Inspect
+                  </Link>
+                )}
               </div>
 
               {step3Blocked ? (

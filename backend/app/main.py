@@ -2225,11 +2225,17 @@ async def _run_relationship_analysis_task(
     task_id: str,
     collection_id: Optional[str],
     scope: str,
+    rebuild: bool = False,
 ) -> None:
     """Background task for relationship analysis with progress tracking."""
     try:
         processor = get_document_processor()
         neo4j = get_neo4j_service()
+
+        # If rebuild mode, delete all existing relationships first
+        if rebuild:
+            update_task_progress(task_id, 0, 1, "Clearing existing relationships for full rebuild...")
+            await asyncio.to_thread(neo4j.delete_all_relationships)
 
         # Count entities for progress
         entities = await asyncio.to_thread(
@@ -2281,6 +2287,9 @@ async def analyze_relationships(
     scope: str = Query(
         default="full", description="'recent' for new entities, 'full' for all"
     ),
+    rebuild: bool = Query(
+        default=False, description="Delete all existing relationships before analysis"
+    ),
 ):
     """Analyze relationships between entities across documents.
 
@@ -2296,13 +2305,14 @@ async def analyze_relationships(
             raise HTTPException(status_code=400, detail="Graph extraction is disabled")
 
         task = create_task("relationship_analysis")
-        task.message = "Starting relationship analysis..."
+        task.message = "Starting relationship analysis..." if not rebuild else "Starting full rebuild..."
 
         background_tasks.add_task(
             _run_relationship_analysis_task,
             task.task_id,
             collection_id,
             scope,
+            rebuild,
         )
 
         return {
@@ -2356,6 +2366,10 @@ async def _run_community_detection_task(
         neo4j = get_neo4j_service()
         extractor = get_graph_extractor()
         
+        # Step 0: Clean up previous communities to avoid stale data
+        update_task_progress(task_id, 0, 1, "Cleaning up previous communities...")
+        await asyncio.to_thread(neo4j.delete_all_communities)
+
         # Step 1: Detect communities
         update_task_progress(task_id, 0, 1, "Detecting communities in knowledge graph...")
         communities = await asyncio.to_thread(neo4j.detect_communities, min_size, collection_id)
@@ -2417,10 +2431,38 @@ async def _run_community_detection_task(
             neo4j.set_meta, "last_community_detection_at", datetime.now(timezone.utc).isoformat()
         )
 
+        # Compute community distribution stats for diagnostics
+        sizes = [c.get("entity_count", 0) for c in communities]
+        total_entities = sum(sizes)
+        distribution_stats = {}
+        if sizes:
+            sorted_sizes = sorted(sizes)
+            distribution_stats = {
+                "community_count": len(communities),
+                "total_entities_covered": total_entities,
+                "min_size": sorted_sizes[0],
+                "max_size": sorted_sizes[-1],
+                "median_size": sorted_sizes[len(sorted_sizes) // 2],
+                "mean_size": round(total_entities / len(communities), 1),
+            }
+
+            if sorted_sizes[-1] > total_entities * 0.5:
+                logger.warning(
+                    f"Community detection: largest community contains >50% of entities "
+                    f"({sorted_sizes[-1]}/{total_entities})"
+                )
+            min_size_count = sum(1 for s in sizes if s == min_size)
+            if min_size_count > len(sizes) * 0.8:
+                logger.warning(
+                    f"Community detection: >80% of communities are at minimum size — "
+                    f"consider lowering min_size or adjusting algorithm parameters"
+                )
+
         complete_task(task_id, {
             "communities": communities,
             "total": len(communities),
-            "collection_id": collection_id
+            "collection_id": collection_id,
+            "distribution": distribution_stats,
         })
 
     except Exception as e:

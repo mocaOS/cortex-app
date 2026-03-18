@@ -735,24 +735,30 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       )}
 
       {/* Extract Entities banner */}
-      {statusCounts.pending > 0 && !isStartingProcessing && (
+      {(statusCounts.pending > 0 || statusCounts.in_progress > 0 || isStartingProcessing) && (
         <div className="glass rounded-lg p-4 border border-border flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
-            {statusCounts.pending} document{statusCounts.pending !== 1 ? "s" : ""} ready to process
+            {statusCounts.in_progress > 0 || isStartingProcessing
+              ? `Processing ${statusCounts.in_progress + statusCounts.pending} document${statusCounts.in_progress + statusCounts.pending !== 1 ? "s" : ""}...`
+              : `${statusCounts.pending} document${statusCounts.pending !== 1 ? "s" : ""} ready to process`}
           </div>
           <button
             onClick={handleStartProcessing}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+            disabled={isStartingProcessing || statusCounts.in_progress > 0}
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <FileText className="w-4 h-4" />
-            Extract Entities ({statusCounts.pending})
+            {isStartingProcessing || statusCounts.in_progress > 0 ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Extracting...
+              </>
+            ) : (
+              <>
+                <FileText className="w-4 h-4" />
+                Extract Entities ({statusCounts.pending})
+              </>
+            )}
           </button>
-        </div>
-      )}
-      {isStartingProcessing && (
-        <div className="glass rounded-lg p-4 border border-border flex items-center gap-3">
-          <Loader2 className="w-4 h-4 animate-spin text-accent" />
-          <span className="text-sm text-accent">Starting processing...</span>
         </div>
       )}
 

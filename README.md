@@ -54,11 +54,14 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔬 Deep Research Mode**: Agentic multi-step RAG for complex questions
 
 ### Advanced Features
-- **🌐 Community Detection**: Automatic grouping of related entities using graph algorithms
-- **📝 Graph Summarization**: LLM-generated summaries for entity communities
+- **🌐 Community Detection**: Automatic grouping of related entities using Leiden/Louvain algorithms with weight-aware, undirected graph projection and co-mention edges
+- **📝 Graph Summarization**: LLM-generated summaries for entity communities with assistant prefill for reliable JSON output
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
-- **🎯 Semantic Entity Resolution**: Embedding-based entity deduplication for cleaner graphs
+- **🎯 Semantic Entity Resolution**: Levenshtein fuzzy deduplication (85% threshold) during entity extraction with alias tracking
+- **🔄 Incremental & Rebuild Modes**: Relationship analysis supports building on existing relationships or full rebuild from scratch
+- **📊 Paginated Explore Views**: Entities, relationships, and communities browsers with search, type filters, detail modals, and pagination
+- **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
@@ -250,7 +253,7 @@ npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/graph/relationships/analyze` | Analyze cross-document relationships (Phase B) |
+| POST | `/api/graph/relationships/analyze` | Analyze cross-document relationships (Phase B). Params: `rebuild=true` for full rebuild |
 | DELETE | `/api/graph/relationships` | Delete ALL entity relationships |
 
 ### Community Detection Endpoints
@@ -764,12 +767,14 @@ When a document is uploaded (or custom input is added), the following pipeline e
 1. **Document Conversion** - Extract text from PDF/TXT/MD files (or use custom input content directly)
 2. **Chunking** - Split into manageable chunks (default: 500 words). URLs are protected from splitting.
 3. **Embedding Generation** - Create vector embeddings for each chunk
-4. **Entity Extraction** - LLM extracts entities (Person, Organization, Concept, etc.)
-5. **Semantic Entity Resolution** - Match entities with similar embeddings to avoid duplicates
-6. **Relationship Extraction** - LLM identifies relationships between entities
+4. **Entity Extraction** - LLM extracts entities with strict type enforcement (10 types: Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process). Non-standard types are fuzzy-matched to the nearest allowed type.
+5. **Fuzzy Entity Resolution** - Levenshtein similarity (85% threshold) deduplicates entities at storage time, merging "OpenAI" and "Open AI" into a single node with aliases
+6. **Entity-Chunk Linking** - Fuzzy string matching links entities to the chunks that mention them
 7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
 8. **Collection Assignment** - Optionally add document to a collection scope
 9. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
+10. **Relationship Analysis** (separate step via Generate Graph) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
+11. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
 
 ### Query Pipeline (Enhanced)
 
@@ -801,10 +806,13 @@ For complex questions, enable Deep Research mode with visible reasoning:
 
 The system can automatically detect communities of related entities:
 
-1. **Graph Analysis** - Use Louvain algorithm (if Neo4j GDS available) or connected components
-2. **Community Extraction** - Group entities that frequently co-occur or are connected
-3. **Summary Generation** - LLM generates descriptive names and summaries for each community
-4. **Context Enhancement** - Community summaries are used to enrich RAG answers
+1. **Cleanup** - Remove old communities and stale assignments before re-detection
+2. **Graph Projection** - Project entities with undirected, weight-aware relationships plus co-mention edges (entities sharing a chunk get implicit connections)
+3. **Algorithm** - Try Leiden first (hierarchical, guaranteed connected communities), fall back to Louvain, then BFS. Relationship weights (0-10 scale) influence community membership.
+4. **Community Extraction** - Group entities that frequently co-occur or are connected (min size configurable, default 3)
+5. **Summary Generation** - LLM generates descriptive names and summaries for each community (assistant prefill technique for reliable JSON output)
+6. **Distribution Monitoring** - Log warnings for pathological distributions (mega-communities, all-minimum-size)
+7. **Context Enhancement** - Community summaries are used to enrich RAG answers
 
 ### Document Deletion & Cleanup
 

@@ -58,7 +58,7 @@ export default function StatsBar() {
     if (!isAuthReady) return;
 
     fetchStats();
-    const interval = setInterval(fetchStats, 15000);
+    const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
   }, [isAuthReady, fetchStats]);
 

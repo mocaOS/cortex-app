@@ -1519,10 +1519,43 @@ class Neo4jService:
                 """, name=entity_name)
                 return [dict(record) for record in result]
     
+    def get_chunk_context_for_entities(
+        self,
+        entity_names: List[str],
+        max_chunks: int = 10,
+        max_content_length: int = 500,
+    ) -> str:
+        """Retrieve the most relevant chunk text for a set of entities.
+
+        Prioritizes chunks that mention the most entities in the batch
+        (co-mention chunks), as these are most likely to contain
+        relationship-relevant context.
+        """
+        if not entity_names:
+            return ""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+                WHERE e.name IN $entity_names
+                WITH c, count(DISTINCT e) as mention_count
+                ORDER BY mention_count DESC
+                LIMIT $max_chunks
+                RETURN c.content as content, mention_count
+            """, entity_names=entity_names, max_chunks=max_chunks)
+
+            chunks = []
+            for record in result:
+                content = (record["content"] or "")[:max_content_length]
+                if content:
+                    chunks.append(content)
+
+            return "\n---\n".join(chunks) if chunks else ""
+
     def store_entity_with_resolution(
         self,
         entity: Entity,
-        chunk_id: str,
+        chunk_id: str = None,
+        document_id: str = None,
         similarity_threshold: float = 0.85
     ) -> str:
         """
@@ -1531,27 +1564,42 @@ class Neo4jService:
         """
         # First, check for similar existing entities
         similar = self.find_similar_entities(entity.name, similarity_threshold)
-        
+
         if similar and similar[0]["similarity"] >= similarity_threshold:
             # Merge into existing entity
             canonical_name = similar[0]["name"]
-            
+
             # Add alias if names are different
             if canonical_name.lower() != entity.name.lower():
                 self._add_entity_alias(canonical_name, entity.name)
-            
-            # Link to chunk
-            with self.driver.session() as session:
-                session.run("""
-                    MATCH (e:Entity {name: $name})
-                    MATCH (c:Chunk {id: $chunk_id})
-                    MERGE (c)-[:MENTIONS]->(e)
-                """, name=canonical_name, chunk_id=chunk_id)
-            
+
+            # Link to chunk if provided
+            if chunk_id:
+                with self.driver.session() as session:
+                    session.run("""
+                        MATCH (e:Entity {name: $name})
+                        MATCH (c:Chunk {id: $chunk_id})
+                        MERGE (c)-[:MENTIONS]->(e)
+                    """, name=canonical_name, chunk_id=chunk_id)
+
+            # Update document provenance if provided
+            if document_id:
+                with self.driver.session() as session:
+                    session.run("""
+                        MATCH (e:Entity {name: $name})
+                        SET e.source_documents = CASE
+                            WHEN NOT $doc_id IN coalesce(e.source_documents, [])
+                            THEN coalesce(e.source_documents, []) + $doc_id
+                            ELSE coalesce(e.source_documents, [])
+                        END,
+                        e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                        e.last_extracted_at = datetime()
+                    """, name=canonical_name, doc_id=document_id)
+
             return canonical_name
-        
+
         # No similar entity, create new
-        return self.store_entity(entity, chunk_id)
+        return self.store_entity(entity, chunk_id=chunk_id, document_id=document_id)
     
     def _add_entity_alias(self, canonical_name: str, alias: str):
         """Add an alias for an entity."""
@@ -2155,44 +2203,71 @@ class Neo4jService:
         graph_name = f"entity_graph_{uuid.uuid4().hex[:8]}"
         
         try:
-            # Create a temporary graph projection
+            # Create a temporary graph projection with:
+            # 1. Direct entity-to-entity relationships (undirected, weighted)
+            # 2. Co-mention edges: entities sharing a chunk get an implicit connection (weight 2.0)
+            #    This helps community detection when direct relationships are sparse.
             if collection_id:
                 # Collection-scoped graph
                 session.run("""
                     CALL gds.graph.project.cypher(
                         $graph_name,
                         'MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity) RETURN id(e) as id',
-                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target',
+                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target, coalesce(r.weight, 5.0) as weight UNION MATCH (e1:Entity)<-[r]-(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target, coalesce(r.weight, 5.0) as weight UNION MATCH (c:Chunk)-[:MENTIONS]->(e1:Entity), (c)-[:MENTIONS]->(e2:Entity) WHERE id(e1) < id(e2) RETURN id(e1) as source, id(e2) as target, 2.0 as weight',
                         {parameters: {col_id: $col_id}}
                     )
                 """, graph_name=graph_name, col_id=collection_id)
             else:
-                # Global graph - project all entity-to-entity relationships
+                # Global graph - entity relationships + co-mention edges
                 session.run("""
                     CALL gds.graph.project.cypher(
                         $graph_name,
                         'MATCH (e:Entity) RETURN id(e) as id',
-                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target'
+                        'MATCH (e1:Entity)-[r]->(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target, coalesce(r.weight, 5.0) as weight UNION MATCH (e1:Entity)<-[r]-(e2:Entity) WHERE type(r) <> "MENTIONS" RETURN id(e1) as source, id(e2) as target, coalesce(r.weight, 5.0) as weight UNION MATCH (c:Chunk)-[:MENTIONS]->(e1:Entity), (c)-[:MENTIONS]->(e2:Entity) WHERE id(e1) < id(e2) RETURN id(e1) as source, id(e2) as target, 2.0 as weight'
                     )
                 """, graph_name=graph_name)
-            
-            # Run Louvain community detection
-            result = session.run("""
-                CALL gds.louvain.stream($graph_name)
-                YIELD nodeId, communityId
-                WITH gds.util.asNode(nodeId) as entity, communityId
-                WITH communityId, 
-                     collect({
-                         name: entity.name, 
-                         type: entity.type, 
-                         description: entity.description
-                     }) as members
-                WHERE size(members) >= $min_size
-                RETURN communityId as id,
-                       members,
-                       size(members) as entity_count
-                ORDER BY entity_count DESC
-            """, graph_name=graph_name, min_size=min_size)
+
+            # Try Leiden first (better for GraphRAG), fall back to Louvain
+            try:
+                result = session.run("""
+                    CALL gds.leiden.stream($graph_name, {
+                        relationshipWeightProperty: 'weight'
+                    })
+                    YIELD nodeId, communityId
+                    WITH gds.util.asNode(nodeId) as entity, communityId
+                    WITH communityId,
+                         collect({
+                             name: entity.name,
+                             type: entity.type,
+                             description: entity.description
+                         }) as members
+                    WHERE size(members) >= $min_size
+                    RETURN communityId as id,
+                           members,
+                           size(members) as entity_count
+                    ORDER BY entity_count DESC
+                """, graph_name=graph_name, min_size=min_size)
+                logger.info("Community detection: using Leiden algorithm")
+            except Exception as leiden_err:
+                logger.info(f"Leiden not available ({leiden_err}), falling back to Louvain")
+                result = session.run("""
+                    CALL gds.louvain.stream($graph_name, {
+                        relationshipWeightProperty: 'weight'
+                    })
+                    YIELD nodeId, communityId
+                    WITH gds.util.asNode(nodeId) as entity, communityId
+                    WITH communityId,
+                         collect({
+                             name: entity.name,
+                             type: entity.type,
+                             description: entity.description
+                         }) as members
+                    WHERE size(members) >= $min_size
+                    RETURN communityId as id,
+                           members,
+                           size(members) as entity_count
+                    ORDER BY entity_count DESC
+                """, graph_name=graph_name, min_size=min_size)
             
             communities = []
             for record in result:
@@ -2333,8 +2408,9 @@ class Neo4jService:
             
             # Get key relationships within the community
             rel_result = session.run("""
-                MATCH (e1:Entity {community_id: $id})-[r:RELATED_TO]->(e2:Entity {community_id: $id})
-                RETURN e1.name as source, e2.name as target, r.type as type, r.description as description
+                MATCH (e1:Entity {community_id: $id})-[r]->(e2:Entity {community_id: $id})
+                WHERE type(r) <> 'MENTIONS'
+                RETURN e1.name as source, e2.name as target, type(r) as type, r.description as description
                 LIMIT 20
             """, id=community_id)
             
@@ -2364,10 +2440,11 @@ class Neo4jService:
         """Get relationships within a community."""
         with self.driver.session() as session:
             result = session.run("""
-                MATCH (e1:Entity {community_id: $id})-[r:RELATED_TO]->(e2:Entity {community_id: $id})
+                MATCH (e1:Entity {community_id: $id})-[r]->(e2:Entity {community_id: $id})
+                WHERE type(r) <> 'MENTIONS'
                 RETURN e1.name as source,
                        e2.name as target,
-                       r.type as type,
+                       type(r) as type,
                        r.description as description,
                        r.weight as weight
                 ORDER BY r.weight DESC

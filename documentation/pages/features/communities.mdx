@@ -45,20 +45,30 @@ graph TB
 
 ## Detection Algorithm
 
-MOCA uses the **Louvain algorithm** for community detection:
+MOCA uses **Leiden** (preferred) or **Louvain** algorithm for community detection, with a BFS fallback when GDS is unavailable:
 
 <Mermaid chart={`
 flowchart TD
-    A["🕸️ Knowledge Graph"] --> B["📊 Graph Analysis"]
-    B --> C["🔍 Louvain Algorithm"]
+    A["🕸️ Knowledge Graph"] --> A1["🧹 Cleanup old communities"]
+    A1 --> B["📊 Graph Projection"]
+    B --> C["🔍 Leiden / Louvain Algorithm"]
     C --> D["📦 Community Assignment"]
-    D --> E["🤖 Theme Extraction"]
-    E --> F["📝 Auto-naming"]
-    
-    C -.-> C1["Find densely connected clusters"]
-    D -.-> D1["Assign entities to communities"]
-    E -.-> E1["LLM summarizes themes"]
+    D --> E["🤖 LLM Summarization"]
+    E --> F["📊 Distribution Analysis"]
+
+    B -.-> B1["Undirected + weighted edges"]
+    B -.-> B2["Co-mention edges (weight 2.0)"]
+    C -.-> C1["Weight-aware clustering"]
+    E -.-> E1["Assistant prefill for JSON output"]
+    F -.-> F1["Warn on pathological distributions"]
 `} />
+
+Key improvements in the detection pipeline:
+- **Old community cleanup** before re-detection prevents stale data accumulation
+- **Undirected projection** treats all relationships as bidirectional for community membership
+- **Relationship weights** (0-10 scale) influence community membership — strongly weighted relationships pull entities together
+- **Co-mention edges** connect entities that appear in the same chunk, providing structure even when direct entity-to-entity relationships are sparse
+- **Distribution monitoring** logs warnings for pathological distributions (e.g., one mega-community containing >50% of entities)
 
 ## API Usage
 

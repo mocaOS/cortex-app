@@ -128,6 +128,7 @@ SUMMARY_PROMPT = """Generate a descriptive summary of the following document. Th
 - Be roughly 10% of the input document size
 - Retain key points, entities, and relationships mentioned
 - Provide context for entity extraction
+- Focus especially on entities and technical concepts that might connect to other documents
 
 Document:
 {document}
@@ -182,29 +183,24 @@ Output ONLY the XML format:
 ENTITY_EXTRACTION_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract entities from text to build a comprehensive knowledge graph.
 
 # Goal
-Given text and a document summary for context, identify all important entities and their types.
+Given text and a document summary for context, identify ALL important entities.
 
-# Steps
-1. Identify all entities in the text. For each entity, extract:
-   - entity: Name of the entity, properly capitalized
-   - entity_type: Type of the entity (use the provided entity types)
-   - entity_description: Comprehensive description of the entity based on the text
+# Rules
+- Use ONLY these entity types: Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process.
+- If an entity doesn't clearly fit, classify it as Concept.
+- Extract every named entity and important concept. Be exhaustive.
+- Use consistent, canonical naming (e.g. always "Neo4j", not "neo4j" or "Neo4J").
+- Write rich, standalone descriptions that include the entity's role and context.
 
-   Format each entity in XML tags as follows:
-   <entity name="entity"><type>entity_type</type><description>entity_description</description></entity>
+Output Format: Output ONLY XML entities. No other text, no explanations.
 
-2. Coverage Requirements:
-   - Extract ALL named entities (people, organizations, technologies, concepts, etc.)
-   - Use consistent naming (e.g., always "Neo4j" not "neo4j")
-   - Include entities that are referenced indirectly
-   - Provide rich descriptions that capture the entity's role and context
-
-IMPORTANT: Output ONLY the XML entities, no other text."""
+Format:
+<entity name="Entity Name"><type>EntityType</type><description>Comprehensive description here.</description></entity>"""
 
 
-ENTITY_EXTRACTION_USER_PROMPT = """Extract ALL named entities from the following document section. Be thorough - extract every person, organization, technology, concept, location, event, and any other named entity you can identify. Do not limit yourself to only the most important ones.
+ENTITY_EXTRACTION_USER_PROMPT = """Extract ALL entities from the following document section. Be exhaustive — include every person, organization, technology, concept, product, event, or system mentioned or implied.
 
-Entity Types: {entity_types}
+Entity Types (use only these): {entity_types}
 
 Document Summary (for context):
 {document_summary}
@@ -212,62 +208,45 @@ Document Summary (for context):
 Text:
 {text}
 
-######################
 Example Output:
-<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
-<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
+<entity name="Stable Diffusion"><type>Technology</type><description>Stable Diffusion is a latent diffusion model for text-to-image generation released by Stability AI.</description></entity>
 
-######################
-Now extract all entities from the text above:"""
+Now extract all entities:"""
 
 
 # =============================================================================
 # Relationship Analysis Prompt (Phase B - cross-document relationship discovery)
 # =============================================================================
 
-RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to extract relationships between entities to build a comprehensive knowledge graph.
+RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to find as many valid relationships as possible between the given entities.
 
 # Goal
-Given a list of entities (with their types and descriptions), identify all relationships among them.
+Identify ALL meaningful semantic relationships between the provided entities using the allowed relationship types.
 
-# Steps
-1. From the entities below, identify all related entity pairs and extract:
-   - source_entity: name of the source entity (MUST be from the provided list)
-   - target_entity: name of the target entity (MUST be from the provided list)
-   - relation: relationship type (use the provided relation types)
-   - relationship_description: justification and context for the relationship
-   - relationship_weight: strength score from 0-10 (10 = strongest/most direct)
+# Rules
+- ONLY use entities from the provided list.
+- ONLY use these relationship types: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, CREATED_BY, IMPLEMENTS, MENTIONS, DEPENDS_ON, IS_A, HAS_PROPERTY, FOUNDED_BY, FEATURES, CONTAINS, INTERACTS_WITH. Use RELATED_TO only when no better type fits.
+- Be aggressive. Create a relationship if there is any plausible semantic connection based on descriptions and context.
+- Use the provided chunk context and existing relationships to infer new connections.
+- Each entity should end up with at least 1-3 relationships when possible.
+- Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection).
 
-   Format each relationship in XML tags as follows:
-   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type><description>relationship_description</description><weight>relationship_weight</weight></relationship>
-
-2. Coverage Requirements:
-   - ONLY use entity names from the provided list
-   - Focus on the most significant and well-supported relationships
-   - Infer relationships from entity descriptions and context
-   - Include both direct and indirect relationships
-   - Prioritize relationships that connect different entity types
-
-IMPORTANT: Output ONLY the XML relationships, no other text."""
+Output ONLY XML relationships. No explanations, no chain-of-thought, no other text."""
 
 
-RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract relationships from the following entities.
+RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract as many relationships as possible from the following entities. Use the provided context and existing relationships to discover new connections.
 
-Relation Types: {relation_types}
+Relation Types (use only these): {relation_types}
 
 {context_section}
 
 === Entities ===
 {entity_list}
 
-######################
-Example Output (for reference):
-<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
-<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
+Example Output:
 <relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
 
-######################
-Now extract relationships from the entities above:"""
+Now extract relationships. Find every meaningful connection possible:"""
 
 
 class GraphExtractor:
@@ -442,24 +421,39 @@ class GraphExtractor:
 
         return content or None
 
+    @staticmethod
+    def _normalize_entity_type(etype: str) -> str:
+        """Normalize entity type to one of the allowed types, defaulting to Concept."""
+        etype = etype.strip()
+        # Check exact match (case-insensitive)
+        for allowed in DEFAULT_ENTITY_TYPES:
+            if etype.lower() == allowed.lower():
+                return allowed
+        # Fuzzy match
+        from rapidfuzz import process as fuzz_process
+        closest, score, _ = fuzz_process.extractOne(etype, DEFAULT_ENTITY_TYPES)
+        if score >= 75:
+            return closest
+        return "Concept"
+
     def _extract_xml_entities(self, content: str) -> List[dict]:
         """
         Extract entities from XML-formatted LLM response.
         Handles format: <entity name="..."><type>...</type><description>...</description></entity>
         """
         entities = []
-        
+
         # Pattern for XML entity format
         entity_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*<description>([\s\S]*?)</description>\s*</entity>'
-        
+
         matches = re.findall(entity_pattern, content, re.IGNORECASE | re.DOTALL)
         for name, etype, description in matches:
             entities.append({
                 "name": name.strip(),
-                "type": etype.strip(),
+                "type": self._normalize_entity_type(etype),
                 "description": description.strip()
             })
-        
+
         # Also try simpler format without description
         simple_pattern = r'<entity\s+name="([^"]+)"[^>]*>\s*<type>([^<]+)</type>\s*</entity>'
         simple_matches = re.findall(simple_pattern, content, re.IGNORECASE | re.DOTALL)
@@ -468,10 +462,10 @@ class GraphExtractor:
             if name.strip().lower() not in existing_names:
                 entities.append({
                     "name": name.strip(),
-                    "type": etype.strip(),
+                    "type": self._normalize_entity_type(etype),
                     "description": ""
                 })
-        
+
         return entities
     
     def _extract_xml_relationships(self, content: str) -> List[dict]:
@@ -499,6 +493,16 @@ class GraphExtractor:
                 source = source_match.group(1).strip()
                 target = target_match.group(1).strip()
                 rtype = type_match.group(1).strip().upper().replace(" ", "_")
+
+                # Normalize to closest standard relationship type
+                if rtype not in DEFAULT_RELATION_TYPES:
+                    from rapidfuzz import process as fuzz_process
+                    closest, score, _ = fuzz_process.extractOne(rtype, DEFAULT_RELATION_TYPES)
+                    if score >= 80:
+                        rtype = closest
+                    else:
+                        rtype = "RELATED_TO"
+
                 description = desc_match.group(1).strip() if desc_match else ""
                 
                 weight_val = 5.0
@@ -1144,17 +1148,17 @@ class GraphExtractor:
         
         # Format entity information
         entity_info = "\n".join([
-            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:100]}"
-            for e in entities[:15]
+            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:200]}"
+            for e in entities[:30]
         ])
-        
+
         # Format relationship information
         rel_info = "\n".join([
             f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
-            for r in relationships[:20]
+            for r in relationships[:40]
         ]) if relationships else "No explicit relationships."
         
-        prompt = f"""Given these related entities and relationships, generate a JSON object with a short name and summary.
+        prompt = f"""Analyze the following group of entities and relationships. Create a short, descriptive community name and a clear summary of what this cluster represents.
 
 === Entities ===
 {entity_info}
@@ -1162,19 +1166,16 @@ class GraphExtractor:
 === Relationships ===
 {rel_info}
 
-######################
-Example Output (for reference):
-{{"name": "Stable Diffusion AI Ecosystem", "summary": "These entities form the core ecosystem around Stable Diffusion, an AI image generation model. LoRA is a fine-tuning technique that customizes models, while Kohya provides training tools."}}
-
-######################
-Now generate the JSON for the entities above:"""
+Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just the JSON.
+Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
             response = self.client.chat.completions.create(
                 model=self.current_model,
                 messages=[
-                    {"role": "system", "content": "You are a knowledge graph builder. Extract a short name and summary for groups of related entities. Output ONLY a JSON object with \"name\" and \"summary\" keys, no other text."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "{"}
                 ],
                 temperature=0.3,
                 max_tokens=300,
@@ -1183,59 +1184,93 @@ Now generate the JSON for the entities above:"""
             raw_content = self._extract_response_content(response)
             if not raw_content:
                 return {"name": f"Community ({len(entities)} entities)", "summary": ""}
-            content = raw_content.strip()
+            # Prepend the '{' from assistant prefill since model continues from there
+            content = "{" + raw_content.strip()
+            # Fix double-brace when model echoes the prefill
+            if content.startswith("{{"):
+                content = content[1:]
 
             # Parse JSON response with multiple strategies
             import re
 
-            # Strategy 1: Direct JSON parse
-            try:
-                result = json.loads(content)
-                if "name" in result and "summary" in result:
-                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
-                    return result
-            except json.JSONDecodeError:
-                pass
+            def _try_parse_community_json(text: str) -> dict | None:
+                """Try to parse community summary JSON from text."""
+                try:
+                    result = json.loads(text)
+                    if isinstance(result, dict) and "name" in result:
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                return None
 
-            # Strategy 2: Extract JSON block from markdown code fence
+            # Strategy 1: Direct JSON parse
+            parsed = _try_parse_community_json(content)
+            if parsed:
+                logger.info(f"Generated community summary: {parsed.get('name', 'Unknown')}")
+                return parsed
+
+            # Strategy 2: Strip to first { (handles chain-of-thought before JSON)
+            brace_idx = content.find("{")
+            if brace_idx > 0:
+                parsed = _try_parse_community_json(content[brace_idx:])
+                if parsed:
+                    logger.info(f"Generated community summary (stripped): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 3: Extract JSON block from markdown code fence
             json_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
             if json_block_match:
-                try:
-                    result = json.loads(json_block_match.group(1))
-                    if "name" in result:
-                        logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
-                        return result
-                except json.JSONDecodeError:
-                    pass
-            
-            # Strategy 3: Find any JSON object in the content
+                parsed = _try_parse_community_json(json_block_match.group(1))
+                if parsed:
+                    logger.info(f"Generated community summary (code fence): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 4: Find any JSON object in the content
             json_match = re.search(r'\{[^{}]*"name"\s*:\s*"[^"]*"[^{}]*\}', content, re.DOTALL)
             if json_match:
-                try:
-                    result = json.loads(json_match.group())
-                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
-                    return result
-                except json.JSONDecodeError:
-                    pass
-            
-            # Strategy 4: Extract name and summary with regex patterns
+                parsed = _try_parse_community_json(json_match.group())
+                if parsed:
+                    logger.info(f"Generated community summary (regex obj): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 5: Extract name and summary with regex patterns
             name_match = re.search(r'"name"\s*:\s*"([^"]+)"', content)
             summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', content)
-            
+
             if name_match:
-                logger.info(f"Generated community summary (regex): {name_match.group(1)}")
+                logger.info(f"Generated community summary (regex fields): {name_match.group(1)}")
                 return {
                     "name": name_match.group(1),
                     "summary": summary_match.group(1) if summary_match else content[:500]
                 }
-            
-            # Fallback: use content as summary with generic name
+
+            # Fallback: generate name from top entity types, use raw text as summary
             logger.warning("Could not parse community summary as JSON, using fallback")
+            type_counts: dict[str, int] = {}
+            for e in entities[:30]:
+                t = e.get("type", "")
+                if t:
+                    type_counts[t] = type_counts.get(t, 0) + 1
+            top_types = sorted(type_counts, key=type_counts.get, reverse=True)[:3]
+            # Use top entity names for a descriptive fallback name
+            top_names = [e.get("name", "") for e in entities[:3] if e.get("name")]
+            fallback_name = ", ".join(top_names) if top_names else " & ".join(top_types) if top_types else f"Community ({len(entities)} entities)"
+            # Clean up chain-of-thought from summary text
+            summary_text = content[:500] if content else None
+            if summary_text and summary_text.startswith("{"):
+                summary_text = summary_text  # Already handled by parser
+            elif summary_text:
+                # Strip "Let me analyze..." preamble if present
+                for marker in ["Looking at", "The entities", "This cluster", "These entities", "Key entities", "1."]:
+                    idx = summary_text.find(marker)
+                    if idx > 0:
+                        summary_text = summary_text[idx:]
+                        break
             return {
-                "name": f"Community ({len(entities)} entities)",
-                "summary": content[:500] if content else None
+                "name": fallback_name,
+                "summary": summary_text
             }
-                
+
         except Exception as e:
             logger.error(f"Error generating community summary: {e}")
             return {"name": None, "summary": None}
@@ -1251,17 +1286,17 @@ Now generate the JSON for the entities above:"""
         
         # Format entity information
         entity_info = "\n".join([
-            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:100]}"
-            for e in entities[:15]
+            f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:200]}"
+            for e in entities[:30]
         ])
-        
+
         # Format relationship information
         rel_info = "\n".join([
             f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
-            for r in relationships[:20]
+            for r in relationships[:40]
         ]) if relationships else "No explicit relationships."
         
-        prompt = f"""Given these related entities and relationships, generate a JSON object with a short name and summary.
+        prompt = f"""Analyze the following group of entities and relationships. Create a short, descriptive community name and a clear summary of what this cluster represents.
 
 === Entities ===
 {entity_info}
@@ -1269,19 +1304,16 @@ Now generate the JSON for the entities above:"""
 === Relationships ===
 {rel_info}
 
-######################
-Example Output (for reference):
-{{"name": "Stable Diffusion AI Ecosystem", "summary": "These entities form the core ecosystem around Stable Diffusion, an AI image generation model. LoRA is a fine-tuning technique that customizes models, while Kohya provides training tools."}}
-
-######################
-Now generate the JSON for the entities above:"""
+Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just the JSON.
+Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
             response = await self.async_client.chat.completions.create(
                 model=self.current_model,
                 messages=[
-                    {"role": "system", "content": "You are a knowledge graph builder. Extract a short name and summary for groups of related entities. Output ONLY a JSON object with \"name\" and \"summary\" keys, no other text."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "{"}
                 ],
                 temperature=0.3,
                 max_tokens=300,
@@ -1290,33 +1322,93 @@ Now generate the JSON for the entities above:"""
             raw_content = self._extract_response_content(response)
             if not raw_content:
                 return {"name": f"Community ({len(entities)} entities)", "summary": ""}
-            content = raw_content.strip()
+            # Prepend the '{' from assistant prefill since model continues from there
+            content = "{" + raw_content.strip()
+            # Fix double-brace when model echoes the prefill
+            if content.startswith("{{"):
+                content = content[1:]
 
-            # Parse JSON response
-            try:
-                result = json.loads(content)
-                if "name" in result and "summary" in result:
-                    logger.info(f"Generated community summary: {result.get('name', 'Unknown')}")
-                    return result
-            except json.JSONDecodeError:
-                pass
-
-            # Try regex extraction
+            # Parse JSON response with multiple strategies
             import re
+
+            def _try_parse_community_json(text: str) -> dict | None:
+                """Try to parse community summary JSON from text."""
+                try:
+                    result = json.loads(text)
+                    if isinstance(result, dict) and "name" in result:
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                return None
+
+            # Strategy 1: Direct JSON parse
+            parsed = _try_parse_community_json(content)
+            if parsed:
+                logger.info(f"Generated community summary: {parsed.get('name', 'Unknown')}")
+                return parsed
+
+            # Strategy 2: Strip to first { (handles chain-of-thought before JSON)
+            brace_idx = content.find("{")
+            if brace_idx > 0:
+                parsed = _try_parse_community_json(content[brace_idx:])
+                if parsed:
+                    logger.info(f"Generated community summary (stripped): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 3: Extract JSON block from markdown code fence
+            json_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_block_match:
+                parsed = _try_parse_community_json(json_block_match.group(1))
+                if parsed:
+                    logger.info(f"Generated community summary (code fence): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 4: Find any JSON object in the content
+            json_match = re.search(r'\{[^{}]*"name"\s*:\s*"[^"]*"[^{}]*\}', content, re.DOTALL)
+            if json_match:
+                parsed = _try_parse_community_json(json_match.group())
+                if parsed:
+                    logger.info(f"Generated community summary (regex obj): {parsed.get('name', 'Unknown')}")
+                    return parsed
+
+            # Strategy 5: Extract name and summary with regex patterns
             name_match = re.search(r'"name"\s*:\s*"([^"]+)"', content)
             summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', content)
-            
+
             if name_match:
+                logger.info(f"Generated community summary (regex fields): {name_match.group(1)}")
                 return {
                     "name": name_match.group(1),
                     "summary": summary_match.group(1) if summary_match else content[:500]
                 }
-            
+
+            # Fallback: generate name from top entity types, use raw text as summary
+            logger.warning("Could not parse community summary as JSON, using fallback")
+            type_counts: dict[str, int] = {}
+            for e in entities[:30]:
+                t = e.get("type", "")
+                if t:
+                    type_counts[t] = type_counts.get(t, 0) + 1
+            top_types = sorted(type_counts, key=type_counts.get, reverse=True)[:3]
+            # Use top entity names for a descriptive fallback name
+            top_names = [e.get("name", "") for e in entities[:3] if e.get("name")]
+            fallback_name = ", ".join(top_names) if top_names else " & ".join(top_types) if top_types else f"Community ({len(entities)} entities)"
+            # Clean up chain-of-thought from summary text
+            summary_text = content[:500] if content else None
+            if summary_text and summary_text.startswith("{"):
+                summary_text = summary_text  # Already handled by parser
+            elif summary_text:
+                # Strip "Let me analyze..." preamble if present
+                for marker in ["Looking at", "The entities", "This cluster", "These entities", "Key entities", "1."]:
+                    idx = summary_text.find(marker)
+                    if idx > 0:
+                        summary_text = summary_text[idx:]
+                        break
             return {
-                "name": f"Community ({len(entities)} entities)",
-                "summary": content[:500] if content else None
+                "name": fallback_name,
+                "summary": summary_text
             }
-                
+
         except Exception as e:
             logger.error(f"Error generating community summary: {e}")
             return {"name": None, "summary": None}
@@ -1566,7 +1658,7 @@ Respond with ONLY the community name, nothing else."""
     # Phase B: Cross-Document Relationship Analysis
     # =========================================================================
 
-    def _format_entity_for_prompt(self, entity: dict, max_desc_len: int = 200) -> str:
+    def _format_entity_for_prompt(self, entity: dict, max_desc_len: int = 500) -> str:
         """Format a single entity for inclusion in a prompt."""
         name = entity.get("name", "Unknown")
         etype = entity.get("type", "Unknown")
@@ -1609,7 +1701,7 @@ Respond with ONLY the community name, nothing else."""
         if existing_relationships:
             existing_text = "\n".join([
                 f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
-                for r in existing_relationships[:50]
+                for r in existing_relationships[:400]
             ])
             context_section += (
                 f"\nThe following relationships are already known — "
@@ -1686,6 +1778,8 @@ Respond with ONLY the community name, nothing else."""
         max_output_tokens: int = 8000,
         existing_relationships: List[dict] = None,
         on_batch_complete: Optional[Callable[[List[Relationship]], Awaitable[None]]] = None,
+        get_batch_context: Optional[Callable[[List[dict]], Awaitable[str]]] = None,
+        progress_stats: Optional[dict] = None,
     ) -> List[Relationship]:
         """Analyze relationships in batches using token-based context window management.
 
@@ -1700,6 +1794,8 @@ Respond with ONLY the community name, nothing else."""
             existing_relationships: Optional list of already-known relationships
             on_batch_complete: Optional callback(batch_relationships) called after each batch
                                for incremental storage. Receives list of Relationship objects.
+            get_batch_context: Optional async callback(entity_batch) -> str that fetches
+                               relevant source text for the current entity batch.
 
         Returns:
             Deduplicated list of all discovered Relationship objects
@@ -1727,12 +1823,12 @@ Respond with ONLY the community name, nothing else."""
             context_section=context or "",
             entity_list="",
         ))
-        # Account for existing relationships context (up to 50)
+        # Account for existing relationships context (up to 400 per batch)
         existing_context_tokens = 0
         if existing_relationships:
             existing_text = "\n".join([
                 f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
-                for r in existing_relationships[:50]
+                for r in existing_relationships[:400]
             ])
             existing_context_tokens = count_tokens(existing_text) + 100  # Extra for header text
 
@@ -1744,16 +1840,23 @@ Respond with ONLY the community name, nothing else."""
             available_tokens = 2000  # Fallback minimum
             logger.warning(f"Very limited context budget ({available_tokens} tokens), using minimum")
 
-        # Group entities by type for better batch coherence (related entities together)
+        # Interleave entity types for cross-type relationship discovery
         by_type: dict[str, List[dict]] = {}
         for e in all_entities:
             t = e.get("type", "Other")
             by_type.setdefault(t, []).append(e)
 
-        # Flatten with type grouping preserved
+        # Round-robin interleave so each batch contains a diverse mix of types
         sorted_entities = []
-        for entities_of_type in by_type.values():
-            sorted_entities.extend(entities_of_type)
+        iterators = [iter(v) for v in by_type.values()]
+        while iterators:
+            next_round = []
+            for it in iterators:
+                val = next(it, None)
+                if val is not None:
+                    sorted_entities.append(val)
+                    next_round.append(it)
+            iterators = next_round
 
         # Pre-compute token count for each entity
         entity_tokens = []
@@ -1761,16 +1864,17 @@ Respond with ONLY the community name, nothing else."""
             formatted = self._format_entity_for_prompt(e)
             entity_tokens.append((e, count_tokens(formatted)))
 
-        # Batch entities by token budget (not count)
+        # Batch entities by token budget AND hard entity cap for quality
+        MAX_ENTITIES_PER_BATCH = 120
         batches: List[List[dict]] = []
         current_batch: List[dict] = []
         current_tokens = 0
 
         for entity, tokens in entity_tokens:
-            if current_batch and (current_tokens + tokens) > available_tokens:
+            if current_batch and ((current_tokens + tokens) > available_tokens or len(current_batch) >= MAX_ENTITIES_PER_BATCH):
                 batches.append(current_batch)
-                # 10% overlap: keep last ~10% of entities for continuity
-                overlap_count = max(1, len(current_batch) // 10)
+                # 15% overlap: keep last ~15% of entities for cross-batch relationship continuity
+                overlap_count = max(2, len(current_batch) * 15 // 100)
                 overlap_entities = current_batch[-overlap_count:]
                 overlap_tokens = sum(
                     count_tokens(self._format_entity_for_prompt(e))
@@ -1791,13 +1895,37 @@ Respond with ONLY the community name, nothing else."""
             f"available={available_tokens} tokens)"
         )
 
-        # Process batches with optional incremental callback
+        # Report real batch count back to caller for accurate progress
+        if progress_stats is not None:
+            progress_stats["total_batches"] = len(batches)
+
+        # Process batches sequentially
         all_relationships: List[Relationship] = []
         seen_keys: set[tuple] = set()  # For deduplication
 
         for batch_idx, batch in enumerate(batches):
+            # Fetch per-batch source text context if callback provided
+            if get_batch_context:
+                try:
+                    batch_context = await get_batch_context(batch)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch batch context: {e}")
+                    batch_context = context
+            else:
+                batch_context = context
+
+            # Filter existing relationships to those involving entities in this batch
+            batch_existing = existing_relationships
+            if existing_relationships:
+                batch_names = {e.get("name", "").lower() for e in batch}
+                batch_existing = [
+                    r for r in existing_relationships
+                    if r.get("source", "").lower() in batch_names
+                    or r.get("target", "").lower() in batch_names
+                ][:400]
+
             rels = await self.analyze_relationships_async(
-                batch, context, existing_relationships, max_output_tokens
+                batch, batch_context, batch_existing, max_output_tokens
             )
 
             # Deduplicate as we go (memory efficient)

@@ -105,8 +105,8 @@ function ExplorePageContent() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [nodeLimit, setNodeLimit] = useState(100);
-  const [includeNeighbors, setIncludeNeighbors] = useState(true);
+  const [nodeLimit, setNodeLimit] = useState(2000);
+  const [includeNeighbors] = useState(true);
   
   // Get active tab from URL params
   const activeTab = getTabFromUrl(searchParams.get("tab"));
@@ -288,48 +288,7 @@ function ExplorePageContent() {
   // Render Knowledge Graph tab with all its controls
   return (
     <div className="py-6">
-      {/* Header Row - Only for Knowledge Graph */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={includeNeighbors}
-              onChange={(e) => setIncludeNeighbors(e.target.checked)}
-              className="w-4 h-4 rounded border-border bg-muted accent-accent"
-            />
-            Include neighbors
-          </label>
-          <Dropdown
-            value={nodeLimit}
-            onChange={setNodeLimit}
-            icon={Network}
-            options={[
-              { value: 100, label: "100 nodes" },
-              { value: 500, label: "500 nodes" },
-              { value: 2000, label: "2,000 nodes" },
-              { value: 5000, label: "5,000 nodes" },
-              { value: 10000, label: "10,000 nodes" },
-            ]}
-          />
-          <button
-            onClick={() => {
-              if (selectedEntities.length > 0) {
-                fetchSubgraph(selectedEntities);
-              } else {
-                fetchGraphData();
-              }
-            }}
-            disabled={isGraphLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={cn("w-4 h-4", isGraphLoading && "animate-spin")} />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* Search Row - Only for Knowledge Graph */}
+      {/* Controls Row - Only for Knowledge Graph */}
       <div className="flex items-center gap-3 mb-6">
         {/* Entity Search */}
         <div className="relative" ref={searchContainerRef}>
@@ -406,6 +365,32 @@ function ExplorePageContent() {
             </div>
           )}
         </div>
+
+        <Dropdown
+          value={nodeLimit}
+          onChange={setNodeLimit}
+          icon={Network}
+          options={[
+            { value: 100, label: "100 nodes" },
+            { value: 500, label: "500 nodes" },
+            { value: 2000, label: "2,000 nodes" },
+            { value: 5000, label: "5,000 nodes" },
+            { value: 10000, label: "10,000 nodes" },
+          ]}
+        />
+        <button
+          onClick={() => {
+            if (selectedEntities.length > 0) {
+              fetchSubgraph(selectedEntities);
+            } else {
+              fetchGraphData();
+            }
+          }}
+          disabled={isGraphLoading}
+          className="flex items-center gap-2 px-3 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={cn("w-4 h-4", isGraphLoading && "animate-spin")} />
+        </button>
 
         {/* Selected Entities Pills */}
         {selectedEntities.length > 0 && (

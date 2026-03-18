@@ -559,9 +559,10 @@ class ApiClient {
     );
   }
 
-  async analyzeRelationships(collectionId?: string, scope = "full"): Promise<TaskStartResponse> {
+  async analyzeRelationships(collectionId?: string, scope = "full", rebuild = false): Promise<TaskStartResponse> {
     const params = new URLSearchParams({ scope });
     if (collectionId) params.set("collection_id", collectionId);
+    if (rebuild) params.set("rebuild", "true");
 
     return this.request<TaskStartResponse>(
       `/api/graph/relationships/analyze?${params}`,

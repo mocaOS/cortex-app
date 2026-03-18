@@ -1316,15 +1316,16 @@ class DocumentProcessor:
                     ),
                 )
 
-                # Store entities with provenance
+                # Store entities with provenance and fuzzy deduplication
                 for entity in entities:
                     self._check_cancellation(doc_id)
                     await loop.run_in_executor(
                         _get_processing_executor(),
                         functools.partial(
-                            self.neo4j.store_entity,
+                            self.neo4j.store_entity_with_resolution,
                             entity,
                             document_id=doc_id,
+                            similarity_threshold=0.85,
                         ),
                     )
                     total_entities += 1
@@ -1474,15 +1475,18 @@ class DocumentProcessor:
         )
 
         if progress_callback:
-            progress_callback(0, len(entities), f"Analyzing relationships between {len(entities)} entities...")
+            progress_callback(0, 1, f"Analyzing {len(entities)} entities, estimating duration...")
 
         # Track storage stats for incremental callback
-        storage_stats = {"stored": 0, "discovered": 0}
+        import time
+        storage_stats = {"stored": 0, "discovered": 0, "batches_done": 0, "total_batches": 0}
+        _analysis_start_time = time.monotonic()
 
         async def store_batch_relationships(batch_rels: list):
             """Callback to store relationships incrementally as each batch completes."""
             nonlocal storage_stats
             storage_stats["discovered"] += len(batch_rels)
+            storage_stats["batches_done"] += 1
 
             for rel in batch_rels:
                 try:
@@ -1494,13 +1498,41 @@ class DocumentProcessor:
                 except Exception as e:
                     logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
 
-            # Update progress after each batch
+            # Update progress with ETA
             if progress_callback:
+                total_batches = storage_stats["total_batches"]
+                if total_batches <= 0:
+                    # Fallback estimate until real count is known
+                    total_batches = max(1, storage_stats["batches_done"] + 1)
+
+                elapsed = time.monotonic() - _analysis_start_time
+                avg_per_batch = elapsed / storage_stats["batches_done"]
+                remaining = total_batches - storage_stats["batches_done"]
+                eta_seconds = int(avg_per_batch * remaining)
+
+                if eta_seconds > 60:
+                    eta_str = f"~{eta_seconds // 60}m remaining"
+                elif eta_seconds > 0:
+                    eta_str = f"~{eta_seconds}s remaining"
+                else:
+                    eta_str = "almost done"
+
                 progress_callback(
-                    storage_stats["discovered"],
-                    len(entities),  # Use entity count as rough progress indicator
-                    f"Stored {storage_stats['stored']} relationships..."
+                    storage_stats["batches_done"],
+                    total_batches,
+                    f"Batch {storage_stats['batches_done']}/{total_batches}, {eta_str}"
                 )
+
+        # Callback to fetch relevant source text for each entity batch
+        async def get_batch_context(entity_batch: list) -> str:
+            """Fetch relevant chunk text for the current entity batch."""
+            batch_names = [e.get("name") for e in entity_batch if e.get("name")]
+            return await asyncio.to_thread(
+                self.neo4j.get_chunk_context_for_entities,
+                batch_names,
+                max_chunks=10,
+                max_content_length=500,
+            )
 
         # Run batched relationship analysis with incremental storage
         # Uses token-based batching (not entity count) for optimal context utilization
@@ -1511,6 +1543,8 @@ class DocumentProcessor:
             max_output_tokens=self.settings.relationship_max_output_tokens,
             existing_relationships=existing_relationships,
             on_batch_complete=store_batch_relationships,
+            get_batch_context=get_batch_context,
+            progress_stats=storage_stats,
         )
 
         if progress_callback:

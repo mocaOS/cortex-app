@@ -20,9 +20,9 @@ GraphRAG uses Large Language Models to:
 
 MOCA uses a two-phase approach for building the knowledge graph:
 
-**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking.
+**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Fuzzy entity resolution (Levenshtein 85%) deduplicates entities at storage time, merging variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching.
 
-**Phase B (per-collection, on demand):** Cross-document relationship analysis using the main (large) model. Discovers relationships between all entities. Triggered via API after document processing.
+**Phase B (per-collection, on demand):** Cross-document relationship analysis using the main (large) model. Discovers relationships between all entities using source text context — relevant chunk text is fetched per batch so the LLM can ground relationships in actual document content. Batched at 120 entities per batch with 15% overlap for cross-batch continuity. Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. Triggered via API or Generate Graph UI after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -52,6 +52,11 @@ MOCA extracts various entity types:
 | `Location` | Places, regions, countries |
 | `Event` | Conferences, releases, meetings |
 | `Product` | Products, services, offerings |
+| `Document` | Papers, reports, articles |
+| `System` | Platforms, infrastructure, OS |
+| `Process` | Workflows, procedures, methods |
+
+Entity types are strictly enforced during extraction — non-standard types are automatically fuzzy-matched to the nearest allowed type (defaulting to `Concept` if no match above 75%).
 
 ## Relationship Types
 
@@ -59,13 +64,23 @@ Common relationship types discovered:
 
 | Relationship | Description |
 |--------------|-------------|
-| `RELATED_TO` | Generic relationship |
-| `CREATED` | Creator/creation relationship |
+| `RELATED_TO` | Generic/fallback relationship |
+| `CREATED_BY` | Creator/creation relationship |
 | `WORKS_FOR` | Employment relationship |
 | `PART_OF` | Containment/membership |
 | `USES` | Utilization relationship |
 | `LOCATED_IN` | Geographic relationship |
 | `MENTIONS` | Reference relationship |
+| `IMPLEMENTS` | Implementation relationship |
+| `DEPENDS_ON` | Dependency relationship |
+| `IS_A` | Classification relationship |
+| `HAS_PROPERTY` | Attribute relationship |
+| `FOUNDED_BY` | Founding relationship |
+| `FEATURES` | Feature/capability relationship |
+| `CONTAINS` | Containment relationship |
+| `INTERACTS_WITH` | Interaction relationship |
+
+Relationship types are strictly enforced — the LLM is instructed to only use these types, and any non-standard types in the output are fuzzy-matched to the nearest allowed type (80% threshold, fallback to `RELATED_TO`).
 
 ## Graph Visualization
 
