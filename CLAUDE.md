@@ -36,6 +36,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `lib/session.ts` — JWT session management
 - `components/layout/` — Header (top nav with Manage/Explore), SubMenu (contextual tabs), StatsBar (4 KPI cards: Documents, Entities, Relations, Communities)
 - `components/upload/UploadModal.tsx` — Upload modal (drag-and-drop + collection selector), closes immediately on file selection; upload progress shown inline in document list
+- `components/documents/DocumentCard.tsx` — Document row with view button: `.md` files open in an in-app Markdown viewer modal; all other file types open in a new browser tab via `/api/documents/{id}/file` (browser decides to display or download)
 - `components/explore/` — Read-only browsers for entities, relationships, communities + KnowledgeGraph visualization
 - `app/extract/page.tsx` — Generate Graph page: 3-step pipeline with status tracking, staleness detection via `SystemMeta` Neo4j nodes (`last_relationship_analysis_at`, `last_community_detection_at`), cascading blocked states
 - `components/` — UI components organized by feature

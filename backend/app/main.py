@@ -14,7 +14,7 @@ from typing import Optional, Dict, List
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 import aiofiles
@@ -1017,6 +1017,36 @@ async def get_document_content(document_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting document content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documents/{document_id}/file")
+async def get_document_file(document_id: str):
+    """
+    Serve the original uploaded file for viewing/download.
+    """
+    try:
+        neo4j = get_neo4j_service()
+        doc = await asyncio.to_thread(neo4j.get_document, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        file_path = doc.get("file_path")
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Original file not available")
+
+        filename = doc.get("filename", os.path.basename(file_path))
+        media_type = doc.get("file_type", "application/octet-stream")
+
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type=media_type,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving document file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

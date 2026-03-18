@@ -185,6 +185,7 @@ npm run dev
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
 | GET | `/api/documents/{id}/content` | Get document with full chunk content |
+| GET | `/api/documents/{id}/file` | Serve original uploaded file (inline viewing for PDF, download for others) |
 | DELETE | `/api/documents/{id}` | Delete a document (cancels processing, cleans up graph) |
 | POST | `/api/documents/delete` | Bulk delete multiple documents (cancels all processing) |
 | DELETE | `/api/documents` | Delete ALL documents (cancels all tasks, cleans entire graph) |

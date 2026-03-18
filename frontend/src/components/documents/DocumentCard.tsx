@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef } from "react";
-import { motion } from "framer-motion";
+import { useRef, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText,
   FileSpreadsheet,
@@ -16,8 +16,11 @@ import {
   Upload,
   Play,
   PenLine,
+  Eye,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import MarkdownRenderer from "@/components/MarkdownRenderer";
 
 interface Document {
   id: string;
@@ -147,6 +150,12 @@ const formatDate = (dateString: string) => {
   });
 };
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+const isMarkdownFile = (filename: string) => {
+  return /\.md$/i.test(filename);
+};
+
 export function DocumentCard({
   doc,
   index,
@@ -160,6 +169,9 @@ export function DocumentCard({
   isReprocessing,
 }: DocumentCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showMarkdownViewer, setShowMarkdownViewer] = useState(false);
+  const [markdownContent, setMarkdownContent] = useState<string | null>(null);
+  const [loadingContent, setLoadingContent] = useState(false);
   const FileIcon = getFileIcon(doc.file_type, doc.is_custom_input);
   const status = getStatusConfig(doc.processing_status, doc);
   const StatusIcon = status.icon;
@@ -172,6 +184,27 @@ export function DocumentCard({
     }
     e.target.value = "";
   };
+
+  const handleView = useCallback(async () => {
+    if (!doc.file_path) return;
+
+    if (isMarkdownFile(doc.filename)) {
+      setLoadingContent(true);
+      setShowMarkdownViewer(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/documents/${doc.id}/file`);
+        if (!res.ok) throw new Error("Failed to fetch file");
+        const text = await res.text();
+        setMarkdownContent(text);
+      } catch {
+        setMarkdownContent("*Failed to load document content.*");
+      } finally {
+        setLoadingContent(false);
+      }
+    } else {
+      window.open(`${API_BASE}/api/documents/${doc.id}/file`, "_blank");
+    }
+  }, [doc.id, doc.filename, doc.file_path]);
 
   const progressPercent =
     doc.progress_current && doc.progress_total
@@ -187,6 +220,7 @@ export function DocumentCard({
   const imageAnalysisDone = hasImageProgress && doc.image_progress_current === doc.image_progress_total;
 
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -324,6 +358,17 @@ export function DocumentCard({
 
         {/* Actions */}
         <div className="flex items-center gap-1">
+          {/* View button */}
+          {doc.file_path && (
+            <button
+              onClick={handleView}
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="View document"
+            >
+              <Eye className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Restart button for in-progress documents */}
           {isProcessing(doc.processing_status) && doc.file_path && (
             <button
@@ -398,5 +443,48 @@ export function DocumentCard({
         </div>
       </div>
     </motion.div>
+
+    {/* Markdown Viewer Modal */}
+    <AnimatePresence>
+      {showMarkdownViewer && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setShowMarkdownViewer(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-card border border-border rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <h3 className="text-sm font-medium text-foreground truncate" title={doc.filename}>
+                {doc.filename}
+              </h3>
+              <button
+                onClick={() => setShowMarkdownViewer(false)}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {loadingContent ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <MarkdownRenderer content={markdownContent || ""} />
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+    </>
   );
 }

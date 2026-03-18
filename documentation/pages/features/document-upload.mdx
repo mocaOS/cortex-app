@@ -155,6 +155,23 @@ curl -X POST "http://localhost:8000/api/custom-input" \
   }'
 ```
 
+## Viewing Documents
+
+You can view the original uploaded file for any document. The behavior depends on the file type:
+
+- **Markdown files (`.md`)**: Rendered in an in-app viewer with full Markdown formatting (headings, tables, code blocks, etc.)
+- **PDF files**: Opened in a new browser tab for inline viewing
+- **Other file types**: Opened in a new tab — the browser decides whether to display or download the file
+
+```bash
+# Get the original file (returns the file with appropriate Content-Type)
+curl "http://localhost:8000/api/documents/doc_abc123/file" \
+  -H "X-API-Key: your-api-key" \
+  -o document.pdf
+```
+
+In the UI, click the **eye icon** on any document card to view it.
+
 ## Document Management
 
 ### List All Documents
