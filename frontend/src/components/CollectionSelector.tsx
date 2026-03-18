@@ -19,6 +19,7 @@ interface CollectionSelectorProps {
   onChange: (collectionId: string | undefined) => void;
   allowCreate?: boolean;
   className?: string;
+  placeholder?: string;
 }
 
 export default function CollectionSelector({
@@ -26,6 +27,7 @@ export default function CollectionSelector({
   onChange,
   allowCreate = true,
   className,
+  placeholder = "Select collection...",
 }: CollectionSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -113,7 +115,7 @@ export default function CollectionSelector({
           ) : selectedCollection ? (
             selectedCollection.name
           ) : (
-            <span className="text-muted-foreground">Select collection...</span>
+            <span className="text-muted-foreground">{placeholder}</span>
           )}
         </span>
         <ChevronDown
