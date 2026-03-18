@@ -582,7 +582,28 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `GRAPH_WEIGHT` | Weight for graph context in RRF | No | `0.2` |
 | `MAX_CONVERSATION_HISTORY` | Max messages in conversation context | No | `6` |
 | `ENABLE_AGENTIC_RAG` | Enable multi-step agentic RAG | No | `true` |
-| `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG | No | `3` |
+| `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG (legacy) | No | `3` |
+
+#### Agent-Based Research Pipeline
+
+The agent pipeline uses an LLM-driven researcher/writer architecture where the researcher iteratively gathers information via function-calling tools, then the writer synthesizes the answer.
+
+**LLM requirement:** The model must support **function calling / tool use** (OpenAI `tools` parameter). Models like GPT-4o, GPT-4o-mini, Claude, Mistral Large, and Command R+ support this. Many smaller or local models behind LiteLLM do not.
+
+Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if:
+- Your LLM does not support function calling (e.g., local models via Ollama/vLLM without tool-use support)
+- You want lower token usage (the agent pipeline uses 3-5x more tokens due to multiple researcher iterations)
+- You want lower latency (the legacy pipeline makes 2 LLM calls vs 4-8 for the agent)
+- You want deterministic, reproducible query behavior (the legacy pipeline follows a fixed decompose → search → synthesize path)
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_AGENT_RESEARCH` | Use agent pipeline for deep research mode (set `false` for legacy) | No | `true` |
+| `ENABLE_AGENT_CHAT` | Use agent pipeline for standard chat mode | No | `false` |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `2` |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `10` |
+| `WRITER_MAX_TOKENS_SPEED` | Max output tokens for chat answers | No | `1200` |
+| `WRITER_MAX_TOKENS_QUALITY` | Max output tokens for deep research answers | No | `4000` |
 
 #### Batch Processing
 
@@ -597,6 +618,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 |----------|-------------|----------|---------|
 | `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `8000` |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (1 = sequential) | No | `1` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 
@@ -785,31 +807,37 @@ When a document is uploaded (or custom input is added), the following pipeline e
 10. **Relationship Analysis** (separate step via Generate Graph) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
 11. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
 
-### Query Pipeline (Enhanced)
+### Query Pipeline (Agent Architecture)
 
-When you ask a question (optionally scoped to a specific collection via `collection_id`):
+Both Chat and Deep Research modes use a **researcher/writer agent architecture**. An LLM-driven researcher agent uses function-calling to iteratively gather information via tools, then a separate writer LLM synthesizes the answer.
 
-1. **Query Embedding** - Convert question to vector
-2. **Entity Extraction** - Extract entity names from the question
-3. **Community Search** - Find relevant entity communities
-4. **Hybrid Search with RRF** - Combine three search methods:
-   - Vector similarity search (semantic matching)
-   - Full-text keyword search (exact term matching)
-   - Graph traversal (relationship-based retrieval)
+**Chat mode** (speed): The researcher gets 2 iterations with `knowledge_search` (hybrid RRF: vector + keyword + graph, with cross-encoder reranking) and `done`. Each search call supports up to 3 parallel queries.
+
+**Deep Research mode** (quality): The researcher gets up to 10 iterations with additional tools — `community_search`, `entity_lookup`, and `reasoning` (for transparent thinking). The agent decides what to search, when to dig deeper, and when to stop.
+
+Both modes use the same underlying search infrastructure:
+
+1. **Hybrid Search with RRF** - Per query, combines three search methods:
+   - Vector similarity search (semantic matching, weight 0.5)
+   - Full-text keyword search (exact term matching, weight 0.3)
+   - Graph traversal (relationship-based retrieval, weight 0.2)
    - Reciprocal Rank Fusion combines rankings
-5. **Cross-Encoder Re-ranking** - Re-score results for precision
-6. **Context Assembly** - Combine results + graph context + community summaries
-7. **LLM Generation** - Generate answer with conversation history
+2. **Cross-Encoder Re-ranking** - Re-score results for precision
+3. **Context Assembly** - Accumulated sources + graph context + community summaries
+4. **Writer LLM** - Generates answer with conversation history and source citations
 
-### Deep Research Mode (Agentic RAG) with Extended Thinking
+### Deep Research Mode with Extended Thinking
 
-For complex questions, enable Deep Research mode with visible reasoning:
+For complex questions, the quality researcher agent conducts multi-angle investigation:
 
-1. **Question Decomposition** - Break into sub-questions (streamed as thinking events)
-2. **Community Context** - Search relevant entity communities for background
-3. **Iterative Retrieval** - Research each sub-question (progress streamed)
-4. **Result Aggregation** - Merge and deduplicate findings
-5. **Comprehensive Synthesis** - Generate detailed answer with community insights
+1. **Reasoning** - Plan research strategy (streamed as thinking events)
+2. **Broad Search** - Initial `knowledge_search` + `community_search` for overview
+3. **Targeted Follow-up** - Additional searches following leads from initial results
+4. **Entity Exploration** - `entity_lookup` for key entities mentioned in results
+5. **Cross-referencing** - Fill gaps and verify from multiple angles
+6. **Writer Synthesis** - Comprehensive answer with Markdown formatting (up to 4000 tokens)
+
+Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline.
 
 ### Community Detection Pipeline
 

@@ -24,6 +24,8 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/vision_analyzer.py` — Image analysis and OCR
 - `services/auth_service.py` — Admin JWT auth
 - `services/prompt_security.py` — Prompt injection detection
+- `services/researcher_agent.py` — Agent-based research pipeline (researcher loop + writer streaming)
+- `services/research_prompts.py` — Prompt templates and tool definitions for researcher/writer agents
 
 **Frontend** (`frontend/src/`):
 - Next.js App Router with unified navigation structure:
@@ -43,7 +45,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 
 **Document Processing Pipeline**: Upload (modal closes immediately, duplicate detection by filename+filesize, progress in document list) → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction with fuzzy entity resolution (Levenshtein 85% dedup, triggered via "Extract Entities" button on Documents or Generate Graph page) → entity type normalization (10 allowed types, fuzzy matched) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job via Generate Graph Step 2) relationship analysis with source text context (chunk co-mentions fed to LLM per batch, 120 entities/batch, sequential, with ETA tracking) → (Step 3) community detection (Leiden with Louvain fallback, weight-aware, co-mention edges for sparse graphs) → community summarization (assistant prefill for JSON output). Step 2 supports incremental mode (builds on existing) and rebuild mode (deletes all relationships first). Timestamps persisted in `SystemMeta` Neo4j nodes for staleness tracking.
 
-**RAG Query Pipeline**: Query embedding → entity extraction → community search → hybrid search (vector 0.5 + fulltext 0.3 + graph 0.2, RRF) → cross-encoder reranking → context assembly → LLM generation. Agentic mode adds multi-step decomposition.
+**RAG Query Pipeline (Agent Architecture)**: Two-stage researcher/writer pipeline. Researcher agent uses OpenAI function-calling to iteratively gather information via tools: `knowledge_search` (hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking), `community_search`, `entity_lookup`, `reasoning` (quality mode only), `done`. Writer then synthesizes all gathered context into a streamed answer. Speed mode (chat): 2 iterations, knowledge_search + done. Quality mode (deep research): up to 10 iterations, all tools with reasoning transparency. Legacy fixed pipeline available as fallback via `ENABLE_AGENT_RESEARCH=false`.
 
 ## Development Commands
 
@@ -84,6 +86,9 @@ Copy `.env.example` to `.env`. Key variables:
 - `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `USE_OPENAI_EMBEDDINGS` — embedding config
 - `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
 - `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
+- `ENABLE_AGENT_RESEARCH` (default: true), `ENABLE_AGENT_CHAT` (default: false) — agent-based research pipeline flags
+- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 2), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 10) — agent loop iteration caps
+- `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
 - `EXTRACTION_MAX_CONTEXT` (default: 32768), `RELATIONSHIP_MAX_CONTEXT` (default: 65536), `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 8000) — context window and output budgets for graph extraction
 - `PARALLEL_RELATIONSHIP_BATCHES` (default: 1) — number of relationship analysis batches to process in parallel (1 = sequential)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth

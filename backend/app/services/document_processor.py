@@ -2875,6 +2875,96 @@ Comprehensive Answer:""",
 
         yield {"done": True, "communities_used": list(communities_used)}
 
+    # =========================================================================
+    # Agent-based Research Pipeline (Researcher/Writer Architecture)
+    # =========================================================================
+
+    async def agent_rag_stream(
+        self,
+        question: str,
+        mode: str = "quality",
+        conversation_history: Optional[List[ConversationMessage]] = None,
+        collection_id: Optional[str] = None,
+    ) -> AsyncGenerator[dict, None]:
+        """
+        Stream research pipeline results using the agent-based architecture.
+
+        The researcher agent uses tool-calling to iteratively gather information,
+        then the writer synthesizes it into a streamed answer.
+
+        Args:
+            question: The user's question
+            mode: "speed" for chat, "quality" for deep research
+            conversation_history: Previous conversation messages
+            collection_id: Optional collection scope
+        """
+        from app.services.researcher_agent import run_research_pipeline
+        from app.services.llm_config import get_llm_config
+
+        llm_config = get_llm_config()
+
+        async for event in run_research_pipeline(
+            question=question,
+            mode=mode,
+            conversation_history=conversation_history,
+            collection_id=collection_id,
+            processor=self,
+            neo4j_service=self.neo4j,
+            llm_config=llm_config,
+            settings=self.settings,
+        ):
+            yield event
+
+    async def agent_rag_query(
+        self,
+        question: str,
+        mode: str = "quality",
+        conversation_history: Optional[List[ConversationMessage]] = None,
+        collection_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Non-streaming agent RAG query. Wraps the streaming pipeline,
+        collecting events and returning a single response dict.
+        """
+        answer = ""
+        sources = []
+        graph_context = None
+        retrieval_stats = None
+        communities_used = []
+        reasoning_steps = []
+
+        async for event in self.agent_rag_stream(
+            question=question,
+            mode=mode,
+            conversation_history=conversation_history,
+            collection_id=collection_id,
+        ):
+            if "content" in event:
+                answer += event["content"]
+            elif "sources" in event:
+                sources = event["sources"]
+            elif "graph_context" in event:
+                graph_context = event["graph_context"]
+            elif "retrieval_stats" in event:
+                retrieval_stats = event["retrieval_stats"]
+            elif "thinking" in event:
+                reasoning_steps.append(f"[thinking] {event['thinking']}")
+            elif "retrieval" in event:
+                reasoning_steps.append(f"[retrieval] {event['retrieval']}")
+            elif "done" in event:
+                communities_used = event.get("communities_used", [])
+
+        return {
+            "question": question,
+            "answer": answer,
+            "sources": sources,
+            "graph_context": graph_context,
+            "reasoning_steps": reasoning_steps,
+            "communities_used": communities_used,
+            "retrieval_stats": retrieval_stats,
+            "reranked": True,
+        }
+
 
 # Singleton instances
 _document_processor: Optional[DocumentProcessor] = None

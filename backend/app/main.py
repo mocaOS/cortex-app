@@ -1526,13 +1526,51 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
     - Agentic multi-step reasoning (optional)
     """
     try:
+        settings = get_settings()
         processor = get_query_processor()
-        
+
         # Convert conversation history if provided
         conversation_history = None
         if request.conversation_history:
             conversation_history = request.conversation_history
-        
+
+        # Use agent pipeline for agentic requests if enabled
+        if request.use_agentic and settings.enable_agent_research:
+            result = await processor.agent_rag_query(
+                question=request.question,
+                mode="quality",
+                conversation_history=conversation_history,
+                collection_id=request.collection_id,
+            )
+
+            # Build sources from agent result (already formatted)
+            sources = [
+                SearchResult(
+                    document_id=s.get("document_id", ""),
+                    chunk_id=s.get("chunk_id", ""),
+                    content=s.get("content", ""),
+                    score=s.get("score", 0),
+                    metadata=s.get("metadata", {}),
+                )
+                for s in result.get("sources", [])
+            ]
+
+            graph_context = None
+            if result.get("graph_context"):
+                graph_context = GraphContext(**result["graph_context"])
+
+            return RAGResponse(
+                question=result["question"],
+                answer=result["answer"],
+                sources=sources,
+                graph_context=graph_context,
+                reranked=result.get("reranked", False),
+                reasoning_steps=result.get("reasoning_steps"),
+                communities_used=result.get("communities_used"),
+                retrieval_stats=result.get("retrieval_stats"),
+            )
+
+        # Legacy path for non-agent requests
         result = await processor.rag_query(
             question=request.question,
             top_k=request.top_k,
@@ -1543,7 +1581,7 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
             use_agentic=request.use_agentic,
             collection_id=request.collection_id
         )
-        
+
         sources = [
             SearchResult(
                 document_id=r["document_id"],
@@ -1551,19 +1589,19 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
                 content=r["content"],
                 score=r.get("rerank_score", r.get("score", 0)),
                 metadata={
-                    "filename": r["filename"], 
+                    "filename": r["filename"],
                     "chunk_index": r.get("chunk_index", 0),
                     "rerank_score": r.get("rerank_score")
                 }
             )
             for r in result["sources"]
         ]
-        
+
         # Build graph context if available
         graph_context = None
         if result.get("graph_context"):
             graph_context = GraphContext(**result["graph_context"])
-        
+
         return RAGResponse(
             question=result["question"],
             answer=result["answer"],
@@ -1611,20 +1649,30 @@ async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(re
         async def generate_agentic():
             try:
                 processor = get_query_processor()
-                
-                async for event in processor.agentic_rag_stream(
-                    question=request.question,
-                    top_k=request.top_k,
-                    max_hops=request.max_hops,
-                    conversation_history=request.conversation_history,
-                    collection_id=request.collection_id
-                ):
-                    yield f"data: {json.dumps(event)}\n\n"
-                
+
+                # Use new agent-based pipeline if enabled, otherwise legacy
+                if settings.enable_agent_research:
+                    async for event in processor.agent_rag_stream(
+                        question=request.question,
+                        mode="quality",
+                        conversation_history=request.conversation_history,
+                        collection_id=request.collection_id
+                    ):
+                        yield f"data: {json.dumps(event)}\n\n"
+                else:
+                    async for event in processor.agentic_rag_stream(
+                        question=request.question,
+                        top_k=request.top_k,
+                        max_hops=request.max_hops,
+                        conversation_history=request.conversation_history,
+                        collection_id=request.collection_id
+                    ):
+                        yield f"data: {json.dumps(event)}\n\n"
+
             except Exception as e:
                 logger.error(f"Error in streaming agentic RAG: {e}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        
+
         return StreamingResponse(
             generate_agentic(),
             media_type="text/event-stream",
@@ -1736,29 +1784,40 @@ Question: {request.question}"""
             }
         )
     
-    # Standard streaming RAG (hybrid + reranking)
+    # Standard streaming RAG — optionally uses speed mode agent pipeline
     async def generate():
         try:
-            from openai import AsyncOpenAI
-            
             # Validate user input for prompt injection (if enabled)
             processed_question, was_blocked, reason = validate_and_process_input(
                 request.question, strict_mode=True, enabled=settings.prompt_security
             )
-            
+
             if was_blocked:
                 logger.warning(f"Blocked potential prompt injection: {reason}")
                 yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
                 return
-            
+
             processor = get_query_processor()
-            
-            # First, do the retrieval (non-streaming part)
+
+            # Speed mode agent pipeline for standard chat (opt-in via config)
+            if settings.enable_agent_chat:
+                async for event in processor.agent_rag_stream(
+                    question=request.question,
+                    mode="speed",
+                    conversation_history=request.conversation_history,
+                    collection_id=request.collection_id
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+                return
+
+            # Legacy standard streaming path (hybrid search + reranking + writer)
+            from openai import AsyncOpenAI
+
             conversation_history = request.conversation_history
-            
+
             graph_context = None
-            
+
             if request.use_graph:
                 search_result = await processor.graph_search_async(
                     request.question,
@@ -1769,7 +1828,7 @@ Question: {request.question}"""
                 )
                 results = search_result["results"]
                 graph_data = search_result["graph_context"]
-                
+
                 if graph_data["entities"] or graph_data["relationships"]:
                     graph_context = GraphContext(
                         entities=graph_data["entities"],
@@ -1778,7 +1837,7 @@ Question: {request.question}"""
                     )
             else:
                 results = processor.search(request.question, top_k=request.top_k * 2, collection_id=request.collection_id)
-            
+
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
                 results = await processor.rerank_results_async(
@@ -1786,7 +1845,7 @@ Question: {request.question}"""
                 )
             else:
                 results = results[:request.top_k]
-            
+
             # Send sources first
             sources = [
                 {
@@ -1799,17 +1858,17 @@ Question: {request.question}"""
                 for r in results
             ]
             yield f"data: {json.dumps({'sources': sources})}\n\n"
-            
+
             # Send graph context
             if graph_context:
                 yield f"data: {json.dumps({'graph_context': graph_context.model_dump()})}\n\n"
-            
+
             # Build context for generation
             formatted_sources = ""
             for idx, r in enumerate(results):
                 ref_id = f"src_{idx+1}"
                 formatted_sources += f"\n[{ref_id}] Source: {r['filename']}\n{r['content']}\n"
-            
+
             graph_context_str = ""
             if graph_context and graph_context.entities:
                 entity_info = "\n".join([
@@ -1817,36 +1876,24 @@ Question: {request.question}"""
                     for e in graph_context.entities[:10]
                 ])
                 graph_context_str += f"\n\n=== Related Entities ===\n{entity_info}"
-            
+
             if graph_context and graph_context.relationships:
                 rel_info = "\n".join([
                     f"- {r['source']} --[{r['type']}]--> {r['target']}"
                     for r in graph_context.relationships[:15]
                 ])
                 graph_context_str += f"\n\n=== Entity Relationships ===\n{rel_info}"
-            
-            # Check if this is a follow-up question
+
+            # Use improved writer prompt from research_prompts module
+            from app.services.research_prompts import get_writer_system_prompt, get_writer_user_prompt
+
             has_history = conversation_history and len(conversation_history) > 0
-            
-            system_prompt = """You are an expert research assistant providing accurate, helpful answers.
+            anti_injection = get_anti_injection_instruction(enabled=settings.prompt_security)
+            system_prompt = get_writer_system_prompt("speed", anti_injection)
 
-Guidelines:
-1. Synthesize information into a coherent, natural-sounding answer
-2. Cite sources inline using [src_1], [src_2] notation when referencing specific information
-3. Be precise and factual - avoid speculation
-4. If you cannot fully answer, explain what aspects you can address
-5. When there is conversation history, prioritize continuing that conversation naturally
-
-Response Style:
-- Write naturally as if you're an expert directly answering the question
-- Never mention "context", "provided documents", or similar phrases
-- Never say "Based on the context" or "According to the documents provided"
-- Present information confidently as expert knowledge
-- Never output tool calls, function calls, or any special syntax - just provide plain text answers""" + get_anti_injection_instruction(enabled=settings.prompt_security)
-            
             # Build messages with conversation history
             messages = [{"role": "system", "content": system_prompt}]
-            
+
             if has_history:
                 max_history = settings.max_conversation_history
                 for msg in conversation_history[-max_history:]:
@@ -1854,58 +1901,42 @@ Response Style:
                         "role": msg.role,
                         "content": msg.content
                     })
-                
-                # For follow-up questions, include sources as additional context but keep question simple
-                if formatted_sources or graph_context_str:
-                    prompt = f"""{request.question}
 
-(Additional reference material if needed:
-{formatted_sources if formatted_sources else ""}
-{graph_context_str})"""
-                else:
-                    prompt = request.question
-            else:
-                # First message - full context with sources
-                prompt = f"""Answer the following question. Use [src_1], [src_2], etc. to cite specific information.
-
-=== Reference Material ===
-{formatted_sources if formatted_sources else "No references available."}
-{graph_context_str}
-
-### Question:
-{request.question}
-
-### Answer:"""
-            
+            prompt = get_writer_user_prompt(
+                mode="speed",
+                formatted_sources=formatted_sources,
+                graph_context_str=graph_context_str,
+                question=request.question,
+                has_history=has_history,
+            )
             messages.append({"role": "user", "content": prompt})
-            
+
             # Stream the response using async client
-            # Use turbo mode config if active, otherwise default settings
             llm_config = get_llm_config()
             client = AsyncOpenAI(
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
             )
-            
+
             stream = await client.chat.completions.create(
                 model=llm_config.model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1200,
+                max_tokens=settings.writer_max_tokens_speed,
                 stream=True
             )
-            
+
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     yield f"data: {json.dumps({'content': content})}\n\n"
 
             yield f"data: {json.dumps({'done': True})}\n\n"
-            
+
         except Exception as e:
             logger.error(f"Error in streaming RAG: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
@@ -2796,20 +2827,30 @@ async def ask_with_thinking_stream(request: RAGRequest):
     async def generate():
         try:
             processor = get_query_processor()
-            
-            async for event in processor.agentic_rag_stream(
-                question=request.question,
-                top_k=request.top_k,
-                max_hops=request.max_hops,
-                conversation_history=request.conversation_history,
-                collection_id=request.collection_id
-            ):
-                yield f"data: {json.dumps(event)}\n\n"
-            
+
+            # Use new agent pipeline if enabled, otherwise legacy
+            if settings.enable_agent_research:
+                async for event in processor.agent_rag_stream(
+                    question=request.question,
+                    mode="quality",
+                    conversation_history=request.conversation_history,
+                    collection_id=request.collection_id
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+            else:
+                async for event in processor.agentic_rag_stream(
+                    question=request.question,
+                    top_k=request.top_k,
+                    max_hops=request.max_hops,
+                    conversation_history=request.conversation_history,
+                    collection_id=request.collection_id
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+
         except Exception as e:
             logger.error(f"Error in streaming agentic RAG: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",

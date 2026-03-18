@@ -27,23 +27,38 @@ The settings dropdown allows you to:
 
 ## How It Works
 
+Both modes use a **researcher/writer agent architecture**. An LLM-driven researcher agent iteratively gathers information from the knowledge base using tool-calling, then a separate writer LLM synthesizes the gathered context into a streamed answer.
+
 <Mermaid chart={`
 flowchart TD
     Q["User Question"] --> MODE{"Mode?"}
-    MODE -->|Chat| SEARCH["Hybrid Search"]
-    MODE -->|Deep Research| DECOMPOSE["Decompose into Sub-Questions"]
+    MODE -->|Chat| SPEED["Speed Researcher Agent"]
+    MODE -->|Deep Research| QUALITY["Quality Researcher Agent"]
 
-    SEARCH --> RERANK["Cross-Encoder Re-ranking"]
-    RERANK --> GRAPH["Graph Context Enrichment"]
-    GRAPH --> LLM["LLM Generation"]
+    SPEED --> KS1["knowledge_search (1 call, 3 queries)"]
+    KS1 --> DONE1["done"]
+    DONE1 --> WRITER1["Writer LLM (1200 tokens)"]
 
-    DECOMPOSE --> MULTI["Multi-Step Retrieval"]
-    MULTI --> CONSOLIDATE["Consolidate Sources"]
-    CONSOLIDATE --> DEEP_LLM["LLM Synthesis (2000 tokens)"]
+    QUALITY --> REASON["reasoning"]
+    REASON --> KS2["knowledge_search (3-5+ calls)"]
+    KS2 --> CS["community_search"]
+    CS --> EL["entity_lookup"]
+    EL --> DONE2["done"]
+    DONE2 --> WRITER2["Writer LLM (4000 tokens)"]
 
-    LLM --> STREAM["SSE Stream"]
-    DEEP_LLM --> STREAM
+    WRITER1 --> STREAM["SSE Stream"]
+    WRITER2 --> STREAM
 `} />
+
+The researcher agent has access to these tools:
+
+| Tool | Speed Mode | Quality Mode | Description |
+|------|:----------:|:------------:|-------------|
+| `knowledge_search` | 1 call | 3-5+ calls | Hybrid RRF search (vector + keyword + graph) with cross-encoder reranking. Up to 3 queries per call. |
+| `community_search` | - | Yes | Search entity community summaries for thematic context |
+| `entity_lookup` | - | Yes | Look up specific entities by name for deeper exploration |
+| `reasoning` | - | Yes | Plan next research step (streamed to UI as thinking events) |
+| `done` | Yes | Yes | Signal research completion with a summary for the writer |
 
 ## Streaming Endpoint
 
@@ -124,9 +139,9 @@ data: {"done": true}
 
 ### 2. Deep Research Mode (Agentic)
 
-For complex questions requiring multi-step reasoning. The system decomposes your question into sub-questions, researches each independently, then synthesizes a comprehensive answer (up to 2000 tokens).
+For complex questions requiring multi-angle investigation. The researcher agent iteratively searches, explores communities, looks up entities, and cross-references information before handing off to the writer for a comprehensive answer (up to 4000 tokens).
 
-Requires `ENABLE_AGENTIC_RAG=true` on the server.
+Requires `ENABLE_AGENTIC_RAG=true` and `ENABLE_AGENT_RESEARCH=true` on the server.
 
 ```bash
 curl -X POST "http://localhost:8000/api/ask/stream" \
@@ -138,47 +153,48 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
   }' --no-buffer
 ```
 
-**Event sequence:** `thinking` → `sub_questions` → (`thinking` + `retrieval`) per sub-question → `sources` → `graph_context` → `retrieval_stats` → `thinking` → `content` (multiple) → `done`
+**Event sequence:** `thinking` (reasoning + search progress) → `retrieval` (per search) → `sources` → `graph_context` → `retrieval_stats` → `content` (multiple) → `done`
 
 ```
-data: {"thinking": "Analyzing question complexity..."}
+data: {"thinking": "Starting research..."}
 
-data: {"sub_questions": ["What methodology does Paper A use?", "What methodology does Paper B use?", "How do the two methodologies compare?"]}
+data: {"thinking": "The user wants to compare methodologies in papers A and B. I'll start by searching for each paper's methodology separately."}
+data: {"thinking": "Searching: Paper A methodology, Paper B methodology, methodology comparison"}
+data: {"retrieval": "Found 8 sources"}
 
-data: {"thinking": "Researching (1/3): What methodology does Paper A use?..."}
-data: {"retrieval": "Found 5 sources for sub-question 1"}
+data: {"thinking": "Good results on Paper A. I should also check for community-level context on research methodologies."}
+data: {"retrieval": "Found 2 relevant communities"}
 
-data: {"thinking": "Researching (2/3): What methodology does Paper B use?..."}
-data: {"retrieval": "Found 4 sources for sub-question 2"}
+data: {"thinking": "Let me search for specific differences and limitations."}
+data: {"thinking": "Searching: Paper A limitations, Paper B strengths weaknesses, methodology comparison criteria"}
+data: {"retrieval": "Found 6 sources"}
 
-data: {"thinking": "Researching (3/3): How do the two methodologies compare?..."}
-data: {"retrieval": "Found 3 sources for sub-question 3"}
+data: {"thinking": "Comprehensive coverage achieved. Ready to wrap up."}
 
-data: {"thinking": "Consolidating and ranking sources..."}
 data: {"sources": [...]}
 data: {"graph_context": {"entities": [...], "relationships": [...], "communities": [...]}}
-data: {"retrieval_stats": {"total_sources": 12, "unique_sources": 9, "communities_used": 3}}
+data: {"retrieval_stats": {"total_sources_considered": 14, "unique_sources": 11, "search_calls": 2, "communities_used": 2}}
 
-data: {"thinking": "Synthesizing comprehensive answer..."}
 data: {"content": "Both papers "}
 data: {"content": "approach the problem "}
 data: {"content": "differently..."}
 
-data: {"done": true, "communities_used": [1, 4, 7]}
+data: {"done": true, "communities_used": [1, 4]}
 ```
 
 <Mermaid chart={`
 flowchart TD
-    Q["Complex Question"] --> THINK["Analyze Question"]
-    THINK --> DECOMPOSE["Decompose into Sub-Questions"]
-    DECOMPOSE --> R1["Research Sub-Q 1"]
-    DECOMPOSE --> R2["Research Sub-Q 2"]
-    DECOMPOSE --> R3["Research Sub-Q N"]
-    R1 --> CONSOLIDATE["Consolidate Sources"]
-    R2 --> CONSOLIDATE
-    R3 --> CONSOLIDATE
-    CONSOLIDATE --> SYNTH["Synthesize Answer"]
-    SYNTH --> STREAM["Stream Response"]
+    Q["Complex Question"] --> R["Researcher Agent Loop"]
+    R --> REASON["reasoning: plan next step"]
+    REASON --> KS["knowledge_search (3 queries)"]
+    KS --> REASON2["reasoning: reflect on results"]
+    REASON2 --> CS["community_search"]
+    CS --> REASON3["reasoning: identify gaps"]
+    REASON3 --> KS2["knowledge_search (follow-up)"]
+    KS2 --> EL["entity_lookup (key entities)"]
+    EL --> DONE["done (summary)"]
+    DONE --> WRITER["Writer: synthesize answer"]
+    WRITER --> STREAM["Stream Response"]
 `} />
 
 ## SSE Event Reference
@@ -447,7 +463,14 @@ chat("How does that compare to the introduction?")
 ```bash
 # Agentic RAG (Deep Research)
 ENABLE_AGENTIC_RAG=true          # Enable deep research mode
-MAX_AGENTIC_STEPS=3              # Max sub-question decomposition steps
+
+# Agent-Based Research Pipeline
+ENABLE_AGENT_RESEARCH=true       # Use agent pipeline for deep research (set false for legacy)
+# ENABLE_AGENT_CHAT=false        # Use agent pipeline for standard chat (opt-in)
+# RESEARCHER_MAX_ITERATIONS_SPEED=2    # Agent iterations for chat mode
+# RESEARCHER_MAX_ITERATIONS_QUALITY=10 # Agent iterations for deep research
+# WRITER_MAX_TOKENS_SPEED=1200         # Max output tokens for chat
+# WRITER_MAX_TOKENS_QUALITY=4000       # Max output tokens for deep research
 
 # Conversation
 MAX_CONVERSATION_HISTORY=6       # Messages to keep for context
@@ -459,6 +482,22 @@ SHOW_RETRIEVAL_STATS=true        # Include retrieval_stats events
 # Prompt security
 PROMPT_SECURITY=true             # Sanitize input and filter harmful output
 ```
+
+### Agent vs Legacy Pipeline
+
+The agent pipeline (`ENABLE_AGENT_RESEARCH=true`, default) provides adaptive research depth and reasoning transparency but has specific requirements and trade-offs:
+
+| | Agent Pipeline | Legacy Pipeline |
+|---|---|---|
+| **LLM requirement** | Must support **function calling / tool use** (OpenAI `tools` parameter) | Any OpenAI-compatible chat endpoint |
+| **Compatible models** | GPT-4o, GPT-4o-mini, Claude, Mistral Large, Command R+ | Any model (including local Ollama/vLLM) |
+| **Token usage** | 3-5x higher (multiple researcher iterations) | Lower (2 LLM calls: decompose + synthesize) |
+| **Latency** | 15-30s typical (4-8 LLM round-trips) | 5-10s typical (2 LLM calls) |
+| **Research depth** | Adaptive — agent decides when to dig deeper | Fixed — always decomposes into N sub-questions |
+| **Behavior** | Non-deterministic — agent chooses search queries dynamically | Deterministic — fixed decompose → search → synthesize path |
+| **Transparency** | Reasoning tool streams agent's thought process | Hard-coded status messages |
+
+Set `ENABLE_AGENT_RESEARCH=false` if your model doesn't support function calling, or if you prefer lower cost/latency with predictable behavior.
 
 ## Prompt Security
 

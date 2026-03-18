@@ -144,6 +144,10 @@ to build the relationship graph:
 # Max OUTPUT tokens for relationship analysis LLM responses
 # RELATIONSHIP_MAX_OUTPUT_TOKENS=8000
 
+# Number of relationship analysis batches to process in parallel
+# Set to 1 for sequential processing, increase for multi-GPU or high-rate-limit setups
+# PARALLEL_RELATIONSHIP_BATCHES=1
+
 # Auto-trigger relationship analysis after batch processing
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
 
@@ -194,11 +198,45 @@ RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 # Enable multi-step reasoning
 ENABLE_AGENTIC_RAG=true
 
-# Maximum reasoning steps
+# Maximum reasoning steps (legacy pipeline)
 MAX_AGENTIC_STEPS=3
 
 # Conversation history length
 MAX_CONVERSATION_HISTORY=6
+```
+
+### Agent-Based Research Pipeline
+
+The agent pipeline replaces the legacy fixed-step agentic RAG with an LLM-driven
+researcher/writer architecture. The researcher agent uses function-calling to
+iteratively gather information via tools (`knowledge_search`, `community_search`,
+`entity_lookup`, `reasoning`), then the writer synthesizes a streamed answer.
+
+**LLM requirement:** Your model must support **function calling / tool use** (the OpenAI
+`tools` parameter). Compatible models include GPT-4o, GPT-4o-mini, Claude, Mistral Large,
+and Command R+. Many smaller or local models behind LiteLLM do not support this.
+
+**When to disable (`ENABLE_AGENT_RESEARCH=false`):**
+
+- Your LLM does not support function calling (e.g., local models via Ollama/vLLM without tool-use support)
+- You want lower token usage — the agent pipeline uses 3-5x more tokens due to multiple researcher iterations
+- You want lower latency — the legacy pipeline makes 2 LLM calls vs 4-8 for the agent
+- You want deterministic behavior — the legacy pipeline follows a fixed decompose → search → synthesize path, while the agent decides dynamically what to search and when to stop
+
+```bash
+# Use agent pipeline for deep research mode (set false for legacy fixed pipeline)
+ENABLE_AGENT_RESEARCH=true
+
+# Use agent pipeline for standard chat mode (opt-in, off by default)
+# ENABLE_AGENT_CHAT=false
+
+# Max agent loop iterations per mode
+# RESEARCHER_MAX_ITERATIONS_SPEED=2      # Chat mode (speed)
+# RESEARCHER_MAX_ITERATIONS_QUALITY=10   # Deep research mode (quality)
+
+# Max output tokens for the writer per mode
+# WRITER_MAX_TOKENS_SPEED=1200           # Chat mode
+# WRITER_MAX_TOKENS_QUALITY=4000         # Deep research mode
 ```
 
 ### Reasoning Visibility
@@ -357,11 +395,18 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `EXTRACTION_MAX_CONTEXT` | No | `32768` | Max context window tokens for entity extraction batching |
 | `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max INPUT context window tokens for relationship analysis batching |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `8000` | Max OUTPUT tokens for relationship analysis LLM responses |
+| `PARALLEL_RELATIONSHIP_BATCHES` | No | `1` | Parallel relationship analysis batches (1 = sequential) |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | No | `false` | Auto-analyze after batch processing |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |
+| `ENABLE_AGENT_RESEARCH` | No | `true` | Use agent pipeline for deep research (vs legacy) |
+| `ENABLE_AGENT_CHAT` | No | `false` | Use agent pipeline for standard chat |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | No | `2` | Agent loop iterations for chat mode |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `10` | Agent loop iterations for deep research |
+| `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |
+| `WRITER_MAX_TOKENS_QUALITY` | No | `4000` | Max output tokens for deep research answers |
 | `ENABLE_COMMUNITY_DETECTION` | No | `true` | Enable communities |
 | `PROMPT_SECURITY` | No | `true` | Enable prompt guard |
 | `VISION_MODEL` | No | - | Vision model for image analysis |

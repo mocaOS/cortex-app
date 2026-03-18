@@ -875,14 +875,18 @@ MOCA (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combine
 - `graph_search_async(query, top_k, max_hops, use_hybrid_rrf) -> dict`: Graph-enhanced search
 - `rerank_results(query, results, top_k) -> List[dict]`: Cross-encoder reranking
 - `rag_query(question, top_k, use_graph, max_hops, conversation_history, use_reranking, use_agentic) -> dict`: RAG query
-- `agentic_rag_stream(question, top_k, max_hops, conversation_history, collection_id) -> AsyncGenerator`: Streaming agentic RAG
+- `agentic_rag_stream(question, top_k, max_hops, conversation_history, collection_id) -> AsyncGenerator`: Streaming agentic RAG (legacy)
+- `agent_rag_stream(question, mode, conversation_history, collection_id) -> AsyncGenerator`: Agent-based research pipeline (researcher/writer)
+- `agent_rag_query(question, mode, conversation_history, collection_id) -> dict`: Non-streaming agent RAG query
 
 **Features**:
-- Hybrid search combining vector, keyword, and metadata
+- Hybrid search combining vector, keyword, and graph traversal (RRF)
 - Cross-encoder reranking for precision
 - Conversation memory support
-- Agentic multi-step RAG with extended thinking
-- Community-aware retrieval
+- Agent-based research pipeline with LLM-driven tool-calling (researcher/writer architecture)
+- Community-aware retrieval via `community_search` tool
+- Entity exploration via `entity_lookup` tool
+- Reasoning transparency via `reasoning` tool (quality mode)
 
 ### GraphExtractor
 
@@ -1120,7 +1124,18 @@ curl -H "X-API-Key: moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `GRAPH_WEIGHT`: Weight for graph context (default: `0.2`)
 - `MAX_CONVERSATION_HISTORY`: Max messages in conversation (default: `6`)
 - `ENABLE_AGENTIC_RAG`: Enable multi-step agentic RAG (default: `True`)
-- `MAX_AGENTIC_STEPS`: Maximum steps in agentic RAG (default: `3`)
+- `MAX_AGENTIC_STEPS`: Maximum steps in agentic RAG — legacy (default: `3`)
+
+#### Agent-Based Research Pipeline
+- `ENABLE_AGENT_RESEARCH`: Use agent pipeline for deep research mode (default: `True`)
+- `ENABLE_AGENT_CHAT`: Use agent pipeline for standard chat mode (default: `False`)
+- `RESEARCHER_MAX_ITERATIONS_SPEED`: Max agent iterations for chat (default: `2`)
+- `RESEARCHER_MAX_ITERATIONS_QUALITY`: Max agent iterations for deep research (default: `10`)
+- `WRITER_MAX_TOKENS_SPEED`: Max output tokens for chat answers (default: `1200`)
+- `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `4000`)
+
+#### Relationship Analysis
+- `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 1 = sequential (default: `1`)
 
 #### Community Detection & Graph Summarization
 - `ENABLE_COMMUNITY_DETECTION`: Enable community detection (default: `True`)

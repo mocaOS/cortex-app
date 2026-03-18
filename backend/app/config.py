@@ -185,7 +185,27 @@ class Settings(BaseSettings):
         default=6
     )  # Max messages to include from conversation
     enable_agentic_rag: bool = Field(default=True)  # Enable multi-step agentic RAG
-    max_agentic_steps: int = Field(default=3)  # Maximum steps in agentic RAG
+    max_agentic_steps: int = Field(default=3)  # Maximum steps in agentic RAG (legacy)
+
+    # Agent-based research pipeline (researcher/writer architecture)
+    enable_agent_research: bool = Field(
+        default=True
+    )  # Use agent pipeline for research mode (vs legacy fixed pipeline)
+    enable_agent_chat: bool = Field(
+        default=False
+    )  # Use agent pipeline for standard chat mode
+    researcher_max_iterations_speed: int = Field(
+        default=2
+    )  # Max agent loop iterations in speed/chat mode
+    researcher_max_iterations_quality: int = Field(
+        default=10
+    )  # Max agent loop iterations in quality/research mode
+    writer_max_tokens_speed: int = Field(
+        default=1200
+    )  # Max output tokens for writer in speed mode
+    writer_max_tokens_quality: int = Field(
+        default=4000
+    )  # Max output tokens for writer in quality/research mode
 
     # Chunking Configuration (enhanced)
     chunk_by: str = Field(default="sentence")  # "word" or "sentence" based splitting
