@@ -13,6 +13,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Upload,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Collection } from "@/types";
@@ -41,6 +43,15 @@ interface Document {
   is_custom_input?: boolean;
   custom_input_type?: string | null;
   custom_topic_hint?: string | null;
+}
+
+type UploadFileStatus = "uploading" | "uploaded" | "error";
+
+interface UploadingFileEntry {
+  id: string;
+  file: File;
+  status: UploadFileStatus;
+  message?: string;
 }
 
 interface DocumentListProps {
@@ -86,7 +97,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
-  
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingFileEntry[]>([]);
+  const [isStartingProcessing, setIsStartingProcessing] = useState(false);
+
   // Track last clicked index for shift-click range selection
   const lastClickedIndex = useRef<number | null>(null);
   
@@ -123,6 +136,73 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       setCollections(data.collections);
     } catch (error) {
       console.error("Failed to fetch collections:", error);
+    }
+  };
+
+  const handleFilesSelected = useCallback(async (files: File[], collectionId?: string) => {
+    // Create entries for each file
+    const entries: UploadingFileEntry[] = files.map((file, i) => ({
+      id: `upload-${Date.now()}-${i}`,
+      file,
+      status: "uploading" as const,
+    }));
+    setUploadingFiles((prev) => [...prev, ...entries]);
+
+    const CONCURRENCY_LIMIT = 10;
+    const queue = [...entries];
+    let allDone = 0;
+
+    const uploadNext = async () => {
+      const entry = queue.shift();
+      if (!entry) return;
+
+      try {
+        await api.uploadFile(entry.file, collectionId, false);
+        setUploadingFiles((prev) =>
+          prev.map((uf) =>
+            uf.id === entry.id ? { ...uf, status: "uploaded" as const, message: "Uploaded" } : uf
+          )
+        );
+      } catch (error) {
+        setUploadingFiles((prev) =>
+          prev.map((uf) =>
+            uf.id === entry.id
+              ? { ...uf, status: "error" as const, message: error instanceof Error ? error.message : "Upload failed" }
+              : uf
+          )
+        );
+      }
+      allDone++;
+
+      // Refresh document list after each upload to show new docs
+      await fetchDocuments();
+
+      await uploadNext();
+    };
+
+    const workers = [];
+    for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, entries.length); i++) {
+      workers.push(uploadNext());
+    }
+    await Promise.all(workers);
+
+    // All uploads done — clear uploading entries after a short delay
+    setTimeout(() => {
+      setUploadingFiles((prev) => prev.filter((uf) => uf.status === "error"));
+    }, 1500);
+
+    fetchDocuments();
+  }, []);
+
+  const handleStartProcessing = async () => {
+    setIsStartingProcessing(true);
+    try {
+      await api.processPendingDocuments();
+      await fetchDocuments();
+    } catch (error) {
+      console.error("Failed to start processing:", error);
+    } finally {
+      setIsStartingProcessing(false);
     }
   };
 
@@ -504,7 +584,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         <UploadModal
           isOpen={showUploadModal}
           onClose={() => setShowUploadModal(false)}
-          onUploadComplete={fetchDocuments}
+          onFilesSelected={handleFilesSelected}
         />
       </>
     );
@@ -608,6 +688,71 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           <p className="text-muted-foreground">
             No documents match your current filters.
           </p>
+        </div>
+      )}
+
+      {/* Uploading files */}
+      {uploadingFiles.length > 0 && (
+        <div className="grid gap-2">
+          {uploadingFiles.map((uf) => (
+            <div
+              key={uf.id}
+              className={cn(
+                "glass rounded-lg p-4 border transition-all duration-200",
+                uf.status === "error" ? "border-destructive/30" : "border-border"
+              )}
+            >
+              <div className="flex items-center gap-4">
+                <div className="p-2 rounded-lg bg-muted shrink-0">
+                  {uf.status === "uploading" ? (
+                    <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                  ) : uf.status === "uploaded" ? (
+                    <CheckCircle2 className="w-5 h-5 text-accent" />
+                  ) : (
+                    <XCircle className="w-5 h-5 text-destructive" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-medium text-foreground truncate">{uf.file.name}</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {uf.status === "uploading"
+                      ? "Uploading..."
+                      : uf.status === "uploaded"
+                        ? "Uploaded"
+                        : uf.message || "Upload failed"}
+                  </p>
+                </div>
+                {uf.status === "uploading" && (
+                  <div className="px-2 py-1 rounded-full bg-muted text-xs text-muted-foreground">
+                    <Upload className="w-3 h-3 inline mr-1" />
+                    Uploading
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Extract Entities banner */}
+      {statusCounts.pending > 0 && !isStartingProcessing && (
+        <div className="glass rounded-lg p-4 border border-border flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            {statusCounts.pending} document{statusCounts.pending !== 1 ? "s" : ""} ready to process
+          </div>
+          <button
+            onClick={handleStartProcessing}
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            <FileText className="w-4 h-4" />
+            Extract Entities ({statusCounts.pending})
+          </button>
+        </div>
+      )}
+      {isStartingProcessing && (
+        <div className="glass rounded-lg p-4 border border-border flex items-center gap-3">
+          <Loader2 className="w-4 h-4 animate-spin text-accent" />
+          <span className="text-sm text-accent">Starting processing...</span>
         </div>
       )}
 
@@ -767,7 +912,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       <UploadModal
         isOpen={showUploadModal}
         onClose={() => setShowUploadModal(false)}
-        onUploadComplete={fetchDocuments}
+        onFilesSelected={handleFilesSelected}
       />
     </div>
   );

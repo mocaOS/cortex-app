@@ -210,7 +210,15 @@ GRAPH_WEIGHT=0.2
 
 ## Visualization
 
-The Explore page provides an interactive graph visualization:
+The **Generate Graph** page (under Manage) guides you through a 3-step pipeline:
+
+1. **Entity Extraction** — Process uploaded documents to extract entities. Shows pending document count with an "Extract Entities" button. Greyed-out steps below unlock as each step completes.
+2. **Relationship Analysis** — Discover connections between entities across documents. Detects when new documents have been processed since the last analysis and prompts re-analysis.
+3. **Community Detection** — Group related entities into communities. Detects when relationships have been updated since the last detection and prompts re-detection.
+
+Each step tracks staleness via persisted timestamps, ensuring users are always guided to keep the knowledge graph up to date.
+
+The **Explore** section provides an interactive graph visualization (Knowledge Graph tab) plus read-only browsers for Entities, Relationships, and Communities:
 
 - **Node Colors** - Different colors for entity types
 - **Node Size** - Based on mention frequency

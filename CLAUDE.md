@@ -27,17 +27,20 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 
 **Frontend** (`frontend/src/`):
 - Next.js App Router with unified navigation structure:
-  - **Manage** section: Documents (`/documents`, default), Collections, Entities (`/entities`), Relationships (`/relationships`), Communities (`/communities`), Add
-  - **Explore** section: Knowledge Graph, Deep Research, Chat (tab-based on `/explore` with `?tab=graph|research|chat`)
-  - **Settings**: Admin page with Turbo Mode configuration
+  - **Manage** section: Documents (`/documents`, default), Generate Graph (`/extract` — 3-step pipeline: entity extraction → relationship analysis → community detection with staleness tracking), Collections, Add
+  - **Explore** section: Knowledge Graph, Entities (read-only), Relationships (read-only), Communities (read-only), Deep Research, Chat (all tab-based on `/explore` with `?tab=graph|entities|relationships|communities|research|chat`)
+  - **Settings** (`/admin`): Statistics dashboard, system configuration, API key management, danger zone. Stats bar hidden on this page.
   - `/` redirects to `/documents`
+  - `/entities`, `/relationships`, `/communities` redirect to their Explore tabs
 - `lib/api.ts` — API client with auth headers
 - `lib/session.ts` — JWT session management
-- `components/layout/` — Header (top nav), SubMenu (contextual tabs below stats), StatsBar (KPI grid)
-- `components/upload/UploadModal.tsx` — Upload modal (drag-and-drop + collection selector), opened from Documents page
+- `components/layout/` — Header (top nav with Manage/Explore), SubMenu (contextual tabs), StatsBar (4 KPI cards: Documents, Entities, Relations, Communities)
+- `components/upload/UploadModal.tsx` — Upload modal (drag-and-drop + collection selector), closes immediately on file selection; upload progress shown inline in document list
+- `components/explore/` — Read-only browsers for entities, relationships, communities + KnowledgeGraph visualization
+- `app/extract/page.tsx` — Generate Graph page: 3-step pipeline with status tracking, staleness detection via `SystemMeta` Neo4j nodes (`last_relationship_analysis_at`, `last_community_detection_at`), cascading blocked states
 - `components/` — UI components organized by feature
 
-**Document Processing Pipeline**: Upload → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction (per-document, batched) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job) relationship analysis → community detection (Louvain) → community summarization
+**Document Processing Pipeline**: Upload (modal closes immediately, progress in document list) → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction (triggered via "Extract Entities" button on Documents or Generate Graph page) → fuzzy entity-to-chunk linking → Neo4j storage → (separate job via Generate Graph Step 2) relationship analysis → (Step 3) community detection (Louvain) → community summarization. Timestamps persisted in `SystemMeta` Neo4j nodes for staleness tracking.
 
 **RAG Query Pipeline**: Query embedding → entity extraction → community search → hybrid search (vector 0.5 + fulltext 0.3 + graph 0.2, RRF) → cross-encoder reranking → context assembly → LLM generation. Agentic mode adds multi-step decomposition.
 
@@ -89,6 +92,8 @@ Copy `.env.example` to `.env`. Key variables:
 - Graph extraction uses `get_extraction_llm_config()` from `llm_config.py` (separate from Q&A model)
 - Turbo mode overrides both extraction and main model configs
 - Entity extraction is per-document (Phase A), relationship analysis is per-collection (Phase B)
+- Generate Graph page guides users through the 3-step pipeline with staleness detection: pending docs → needs relationship re-analysis → needs community re-detection. Steps cascade (Step 2/3 grey out when prior step needs update).
+- `SystemMeta` Neo4j nodes store `last_relationship_analysis_at` and `last_community_detection_at` timestamps. Upload dates are naive (no timezone) — frontend appends `Z` for UTC comparison.
 - Backend uses singleton service instances (Neo4jService, DocumentProcessor, etc.)
 - Background tasks via FastAPI's `BackgroundTasks` for document processing
 - Streaming responses for `/api/ask/stream` and `/api/ask/stream/thinking` endpoints

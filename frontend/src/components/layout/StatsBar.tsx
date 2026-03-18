@@ -99,23 +99,11 @@ export default function StatsBar() {
           </button>
         </div>
       )}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        <StatsCard
-          label="Collections"
-          value={stats?.collection_count ?? 0}
-          icon={FolderOpen}
-          loading={statsLoading}
-        />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatsCard
           label="Documents"
           value={stats?.document_count ?? 0}
           icon={FileText}
-          loading={statsLoading}
-        />
-        <StatsCard
-          label="Chunks"
-          value={stats?.chunk_count ?? 0}
-          icon={BookOpen}
           loading={statsLoading}
         />
         <StatsCard

@@ -21,10 +21,21 @@ import {
   Eye,
   Check,
   X,
+  BarChart3,
+  FolderOpen,
+  BookOpen,
+  Link2,
+  Users,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Layers,
+  Share2,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { api, clearAdminApiKey } from "@/lib/api";
-import type { SystemConfig } from "@/types";
+import { formatBytes } from "@/lib/utils";
+import type { SystemConfig, Stats } from "@/types";
 
 // Helper component for displaying config items
 function ConfigItem({ label, value, type = "text" }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list" }) {
@@ -106,6 +117,8 @@ export default function AdminPage() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [openSections, setOpenSections] = useState<Set<ConfigSectionId>>(new Set(["llm"]));
 
   const toggleSection = (id: ConfigSectionId) => {
@@ -148,7 +161,18 @@ export default function AdminPage() {
         setConfigLoading(false);
       }
     }
+    async function fetchStats() {
+      try {
+        const data = await api.getStats();
+        setStats(data);
+      } catch (err) {
+        console.error("Failed to fetch stats:", err);
+      } finally {
+        setStatsLoading(false);
+      }
+    }
     fetchConfig();
+    fetchStats();
   }, []);
 
   const handleLogout = async () => {
@@ -189,6 +213,138 @@ export default function AdminPage() {
           transition={{ delay: 0.1 }}
         >
           <ApiKeyManager />
+        </motion.div>
+
+        {/* Statistics */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+        >
+          <div className="glass rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-border/50">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="w-5 h-5 text-accent" />
+                <h2 className="text-lg font-semibold text-foreground">Statistics</h2>
+              </div>
+              <p className="text-muted-foreground text-sm mt-1">
+                Knowledge base overview
+              </p>
+            </div>
+
+            <div className="p-6">
+              {statsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-accent" />
+                </div>
+              ) : stats ? (
+                <div className="space-y-6">
+                  {/* Primary KPIs */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <FolderOpen className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.collection_count ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">Collections</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <FileText className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.document_count}</p>
+                      <p className="text-xs text-muted-foreground">Documents</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <BookOpen className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.chunk_count}</p>
+                      <p className="text-xs text-muted-foreground">Chunks</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <Layers className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.entity_count ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">Entities</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <Share2 className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.relationship_count ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">Relationships</p>
+                    </div>
+                    <div className="p-3 bg-muted/30 rounded-lg text-center">
+                      <Users className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                      <p className="text-xl font-semibold">{stats.community_count ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">Communities</p>
+                    </div>
+                  </div>
+
+                  {/* Document Processing */}
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground mb-3">Document Processing</h3>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                          Completed
+                        </span>
+                        <span className="text-sm font-mono text-foreground">{stats.completed_count ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="w-3.5 h-3.5 text-accent" />
+                          Processing
+                        </span>
+                        <span className="text-sm font-mono text-foreground">{stats.processing_count ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Clock className="w-3.5 h-3.5" />
+                          Pending
+                        </span>
+                        <span className="text-sm font-mono text-foreground">{stats.pending_count ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <XCircle className="w-3.5 h-3.5 text-destructive" />
+                          Failed
+                        </span>
+                        <span className="text-sm font-mono text-foreground">{stats.failed_count ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="text-sm text-muted-foreground">Total Storage</span>
+                        <span className="text-sm font-mono text-foreground">{formatBytes(stats.total_size)}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2">
+                        <span className="text-sm text-muted-foreground">Avg. Chunks per Document</span>
+                        <span className="text-sm font-mono text-foreground">{stats.avg_chunks_per_doc ?? 0}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Knowledge Graph */}
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground mb-3">Knowledge Graph</h3>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between py-2 border-b border-border/50">
+                        <span className="text-sm text-muted-foreground">Avg. Mentions per Entity</span>
+                        <span className="text-sm font-mono text-foreground">{stats.avg_entity_mentions ?? 0}</span>
+                      </div>
+                      {stats.entity_type_counts && Object.keys(stats.entity_type_counts).length > 0 && (
+                        <>
+                          <div className="pt-2 pb-1">
+                            <span className="text-xs text-muted-foreground uppercase tracking-wider">Entity Types</span>
+                          </div>
+                          {Object.entries(stats.entity_type_counts)
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([type, count]) => (
+                              <div key={type} className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0">
+                                <span className="text-sm text-muted-foreground">{type}</span>
+                                <span className="text-sm font-mono text-foreground">{count}</span>
+                              </div>
+                            ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </motion.div>
 
         {/* System Configuration */}

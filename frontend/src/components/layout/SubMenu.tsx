@@ -12,6 +12,7 @@ import {
   Users,
   Sparkles,
   MessageSquare,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,10 +33,8 @@ const menuSections: MenuSection[] = [
     basePath: "/",
     items: [
       { href: "/documents", label: "Documents", icon: FileText },
+      { href: "/extract", label: "Generate Graph", icon: FlaskConical },
       { href: "/collections", label: "Collections", icon: FolderOpen },
-      { href: "/entities", label: "Entities", icon: Layers },
-      { href: "/relationships", label: "Relationships", icon: Share2 },
-      { href: "/communities", label: "Communities", icon: Users },
       { href: "/add", label: "Add", icon: PenLine },
     ],
   },
@@ -43,6 +42,9 @@ const menuSections: MenuSection[] = [
     basePath: "/explore",
     items: [
       { href: "/explore", label: "Knowledge Graph", icon: Network, param: { key: "tab", value: "graph" } },
+      { href: "/explore", label: "Entities", icon: Layers, param: { key: "tab", value: "entities" } },
+      { href: "/explore", label: "Relationships", icon: Share2, param: { key: "tab", value: "relationships" } },
+      { href: "/explore", label: "Communities", icon: Users, param: { key: "tab", value: "communities" } },
       { href: "/explore", label: "Deep Research", icon: Sparkles, param: { key: "tab", value: "research" } },
       { href: "/explore", label: "Chat", icon: MessageSquare, param: { key: "tab", value: "chat" } },
     ],
@@ -50,7 +52,7 @@ const menuSections: MenuSection[] = [
 ];
 
 // Routes that belong to the "Data" section
-const dataRoutes = ["/", "/documents", "/collections", "/add", "/entities", "/relationships", "/communities"];
+const dataRoutes = ["/", "/documents", "/collections", "/add", "/extract"];
 
 export default function SubMenu() {
   const pathname = usePathname();

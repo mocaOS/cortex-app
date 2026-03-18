@@ -2566,22 +2566,36 @@ class Neo4jService:
                 MATCH (d:Document)
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
                 WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size
-                
+
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
-                
+
                 OPTIONAL MATCH (:Entity)-[r]->(:Entity)
                 WHERE type(r) <> 'MENTIONS'
                 WITH doc_count, chunk_count, total_size, entity_count, count(r) as relationship_count
-                
+
                 OPTIONAL MATCH (com:Community)
                 WITH doc_count, chunk_count, total_size, entity_count, relationship_count, count(com) as community_count
-                
+
                 OPTIONAL MATCH (col:Collection)
                 WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, count(col) as collection_count
-                
+
                 OPTIONAL MATCH (pending:Document)
                 WHERE coalesce(pending.processing_status, 'pending') = 'pending'
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, count(pending) as pending_count
+
+                OPTIONAL MATCH (completed:Document)
+                WHERE completed.processing_status = 'completed'
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, count(completed) as completed_count
+
+                OPTIONAL MATCH (failed:Document)
+                WHERE failed.processing_status = 'failed'
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, completed_count, count(failed) as failed_count
+
+                OPTIONAL MATCH (proc:Document)
+                WHERE proc.processing_status IN ['processing', 'extracting']
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, completed_count, failed_count, count(proc) as processing_count
+
                 RETURN doc_count as document_count,
                        chunk_count,
                        total_size,
@@ -2589,21 +2603,97 @@ class Neo4jService:
                        relationship_count,
                        community_count,
                        collection_count,
-                       count(pending) as pending_count
+                       pending_count,
+                       completed_count,
+                       failed_count,
+                       processing_count
             """)
-            
+
             record = result.single()
+            doc_count = record["document_count"]
+            chunk_count = record["chunk_count"]
+            completed_count = record["completed_count"]
+            entity_count = record["entity_count"]
+
+            # Get entity type breakdown
+            entity_type_counts = {}
+            avg_entity_mentions = 0.0
+            if entity_count > 0:
+                type_result = session.run("""
+                    MATCH (e:Entity)
+                    RETURN e.type as entity_type, count(e) as count, avg(coalesce(e.mention_count, 0)) as avg_mentions
+                    ORDER BY count DESC
+                """)
+                total_mentions = 0.0
+                total_entities = 0
+                for type_record in type_result:
+                    etype = type_record["entity_type"] or "Unknown"
+                    ecount = type_record["count"]
+                    entity_type_counts[etype] = ecount
+                    total_mentions += type_record["avg_mentions"] * ecount
+                    total_entities += ecount
+                if total_entities > 0:
+                    avg_entity_mentions = round(total_mentions / total_entities, 1)
+
+            avg_chunks = round(chunk_count / completed_count, 1) if completed_count > 0 else 0.0
+
             return {
-                "document_count": record["document_count"],
-                "chunk_count": record["chunk_count"],
+                "document_count": doc_count,
+                "chunk_count": chunk_count,
                 "total_size": record["total_size"] or 0,
-                "entity_count": record["entity_count"],
+                "entity_count": entity_count,
                 "relationship_count": record["relationship_count"],
                 "community_count": record["community_count"],
                 "collection_count": record["collection_count"],
-                "pending_count": record["pending_count"]
+                "pending_count": record["pending_count"],
+                "completed_count": completed_count,
+                "failed_count": record["failed_count"],
+                "processing_count": record["processing_count"],
+                "avg_chunks_per_doc": avg_chunks,
+                "entity_type_counts": entity_type_counts,
+                "avg_entity_mentions": avg_entity_mentions,
+                "last_relationship_analysis_at": self._get_or_seed_analysis_timestamp(record["relationship_count"]),
+                "last_community_detection_at": self._get_or_seed_detection_timestamp(record["community_count"]),
             }
-    
+
+    def _get_or_seed_analysis_timestamp(self, relationship_count: int) -> str | None:
+        """Get the last relationship analysis timestamp, seeding it if relationships exist but no timestamp."""
+        ts = self._get_meta("last_relationship_analysis_at")
+        if ts is None and relationship_count > 0:
+            # Relationships exist from before timestamp tracking was added.
+            # Seed with epoch so all existing completed docs are flagged as
+            # needing re-analysis. Once the user re-analyzes, the real
+            # timestamp replaces this.
+            ts = "2000-01-01T00:00:00+00:00"
+            self.set_meta("last_relationship_analysis_at", ts)
+        return ts
+
+    def _get_or_seed_detection_timestamp(self, community_count: int) -> str | None:
+        """Get the last community detection timestamp, seeding it if communities exist but no timestamp."""
+        ts = self._get_meta("last_community_detection_at")
+        if ts is None and community_count > 0:
+            ts = "2000-01-01T00:00:00+00:00"
+            self.set_meta("last_community_detection_at", ts)
+        return ts
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Store a metadata value on a SystemMeta node."""
+        with self.driver.session() as session:
+            session.run(
+                "MERGE (m:SystemMeta {key: $key}) SET m.value = $value",
+                key=key, value=value
+            )
+
+    def _get_meta(self, key: str) -> str | None:
+        """Retrieve a metadata value from a SystemMeta node."""
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (m:SystemMeta {key: $key}) RETURN m.value as value",
+                key=key
+            )
+            record = result.single()
+            return record["value"] if record else None
+
     # =========================================================================
     # API Key Management
     # =========================================================================

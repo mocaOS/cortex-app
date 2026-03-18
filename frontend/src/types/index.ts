@@ -144,6 +144,15 @@ export interface Stats {
   relationship_count?: number;
   community_count?: number;
   collection_count?: number;
+  pending_count?: number;
+  completed_count?: number;
+  failed_count?: number;
+  processing_count?: number;
+  avg_chunks_per_doc?: number;
+  entity_type_counts?: Record<string, number>;
+  avg_entity_mentions?: number;
+  last_relationship_analysis_at?: string | null;
+  last_community_detection_at?: string | null;
 }
 
 export interface HealthResponse {

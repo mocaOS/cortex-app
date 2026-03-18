@@ -42,8 +42,8 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Documents, Collections, Entities, Relationships, Communities, Add
-  - **Explore**: Knowledge Graph, Deep Research, Chat
+  - **Manage**: Documents, Generate Graph (3-step pipeline: extract entities → analyze relationships → detect communities), Collections, Add
+  - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
 - **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction

@@ -4,14 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "rea
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { GraphData, GraphNode, GraphEdge } from "@/types";
-import { KnowledgeGraph } from "@/components/explore";
+import { KnowledgeGraph, EntitiesBrowser, RelationshipsBrowser, CommunitiesBrowser } from "@/components/explore";
 import AskPanel from "@/components/AskPanel";
 import { Loader2, RefreshCw, Search, Network, ChevronDown, Check, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type TabType = "graph" | "research" | "chat";
+type TabType = "graph" | "entities" | "relationships" | "communities" | "research" | "chat";
 
-const validTabs: TabType[] = ["graph", "research", "chat"];
+const validTabs: TabType[] = ["graph", "entities", "relationships", "communities", "research", "chat"];
 
 // Search result from entity search
 interface EntitySearchResult {
@@ -252,11 +252,35 @@ function ExplorePageContent() {
 
   const isGraphLoading = loading || isLoadingSubgraph;
 
-  // Render non-graph tabs (Deep Research and Chat)
+  // Render non-graph tabs
   if (activeTab === "research" || activeTab === "chat") {
     return (
       <div className="py-6">
         <AskPanel initialMode={activeTab} />
+      </div>
+    );
+  }
+
+  if (activeTab === "entities") {
+    return (
+      <div className="py-6">
+        <EntitiesBrowser />
+      </div>
+    );
+  }
+
+  if (activeTab === "relationships") {
+    return (
+      <div className="py-6">
+        <RelationshipsBrowser />
+      </div>
+    );
+  }
+
+  if (activeTab === "communities") {
+    return (
+      <div className="py-6">
+        <CommunitiesBrowser />
       </div>
     );
   }

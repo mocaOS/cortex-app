@@ -288,6 +288,15 @@ class GraphStatsResponse(BaseModel):
     community_count: int = Field(default=0, description="Number of detected communities")
     collection_count: int = Field(default=0, description="Number of collections")
     pending_count: int = Field(default=0, description="Number of documents pending processing")
+    # Additional KPIs
+    completed_count: int = Field(default=0, description="Number of successfully processed documents")
+    failed_count: int = Field(default=0, description="Number of failed documents")
+    processing_count: int = Field(default=0, description="Number of currently processing documents")
+    avg_chunks_per_doc: float = Field(default=0.0, description="Average chunks per completed document")
+    entity_type_counts: dict = Field(default_factory=dict, description="Entity counts by type")
+    avg_entity_mentions: float = Field(default=0.0, description="Average mention count per entity")
+    last_relationship_analysis_at: Optional[str] = Field(default=None, description="ISO timestamp of last relationship analysis")
+    last_community_detection_at: Optional[str] = Field(default=None, description="ISO timestamp of last community detection")
 
 
 class UploadResponse(BaseModel):

@@ -480,7 +480,15 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
             total_size=stats["total_size"],
             community_count=stats.get("community_count", 0),
             collection_count=stats.get("collection_count", 0),
-            pending_count=stats.get("pending_count", 0)
+            pending_count=stats.get("pending_count", 0),
+            completed_count=stats.get("completed_count", 0),
+            failed_count=stats.get("failed_count", 0),
+            processing_count=stats.get("processing_count", 0),
+            avg_chunks_per_doc=stats.get("avg_chunks_per_doc", 0.0),
+            entity_type_counts=stats.get("entity_type_counts", {}),
+            avg_entity_mentions=stats.get("avg_entity_mentions", 0.0),
+            last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
+            last_community_detection_at=stats.get("last_community_detection_at"),
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -2221,6 +2229,12 @@ async def _run_relationship_analysis_task(
             progress_callback=progress_cb,
         )
 
+        # Persist the analysis timestamp
+        from datetime import datetime, timezone
+        await asyncio.to_thread(
+            neo4j.set_meta, "last_relationship_analysis_at", datetime.now(timezone.utc).isoformat()
+        )
+
         complete_task(task_id, result)
 
     except Exception as e:
@@ -2367,12 +2381,18 @@ async def _run_community_detection_task(
             
             update_task_progress(task_id, total_steps, total_steps, "Finalizing...")
         
+        # Persist the detection timestamp
+        from datetime import datetime, timezone
+        await asyncio.to_thread(
+            neo4j.set_meta, "last_community_detection_at", datetime.now(timezone.utc).isoformat()
+        )
+
         complete_task(task_id, {
             "communities": communities,
             "total": len(communities),
             "collection_id": collection_id
         })
-        
+
     except Exception as e:
         logger.error(f"Error in community detection task {task_id}: {e}")
         fail_task(task_id, str(e))

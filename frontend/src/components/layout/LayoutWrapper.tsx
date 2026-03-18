@@ -31,11 +31,13 @@ export default function LayoutWrapper({
     return <>{children}</>;
   }
 
+  const hideStatsBar = pathname.startsWith("/admin");
+
   // Regular pages get the full layout with header, stats, submenu, and footer
   return (
     <>
       <Header />
-      <StatsBar />
+      {!hideStatsBar && <StatsBar />}
       <SubMenuWithSuspense />
       <main className="max-w-7xl mx-auto px-6 pt-6 pb-12 w-full flex-1">
         {children}

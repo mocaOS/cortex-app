@@ -258,7 +258,7 @@ export function DocumentCard({
           </div>
 
           {/* Progress bar for processing */}
-          {isProcessing(doc.processing_status, doc) && doc.processing_status !== "completed" && doc.progress_total && doc.progress_total > 0 && (
+          {isProcessing(doc.processing_status, doc) && doc.processing_status !== "completed" && doc.processing_status !== "pending" && doc.progress_total && doc.progress_total > 0 && (
             <div className="mt-3">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span>{doc.progress_message || "Processing..."}</span>
@@ -297,8 +297,13 @@ export function DocumentCard({
             <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{doc.error_message}</p>
           )}
 
+          {/* Pending status */}
+          {doc.processing_status === "pending" && (
+            <div className="mt-2 text-xs text-muted-foreground">Unprocessed</div>
+          )}
+
           {/* Chunk count for completed */}
-          {doc.processing_status === "completed" && (
+          {doc.processing_status === "completed" && doc.chunk_count > 0 && (
             <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
               <span>{doc.chunk_count} chunk{doc.chunk_count !== 1 ? "s" : ""} indexed</span>
               {hasImageProgress && imageAnalysisDone && (
