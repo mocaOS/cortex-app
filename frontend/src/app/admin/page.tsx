@@ -427,7 +427,6 @@ export default function AdminPage() {
                   <ConfigSection title="Embeddings" icon={Database} isOpen={openSections.has("embeddings")} onToggle={() => toggleSection("embeddings")}>
                     <ConfigItem label="Model" value={config.embedding_model} />
                     <ConfigItem label="Dimension" value={config.embedding_dimension} />
-                    <ConfigItem label="OpenAI Embeddings" value={config.use_openai_embeddings} type="boolean" />
                   </ConfigSection>
 
                   {/* Document Processing */}
