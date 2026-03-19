@@ -117,11 +117,24 @@ Copy `.env.example` to `.env`. Key variables:
 - Explore browsers (entities, relationships, communities) fetch all items (no limit cap) for full client-side search and pagination (50 items/page). Search in all three browsers prioritizes name matches over description/summary matches. Each item is clickable for a detail modal. Relationships browser has type dropdown filter. Communities browser cleans up JSON artifacts in summaries for display.
 - All API endpoints are in `main.py` (no separate router modules)
 
+## Design System
+
+The project has a portable design system at `design-system/moca-cortex/`:
+- `MASTER.md` — Complete design spec: colors (OKLCh), typography (Inter + JetBrains Mono), spacing, glass morphism, animation tokens, component patterns, accessibility checklist, z-index scale, and anti-patterns. This is the source of truth for all visual decisions.
+- `tokens.css` — Drop-in CSS file with all custom properties (light + dark themes), glass/glow/shimmer classes. Import this into any new project to reuse the design system.
+- `tailwind.preset.ts` — Tailwind preset with all color/font/radius tokens. Use via `presets: [mocaPreset]` in other projects.
+- `pages/*.md` — Page-specific overrides (dashboard, ask, explore, documents) that take precedence over MASTER.md for those pages.
+
+Design context and principles are also documented in `.impeccable.md` at the repo root.
+
+Key design characteristics: monochrome foundation with a single dynamic accent color (`oklch(0.79 0.18 70.67)`, configurable via `NEXT_PUBLIC_ACCENT_COLOR`), dark mode default, glass morphism surfaces (24px blur), Framer Motion animations, Lucide icons only.
+
 ## Documentation & Maintenance Rules
 
 - **Keep `documentation/` in sync**: When adding, modifying, or removing API endpoints, features, or configuration options, update the corresponding pages in `documentation/` (Zudoku-based docs site with pages in `documentation/pages/` and API specs in `documentation/apis/`).
 - **Keep `README.md` in sync**: When making changes that affect the project overview, features, API endpoints, environment variables, architecture, or setup instructions, update `README.md` accordingly.
 - **Keep this `CLAUDE.md` in sync**: When changes affect the architecture, key patterns, development commands, or deployment instructions documented here, update this file.
+- **Keep `design-system/` in sync**: When making global design changes (color tokens, typography, spacing scale, animation defaults, new component patterns, or glass morphism treatment), update `design-system/moca-cortex/MASTER.md`, `tokens.css`, and `tailwind.preset.ts` accordingly. For page-specific design changes, update or create the corresponding `design-system/moca-cortex/pages/<page>.md` override.
 
 ## Deployment
 

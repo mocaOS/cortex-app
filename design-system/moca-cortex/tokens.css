@@ -1,0 +1,243 @@
+/**
+ * MOCA Cortex — Design Tokens
+ *
+ * Portable CSS custom properties file.
+ * Drop this into any project's stylesheet to apply the MOCA design system.
+ *
+ * Color space: OKLCh (perceptually uniform)
+ * Theme: Monochrome + single chromatic accent
+ * Default: Dark mode
+ *
+ * Usage:
+ *   @import url('./tokens.css');
+ *   — or copy the contents into your globals.css inside @layer base { }
+ */
+
+/* ============================================
+   LIGHT THEME (default root)
+   ============================================ */
+:root {
+  /* Surfaces */
+  --background: oklch(1.0000 0 0);
+  --foreground: oklch(0.1448 0 0);
+  --card: oklch(1.0000 0 0);
+  --card-foreground: oklch(0.1448 0 0);
+  --popover: oklch(1.0000 0 0);
+  --popover-foreground: oklch(0.1448 0 0);
+
+  /* Interactive */
+  --primary: oklch(0.2046 0 0);
+  --primary-foreground: oklch(0.9851 0 0);
+  --secondary: oklch(0.9702 0 0);
+  --secondary-foreground: oklch(0.2046 0 0);
+  --muted: oklch(0.9702 0 0);
+  --muted-foreground: oklch(0.5486 0 0);
+
+  /* Accent — the ONLY chromatic color */
+  --accent: oklch(0.79 0.18 70.67);
+  --accent-foreground: oklch(0.1448 0 0);
+
+  /* Semantic */
+  --destructive: oklch(0.5830 0.2387 28.4765);
+  --destructive-foreground: oklch(0.9702 0 0);
+  --success: oklch(0.5555 0 0);
+  --success-foreground: oklch(0.9851 0 0);
+  --warning: oklch(0.6500 0 0);
+  --warning-foreground: oklch(0.1448 0 0);
+  --info: oklch(0.5555 0 0);
+  --info-foreground: oklch(0.9851 0 0);
+
+  /* Borders & Inputs */
+  --border: oklch(0.9219 0 0);
+  --input: oklch(0.9219 0 0);
+  --ring: oklch(0.7090 0 0);
+
+  /* Charts (monochrome scale) */
+  --chart-1: oklch(0.5555 0 0);
+  --chart-2: oklch(0.4500 0 0);
+  --chart-3: oklch(0.3500 0 0);
+  --chart-4: oklch(0.6500 0 0);
+  --chart-5: oklch(0.7500 0 0);
+
+  /* Sidebar */
+  --sidebar: oklch(0.9851 0 0);
+  --sidebar-foreground: oklch(0.1448 0 0);
+  --sidebar-primary: oklch(0.2046 0 0);
+  --sidebar-primary-foreground: oklch(0.9851 0 0);
+  --sidebar-accent: oklch(0.9702 0 0);
+  --sidebar-accent-foreground: oklch(0.2046 0 0);
+  --sidebar-border: oklch(0.9219 0 0);
+  --sidebar-ring: oklch(0.7090 0 0);
+
+  /* Layout */
+  --radius: 0.5rem;
+}
+
+/* ============================================
+   DARK THEME
+   ============================================ */
+.dark {
+  /* Surfaces */
+  --background: oklch(0.1448 0 0);
+  --foreground: oklch(0.9851 0 0);
+  --card: oklch(0.2134 0 0);
+  --card-foreground: oklch(0.9851 0 0);
+  --popover: oklch(0.2686 0 0);
+  --popover-foreground: oklch(0.9851 0 0);
+
+  /* Interactive */
+  --primary: oklch(0.9851 0 0);
+  --primary-foreground: oklch(0.1448 0 0);
+  --secondary: oklch(0.2686 0 0);
+  --secondary-foreground: oklch(0.9851 0 0);
+  --muted: oklch(0.2686 0 0);
+  --muted-foreground: oklch(0.7090 0 0);
+
+  /* Accent — same in both themes */
+  --accent: oklch(0.79 0.18 70.67);
+  --accent-foreground: oklch(0.1448 0 0);
+
+  /* Semantic */
+  --destructive: oklch(0.7022 0.1892 22.2279);
+  --destructive-foreground: oklch(0.2686 0 0);
+  --success: oklch(0.6500 0 0);
+  --success-foreground: oklch(0.1448 0 0);
+  --warning: oklch(0.7500 0 0);
+  --warning-foreground: oklch(0.1448 0 0);
+  --info: oklch(0.5555 0 0);
+  --info-foreground: oklch(0.9851 0 0);
+
+  /* Borders & Inputs */
+  --border: oklch(0.3407 0 0);
+  --input: oklch(0.4386 0 0);
+  --ring: oklch(0.5555 0 0);
+
+  /* Charts (adjusted for dark bg) */
+  --chart-1: oklch(0.5555 0 0);
+  --chart-2: oklch(0.4500 0 0);
+  --chart-3: oklch(0.6500 0 0);
+  --chart-4: oklch(0.7500 0 0);
+  --chart-5: oklch(0.3500 0 0);
+
+  /* Sidebar */
+  --sidebar: oklch(0.2046 0 0);
+  --sidebar-foreground: oklch(0.9851 0 0);
+  --sidebar-primary: oklch(0.9851 0 0);
+  --sidebar-primary-foreground: oklch(0.2046 0 0);
+  --sidebar-accent: oklch(0.2686 0 0);
+  --sidebar-accent-foreground: oklch(0.9851 0 0);
+  --sidebar-border: oklch(0.3407 0 0);
+  --sidebar-ring: oklch(0.4386 0 0);
+}
+
+/* ============================================
+   GLOBAL RESET
+   ============================================ */
+* {
+  border-color: var(--border);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* ============================================
+   GLASS MORPHISM
+   ============================================ */
+.glass {
+  background-color: var(--card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-width: 1px;
+  border-color: var(--border);
+}
+
+.glass-hover {
+  transition: all 300ms;
+}
+
+.glass-hover:hover {
+  background-color: var(--muted);
+  border-color: var(--ring);
+}
+
+/* ============================================
+   TEXT EFFECTS
+   ============================================ */
+.text-gradient {
+  background: linear-gradient(to right, var(--foreground), var(--muted-foreground));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ============================================
+   GLOW EFFECTS
+   ============================================ */
+.glow {
+  box-shadow: 0 0 20px oklch(0 0 0 / 0.1);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px oklch(0 0 0 / 0.15);
+}
+
+/* ============================================
+   LOADING ANIMATION
+   ============================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(0.5 0 0 / 0.1) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* ============================================
+   DROP ZONE
+   ============================================ */
+.drop-zone {
+  border-width: 2px;
+  border-style: dashed;
+  border-color: var(--border);
+  border-radius: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+  transition: all 300ms ease-out;
+}
+
+.drop-zone.active {
+  border-color: var(--foreground);
+  background-color: var(--muted);
+}
+
+/* ============================================
+   SCROLLBAR
+   ============================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ring);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
