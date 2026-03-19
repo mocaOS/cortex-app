@@ -3565,6 +3565,8 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
         documents_deleted=0,
         entities_removed=0,
         communities_removed=0,
+        merge_history_deleted=0,
+        system_meta_deleted=0,
         collections_deleted=0,
         api_keys_deleted=0,
         uploaded_files_deleted=0,
@@ -3587,6 +3589,14 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
             result.communities_removed = doc_result.get("communities_removed", 0)
             logger.info(f"System reset: Deleted {result.documents_deleted} documents, "
                        f"{result.entities_removed} entities, {result.communities_removed} communities")
+
+            # Also clean up merge history and system metadata (tied to knowledge graph)
+            result.merge_history_deleted = await asyncio.to_thread(neo4j.delete_all_merge_history)
+            result.system_meta_deleted = await asyncio.to_thread(neo4j.delete_all_system_meta)
+            if result.merge_history_deleted > 0:
+                logger.info(f"System reset: Deleted {result.merge_history_deleted} merge history records")
+            if result.system_meta_deleted > 0:
+                logger.info(f"System reset: Deleted {result.system_meta_deleted} system metadata records")
         
         # Step 3: Delete uploaded files from disk (if requested)
         if request.delete_uploaded_files:
@@ -3636,6 +3646,8 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
             parts.append(f"{result.entities_removed} entities")
         if result.communities_removed > 0:
             parts.append(f"{result.communities_removed} communities")
+        if result.merge_history_deleted > 0:
+            parts.append(f"{result.merge_history_deleted} merge history records")
         if result.collections_deleted > 0:
             parts.append(f"{result.collections_deleted} collections")
         if result.api_keys_deleted > 0:

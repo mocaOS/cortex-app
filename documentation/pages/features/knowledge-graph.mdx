@@ -497,6 +497,34 @@ curl -X DELETE "http://localhost:8000/api/graph/communities" \
   -H "X-API-Key: your-api-key"
 ```
 
+### System Reset
+
+For a complete wipe of all data, use the **System Reset** feature in Settings → Danger Zone, or call the API directly:
+
+```bash
+curl -X POST "http://localhost:8000/api/admin/reset" \
+  -H "X-API-Key: your-admin-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "delete_documents": true,
+    "delete_uploaded_files": true,
+    "delete_custom_inputs": true,
+    "delete_collections": true,
+    "delete_api_keys": false
+  }'
+```
+
+When documents are deleted, the system also cleans up all associated data:
+
+| Data | Cleaned Up |
+|------|------------|
+| **Documents, Chunks** | All document and chunk nodes |
+| **Entities, Relationships** | All entity nodes and their relationships |
+| **Communities** | All community nodes |
+| **Merge History** | All deduplication audit trail (`MergeHistory` nodes) |
+| **System Metadata** | Staleness timestamps (`SystemMeta` nodes) |
+| **Client Cache** | Dismissed dedup suggestions, regeneration flow state |
+
 ## Best Practices
 
 1. **Quality Documents** - Better source documents = better entities

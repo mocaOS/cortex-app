@@ -31,7 +31,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - Next.js App Router with unified navigation structure:
   - **Manage** section: Documents (`/documents`, default — "Generate Graph" button navigates to `/extract` instead of starting processing directly), Knowledge Graph (`/extract` — 3-step pipeline: entity extraction → relationship analysis → community detection with staleness tracking; "Generate Graph" button when no entities exist as primary CTA, "Regenerate Graph" button when entities exist runs full pipeline from scratch: first calls `deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()` to wipe all graph data, then reprocesses all documents via `api.reprocessDocuments` → relationship rebuild → community detection), Deduplicate (`/deduplicate` — entity deduplication with rapidfuzz similarity scanning, merge/dismiss flow, merge history), Collections, Add
   - **Explore** section: Knowledge Graph, Entities (read-only), Relationships (read-only), Communities (read-only), Deep Research, Chat (all tab-based on `/explore` with `?tab=graph|entities|relationships|communities|research|chat`)
-  - **Settings** (`/admin`): Statistics dashboard, system configuration, API key management, danger zone. Stats bar hidden on this page.
+  - **Settings** (`/admin`): Statistics dashboard, system configuration, API key management, danger zone (system reset). Stats bar hidden on this page.
   - `/` redirects to `/documents`
   - `/entities`, `/relationships`, `/communities` redirect to their Explore tabs
 - `lib/api.ts` — API client with auth headers
@@ -118,6 +118,7 @@ Copy `.env.example` to `.env`. Key variables:
 - Frontend uses `"use client"` directive for interactive components; API calls go through `lib/api.ts`
 - Explore browsers (entities, relationships, communities) fetch all items (no limit cap) for full client-side search and pagination (50 items/page). Search in all three browsers prioritizes name matches over description/summary matches. Each item is clickable for a detail modal. Relationships browser has type dropdown filter. Communities browser cleans up JSON artifacts in summaries for display.
 - All API endpoints are in `main.py` (no separate router modules)
+- System Reset (`POST /api/admin/reset`): Admin-only endpoint with selective deletion options (documents, uploaded files, custom inputs, collections, API keys). When documents are deleted, also cleans up `MergeHistory` nodes (dedup audit trail), `SystemMeta` nodes (staleness timestamps), and frontend clears client-side cached data (`dedup_dismissed` and `moca_community_detection_task` from localStorage, `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage). Accessible via Settings page → Danger Zone → System Reset modal with "DELETE" confirmation.
 
 ## Design System
 

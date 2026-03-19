@@ -3001,6 +3001,40 @@ class Neo4jService:
             logger.info(f"Deleted {deleted} entities")
             return {"entities_deleted": deleted}
 
+    def delete_all_merge_history(self) -> int:
+        """Delete ALL MergeHistory nodes (deduplication audit trail).
+
+        Returns:
+            Number of MergeHistory nodes deleted.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (h:MergeHistory)
+                DETACH DELETE h
+                RETURN count(h) as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} merge history records")
+            return deleted
+
+    def delete_all_system_meta(self) -> int:
+        """Delete ALL SystemMeta nodes (staleness timestamps, etc.).
+
+        Returns:
+            Number of SystemMeta nodes deleted.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (m:SystemMeta)
+                DETACH DELETE m
+                RETURN count(m) as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} system meta records")
+            return deleted
+
     def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
         """Search communities by their summary content."""
         with self.driver.session() as session:

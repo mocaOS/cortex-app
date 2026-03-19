@@ -48,6 +48,16 @@ export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
 
       const response = await api.resetSystem(request);
       setResult(response);
+
+      // Clear client-side cached data tied to the knowledge graph
+      if (request.delete_documents) {
+        localStorage.removeItem("dedup_dismissed");
+        localStorage.removeItem("moca_community_detection_task");
+        sessionStorage.removeItem("regenerateStep");
+        sessionStorage.removeItem("regenerateStartedAt");
+        sessionStorage.removeItem("regenerateTaskId");
+      }
+
       onReset?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset system");
@@ -99,6 +109,12 @@ export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Communities removed:</span>
                 <span className="text-foreground font-medium">{result.communities_removed}</span>
+              </div>
+            )}
+            {result.merge_history_deleted > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Merge history cleared:</span>
+                <span className="text-foreground font-medium">{result.merge_history_deleted}</span>
               </div>
             )}
             {result.collections_deleted > 0 && (

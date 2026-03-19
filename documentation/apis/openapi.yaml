@@ -1216,6 +1216,28 @@ paths:
         '200':
           description: API key activated
 
+  /api/admin/reset:
+    post:
+      tags: [Admin]
+      summary: System reset
+      description: |
+        Selectively delete data from the system. This is a destructive operation that cannot be undone.
+        When documents are deleted, associated data is also cleaned up: merge history (deduplication audit trail),
+        system metadata (staleness timestamps), and all graph data (entities, relationships, communities).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemResetRequest'
+      responses:
+        '200':
+          description: System reset completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemResetResponse'
+
   /api/turbo/status:
     get:
       tags: [Turbo Mode]
@@ -2066,3 +2088,64 @@ components:
         total:
           type: integer
           description: Total number of merge history entries
+
+    SystemResetRequest:
+      type: object
+      properties:
+        delete_documents:
+          type: boolean
+          default: true
+          description: Delete all documents, chunks, entities, relationships, communities, merge history, and system metadata
+        delete_uploaded_files:
+          type: boolean
+          default: true
+          description: Delete uploaded files from disk
+        delete_custom_inputs:
+          type: boolean
+          default: true
+          description: Delete custom input files from disk
+        delete_collections:
+          type: boolean
+          default: true
+          description: Delete all non-default collections
+        delete_api_keys:
+          type: boolean
+          default: false
+          description: Delete all API keys (dangerous — defaults to false)
+
+    SystemResetResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Summary message of what was deleted
+        documents_deleted:
+          type: integer
+          description: Number of documents deleted
+        entities_removed:
+          type: integer
+          description: Number of entities removed
+        communities_removed:
+          type: integer
+          description: Number of communities removed
+        merge_history_deleted:
+          type: integer
+          description: Number of merge history records deleted
+        system_meta_deleted:
+          type: integer
+          description: Number of system metadata records deleted
+        collections_deleted:
+          type: integer
+          description: Number of collections deleted
+        api_keys_deleted:
+          type: integer
+          description: Number of API keys deleted
+        uploaded_files_deleted:
+          type: integer
+          description: Number of uploaded files deleted
+        custom_inputs_deleted:
+          type: integer
+          description: Number of custom input files deleted
+        processing_cancelled:
+          type: integer
+          description: Number of active processing tasks cancelled

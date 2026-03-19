@@ -297,10 +297,11 @@ npm run dev
 | GET | `/api/turbo/jobs/{id}` | Get details of a specific job |
 | GET | `/api/turbo/jobs/{id}/logs` | Get logs from a GPU job |
 
-### Admin Endpoints (API Key Management)
+### Admin Endpoints
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
+| POST | `/api/admin/reset` | System reset — selective deletion of all data | Admin |
 | GET | `/api/admin/api-keys` | List all API keys | Admin |
 | POST | `/api/admin/api-keys` | Create new API key | Admin |
 | GET | `/api/admin/api-keys/{id}` | Get API key details | Admin |

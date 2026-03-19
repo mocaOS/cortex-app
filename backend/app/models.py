@@ -645,6 +645,8 @@ class SystemResetResponse(BaseModel):
     documents_deleted: int = Field(default=0, description="Number of documents deleted")
     entities_removed: int = Field(default=0, description="Number of entities removed")
     communities_removed: int = Field(default=0, description="Number of communities removed")
+    merge_history_deleted: int = Field(default=0, description="Number of merge history records deleted")
+    system_meta_deleted: int = Field(default=0, description="Number of system metadata records deleted")
     collections_deleted: int = Field(default=0, description="Number of collections deleted")
     api_keys_deleted: int = Field(default=0, description="Number of API keys deleted")
     uploaded_files_deleted: int = Field(default=0, description="Number of uploaded files deleted")

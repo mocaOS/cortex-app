@@ -575,6 +575,8 @@ export interface SystemResetResponse {
   documents_deleted: number;
   entities_removed: number;
   communities_removed: number;
+  merge_history_deleted: number;
+  system_meta_deleted: number;
   collections_deleted: number;
   api_keys_deleted: number;
   uploaded_files_deleted: number;
