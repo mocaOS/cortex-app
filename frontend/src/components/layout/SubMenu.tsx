@@ -34,7 +34,7 @@ const menuSections: MenuSection[] = [
     basePath: "/",
     items: [
       { href: "/documents", label: "Documents", icon: FileText },
-      { href: "/extract", label: "Generate Graph", icon: FlaskConical },
+      { href: "/extract", label: "Knowledge Graph", icon: FlaskConical },
       { href: "/deduplicate", label: "Deduplicate", icon: Merge },
       { href: "/collections", label: "Collections", icon: FolderOpen },
       { href: "/add", label: "Add", icon: PenLine },

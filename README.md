@@ -42,7 +42,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Documents, Generate Graph (3-step pipeline: extract entities → analyze relationships → detect communities), Entity Deduplication, Collections, Add
+  - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: extract entities → analyze relationships → detect communities; "Regenerate Graph" deletes all communities, relationships, and entities for a true from-scratch rebuild), Entity Deduplication, Collections, Add
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
@@ -238,6 +238,7 @@ npm run dev
 | GET | `/api/graph/entity/{name}/relationships` | Get entity relationships up to N hops |
 | POST | `/api/graph/subgraph` | Get subgraph for specific entities |
 | GET | `/api/graph/search` | Search entities by name (supports prefix matching with wildcard) |
+| DELETE | `/api/graph/entities` | Delete ALL entities and their connections (DETACH DELETE) |
 
 ### Entity Deduplication Endpoints
 
@@ -804,7 +805,7 @@ When a document is uploaded (or custom input is added), the following pipeline e
 7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
 8. **Collection Assignment** - Optionally add document to a collection scope
 9. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
-10. **Relationship Analysis** (separate step via Generate Graph) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
+10. **Relationship Analysis** (separate step via Knowledge Graph page) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
 11. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
 
 ### Query Pipeline (Agent Architecture)

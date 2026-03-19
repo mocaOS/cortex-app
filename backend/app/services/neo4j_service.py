@@ -2984,6 +2984,23 @@ class Neo4jService:
             logger.info(f"Deleted {deleted} relationships")
             return {"relationships_deleted": deleted}
 
+    def delete_all_entities(self) -> dict:
+        """Delete ALL entities and their MENTIONS relationships from chunks.
+
+        Returns:
+            Dict with count of deleted entities.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                DETACH DELETE e
+                RETURN count(e) as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} entities")
+            return {"entities_deleted": deleted}
+
     def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
         """Search communities by their summary content."""
         with self.driver.session() as session:

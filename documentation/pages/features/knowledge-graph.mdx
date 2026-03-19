@@ -22,7 +22,7 @@ MOCA uses a two-phase approach for building the knowledge graph:
 
 **Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Fuzzy entity resolution (Levenshtein 85%) deduplicates entities at storage time, merging variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching.
 
-**Phase B (per-collection, on demand):** Cross-document relationship analysis using the main (large) model. Discovers relationships between all entities using source text context — relevant chunk text is fetched per batch so the LLM can ground relationships in actual document content. Batched at 120 entities per batch with 15% overlap for cross-batch continuity. Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. Triggered via API or Generate Graph UI after document processing.
+**Phase B (per-collection, on demand):** Cross-document relationship analysis using the main (large) model. Discovers relationships between all entities using source text context — relevant chunk text is fetched per batch so the LLM can ground relationships in actual document content. Batched at 120 entities per batch with 15% overlap for cross-batch continuity. Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -339,13 +339,17 @@ GRAPH_WEIGHT=0.2
 
 ## Visualization
 
-The **Generate Graph** page (under Manage) guides you through a 3-step pipeline:
+The **Knowledge Graph** page (under Manage) provides a one-click **"Generate Graph"** (or **"Regenerate Graph"**) button that runs the full 3-step pipeline in sequence:
 
-1. **Entity Extraction** — Process uploaded documents to extract entities. Shows pending document count with an "Extract Entities" button. Greyed-out steps below unlock as each step completes.
-2. **Relationship Analysis** — Discover connections between entities across documents. Detects when new documents have been processed since the last analysis and prompts re-analysis.
-3. **Community Detection** — Group related entities into communities. Detects when relationships have been updated since the last detection and prompts re-detection.
+1. **Entity Extraction** — Process uploaded documents to extract entities.
+2. **Relationship Analysis** — Discover connections between entities across documents.
+3. **Community Detection** — Group related entities into communities.
 
-Each step tracks staleness via persisted timestamps, ensuring users are always guided to keep the knowledge graph up to date.
+The button label changes to "Regenerate Graph" when a graph already exists. When regenerating, Step 1 first **deletes all communities, relationships, and entities** (in that order) before reprocessing documents, ensuring a true from-scratch rebuild of the entire knowledge graph. The full cleanup order is: `DELETE /api/graph/communities` → `DELETE /api/graph/relationships` → `DELETE /api/graph/entities` → reprocess all documents → relationship analysis (rebuild mode) → community detection.
+
+The pipeline is resilient to page refreshes — progress is persisted via `sessionStorage` with a saved task ID (`regenerateTaskId`) for the active step's backend task. On resume, the step runner checks the saved task's status: **running** → resume polling, **completed** → advance to the next step, **failed** → abort, **not found** → start fresh. This explicit task-based approach eliminates false step-skipping that could occur from stale data. Each step also tracks staleness via persisted timestamps, ensuring users are always guided to keep the knowledge graph up to date.
+
+The **Documents** page also provides a **"Generate Graph"** button that navigates to the Knowledge Graph page to start the pipeline.
 
 The **Explore** section provides an interactive graph visualization (Knowledge Graph tab) plus read-only browsers for Entities, Relationships, and Communities:
 
@@ -444,6 +448,23 @@ Response:
 ```
 
 The StatsBar in the UI also shows a cleanup banner when it detects orphaned graph data (entities exist but no documents).
+
+### Entity Management
+
+Delete all entities and their connections (DETACH DELETE). This removes every entity node and all relationships attached to them:
+
+```bash
+# Delete ALL entities and their connections
+curl -X DELETE "http://localhost:8000/api/graph/entities" \
+  -H "X-API-Key: your-api-key"
+```
+
+Response:
+```json
+{
+  "entities_deleted": 1542
+}
+```
 
 ### Relationship Management
 

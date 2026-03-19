@@ -2497,6 +2497,18 @@ async def delete_all_relationships():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/graph/entities")
+async def delete_all_entities():
+    """Delete ALL entities and their connections."""
+    try:
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(neo4j.delete_all_entities)
+        return result
+    except Exception as e:
+        logger.error(f"Error deleting all entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # =============================================================================
 # Community Detection Endpoints
 # =============================================================================

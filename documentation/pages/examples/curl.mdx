@@ -397,6 +397,13 @@ curl "$MOCA_URL/api/entities/merge-history?limit=20" \
   -H "X-API-Key: $MOCA_API_KEY"
 ```
 
+### Delete All Entities
+
+```bash
+curl -X DELETE "$MOCA_URL/api/graph/entities" \
+  -H "X-API-Key: $MOCA_API_KEY"
+```
+
 ---
 
 ## Communities

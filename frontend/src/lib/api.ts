@@ -578,6 +578,10 @@ class ApiClient {
     return this.request("/api/graph/relationships", { method: "DELETE" });
   }
 
+  async deleteAllEntities(): Promise<{ entities_deleted: number }> {
+    return this.request("/api/graph/entities", { method: "DELETE" });
+  }
+
   // ===========================================================================
   // Task API (Background Task Tracking)
   // ===========================================================================

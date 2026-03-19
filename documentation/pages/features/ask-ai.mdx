@@ -25,6 +25,19 @@ The settings dropdown allows you to:
 - Toggle **Stream responses** on/off (for debugging)
 - Select a **Collection Scope** to limit search to specific documents
 
+### Response Layout
+
+In the UI, responses are rendered in this order:
+
+1. **Research Process** (Deep Research only) — Sub-Questions, Thinking Steps, and Reasoning Steps are displayed above the main answer content. The research process section auto-scrolls to the bottom during streaming so the latest activity is always visible.
+2. **Content** — The main answer from the writer LLM.
+3. **Graph Context** — Related entities, relationships, and communities.
+4. **Sources** — Retrieved source documents with citations.
+
+### Source Citation Viewer
+
+Clicking a source opens a modal that displays the full document content with the cited chunk highlighted. The surrounding text is shown at 60% opacity while the cited chunk appears at full opacity with an accent-colored left border. The modal auto-scrolls to bring the highlighted chunk into view.
+
 ## How It Works
 
 Both modes use a **researcher/writer agent architecture**. An LLM-driven researcher agent iteratively gathers information from the knowledge base using tool-calling, then a separate writer LLM synthesizes the gathered context into a streamed answer.

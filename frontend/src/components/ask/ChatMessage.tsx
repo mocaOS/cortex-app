@@ -198,12 +198,30 @@ export default function ChatMessage({
   const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
-  
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const thinkingStepsRef = useRef<HTMLDivElement>(null);
+
   // Parse thinking content from message (pass isStreaming to handle incomplete blocks)
   const { thinking, mainContent, isThinkingComplete } = useMemo(
     () => parseThinkingContent(message.content, message.isStreaming),
     [message.content, message.isStreaming]
   );
+
+  // Assemble full document text from chunks and split around the cited chunk
+  const highlightParts = useMemo(() => {
+    if (!documentContent || !selectedSource) return null;
+    const sorted = [...documentContent.chunks].sort((a, b) => a.chunk_index - b.chunk_index);
+    const fullText = sorted.map(c => c.content).join("\n\n");
+    const chunkContent = selectedSource.content.trim();
+    const idx = fullText.indexOf(chunkContent);
+    if (idx === -1) return { before: fullText, cited: "", after: "", found: false };
+    return {
+      before: fullText.slice(0, idx),
+      cited: fullText.slice(idx, idx + chunkContent.length),
+      after: fullText.slice(idx + chunkContent.length),
+      found: true,
+    };
+  }, [documentContent, selectedSource]);
 
   // Fetch document content when a source is selected
   const handleSourceClick = async (source: Source) => {
@@ -253,6 +271,24 @@ export default function ChatMessage({
       document.body.style.overflow = "";
     };
   }, [selectedSource]);
+
+  // Auto-scroll Research Process to bottom as new steps stream in
+  useEffect(() => {
+    if (thinkingStepsRef.current && message.isStreaming) {
+      thinkingStepsRef.current.scrollTop = thinkingStepsRef.current.scrollHeight;
+    }
+  }, [message.thinkingSteps, message.isStreaming]);
+
+  // Auto-scroll to highlighted chunk when document content loads
+  useEffect(() => {
+    if (highlightRef.current && documentContent && !isLoadingContent && highlightParts?.found) {
+      const timer = setTimeout(() => {
+        highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [documentContent, isLoadingContent, highlightParts]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -281,6 +317,89 @@ export default function ChatMessage({
           message.role === "user" ? "max-w-[80%] text-right" : ""
         )}
       >
+        {/* Sub-Questions */}
+        {message.subQuestions && message.subQuestions.length > 0 && (
+          <div className="mb-3 p-3 rounded-lg bg-muted border border-border">
+            <div className="flex items-center gap-2 mb-2">
+              <Search className="w-3 h-3 text-foreground" />
+              <span className="text-xs text-foreground font-medium">
+                Research Questions
+              </span>
+            </div>
+            <div className="space-y-1">
+              {message.subQuestions.map((q, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-2 text-xs text-muted-foreground"
+                >
+                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
+                    {idx + 1}
+                  </span>
+                  <span>{q}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Thinking Steps */}
+        {message.thinkingSteps && message.thinkingSteps.length > 0 && (
+          <div className="mb-3 p-3 rounded-lg bg-muted border border-border">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-3 h-3 text-foreground" />
+              <span className="text-xs text-foreground font-medium">
+                {message.isStreaming ? "Thinking..." : "Research Process"}
+              </span>
+              {message.isStreaming && (
+                <Loader2 className="w-3 h-3 text-foreground animate-spin" />
+              )}
+            </div>
+            <div ref={thinkingStepsRef} className="space-y-1 max-h-32 overflow-y-auto">
+              {message.thinkingSteps.map((step, idx) => (
+                <div
+                  key={idx}
+                  className={cn(
+                    "flex items-start gap-2 text-xs",
+                    idx === message.thinkingSteps!.length - 1 && message.isStreaming
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
+                    {idx + 1}
+                  </span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Reasoning Steps */}
+        {message.reasoningSteps && message.reasoningSteps.length > 0 && (
+          <div className="mb-3 p-3 rounded-lg bg-muted border border-border">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-3 h-3 text-foreground" />
+              <span className="text-xs text-foreground font-medium">
+                Research Steps
+              </span>
+            </div>
+            <div className="space-y-1">
+              {message.reasoningSteps.map((step, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground">
+                    {idx + 1}
+                  </span>
+                  {step}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div
           className={cn(
             "rounded-lg p-4",
@@ -387,89 +506,6 @@ export default function ChatMessage({
             </div>
           )}
         </div>
-
-        {/* Sub-Questions */}
-        {message.subQuestions && message.subQuestions.length > 0 && (
-          <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <Search className="w-3 h-3 text-foreground" />
-              <span className="text-xs text-foreground font-medium">
-                Research Questions
-              </span>
-            </div>
-            <div className="space-y-1">
-              {message.subQuestions.map((q, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-start gap-2 text-xs text-muted-foreground"
-                >
-                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
-                    {idx + 1}
-                  </span>
-                  <span>{q}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Thinking Steps */}
-        {message.thinkingSteps && message.thinkingSteps.length > 0 && (
-          <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <Zap className="w-3 h-3 text-foreground" />
-              <span className="text-xs text-foreground font-medium">
-                {message.isStreaming ? "Thinking..." : "Research Process"}
-              </span>
-              {message.isStreaming && (
-                <Loader2 className="w-3 h-3 text-foreground animate-spin" />
-              )}
-            </div>
-            <div className="space-y-1 max-h-32 overflow-y-auto">
-              {message.thinkingSteps.map((step, idx) => (
-                <div
-                  key={idx}
-                  className={cn(
-                    "flex items-start gap-2 text-xs",
-                    idx === message.thinkingSteps!.length - 1 && message.isStreaming
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
-                    {idx + 1}
-                  </span>
-                  <span>{step}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Reasoning Steps */}
-        {message.reasoningSteps && message.reasoningSteps.length > 0 && (
-          <div className="mt-3 p-3 rounded-lg bg-muted border border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <Zap className="w-3 h-3 text-foreground" />
-              <span className="text-xs text-foreground font-medium">
-                Research Steps
-              </span>
-            </div>
-            <div className="space-y-1">
-              {message.reasoningSteps.map((step, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2 text-xs text-muted-foreground"
-                >
-                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground">
-                    {idx + 1}
-                  </span>
-                  {step}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Graph Context */}
         {message.graphContext &&
@@ -634,6 +670,25 @@ export default function ChatMessage({
                           <MarkdownRenderer content={selectedSource.content} />
                         </div>
                       </div>
+                    ) : documentContent && highlightParts?.found ? (
+                      <>
+                        {highlightParts.before && (
+                          <div className="opacity-60">
+                            <MarkdownRenderer content={highlightParts.before} />
+                          </div>
+                        )}
+                        <div
+                          ref={highlightRef}
+                          className="border-l-[3px] border-accent pl-4 my-4"
+                        >
+                          <MarkdownRenderer content={highlightParts.cited} />
+                        </div>
+                        {highlightParts.after && (
+                          <div className="opacity-60">
+                            <MarkdownRenderer content={highlightParts.after} />
+                          </div>
+                        )}
+                      </>
                     ) : documentContent ? (
                       <MarkdownRenderer content={documentContent.full_content} />
                     ) : (
