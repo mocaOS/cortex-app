@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EntityDetails } from "@/types";
@@ -164,6 +165,8 @@ export default function EntitiesBrowser() {
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [entityDetails, setEntityDetails] = useState<EntityDetails | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  useBodyScrollLock(!!selectedEntity);
 
   const handleOpenDetail = async (entity: Entity) => {
     setSelectedEntity(entity);

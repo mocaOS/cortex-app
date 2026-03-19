@@ -2,13 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  X, 
-  Loader2, 
-  TrendingUp, 
-  AlertCircle, 
-  Activity, 
-  BarChart3, 
+import {
+  X,
+  Loader2,
+  TrendingUp,
+  AlertCircle,
+  Activity,
+  BarChart3,
   Calendar,
   CalendarDays,
   CalendarRange,
@@ -17,6 +17,7 @@ import {
   Clock
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { APIKeyWithStats, APIKeyUsageHistoryResponse, APIKeyStats } from "@/types";
 import { UsageLineChart, EndpointBarChart } from "./UsageChart";
 
@@ -38,6 +39,8 @@ const ENDPOINT_COLORS = [
 ];
 
 export function ApiKeyAnalytics({ apiKey, onClose }: ApiKeyAnalyticsProps) {
+  useBodyScrollLock(true);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<APIKeyStats | null>(apiKey.stats || null);

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { Community } from "@/types";
 import { Loader2, Search, Users, Network, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -114,6 +115,8 @@ export default function CommunitiesBrowser() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  useBodyScrollLock(!!selectedCommunity);
 
   const fetchCommunities = useCallback(async () => {
     try {

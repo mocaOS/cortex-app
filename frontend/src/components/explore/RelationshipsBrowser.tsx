@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { GraphEdge } from "@/types";
 import { Loader2, Search, Filter, Network, Share2, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -155,6 +156,8 @@ export default function RelationshipsBrowser() {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
+
+  useBodyScrollLock(!!selectedEdge);
 
   const fetchRelationships = useCallback(async () => {
     try {

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
 interface Document {
   id: string;
@@ -172,6 +173,9 @@ export function DocumentCard({
   const [showMarkdownViewer, setShowMarkdownViewer] = useState(false);
   const [markdownContent, setMarkdownContent] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
+
+  useBodyScrollLock(showMarkdownViewer);
+
   const FileIcon = getFileIcon(doc.file_type, doc.is_custom_input);
   const status = getStatusConfig(doc.processing_status, doc);
   const StatusIcon = status.icon;

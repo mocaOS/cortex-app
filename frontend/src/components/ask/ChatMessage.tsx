@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { GraphContext, DocumentContent } from "@/types";
 
 // Helper to parse <think>...</think> blocks from content
@@ -260,17 +261,7 @@ export default function ChatMessage({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    if (selectedSource) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [selectedSource]);
+  useBodyScrollLock(!!selectedSource);
 
   // Auto-scroll Research Process to bottom as new steps stream in
   useEffect(() => {

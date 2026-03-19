@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { X, AlertTriangle, Loader2, Trash2, Check } from "lucide-react";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { SystemResetRequest, SystemResetResponse } from "@/types";
 
 interface SystemResetModalProps {
@@ -12,6 +13,8 @@ interface SystemResetModalProps {
 }
 
 export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
+  useBodyScrollLock(true);
+
   // Deletion options state
   const [deleteDocuments, setDeleteDocuments] = useState(true);
   const [deleteUploadedFiles, setDeleteUploadedFiles] = useState(true);

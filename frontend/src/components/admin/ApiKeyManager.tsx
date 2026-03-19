@@ -14,6 +14,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type {
   APIKeyWithStats,
   CreateAPIKeyResponse,
@@ -36,6 +37,8 @@ export function ApiKeyManager() {
 
   // Portal mount state for SSR compatibility
   const [mounted, setMounted] = useState(false);
+
+  useBodyScrollLock(showCreateModal || !!newKeyResult);
 
   useEffect(() => {
     setMounted(true);

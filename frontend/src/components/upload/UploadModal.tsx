@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { X, FolderOpen } from "lucide-react";
 import CollectionSelector from "../CollectionSelector";
 import UploadZone from "./UploadZone";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
 const ALLOWED_TYPES = [
   ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
@@ -24,6 +25,8 @@ interface UploadModalProps {
 export default function UploadModal({ isOpen, onClose, onFilesSelected }: UploadModalProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<string | undefined>(undefined);
+
+  useBodyScrollLock(isOpen);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

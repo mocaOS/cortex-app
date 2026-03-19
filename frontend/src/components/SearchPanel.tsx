@@ -6,6 +6,7 @@ import { Search, FileText, Loader2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { DocumentContent } from "@/types";
 
 interface SearchResult {
@@ -66,17 +67,7 @@ export default function SearchPanel() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    if (selectedResult) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [selectedResult]);
+  useBodyScrollLock(!!selectedResult);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();

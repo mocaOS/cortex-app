@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type { DuplicateGroup, MergeEntitiesResponse, MergeHistoryEntry, Stats } from "@/types";
 import { Loader2, Search, Star, Merge, X, AlertTriangle, Check, ChevronDown, ChevronUp, History, Info, ArrowLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -141,11 +142,7 @@ function HistoryModal({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Lock body scroll while modal is open
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
+  useBodyScrollLock(true);
 
   const filtered = searchQuery
     ? history.filter((e) => {
