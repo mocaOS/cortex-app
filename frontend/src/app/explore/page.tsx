@@ -108,6 +108,7 @@ function ExplorePageContent() {
   const [error, setError] = useState<string | null>(null);
   const [nodeLimit, setNodeLimit] = useState(2000);
   const [includeNeighbors] = useState(true);
+  const [hideDisconnected, setHideDisconnected] = useState(true);
   
   // Get active tab from URL params
   const activeTab = getTabFromUrl(searchParams.get("tab"));
@@ -241,15 +242,21 @@ function ExplorePageContent() {
   // Use search graph data when entities are selected, otherwise use full graph
   const activeGraphData = selectedEntities.length > 0 ? searchGraphData : graphData;
 
-  const nodes: GraphNode[] = useMemo(() => {
-    if (!activeGraphData?.nodes) return [];
-    return activeGraphData.nodes;
-  }, [activeGraphData]);
-
   const edges: GraphEdge[] = useMemo(() => {
     if (!activeGraphData?.edges) return [];
     return activeGraphData.edges;
   }, [activeGraphData]);
+
+  const nodes: GraphNode[] = useMemo(() => {
+    if (!activeGraphData?.nodes) return [];
+    if (!hideDisconnected) return activeGraphData.nodes;
+    const connectedIds = new Set<string>();
+    for (const edge of edges) {
+      connectedIds.add(edge.source);
+      connectedIds.add(edge.target);
+    }
+    return activeGraphData.nodes.filter((n) => connectedIds.has(n.id));
+  }, [activeGraphData, hideDisconnected, edges]);
 
   const isGraphLoading = loading || isLoadingSubgraph;
 
@@ -392,6 +399,16 @@ function ExplorePageContent() {
         >
           <RefreshCw className={cn("w-4 h-4", isGraphLoading && "animate-spin")} />
         </button>
+
+        <label className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={hideDisconnected}
+            onChange={(e) => setHideDisconnected(e.target.checked)}
+            className="w-4 h-4 rounded border-border accent-accent cursor-pointer"
+          />
+          Hide disconnected entities
+        </label>
 
         {/* Selected Entities Pills */}
         {selectedEntities.length > 0 && (
