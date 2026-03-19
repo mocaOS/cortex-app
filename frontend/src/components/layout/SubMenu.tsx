@@ -5,7 +5,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import {
   FileText,
   FolderOpen,
-  PenLine,
   Network,
   Layers,
   Share2,
@@ -37,7 +36,6 @@ const menuSections: MenuSection[] = [
       { href: "/extract", label: "Knowledge Graph", icon: FlaskConical },
       { href: "/deduplicate", label: "Deduplicate", icon: Merge },
       { href: "/collections", label: "Collections", icon: FolderOpen },
-      { href: "/add", label: "Add", icon: PenLine },
     ],
   },
   {
@@ -54,7 +52,7 @@ const menuSections: MenuSection[] = [
 ];
 
 // Routes that belong to the "Data" section
-const dataRoutes = ["/", "/documents", "/collections", "/add", "/extract", "/deduplicate"];
+const dataRoutes = ["/", "/documents", "/collections", "/extract", "/deduplicate"];
 
 export default function SubMenu() {
   const pathname = usePathname();
