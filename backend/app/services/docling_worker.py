@@ -232,6 +232,21 @@ def _convert_chunk(
     return md_text, images
 
 
+def _convert_xml_fallback(file_path: str) -> dict:
+    """Fallback for XML files that Docling can't auto-detect (not USPTO/JATS/XBRL).
+
+    Reads the XML as plain text so it can still be ingested, chunked, and searched.
+    """
+    path = Path(file_path)
+    logger.info(f"Using XML plain-text fallback for {path.name}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = path.read_text(encoding="latin-1")
+    md_text = f"```xml\n{text}\n```"
+    return {"markdown": md_text, "filename": path.name, "images": [], "error": None}
+
+
 def convert(file_path: str, use_vision: bool):
     path = Path(file_path)
     if not path.exists():
@@ -274,7 +289,13 @@ def convert(file_path: str, use_vision: bool):
         convert_kwargs = {"max_num_pages": 500}  # Safety limit
         if max_file_size > 0 and max_file_size < (2**31 - 1):
             convert_kwargs["max_file_size"] = max_file_size
-        result = converter.convert(file_path, **convert_kwargs)
+        try:
+            result = converter.convert(file_path, **convert_kwargs)
+        except Exception as exc:
+            # XML files may fail if they don't match a known schema (USPTO/JATS/XBRL)
+            if path.suffix.lower() == ".xml":
+                return _convert_xml_fallback(file_path)
+            raise
         dl_doc = result.document
         md_text = dl_doc.export_to_markdown()
         images = []
