@@ -358,7 +358,18 @@ export default function ChatMessage({
               {/* Main Response Content - only shown after thinking is complete */}
               {mainContent && (
                 <>
-                  <MarkdownRenderer content={mainContent} />
+                  <MarkdownRenderer
+                    content={mainContent}
+                    onCitationClick={
+                      message.sources && message.sources.length > 0
+                        ? (sourceIndex: number) => {
+                            if (message.sources && message.sources[sourceIndex]) {
+                              handleSourceClick(message.sources[sourceIndex]);
+                            }
+                          }
+                        : undefined
+                    }
+                  />
                   {/* Streaming cursor for main content */}
                   {message.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-1" />
