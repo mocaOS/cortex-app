@@ -200,10 +200,8 @@ def _convert_chunk(
     We receive 0-based start/end, so convert: (page_start+1, page_end+1).
     """
     page_range = (page_start + 1, page_end + 1)
-    max_pages = page_end - page_start + 1
 
     convert_kwargs = {
-        "max_num_pages": max_pages,
         "page_range": page_range,
     }
     if max_file_size > 0:

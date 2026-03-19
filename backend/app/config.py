@@ -2,7 +2,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -360,6 +360,14 @@ class Settings(BaseSettings):
     def entity_embed_model(self) -> str:
         """Get the model to use for entity embeddings."""
         return self.entity_embedding_model or self.embedding_model
+
+    @model_validator(mode="before")
+    @classmethod
+    def _empty_str_to_default(cls, values):
+        """Drop empty-string env vars so field defaults apply."""
+        if isinstance(values, dict):
+            return {k: v for k, v in values.items() if v != ""}
+        return values
 
     # Pydantic v2 configuration
     model_config = SettingsConfigDict(
