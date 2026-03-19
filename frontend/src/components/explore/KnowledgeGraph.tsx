@@ -15,6 +15,7 @@ interface ForceGraphNode {
   description?: string;
   community_id?: number;
   mention_count: number;
+  val: number;
   x?: number;
   y?: number;
   vx?: number;
@@ -59,11 +60,23 @@ function getNodeColor(type: string): string {
   return TYPE_COLORS[type] || TYPE_COLORS.default;
 }
 
-// Calculate base node size based on mention count
-function getBaseNodeSize(mentionCount: number): number {
-  const base = 3;
+// Calculate visual node radius based on mention count
+function getNodeRadius(mentionCount: number): number {
+  const base = 5;
   const scale = Math.log2(mentionCount + 1);
-  return Math.min(base + scale * 1, 8);
+  return Math.min(base + scale * 1.5, 14);
+}
+
+// Shadow graph hit detection: the library's shadow canvas reads node.val and
+// uses its own default nodeRelSize (4) to compute the hit circle radius as
+// sqrt(val) * 4.  We derive val from our visual radius + padding so the
+// clickable area fully covers (and slightly exceeds) the visible node.
+const SHADOW_REL_SIZE = 4; // library default for shadow graph
+const HIT_PADDING = 4;     // extra px around visual node for comfortable clicks
+
+function getHitVal(mentionCount: number): number {
+  const hitRadius = getNodeRadius(mentionCount) + HIT_PADDING;
+  return (hitRadius / SHADOW_REL_SIZE) ** 2;
 }
 
 interface EntityPanelProps {
@@ -238,20 +251,25 @@ interface KnowledgeGraphProps {
   edges: GraphEdge[];
   stats?: GraphStats;
   className?: string;
+  initialEntity?: string | null;
 }
 
-// Force graph ref type
+// Force graph ref type — react-force-graph-2d exposes all kapsule methods
 interface ForceGraphMethods {
   zoom: (k?: number, duration?: number) => number;
   centerAt: (x: number, y: number, duration?: number) => void;
   zoomToFit: (duration?: number, padding?: number) => void;
+  screen2GraphCoords: (x: number, y: number) => { x: number; y: number };
 }
+
+const CLICK_THRESHOLD = 5; // px — distinguishes click from drag
 
 export default function KnowledgeGraph({
   nodes,
   edges,
   stats,
   className,
+  initialEntity,
 }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<ForceGraphMethods | null>(null);
@@ -287,24 +305,32 @@ export default function KnowledgeGraph({
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
-  // Convert nodes and edges to force-graph format
+  // Convert nodes and edges to force-graph format.
+  // The `val` property is read by the library's shadow graph (separate instance
+  // with default accessor 'val' and nodeRelSize=4) to size the invisible hit-
+  // detection circles.  We inflate it so the shadow circle fully covers (and
+  // slightly exceeds) the visible node, giving comfortable click/hover targets.
   const graphData = useMemo(() => {
-    const forceNodes: ForceGraphNode[] = nodes.map((n) => ({
-      id: n.id,
-      label: n.label,
-      type: n.type,
-      description: n.description,
-      community_id: n.community_id,
-      mention_count: Math.max(n.mention_count || 1, 1),
-    }));
-    
+    const forceNodes: ForceGraphNode[] = nodes.map((n) => {
+      const mc = Math.max(n.mention_count || 1, 1);
+      return {
+        id: n.id,
+        label: n.label,
+        type: n.type,
+        description: n.description,
+        community_id: n.community_id,
+        mention_count: mc,
+        val: getHitVal(mc),
+      };
+    });
+
     const forceLinks: ForceGraphLink[] = edges.map((e) => ({
       source: e.source,
       target: e.target,
       type: e.type,
-      weight: e.weight ?? 5.0,  // Default weight if not provided
+      weight: e.weight ?? 5.0,
     }));
-    
+
     return { nodes: forceNodes, links: forceLinks };
   }, [nodes, edges]);
 
@@ -361,13 +387,26 @@ export default function KnowledgeGraph({
     }
   }, []);
 
-  // Node hover handlers
-  const handleNodeHover = useCallback((node: ForceGraphNode | null) => {
-    setHoveredNode(node);
-    if (containerRef.current) {
-      containerRef.current.style.cursor = node ? "pointer" : "grab";
+  // Auto-select entity when navigating from Entities browser via ?entity= param
+  const initialEntityConsumedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialEntity || initialEntity === initialEntityConsumedRef.current) return;
+    if (graphData.nodes.length === 0) return;
+    const node = graphData.nodes.find(
+      (n) => n.label.toLowerCase() === initialEntity.toLowerCase()
+    );
+    if (node) {
+      initialEntityConsumedRef.current = initialEntity;
+      // Delay slightly so the force graph has initialized and node positions exist
+      setTimeout(() => {
+        setSelectedNode(node);
+        if (fgRef.current && node.x !== undefined && node.y !== undefined) {
+          fgRef.current.centerAt(node.x, node.y, 500);
+          fgRef.current.zoom(2.5, 500);
+        }
+      }, 300);
     }
-  }, []);
+  }, [initialEntity, graphData.nodes]);
 
   // Fix node position after dragging so it stays where you put it
   const handleNodeDragEnd = useCallback((node: ForceGraphNode) => {
@@ -375,27 +414,114 @@ export default function KnowledgeGraph({
     node.fy = node.y;
   }, []);
 
-  // Custom node rendering with semantic zoom (nodes shrink when zooming in)
+  // ---------- Geometric pointer detection (Brave fingerprinting fallback) ----------
+  // Brave randomizes getImageData() to block canvas fingerprinting, which breaks
+  // force-graph's shadow-canvas color-picking.  We supplement with geometric
+  // distance checking so hover/click works on ALL browsers.
+
+  const findNodeAtCoords = useCallback((gx: number, gy: number): ForceGraphNode | null => {
+    let closest: ForceGraphNode | null = null;
+    let closestDist = Infinity;
+    for (const node of graphData.nodes) {
+      if (node.x === undefined || node.y === undefined) continue;
+      const dx = gx - node.x;
+      const dy = gy - node.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const hitRadius = getNodeRadius(node.mention_count || 1) + HIT_PADDING;
+      if (dist < hitRadius && dist < closestDist) {
+        closest = node;
+        closestDist = dist;
+      }
+    }
+    return closest;
+  }, [graphData.nodes]);
+
+  // Track the last geometrically-hovered node id to avoid redundant state updates
+  const geoHoveredIdRef = useRef<string | null>(null);
+
+  // Convert a PointerEvent to graph coordinates via the library's screen2GraphCoords
+  const toGraphCoords = useCallback((e: PointerEvent): { x: number; y: number } | null => {
+    const fg = fgRef.current;
+    if (!fg?.screen2GraphCoords || !containerRef.current) return null;
+    const canvas = containerRef.current.querySelector("canvas");
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    return fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+  }, []);
+
+  // Pointer events for geometric hover + click fallback
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let downNode: ForceGraphNode | null = null;
+    let downX = 0;
+    let downY = 0;
+
+    const onPointerMove = (e: PointerEvent) => {
+      const coords = toGraphCoords(e);
+      if (!coords) return;
+      const node = findNodeAtCoords(coords.x, coords.y);
+      const nodeId = node?.id ?? null;
+      if (nodeId !== geoHoveredIdRef.current) {
+        geoHoveredIdRef.current = nodeId;
+        setHoveredNode(node);
+        // Set cursor on the canvas itself so it isn't overridden by the library
+        const canvas = container.querySelector("canvas");
+        if (canvas) (canvas as HTMLElement).style.cursor = node ? "pointer" : "grab";
+      }
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      downX = e.clientX;
+      downY = e.clientY;
+      const coords = toGraphCoords(e);
+      downNode = coords ? findNodeAtCoords(coords.x, coords.y) : null;
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const dx = e.clientX - downX;
+      const dy = e.clientY - downY;
+      const isClick = Math.sqrt(dx * dx + dy * dy) < CLICK_THRESHOLD;
+
+      if (isClick) {
+        if (downNode) {
+          handleNodeClick(downNode);
+        } else {
+          setSelectedNode(null);
+        }
+      }
+      downNode = null;
+    };
+
+    container.addEventListener("pointermove", onPointerMove);
+    container.addEventListener("pointerdown", onPointerDown);
+    container.addEventListener("pointerup", onPointerUp);
+    return () => {
+      container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerdown", onPointerDown);
+      container.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [toGraphCoords, findNodeAtCoords, handleNodeClick]);
+
+  // Custom node rendering (replace mode — replaces the default circle on the
+  // MAIN canvas only; the shadow graph has its own default renderer that draws
+  // correctly-sized circles using node.val + __indexColor for hit detection)
   const nodeCanvasObject = useCallback(
     (node: ForceGraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const label = node.label || String(node.id);
-      const baseNodeSize = getBaseNodeSize(node.mention_count || 1);
+      const nodeSize = getNodeRadius(node.mention_count || 1);
       const color = getNodeColor(node.type || "default");
       const isHovered = hoveredNode?.id === node.id;
       const isSelected = selectedNode?.id === node.id;
       const x = node.x ?? 0;
       const y = node.y ?? 0;
 
-      // SEMANTIC ZOOM: Nodes shrink as you zoom in
-      // At zoom 1, show full size. As zoom increases, shrink nodes proportionally
-      // This reveals more of the graph structure and labels when zoomed in
-      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
-      const nodeSize = baseNodeSize / zoomFactor;
-      
       // Font size scales with zoom but stays readable
-      const baseFontSize = 12;
-      const fontSize = Math.max(baseFontSize / globalScale, 3);
-      
+      const fontSize = Math.max(12 / globalScale, 3);
+
       // Border width scales inversely with zoom
       const borderWidth = Math.max((isSelected ? 3 : 2) / globalScale, 0.5);
 
@@ -410,7 +536,7 @@ export default function KnowledgeGraph({
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = borderWidth;
         ctx.stroke();
-        
+
         // Add glow effect
         ctx.shadowColor = color;
         ctx.shadowBlur = 10 / globalScale;
@@ -426,11 +552,11 @@ export default function KnowledgeGraph({
         if (displayLabel.length > 20 && globalScale < 2) {
           displayLabel = displayLabel.substring(0, 18) + "...";
         }
-        
+
         ctx.font = `${isSelected ? "bold " : ""}${fontSize}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        
+
         // Draw text shadow for readability
         ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
         ctx.shadowBlur = 4 / globalScale;
@@ -467,15 +593,14 @@ export default function KnowledgeGraph({
       const endY = end.y;
 
       // Calculate node sizes for proper edge termination
-      const zoomFactor = globalScale > 1 ? Math.pow(globalScale, 0.5) : 1;
-      const startNodeSize = getBaseNodeSize(start.mention_count || 1) / zoomFactor;
-      const endNodeSize = getBaseNodeSize(end.mention_count || 1) / zoomFactor;
+      const startNodeSize = getNodeRadius(start.mention_count || 1);
+      const endNodeSize = getNodeRadius(end.mention_count || 1);
 
       // Calculate direction
       const dx = endX - startX;
       const dy = endY - startY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      
+
       if (distance === 0) return;
 
       // Normalize
@@ -508,7 +633,7 @@ export default function KnowledgeGraph({
         const arrowSize = Math.max(5 / globalScale, 2);
         const arrowAngle = Math.PI / 6;
         const angle = Math.atan2(ny, nx);
-        
+
         ctx.beginPath();
         ctx.moveTo(adjustedEndX, adjustedEndY);
         ctx.lineTo(
@@ -530,7 +655,7 @@ export default function KnowledgeGraph({
         const midX = (adjustedStartX + adjustedEndX) / 2;
         const midY = (adjustedStartY + adjustedEndY) / 2;
         const labelFontSize = Math.max(8 / globalScale, 2);
-        
+
         ctx.font = `${labelFontSize}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -553,14 +678,9 @@ export default function KnowledgeGraph({
         height={dimensions.height}
         nodeId="id"
         nodeLabel=""
-        nodeVal="mention_count"
-        nodeRelSize={8}
         nodeCanvasObject={nodeCanvasObject}
         linkCanvasObject={linkCanvasObject}
-        onNodeClick={handleNodeClick}
-        onNodeHover={handleNodeHover}
         onNodeDragEnd={handleNodeDragEnd}
-        onBackgroundClick={() => setSelectedNode(null)}
         cooldownTicks={100}
         warmupTicks={100}
         d3AlphaDecay={0.02}

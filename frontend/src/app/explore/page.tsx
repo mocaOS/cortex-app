@@ -110,8 +110,9 @@ function ExplorePageContent() {
   const [includeNeighbors] = useState(true);
   const [hideDisconnected, setHideDisconnected] = useState(true);
   
-  // Get active tab from URL params
+  // Get active tab and optional entity focus from URL params
   const activeTab = getTabFromUrl(searchParams.get("tab"));
+  const initialEntity = searchParams.get("entity");
   
   // Update URL when tab changes
   const setActiveTab = useCallback((tab: TabType) => {
@@ -510,7 +511,7 @@ function ExplorePageContent() {
                 </button>
               </div>
             )}
-            <KnowledgeGraph nodes={nodes} edges={edges} stats={activeGraphData?.stats} />
+            <KnowledgeGraph nodes={nodes} edges={edges} stats={activeGraphData?.stats} initialEntity={initialEntity} />
           </div>
         )}
       </div>
