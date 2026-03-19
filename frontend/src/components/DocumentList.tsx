@@ -692,6 +692,31 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         </div>
       )}
 
+      {/* Generate Graph banner */}
+      {(statusCounts.pending > 0 || statusCounts.in_progress > 0) && (
+        <div className="glass rounded-lg p-4 border border-border flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            {statusCounts.in_progress > 0
+              ? `Processing ${statusCounts.in_progress + statusCounts.pending} document${statusCounts.in_progress + statusCounts.pending !== 1 ? "s" : ""}...`
+              : `${statusCounts.pending} document${statusCounts.pending !== 1 ? "s" : ""} ready to process`}
+          </div>
+          {statusCounts.in_progress > 0 ? (
+            <div className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Processing...
+            </div>
+          ) : (
+            <button
+              onClick={() => router.push("/extract")}
+              className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Generate Graph
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Uploading files */}
       {uploadingFiles.length > 0 && (
         <div className="grid gap-2">
@@ -732,31 +757,6 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Generate Graph banner */}
-      {(statusCounts.pending > 0 || statusCounts.in_progress > 0) && (
-        <div className="glass rounded-lg p-4 border border-border flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            {statusCounts.in_progress > 0
-              ? `Processing ${statusCounts.in_progress + statusCounts.pending} document${statusCounts.in_progress + statusCounts.pending !== 1 ? "s" : ""}...`
-              : `${statusCounts.pending} document${statusCounts.pending !== 1 ? "s" : ""} ready to process`}
-          </div>
-          {statusCounts.in_progress > 0 ? (
-            <div className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Processing...
-            </div>
-          ) : (
-            <button
-              onClick={() => router.push("/extract")}
-              className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Generate Graph
-            </button>
-          )}
         </div>
       )}
 
