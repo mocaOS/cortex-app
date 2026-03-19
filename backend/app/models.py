@@ -663,7 +663,7 @@ class SystemConfigResponse(BaseModel):
     
     # LLM Configuration
     openai_model: str = Field(..., description="Primary LLM model")
-    fast_mode_model: str = Field(..., description="Fast mode LLM model")
+    extraction_model: str = Field(..., description="Model used for entity/relationship extraction")
     
     # Embedding Configuration
     embedding_model: str = Field(..., description="Embedding model")
@@ -736,7 +736,7 @@ class SystemConfigResponse(BaseModel):
         json_schema_extra = {
             "example": {
                 "openai_model": "gpt-4o-mini",
-                "fast_mode_model": "gpt-4o-mini",
+                "extraction_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
                 "embedding_dimension": 1536,
                 "use_openai_embeddings": True,

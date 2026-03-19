@@ -102,16 +102,23 @@ Document Upload
     ↓
 Docling Conversion (with do_picture_description=True)
     ↓
-Image Extraction + Docling Description Generation
+Text Processing Completes (status: "completed")
     ↓
-Vision Model Analysis (if configured, takes precedence)
+Background Image Analysis (async, 3-concurrent semaphore)
+    ├── Vision Model Analysis (if configured, takes precedence)
+    ├── Docling Description (fallback)
+    └── Basic Metadata (last resort)
     ↓
-Create Searchable Chunks
+Create Image Chunks (chunk_index 1000+, type: image_analysis)
     ↓
-Embed & Store
+Embed & Store + Graph Extraction (if enabled)
     ↓
 Available in RAG Queries
 ```
+
+:::note
+Image analysis runs **asynchronously after text processing completes**. A document may show `status: "completed"` while images are still being analyzed. Progress is tracked per-document via `image_progress_current`/`image_progress_total` fields. The **Knowledge Graph pipeline** (Manage → Knowledge Graph → Step 1) is aware of this — it treats documents with pending image analysis as still in-progress, showing an aggregate progress bar and blocking advancement to relationship analysis until all images are processed.
+:::
 
 ### Integration with RAG
 

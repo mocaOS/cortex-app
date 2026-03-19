@@ -3178,7 +3178,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
     return SystemConfigResponse(
         # LLM Configuration
         openai_model=settings.openai_model,
-        fast_mode_model=settings.fast_mode_model,
+        extraction_model=settings.extraction_model,
         
         # Embedding Configuration
         embedding_model=settings.embedding_model,

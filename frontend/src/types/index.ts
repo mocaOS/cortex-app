@@ -591,7 +591,7 @@ export interface SystemResetResponse {
 export interface SystemConfig {
   // LLM Configuration
   openai_model: string;
-  fast_mode_model: string;
+  extraction_model: string;
   
   // Embedding Configuration
   embedding_model: string;

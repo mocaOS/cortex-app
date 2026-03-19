@@ -804,10 +804,11 @@ When a document is uploaded (or custom input is added), the following pipeline e
 5. **Fuzzy Entity Resolution** - Levenshtein similarity (85% threshold) deduplicates entities at storage time, merging "OpenAI" and "Open AI" into a single node with aliases
 6. **Entity-Chunk Linking** - Fuzzy string matching links entities to the chunks that mention them
 7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
-8. **Collection Assignment** - Optionally add document to a collection scope
-9. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
-10. **Relationship Analysis** (separate step via Knowledge Graph page) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
-11. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
+8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed asynchronously via vision model (3-concurrent semaphore). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
+9. **Collection Assignment** - Optionally add document to a collection scope
+10. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
+11. **Relationship Analysis** (separate step via Knowledge Graph page) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
+12. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
 
 ### Query Pipeline (Agent Architecture)
 

@@ -13,7 +13,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Upload,
-  CheckCircle2,
   XCircle,
   RefreshCw,
 } from "lucide-react";
@@ -53,6 +52,8 @@ interface UploadingFileEntry {
   file: File;
   status: UploadFileStatus;
   message?: string;
+  /** Backend document ID returned after successful upload */
+  documentId?: string;
 }
 
 interface DocumentListProps {
@@ -151,17 +152,16 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     const CONCURRENCY_LIMIT = 10;
     const queue = [...entries];
-    let allDone = 0;
 
     const uploadNext = async () => {
       const entry = queue.shift();
       if (!entry) return;
 
       try {
-        await api.uploadFile(entry.file, collectionId, false);
+        const result = await api.uploadFile(entry.file, collectionId, false);
         setUploadingFiles((prev) =>
           prev.map((uf) =>
-            uf.id === entry.id ? { ...uf, status: "uploaded" as const, message: "Uploaded" } : uf
+            uf.id === entry.id ? { ...uf, status: "uploaded" as const, message: "Uploaded", documentId: result.document_id } : uf
           )
         );
       } catch (error) {
@@ -173,10 +173,6 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           )
         );
       }
-      allDone++;
-
-      // Refresh document list after each upload to show new docs
-      await fetchDocuments();
 
       await uploadNext();
     };
@@ -187,12 +183,11 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
     await Promise.all(workers);
 
-    // All uploads done — clear uploading entries after a short delay
+    // All uploads done — refresh document list and clear uploading entries
+    await fetchDocuments();
     setTimeout(() => {
       setUploadingFiles((prev) => prev.filter((uf) => uf.status === "error"));
-    }, 1500);
-
-    fetchDocuments();
+    }, 800);
   }, []);
 
   const handleStartProcessing = async () => {
@@ -308,6 +303,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     (d) => selectedIds.has(d.id) && isProcessing(d.processing_status) && d.file_path
   ).length;
   const allFilteredSelected = filteredDocuments.length > 0 && filteredDocuments.every((d) => selectedIds.has(d.id));
+
+  // Upload state: true when any files are still uploading
+  const isUploading = uploadingFiles.some((uf) => uf.status === "uploading");
+
+  // Set of backend document IDs that correspond to completed uploads (still in uploadingFiles)
+  // Only filter these out while uploads are actively in progress to prevent brief flicker
+  // Once all uploads finish, stop filtering so docs appear immediately from the backend list
+  const uploadedDocIds = isUploading
+    ? new Set(
+        uploadingFiles
+          .filter((uf) => uf.status === "uploaded" && uf.documentId)
+          .map((uf) => uf.documentId!)
+      )
+    : new Set<string>();
 
   // Action handlers
   const handleDelete = async (id: string) => {
@@ -560,8 +569,8 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     );
   }
 
-  // Empty state
-  if (documents.length === 0) {
+  // Empty state (don't show if uploads are in progress)
+  if (documents.length === 0 && uploadingFiles.length === 0) {
     return (
       <>
         <div className="glass rounded-lg p-12 text-center">
@@ -692,18 +701,74 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         </div>
       )}
 
+      {/* Upload progress bar */}
+      {uploadingFiles.length > 0 && uploadingFiles.some((uf) => uf.status === "uploading") && (() => {
+        const totalFiles = uploadingFiles.length;
+        const doneFiles = uploadingFiles.filter((uf) => uf.status !== "uploading").length;
+        const errorFiles = uploadingFiles.filter((uf) => uf.status === "error").length;
+        const pct = totalFiles > 0 ? Math.round((doneFiles / totalFiles) * 100) : 0;
+        return (
+          <div className="glass rounded-lg p-4 border border-accent/20">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-sm">
+                <Upload className="w-4 h-4 text-accent" />
+                <span className="text-foreground font-medium">
+                  Uploading {totalFiles} file{totalFiles !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {doneFiles}/{totalFiles} completed{errorFiles > 0 ? ` (${errorFiles} failed)` : ""}
+              </span>
+            </div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent rounded-full transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Upload errors (persistent until dismissed) */}
+      {uploadingFiles.some((uf) => uf.status === "error") && !uploadingFiles.some((uf) => uf.status === "uploading") && (
+        <div className="glass rounded-lg p-4 border border-destructive/30">
+          <div className="flex items-center gap-3">
+            <XCircle className="w-5 h-5 text-destructive shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-medium text-foreground">
+                {uploadingFiles.filter((uf) => uf.status === "error").length} upload{uploadingFiles.filter((uf) => uf.status === "error").length !== 1 ? "s" : ""} failed
+              </h4>
+              <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                {uploadingFiles.filter((uf) => uf.status === "error").map((uf) => (
+                  <p key={uf.id} className="truncate">{uf.file.name}: {uf.message || "Upload failed"}</p>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => setUploadingFiles([])}
+              className="text-muted-foreground hover:text-foreground p-1"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Generate Graph banner */}
-      {(statusCounts.pending > 0 || statusCounts.in_progress > 0) && (
+      {(statusCounts.pending > 0 || statusCounts.in_progress > 0 || isUploading) && (
         <div className="glass rounded-lg p-4 border border-border flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
-            {statusCounts.in_progress > 0
-              ? `Processing ${statusCounts.in_progress + statusCounts.pending} document${statusCounts.in_progress + statusCounts.pending !== 1 ? "s" : ""}...`
-              : `${statusCounts.pending} document${statusCounts.pending !== 1 ? "s" : ""} ready to process`}
+            {isUploading
+              ? "Uploading documents..."
+              : statusCounts.in_progress > 0
+                ? `Processing ${statusCounts.in_progress + statusCounts.pending} document${statusCounts.in_progress + statusCounts.pending !== 1 ? "s" : ""}...`
+                : `${statusCounts.pending} document${statusCounts.pending !== 1 ? "s" : ""} ready to process`}
           </div>
-          {statusCounts.in_progress > 0 ? (
+          {statusCounts.in_progress > 0 || isUploading ? (
             <div className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Processing...
+              {isUploading ? "Uploading..." : "Processing..."}
             </div>
           ) : (
             <button
@@ -717,53 +782,34 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         </div>
       )}
 
-      {/* Uploading files */}
-      {uploadingFiles.length > 0 && (
-        <div className="grid gap-2">
-          {uploadingFiles.map((uf) => (
-            <div
-              key={uf.id}
-              className={cn(
-                "glass rounded-lg p-4 border transition-all duration-200",
-                uf.status === "error" ? "border-destructive/30" : "border-border"
-              )}
-            >
-              <div className="flex items-center gap-4">
-                <div className="p-2 rounded-lg bg-muted shrink-0">
-                  {uf.status === "uploading" ? (
-                    <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
-                  ) : uf.status === "uploaded" ? (
-                    <CheckCircle2 className="w-5 h-5 text-accent" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-destructive" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-medium text-foreground truncate">{uf.file.name}</h4>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {uf.status === "uploading"
-                      ? "Uploading..."
-                      : uf.status === "uploaded"
-                        ? "Uploaded"
-                        : uf.message || "Upload failed"}
-                  </p>
-                </div>
-                {uf.status === "uploading" && (
-                  <div className="px-2 py-1 rounded-full bg-muted text-xs text-muted-foreground">
-                    <Upload className="w-3 h-3 inline mr-1" />
-                    Uploading
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Document list */}
       <div className="grid gap-3">
+        {/* Uploading files — shown inline at the top of the list on page 1 */}
+        {validCurrentPage === 1 && uploadingFiles.filter((uf) => uf.status === "uploading").map((uf) => (
+          <div
+            key={uf.id}
+            className="glass rounded-lg p-4 border border-accent/20"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-2 rounded-lg bg-accent/10 shrink-0">
+                <Loader2 className="w-5 h-5 text-accent animate-spin" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-medium text-foreground truncate">{uf.file.name}</h4>
+                <p className="text-xs text-muted-foreground mt-0.5">Uploading...</p>
+              </div>
+              <div className="px-2 py-1 rounded-full bg-accent/10 text-xs text-accent">
+                <Upload className="w-3 h-3 inline mr-1" />
+                Uploading
+              </div>
+            </div>
+          </div>
+        ))}
+
         <AnimatePresence>
-          {paginatedDocuments.map((doc, index) => (
+          {paginatedDocuments
+            .filter((doc) => !uploadedDocIds.has(doc.id))
+            .map((doc, index) => (
             <DocumentCard
               key={doc.id}
               doc={doc}

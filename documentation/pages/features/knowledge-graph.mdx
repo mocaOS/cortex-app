@@ -341,7 +341,7 @@ GRAPH_WEIGHT=0.2
 
 The **Knowledge Graph** page (under Manage) provides a one-click **"Generate Graph"** (or **"Regenerate Graph"**) button that runs the full 3-step pipeline in sequence:
 
-1. **Entity Extraction** — Process uploaded documents to extract entities.
+1. **Entity Extraction** — Process uploaded documents to extract entities. This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
 2. **Relationship Analysis** — Discover connections between entities across documents.
 3. **Community Detection** — Group related entities into communities.
 

@@ -70,12 +70,15 @@ flowchart TD
     D --> E["🔍 Entity Extraction"]
     E --> F["🔗 Semantic Resolution"]
     F --> G["💾 Neo4j Storage"]
-    G --> H["✅ Complete"]
-    
+    G --> H["✅ Text Complete"]
+    G --> I["🖼️ Background Image Analysis"]
+    I --> J["✅ Fully Complete"]
+
     B -.-> B1["PDF/DOCX parser"]
     C -.-> C1["Sentence-based splits"]
     D -.-> D1["Vector embeddings"]
     E -.-> E1["LLM extraction"]
+    I -.-> I1["Vision model / Docling / fallback"]
 `} />
 
 ## Tracking Progress
@@ -108,8 +111,12 @@ curl "http://localhost:8000/api/documents/doc_abc123" \
 |--------|-------------|
 | `pending` | Uploaded, waiting for processing |
 | `processing` | Currently being processed |
-| `completed` | Successfully processed |
+| `completed` | Successfully processed (text extraction done; images may still be analyzing in the background — check `image_progress_current` vs `image_progress_total`) |
 | `failed` | Processing failed (check logs) |
+
+:::note
+A document with `status: "completed"` may still have background image analysis running. The `image_progress_current`, `image_progress_total`, and `image_progress_message` fields in the document response track this progress. The Knowledge Graph pipeline (Step 1) treats these documents as still in-progress and will not advance to relationship analysis until all image analysis completes.
+:::
 
 ## Custom Inputs
 

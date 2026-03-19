@@ -119,7 +119,8 @@ export default function AdminPage() {
   const [configError, setConfigError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [openSections, setOpenSections] = useState<Set<ConfigSectionId>>(new Set(["llm"]));
+  const [openSections, setOpenSections] = useState<Set<ConfigSectionId>>(new Set(["llm", "vision", "embeddings"]));
+  const [graphStatsOpen, setGraphStatsOpen] = useState(false);
 
   const toggleSection = (id: ConfigSectionId) => {
     setOpenSections(prev => {
@@ -316,30 +317,50 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Knowledge Graph */}
-                  <div>
-                    <h3 className="text-sm font-medium text-foreground mb-3">Knowledge Graph</h3>
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between py-2 border-b border-border/50">
-                        <span className="text-sm text-muted-foreground">Avg. Mentions per Entity</span>
-                        <span className="text-sm font-mono text-foreground">{stats.avg_entity_mentions ?? 0}</span>
+                  {/* Knowledge Graph (collapsible) */}
+                  <div className="border border-border/50 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setGraphStatsOpen(!graphStatsOpen)}
+                      className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Network className="w-4 h-4 text-accent" />
+                        <span className="text-sm font-medium text-foreground">Knowledge Graph</span>
                       </div>
-                      {stats.entity_type_counts && Object.keys(stats.entity_type_counts).length > 0 && (
-                        <>
-                          <div className="pt-2 pb-1">
-                            <span className="text-xs text-muted-foreground uppercase tracking-wider">Entity Types</span>
+                      <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${graphStatsOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {graphStatsOpen && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <div className="px-4 py-3 space-y-1">
+                            <div className="flex items-center justify-between py-2 border-b border-border/50">
+                              <span className="text-sm text-muted-foreground">Avg. Mentions per Entity</span>
+                              <span className="text-sm font-mono text-foreground">{stats.avg_entity_mentions ?? 0}</span>
+                            </div>
+                            {stats.entity_type_counts && Object.keys(stats.entity_type_counts).length > 0 && (
+                              <>
+                                <div className="pt-2 pb-1">
+                                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Entity Types</span>
+                                </div>
+                                {Object.entries(stats.entity_type_counts)
+                                  .sort(([, a], [, b]) => b - a)
+                                  .map(([type, count]) => (
+                                    <div key={type} className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0">
+                                      <span className="text-sm text-muted-foreground">{type}</span>
+                                      <span className="text-sm font-mono text-foreground">{count}</span>
+                                    </div>
+                                  ))}
+                              </>
+                            )}
                           </div>
-                          {Object.entries(stats.entity_type_counts)
-                            .sort(([, a], [, b]) => b - a)
-                            .map(([type, count]) => (
-                              <div key={type} className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0">
-                                <span className="text-sm text-muted-foreground">{type}</span>
-                                <span className="text-sm font-mono text-foreground">{count}</span>
-                              </div>
-                            ))}
-                        </>
+                        </motion.div>
                       )}
-                    </div>
+                    </AnimatePresence>
                   </div>
                 </div>
               ) : null}
@@ -391,8 +412,16 @@ export default function AdminPage() {
                   {/* LLM Configuration */}
                   <ConfigSection title="LLM Configuration" icon={Brain} isOpen={openSections.has("llm")} onToggle={() => toggleSection("llm")}>
                     <ConfigItem label="Primary Model" value={config.openai_model} />
-                    <ConfigItem label="Fast Mode Model" value={config.fast_mode_model} />
+                    <ConfigItem label="Extraction Model" value={config.extraction_model} />
                   </ConfigSection>
+
+                  {/* Vision Model - between LLM and Embeddings */}
+                  {config.vision_model_available && (
+                    <ConfigSection title="Vision Model" icon={Eye} isOpen={openSections.has("vision")} onToggle={() => toggleSection("vision")}>
+                      <ConfigItem label="Model" value={config.vision_model} />
+                      <ConfigItem label="Image Analysis" value={true} type="boolean" />
+                    </ConfigSection>
+                  )}
 
                   {/* Embedding Configuration */}
                   <ConfigSection title="Embeddings" icon={Database} isOpen={openSections.has("embeddings")} onToggle={() => toggleSection("embeddings")}>
@@ -427,7 +456,6 @@ export default function AdminPage() {
                   </ConfigSection>
 
                   {/* Knowledge Graph */}
-                  {/* Knowledge Graph */}
                   <ConfigSection title="Knowledge Graph" icon={Network} isOpen={openSections.has("graph")} onToggle={() => toggleSection("graph")}>
                     <ConfigItem label="Graph Extraction" value={config.enable_graph_extraction} type="boolean" />
                     <ConfigItem label="Max Graph Hops" value={config.max_graph_hops} />
@@ -459,13 +487,6 @@ export default function AdminPage() {
                     </ConfigSection>
                   )}
 
-                  {/* Vision Model - only show if available */}
-                  {config.vision_model_available && (
-                    <ConfigSection title="Vision Model" icon={Eye} isOpen={openSections.has("vision")} onToggle={() => toggleSection("vision")}>
-                      <ConfigItem label="Model" value={config.vision_model} />
-                      <ConfigItem label="Image Analysis" value={true} type="boolean" />
-                    </ConfigSection>
-                  )}
                 </div>
               ) : null}
             </div>

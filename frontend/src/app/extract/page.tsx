@@ -7,6 +7,7 @@ import type { Document, Stats } from "@/types";
 import {
   Loader2,
   FileText,
+  FileImage,
   Layers,
   Share2,
   Users,
@@ -193,12 +194,19 @@ export default function ExtractAnalyzePage() {
     }
   }, [stats]);
 
-  // Auto-refresh stats while tasks are running
+  // Track whether any documents are still analyzing images (background process)
+  const hasImageAnalysisInProgress = documents.some((d) => {
+    if (d.processing_status !== "completed") return false;
+    const hasImages = (d.image_progress_total ?? 0) > 0;
+    return hasImages && d.image_progress_current !== d.image_progress_total;
+  });
+
+  // Auto-refresh stats while tasks are running or images are being analyzed
   useEffect(() => {
-    if (!analyzingRelationships && !detectingCommunities && !isExtractingEntities) return;
+    if (!analyzingRelationships && !detectingCommunities && !isExtractingEntities && !hasImageAnalysisInProgress) return;
     const interval = setInterval(() => fetchData(true), 5000);
     return () => clearInterval(interval);
-  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, fetchData]);
+  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, hasImageAnalysisInProgress, fetchData]);
 
   // Advance the regeneration flow to the next step
   const advanceRegenerateStep = useCallback((nextStep: number) => {
@@ -528,10 +536,26 @@ export default function ExtractAnalyzePage() {
   const failedDocs = documents.filter((d) => d.processing_status === "failed");
   const pendingDocs = documents.filter((d) => d.processing_status === "pending");
 
+  // Documents that are "completed" but still have images being analyzed in the background
+  const analyzingImagesDocs = documents.filter((d) => {
+    if (d.processing_status !== "completed") return false;
+    const hasImages = (d.image_progress_total ?? 0) > 0;
+    const imagesDone = d.image_progress_current === d.image_progress_total;
+    return hasImages && !imagesDone;
+  });
+  const totalImagesCurrent = analyzingImagesDocs.reduce((sum, d) => sum + (d.image_progress_current ?? 0), 0);
+  const totalImagesTotal = analyzingImagesDocs.reduce((sum, d) => sum + (d.image_progress_total ?? 0), 0);
+  // Fully done = completed status AND no pending image analysis
+  const fullyCompletedDocs = completedDocs.filter((d) => {
+    const hasImages = (d.image_progress_total ?? 0) > 0;
+    const imagesDone = !hasImages || d.image_progress_current === d.image_progress_total;
+    return imagesDone;
+  });
+
   // Step 1: Entity Extraction
-  const step1Stale = entityCount > 0 && pendingDocs.length > 0 && processingDocs.length === 0 && !isExtractingEntities;
+  const step1Stale = entityCount > 0 && pendingDocs.length > 0 && processingDocs.length === 0 && analyzingImagesDocs.length === 0 && !isExtractingEntities;
   const step1Status: StepStatus =
-    processingDocs.length > 0 || documents.some((d) => d.processing_status === "extracting") || isExtractingEntities
+    processingDocs.length > 0 || documents.some((d) => d.processing_status === "extracting") || isExtractingEntities || analyzingImagesDocs.length > 0
       ? "in_progress"
       : entityCount > 0 && !step1Stale
         ? "complete"
@@ -664,15 +688,21 @@ export default function ExtractAnalyzePage() {
               </p>
 
               {/* Document processing summary */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div className={cn("grid gap-3 mb-4", analyzingImagesDocs.length > 0 ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
                 <div className="p-3 bg-muted/50 rounded-lg">
-                  <p className="text-lg font-semibold">{completedDocs.length}</p>
+                  <p className="text-lg font-semibold">{fullyCompletedDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Processed</p>
                 </div>
                 <div className="p-3 bg-muted/50 rounded-lg">
                   <p className="text-lg font-semibold">{processingDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Processing</p>
                 </div>
+                {analyzingImagesDocs.length > 0 && (
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                    <p className="text-lg font-semibold text-blue-400">{analyzingImagesDocs.length}</p>
+                    <p className="text-xs text-blue-400/70">Analyzing Images</p>
+                  </div>
+                )}
                 <div className="p-3 bg-muted/50 rounded-lg">
                   <p className="text-lg font-semibold">{pendingDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Pending</p>
@@ -689,6 +719,26 @@ export default function ExtractAnalyzePage() {
                   <span className="text-sm text-accent">
                     Processing {processingDocs.length} document{processingDocs.length !== 1 ? "s" : ""} in parallel... Entities are being extracted... {processingDocs.length + pendingDocs.length} document{processingDocs.length + pendingDocs.length !== 1 ? "s" : ""} remaining...
                   </span>
+                </div>
+              )}
+
+              {analyzingImagesDocs.length > 0 && !entityTaskMessage && (
+                <div className="mb-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileImage className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm text-blue-300">
+                      Analyzing images in {analyzingImagesDocs.length} document{analyzingImagesDocs.length !== 1 ? "s" : ""}... ({totalImagesCurrent}/{totalImagesTotal} images)
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-blue-500/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500/70 rounded-full transition-all duration-500"
+                      style={{ width: `${totalImagesTotal > 0 ? Math.round((totalImagesCurrent / totalImagesTotal) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-blue-400/60 mt-1.5">
+                    Entities from images will be included once analysis completes. Step 1 will finish when all images are processed.
+                  </p>
                 </div>
               )}
 
