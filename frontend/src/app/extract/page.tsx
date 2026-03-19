@@ -397,8 +397,9 @@ export default function ExtractAnalyzePage() {
           setEntityTaskMessage("Processing all documents...");
           const result = await api.reprocessDocuments(allDocIds);
           if (result.task_id) {
-            sessionStorage.setItem("regenerateTaskId", result.task_id);
-            setTimeout(() => pollEntityTask(result.task_id), 1500);
+            const taskId = result.task_id;
+            sessionStorage.setItem("regenerateTaskId", taskId);
+            setTimeout(() => pollEntityTask(taskId), 1500);
           } else {
             setEntityTaskMessage(null);
             setIsExtractingEntities(false);
