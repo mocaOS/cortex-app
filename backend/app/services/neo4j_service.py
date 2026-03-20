@@ -2121,7 +2121,10 @@ class Neo4jService:
         """
         Find candidate duplicate entities using multiple similarity strategies.
 
-        Fetches all entities from Neo4j and compares in Python using rapidfuzz:
+        Uses rapidfuzz's cdist for batch C-level comparison (handles 7000+ entities
+        efficiently vs the O(n²) Python loop).
+
+        Strategies:
         - ratio: catches typos ("Colborn" vs "Colbornne")
         - token_sort_ratio: catches word reordering ("Bell Colborn" vs "Colborn Bell")
         - partial_ratio: only for same-type entities with reasonable length ratio,
@@ -2137,6 +2140,8 @@ class Neo4jService:
         Returns grouped candidates with suggested canonical (most connected entity).
         """
         from rapidfuzz import fuzz
+        from rapidfuzz.process import cdist
+        import numpy as np
 
         # Fetch all entities with their connectivity stats
         with self.driver.session() as session:
@@ -2166,56 +2171,78 @@ class Neo4jService:
                 'relationship_count': e['relationship_count'],
             }
 
-        # Pre-compute lowercased names and types
         names = [e['name'] for e in all_entities]
         names_lower = [n.lower() for n in names]
         types = [e['type'] or '' for e in all_entities]
         n = len(names)
 
-        # Compute pairwise similarity — store as {name: {other_name: score}}
-        direct_matches = {}  # name -> [(other_name, score)]
+        score_cutoff = threshold * 100  # rapidfuzz uses 0-100 scale
 
-        for i in range(n):
-            for j in range(i + 1, n):
-                a_lower = names_lower[i]
-                b_lower = names_lower[j]
+        # Batch compute similarity matrices in C (much faster than Python pairwise loop)
+        best_matrix = cdist(names_lower, names_lower, scorer=fuzz.ratio,
+                            score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
+        token_sort_matrix = cdist(names_lower, names_lower, scorer=fuzz.token_sort_ratio,
+                                  score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
+        np.maximum(best_matrix, token_sort_matrix, out=best_matrix)
+        del token_sort_matrix
 
-                # Skip if both are very short (<=2 chars) — too many false positives
-                if len(a_lower) <= 2 and len(b_lower) <= 2:
-                    continue
+        # partial_ratio: only within same-type groups with length ratio gating
+        type_groups = {}
+        for idx, t in enumerate(types):
+            if t:
+                type_groups.setdefault(t, []).append(idx)
 
-                # Core metrics: ratio (typos) and token_sort_ratio (reordering)
-                score_ratio = fuzz.ratio(a_lower, b_lower)
-                score_token_sort = fuzz.token_sort_ratio(a_lower, b_lower)
-                best_score = max(score_ratio, score_token_sort)
+        for entity_type, indices in type_groups.items():
+            if len(indices) < 2:
+                continue
 
-                # partial_ratio only for same-type entities with reasonable
-                # length ratio — prevents "Google" matching "Google Chrome"
-                # More lenient for Person type (first name → full name is common)
-                same_type = types[i] and types[j] and types[i] == types[j]
-                len_ratio = min(len(a_lower), len(b_lower)) / max(len(a_lower), len(b_lower))
-                is_person = same_type and types[i] == 'Person'
-                min_len_ratio = 0.35 if is_person else 0.5
-                if same_type and len_ratio >= min_len_ratio:
-                    score_partial = fuzz.partial_ratio(a_lower, b_lower)
-                    best_score = max(best_score, score_partial)
+            group_names = [names_lower[i] for i in indices]
+            partial_scores = cdist(group_names, group_names, scorer=fuzz.partial_ratio,
+                                   score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
 
-                best_score = best_score / 100.0
+            # Length ratio gating
+            min_len_ratio = 0.35 if entity_type == 'Person' else 0.5
+            group_lens = np.array([len(names_lower[i]) for i in indices], dtype=np.float32)
+            len_min = np.minimum.outer(group_lens, group_lens)
+            len_max = np.maximum.outer(group_lens, group_lens)
+            len_ratios = np.divide(len_min, len_max, out=np.zeros_like(len_min), where=len_max > 0)
+            partial_scores[len_ratios < min_len_ratio] = 0
 
-                # Higher threshold for short names to reduce noise
-                effective_threshold = threshold
-                if min(len(a_lower), len(b_lower)) <= 3:
-                    effective_threshold = max(threshold, 0.85)
+            # Merge improvements into best_matrix via numpy indexing
+            idx_arr = np.array(indices)
+            current = best_matrix[np.ix_(idx_arr, idx_arr)]
+            best_matrix[np.ix_(idx_arr, idx_arr)] = np.maximum(current, partial_scores)
 
-                if best_score >= effective_threshold:
-                    a_name = names[i]
-                    b_name = names[j]
-                    if a_name not in direct_matches:
-                        direct_matches[a_name] = []
-                    if b_name not in direct_matches:
-                        direct_matches[b_name] = []
-                    direct_matches[a_name].append((b_name, best_score))
-                    direct_matches[b_name].append((a_name, best_score))
+        # Extract matching pairs from upper triangle
+        upper = np.triu(best_matrix, k=1)
+        del best_matrix
+        rows, cols = np.where(upper > 0)
+
+        name_lens = [len(nl) for nl in names_lower]
+        direct_matches = {}
+
+        for idx in range(len(rows)):
+            i, j = int(rows[idx]), int(cols[idx])
+            score = float(upper[i, j]) / 100.0
+
+            len_a, len_b = name_lens[i], name_lens[j]
+
+            # Skip both very short (<=2 chars) — too many false positives
+            if len_a <= 2 and len_b <= 2:
+                continue
+
+            # Higher threshold for short names
+            effective_threshold = threshold
+            if min(len_a, len_b) <= 3:
+                effective_threshold = max(threshold, 0.85)
+
+            if score >= effective_threshold:
+                a_name = names[i]
+                b_name = names[j]
+                direct_matches.setdefault(a_name, []).append((b_name, score))
+                direct_matches.setdefault(b_name, []).append((a_name, score))
+
+        del upper
 
         if not direct_matches:
             return []
