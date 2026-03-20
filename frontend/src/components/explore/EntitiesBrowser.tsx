@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
@@ -159,9 +159,13 @@ export default function EntitiesBrowser() {
   const router = useRouter();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [entityTypes, setEntityTypes] = useState<string[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [entityDetails, setEntityDetails] = useState<EntityDetails | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -182,61 +186,48 @@ export default function EntitiesBrowser() {
     }
   };
 
+  // Debounce search input
   useEffect(() => {
-    const fetchEntities = async () => {
-      try {
-        // Fetch all entities for client-side search + pagination
-        const response = await api.getEntities(undefined, 1000000);
-        setEntities(response.entities);
-      } catch (error) {
-        console.error("Failed to fetch entities:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchEntities();
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, typeFilter]);
+  }, [debouncedSearch, typeFilter]);
 
-  const filteredEntities = useMemo(() => {
-    let result = entities;
-    if (typeFilter) {
-      result = result.filter((e) => e.type === typeFilter);
-    }
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result
-        .filter(
-          (e) =>
-            e.name.toLowerCase().includes(query) ||
-            e.description.toLowerCase().includes(query)
-        )
-        .sort((a, b) => {
-          const aName = a.name.toLowerCase().includes(query);
-          const bName = b.name.toLowerCase().includes(query);
-          if (aName !== bName) return aName ? -1 : 1;
-          const aDesc = a.description.toLowerCase().includes(query);
-          const bDesc = b.description.toLowerCase().includes(query);
-          if (aDesc !== bDesc) return aDesc ? -1 : 1;
-          return 0;
+  // Fetch entity types once
+  useEffect(() => {
+    api.getEntityTypes().then(res => setEntityTypes(res.types)).catch(() => {});
+  }, []);
+
+  // Fetch entities from server
+  useEffect(() => {
+    const fetchEntities = async () => {
+      setFetching(true);
+      try {
+        const response = await api.getEntitiesPaginated({
+          skip: (currentPage - 1) * ITEMS_PER_PAGE,
+          limit: ITEMS_PER_PAGE,
+          search: debouncedSearch || undefined,
+          entityType: typeFilter || undefined,
         });
-    }
-    return result;
-  }, [entities, searchQuery, typeFilter]);
+        setEntities(response.entities);
+        setTotalItems(response.total);
+      } catch (error) {
+        console.error("Failed to fetch entities:", error);
+      } finally {
+        setLoading(false);
+        setFetching(false);
+      }
+    };
+    fetchEntities();
+  }, [currentPage, debouncedSearch, typeFilter]);
 
-  const totalPages = Math.ceil(filteredEntities.length / ITEMS_PER_PAGE);
-  const paginatedEntities = filteredEntities.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
-
-  const uniqueTypes = useMemo(() => {
-    return [...new Set(entities.map((e) => e.type))].sort();
-  }, [entities]);
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
 
   const handleExploreEntity = (entityName: string) => {
     router.push(`/explore?tab=graph&entity=${encodeURIComponent(entityName)}`);
@@ -269,23 +260,23 @@ export default function EntitiesBrowser() {
           icon={Filter}
           options={[
             { value: "", label: "All Types" },
-            ...uniqueTypes.map((type) => ({ value: type, label: type })),
+            ...entityTypes.map((type) => ({ value: type, label: type })),
           ]}
         />
         <span className="text-sm text-muted-foreground whitespace-nowrap">
-          {filteredEntities.length} entit{filteredEntities.length !== 1 ? "ies" : "y"}
+          {totalItems} entit{totalItems !== 1 ? "ies" : "y"}
         </span>
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={filteredEntities.length}
+          totalItems={totalItems}
           onPageChange={setCurrentPage}
           compact
         />
       </div>
 
-      <div className="grid gap-3">
-        {paginatedEntities.map((entity, idx) => (
+      <div className={cn("grid gap-3 transition-opacity", fetching && "opacity-60")}>
+        {entities.map((entity, idx) => (
           <div
             key={idx}
             onClick={() => handleOpenDetail(entity)}
@@ -326,11 +317,11 @@ export default function EntitiesBrowser() {
       <Pagination
         currentPage={currentPage}
         totalPages={totalPages}
-        totalItems={filteredEntities.length}
+        totalItems={totalItems}
         onPageChange={setCurrentPage}
       />
 
-      {filteredEntities.length === 0 && entities.length === 0 && !searchQuery && !typeFilter && (
+      {entities.length === 0 && !loading && !debouncedSearch && !typeFilter && (
         <div className="text-center py-12">
           <Network className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h3 className="text-lg font-medium mb-2">No Entities Yet</h3>
@@ -339,7 +330,7 @@ export default function EntitiesBrowser() {
           </p>
         </div>
       )}
-      {filteredEntities.length === 0 && (entities.length > 0 || searchQuery || typeFilter) && (
+      {entities.length === 0 && !loading && (debouncedSearch || typeFilter) && (
         <div className="text-center py-12 text-muted-foreground">
           No entities found matching your criteria.
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
@@ -150,71 +150,61 @@ function Pagination({
 
 export default function RelationshipsBrowser() {
   const router = useRouter();
-  const [edges, setEdges] = useState<GraphEdge[]>([]);
+  const [relationships, setRelationships] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [relationshipTypes, setRelationshipTypes] = useState<string[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
 
   useBodyScrollLock(!!selectedEdge);
 
-  const fetchRelationships = useCallback(async () => {
-    try {
-      const data = await api.getGraphVisualization(10000, false);
-      setEdges(data.edges || []);
-    } catch (error) {
-      console.error("Failed to fetch relationships:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Debounce search input
   useEffect(() => {
-    fetchRelationships();
-  }, [fetchRelationships]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, typeFilter]);
+  }, [debouncedSearch, typeFilter]);
 
-  const uniqueTypes = useMemo(() => {
-    return [...new Set(edges.map((e) => e.type))].sort();
-  }, [edges]);
+  // Fetch relationship types once
+  useEffect(() => {
+    api.getRelationshipTypes().then(res => setRelationshipTypes(res.types)).catch(() => {});
+  }, []);
 
-  const filteredEdges = useMemo(() => {
-    let result = edges;
-    if (typeFilter) {
-      result = result.filter((e) => e.type === typeFilter);
-    }
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result
-        .filter(
-          (e) =>
-            e.source.toLowerCase().includes(query) ||
-            e.target.toLowerCase().includes(query) ||
-            (e.description || "").toLowerCase().includes(query)
-        )
-        .sort((a, b) => {
-          const aTitle = a.source.toLowerCase().includes(query) || a.target.toLowerCase().includes(query);
-          const bTitle = b.source.toLowerCase().includes(query) || b.target.toLowerCase().includes(query);
-          if (aTitle !== bTitle) return aTitle ? -1 : 1;
-          const aDesc = (a.description || "").toLowerCase().includes(query);
-          const bDesc = (b.description || "").toLowerCase().includes(query);
-          if (aDesc !== bDesc) return aDesc ? -1 : 1;
-          return 0;
+  // Fetch relationships from server
+  useEffect(() => {
+    const fetchRelationships = async () => {
+      setFetching(true);
+      try {
+        const response = await api.getRelationshipsPaginated({
+          skip: (currentPage - 1) * ITEMS_PER_PAGE,
+          limit: ITEMS_PER_PAGE,
+          search: debouncedSearch || undefined,
+          relType: typeFilter || undefined,
         });
-    }
-    return result;
-  }, [edges, searchQuery, typeFilter]);
+        setRelationships(response.relationships as GraphEdge[]);
+        setTotalItems(response.total);
+      } catch (error) {
+        console.error("Failed to fetch relationships:", error);
+      } finally {
+        setLoading(false);
+        setFetching(false);
+      }
+    };
+    fetchRelationships();
+  }, [currentPage, debouncedSearch, typeFilter]);
 
-  const totalPages = Math.ceil(filteredEdges.length / ITEMS_PER_PAGE);
-  const paginatedEdges = filteredEdges.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
 
   const handleExploreEntity = (entityName: string) => {
     router.push(`/explore?tab=graph&entity=${encodeURIComponent(entityName)}`);
@@ -247,23 +237,23 @@ export default function RelationshipsBrowser() {
           icon={Filter}
           options={[
             { value: "", label: "All Types" },
-            ...uniqueTypes.map((type) => ({ value: type, label: type })),
+            ...relationshipTypes.map((type) => ({ value: type, label: type })),
           ]}
         />
         <span className="text-sm text-muted-foreground whitespace-nowrap">
-          {filteredEdges.length} relationship{filteredEdges.length !== 1 ? "s" : ""}
+          {totalItems} relationship{totalItems !== 1 ? "s" : ""}
         </span>
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={filteredEdges.length}
+          totalItems={totalItems}
           onPageChange={setCurrentPage}
           compact
         />
       </div>
 
-      <div className="grid gap-3">
-        {paginatedEdges.map((edge, idx) => (
+      <div className={cn("grid gap-3 transition-opacity", fetching && "opacity-60")}>
+        {relationships.map((edge, idx) => (
           <div
             key={idx}
             onClick={() => setSelectedEdge(edge)}
@@ -301,11 +291,11 @@ export default function RelationshipsBrowser() {
       <Pagination
         currentPage={currentPage}
         totalPages={totalPages}
-        totalItems={filteredEdges.length}
+        totalItems={totalItems}
         onPageChange={setCurrentPage}
       />
 
-      {filteredEdges.length === 0 && edges.length === 0 && (
+      {relationships.length === 0 && !loading && !debouncedSearch && !typeFilter && (
         <div className="text-center py-12">
           <Share2 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h3 className="text-lg font-medium mb-2">No Relationships Yet</h3>
@@ -314,7 +304,7 @@ export default function RelationshipsBrowser() {
           </p>
         </div>
       )}
-      {filteredEdges.length === 0 && edges.length > 0 && (
+      {relationships.length === 0 && !loading && (debouncedSearch || typeFilter) && (
         <div className="text-center py-12 text-muted-foreground">
           No relationships found matching your criteria.
         </div>

@@ -2912,7 +2912,189 @@ class Neo4jService:
                 LIMIT $limit
             """, limit=limit)
             return [dict(record) for record in result]
-    
+
+    def list_entities_paginated(self, skip: int = 0, limit: int = 50, search: str = None, entity_type: str = None) -> dict:
+        """List entities with server-side pagination, search, and filtering."""
+        with self.driver.session() as session:
+            # Build WHERE clauses
+            where_parts = []
+            params = {"skip": skip, "limit": limit}
+
+            if entity_type:
+                where_parts.append("e.type = $entity_type")
+                params["entity_type"] = entity_type
+
+            if search:
+                where_parts.append("(toLower(e.name) CONTAINS toLower($search) OR toLower(e.description) CONTAINS toLower($search))")
+                params["search"] = search
+
+            where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+            # Get total count
+            count_query = f"""
+                MATCH (e:Entity)
+                {where_clause}
+                RETURN count(e) as total
+            """
+            total = session.run(count_query, **params).single()["total"]
+
+            # Get paginated results with sorting: name matches first when searching
+            if search:
+                order_clause = """
+                    ORDER BY
+                        CASE WHEN toLower(e.name) CONTAINS toLower($search) THEN 0 ELSE 1 END,
+                        mention_count DESC
+                """
+            else:
+                order_clause = "ORDER BY mention_count DESC"
+
+            data_query = f"""
+                MATCH (e:Entity)
+                {where_clause}
+                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                WITH e, count(c) as mention_count
+                {order_clause}
+                SKIP $skip
+                LIMIT $limit
+                RETURN e.name as name, e.type as type, e.description as description,
+                       mention_count
+            """
+            entities = [dict(record) for record in session.run(data_query, **params)]
+
+            return {"entities": entities, "total": total}
+
+    def list_relationships_paginated(self, skip: int = 0, limit: int = 50, search: str = None, rel_type: str = None) -> dict:
+        """List relationships with server-side pagination, search, and filtering."""
+        with self.driver.session() as session:
+            params = {"skip": skip, "limit": limit}
+
+            # Build WHERE clauses
+            where_parts = ["type(r) <> 'MENTIONS'", "type(r) <> 'HAS_MEMBER'", "type(r) <> 'FROM_DOCUMENT'", "type(r) <> 'CO_MENTION'"]
+
+            if rel_type:
+                where_parts.append("type(r) = $rel_type")
+                params["rel_type"] = rel_type
+
+            if search:
+                where_parts.append("(toLower(s.name) CONTAINS toLower($search) OR toLower(t.name) CONTAINS toLower($search) OR toLower(coalesce(r.description, '')) CONTAINS toLower($search))")
+                params["search"] = search
+
+            where_clause = "WHERE " + " AND ".join(where_parts)
+
+            # Get total count
+            count_query = f"""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                {where_clause}
+                RETURN count(r) as total
+            """
+            total = session.run(count_query, **params).single()["total"]
+
+            # Get paginated results
+            if search:
+                order_clause = """
+                    ORDER BY
+                        CASE WHEN toLower(source) CONTAINS toLower($search) OR toLower(target) CONTAINS toLower($search) THEN 0 ELSE 1 END,
+                        coalesce(weight, 0) DESC
+                """
+            else:
+                order_clause = "ORDER BY coalesce(weight, 0) DESC"
+
+            data_query = f"""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                {where_clause}
+                WITH s.name as source, t.name as target, type(r) as rel_type,
+                     r.description as description, r.weight as weight
+                {order_clause}
+                SKIP $skip
+                LIMIT $limit
+                RETURN source, target, rel_type as type, description, weight
+            """
+            relationships = [dict(record) for record in session.run(data_query, **params)]
+
+            return {"relationships": relationships, "total": total}
+
+    def list_communities_paginated(self, skip: int = 0, limit: int = 50, search: str = None) -> dict:
+        """List communities with server-side pagination and search."""
+        with self.driver.session() as session:
+            params = {"skip": skip, "limit": limit}
+
+            if search:
+                # For communities, we need to search in name, summary, and member names
+                # Use a WITH clause to collect member info first, then filter
+                count_query = """
+                    MATCH (com:Community)
+                    OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                    WITH com, count(e) as member_count, collect(e.name) as all_entity_names
+                    WHERE toLower(coalesce(com.name, '')) CONTAINS toLower($search)
+                       OR toLower(coalesce(com.summary, '')) CONTAINS toLower($search)
+                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search))
+                    RETURN count(com) as total
+                """
+                params["search"] = search
+                total = session.run(count_query, **params).single()["total"]
+
+                data_query = """
+                    MATCH (com:Community)
+                    OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                    WITH com, count(e) as member_count,
+                         collect(e.name)[0..5] as sample_entities,
+                         collect(e.name) as all_entity_names
+                    WHERE toLower(coalesce(com.name, '')) CONTAINS toLower($search)
+                       OR toLower(coalesce(com.summary, '')) CONTAINS toLower($search)
+                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search))
+                    ORDER BY
+                        CASE WHEN toLower(coalesce(com.name, '')) CONTAINS toLower($search) THEN 0 ELSE 1 END,
+                        member_count DESC
+                    SKIP $skip
+                    LIMIT $limit
+                    RETURN com.id as id, com.name as name, com.summary as summary,
+                           member_count as entity_count, sample_entities
+                """
+            else:
+                count_query = """
+                    MATCH (com:Community)
+                    RETURN count(com) as total
+                """
+                total = session.run(count_query, **params).single()["total"]
+
+                data_query = """
+                    MATCH (com:Community)
+                    OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                    WITH com, count(e) as member_count,
+                         collect(e.name)[0..5] as sample_entities
+                    ORDER BY member_count DESC
+                    SKIP $skip
+                    LIMIT $limit
+                    RETURN com.id as id, com.name as name, com.summary as summary,
+                           member_count as entity_count, sample_entities
+                """
+
+            communities = [dict(record) for record in session.run(data_query, **params)]
+
+            return {"communities": communities, "total": total}
+
+    def get_entity_types(self) -> List[str]:
+        """Get all distinct entity types."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                RETURN DISTINCT e.type as type
+                ORDER BY type
+            """)
+            return [record["type"] for record in result if record["type"]]
+
+    def get_relationship_types(self) -> List[str]:
+        """Get all distinct relationship types (excluding internal types)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                WHERE type(r) <> 'MENTIONS' AND type(r) <> 'HAS_MEMBER'
+                  AND type(r) <> 'FROM_DOCUMENT' AND type(r) <> 'CO_MENTION'
+                RETURN DISTINCT type(r) as type
+                ORDER BY type
+            """)
+            return [record["type"] for record in result if record["type"]]
+
     def get_community_relationships(self, community_id: int, limit: int = 30) -> List[dict]:
         """Get relationships within a community."""
         with self.driver.session() as session:

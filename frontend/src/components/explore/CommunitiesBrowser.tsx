@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
@@ -111,60 +111,52 @@ export default function CommunitiesBrowser() {
   const router = useRouter();
   const [communities, setCommunities] = useState<Community[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   useBodyScrollLock(!!selectedCommunity);
 
-  const fetchCommunities = useCallback(async () => {
-    try {
-      const response = await api.getCommunities(1000000);
-      setCommunities(response.communities);
-    } catch (error) {
-      console.error("Failed to fetch communities:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Debounce search input
   useEffect(() => {
-    fetchCommunities();
-  }, [fetchCommunities]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Reset to page 1 when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery]);
+  }, [debouncedSearch]);
 
-  const filteredCommunities = useMemo(() => {
-    if (!searchQuery) return communities;
-    const query = searchQuery.toLowerCase();
-    return communities
-      .filter(
-        (c) =>
-          (c.name || "").toLowerCase().includes(query) ||
-          (c.summary || "").toLowerCase().includes(query) ||
-          (c.sample_entities || []).some((e) => e.toLowerCase().includes(query))
-      )
-      .sort((a, b) => {
-        const aName = (a.name || "").toLowerCase().includes(query);
-        const bName = (b.name || "").toLowerCase().includes(query);
-        if (aName !== bName) return aName ? -1 : 1;
-        const aSummary = (a.summary || "").toLowerCase().includes(query);
-        const bSummary = (b.summary || "").toLowerCase().includes(query);
-        if (aSummary !== bSummary) return aSummary ? -1 : 1;
-        return 0;
+  // Fetch communities from server
+  useEffect(() => {
+    const fetchCommunities = async () => {
+      setFetching(true);
+      try {
+        const response = await api.getCommunitiesPaginated({
+          skip: (currentPage - 1) * ITEMS_PER_PAGE,
+          limit: ITEMS_PER_PAGE,
+          search: debouncedSearch || undefined,
+        });
+        setCommunities(response.communities);
+        setTotalItems(response.total);
+      } catch (error) {
+        console.error("Failed to fetch communities:", error);
+      } finally {
+        setLoading(false);
+        setFetching(false);
       }
-    );
-  }, [communities, searchQuery]);
+    };
+    fetchCommunities();
+  }, [currentPage, debouncedSearch]);
 
-  const totalPages = Math.ceil(filteredCommunities.length / ITEMS_PER_PAGE);
-  const paginatedCommunities = filteredCommunities.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
 
   const handleOpenDetail = async (community: Community) => {
     setSelectedCommunity(community);
@@ -194,7 +186,7 @@ export default function CommunitiesBrowser() {
     );
   }
 
-  if (communities.length === 0) {
+  if (!loading && totalItems === 0 && !debouncedSearch) {
     return (
       <div className="text-center py-12">
         <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
@@ -220,20 +212,20 @@ export default function CommunitiesBrowser() {
           />
         </div>
         <span className="text-sm text-muted-foreground whitespace-nowrap">
-          {filteredCommunities.length} communit{filteredCommunities.length !== 1 ? "ies" : "y"}
+          {totalItems} communit{totalItems !== 1 ? "ies" : "y"}
         </span>
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={filteredCommunities.length}
+          totalItems={totalItems}
           itemsPerPage={ITEMS_PER_PAGE}
           onPageChange={setCurrentPage}
           compact
         />
       </div>
 
-      <div className="grid gap-3">
-        {paginatedCommunities.map((community) => (
+      <div className={cn("grid gap-3 transition-opacity", fetching && "opacity-60")}>
+        {communities.map((community) => (
           <div
             key={community.id}
             onClick={() => handleOpenDetail(community)}
@@ -273,12 +265,12 @@ export default function CommunitiesBrowser() {
       <Pagination
         currentPage={currentPage}
         totalPages={totalPages}
-        totalItems={filteredCommunities.length}
+        totalItems={totalItems}
         itemsPerPage={ITEMS_PER_PAGE}
         onPageChange={setCurrentPage}
       />
 
-      {filteredCommunities.length === 0 && communities.length > 0 && (
+      {communities.length === 0 && !loading && debouncedSearch && (
         <div className="text-center py-12 text-muted-foreground">
           No communities found matching your search.
         </div>

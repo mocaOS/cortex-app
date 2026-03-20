@@ -776,6 +776,55 @@ class ApiClient {
     );
   }
 
+  /**
+   * List entities with server-side pagination, search, and type filtering.
+   */
+  async getEntitiesPaginated(params: { skip?: number; limit?: number; search?: string; entityType?: string }): Promise<{ entities: Array<{ name: string; type: string; description: string; mention_count: number }>; total: number }> {
+    const p = new URLSearchParams();
+    if (params.skip !== undefined) p.set("skip", String(params.skip));
+    if (params.limit !== undefined) p.set("limit", String(params.limit));
+    if (params.search) p.set("search", params.search);
+    if (params.entityType) p.set("entity_type", params.entityType);
+    return this.request(`/api/graph/entities?${p}`);
+  }
+
+  /**
+   * Get all distinct entity types.
+   */
+  async getEntityTypes(): Promise<{ types: string[] }> {
+    return this.request(`/api/graph/entity-types`);
+  }
+
+  /**
+   * List relationships with server-side pagination, search, and type filtering.
+   */
+  async getRelationshipsPaginated(params: { skip?: number; limit?: number; search?: string; relType?: string }): Promise<{ relationships: Array<{ source: string; target: string; type: string; description?: string; weight?: number }>; total: number }> {
+    const p = new URLSearchParams();
+    if (params.skip !== undefined) p.set("skip", String(params.skip));
+    if (params.limit !== undefined) p.set("limit", String(params.limit));
+    if (params.search) p.set("search", params.search);
+    if (params.relType) p.set("rel_type", params.relType);
+    return this.request(`/api/graph/relationships?${p}`);
+  }
+
+  /**
+   * Get all distinct relationship types.
+   */
+  async getRelationshipTypes(): Promise<{ types: string[] }> {
+    return this.request(`/api/graph/relationship-types`);
+  }
+
+  /**
+   * List communities with server-side pagination and search.
+   */
+  async getCommunitiesPaginated(params: { skip?: number; limit?: number; search?: string }): Promise<{ communities: Community[]; total: number }> {
+    const p = new URLSearchParams();
+    if (params.skip !== undefined) p.set("skip", String(params.skip));
+    if (params.limit !== undefined) p.set("limit", String(params.limit));
+    if (params.search) p.set("search", params.search);
+    return this.request(`/api/graph/communities?${p}`);
+  }
+
   async *askStreamWithThinking(
     question: string,
     options: {

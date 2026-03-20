@@ -2027,37 +2027,62 @@ async def get_graph_subgraph(
 @app.get("/api/graph/entities")
 async def list_entities(
     entity_type: Optional[str] = Query(default=None, description="Filter by entity type"),
-    limit: int = Query(default=50, ge=1, le=1000000)
+    limit: int = Query(default=50, ge=1, le=1000),
+    skip: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None, description="Search in entity name and description"),
 ):
-    """List entities in the knowledge graph."""
-    def _query():
-        neo4j = get_neo4j_service()
-        with neo4j.driver.session() as session:
-            if entity_type:
-                result = session.run("""
-                    MATCH (e:Entity {type: $type})
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                    RETURN e.name as name, e.type as type, e.description as description,
-                           count(c) as mention_count
-                    ORDER BY mention_count DESC
-                    LIMIT $limit
-                """, type=entity_type, limit=limit)
-            else:
-                result = session.run("""
-                    MATCH (e:Entity)
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                    RETURN e.name as name, e.type as type, e.description as description,
-                           count(c) as mention_count
-                    ORDER BY mention_count DESC
-                    LIMIT $limit
-                """, limit=limit)
-            return [dict(record) for record in result]
-
+    """List entities in the knowledge graph with server-side pagination and search."""
     try:
-        entities = await asyncio.to_thread(_query)
-        return {"entities": entities, "total": len(entities)}
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(
+            neo4j.list_entities_paginated, skip, limit, search, entity_type
+        )
+        return result
     except Exception as e:
         logger.error(f"Error listing entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/entity-types")
+async def list_entity_types():
+    """Get all distinct entity types."""
+    try:
+        neo4j = get_neo4j_service()
+        types = await asyncio.to_thread(neo4j.get_entity_types)
+        return {"types": types}
+    except Exception as e:
+        logger.error(f"Error listing entity types: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/relationships")
+async def list_relationships(
+    rel_type: Optional[str] = Query(default=None, description="Filter by relationship type"),
+    limit: int = Query(default=50, ge=1, le=1000),
+    skip: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None, description="Search in source, target, description"),
+):
+    """List relationships with server-side pagination and search."""
+    try:
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(
+            neo4j.list_relationships_paginated, skip, limit, search, rel_type
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error listing relationships: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/graph/relationship-types")
+async def list_relationship_types():
+    """Get all distinct relationship types."""
+    try:
+        neo4j = get_neo4j_service()
+        types = await asyncio.to_thread(neo4j.get_relationship_types)
+        return {"types": types}
+    except Exception as e:
+        logger.error(f"Error listing relationship types: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2514,12 +2539,18 @@ async def delete_all_entities():
 # =============================================================================
 
 @app.get("/api/graph/communities")
-async def list_communities(limit: int = Query(default=50, ge=1, le=1000000)):
-    """List all detected communities."""
+async def list_communities(
+    limit: int = Query(default=50, ge=1, le=1000),
+    skip: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None, description="Search in community name, summary, and entities"),
+):
+    """List all detected communities with server-side pagination and search."""
     try:
         neo4j = get_neo4j_service()
-        communities = await asyncio.to_thread(neo4j.list_communities, limit)
-        return {"communities": communities, "total": len(communities)}
+        result = await asyncio.to_thread(
+            neo4j.list_communities_paginated, skip, limit, search
+        )
+        return result
     except Exception as e:
         logger.error(f"Error listing communities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
