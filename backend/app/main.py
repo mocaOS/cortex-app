@@ -2319,6 +2319,27 @@ async def get_collection(collection_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.put("/api/collections/{collection_id}")
+async def update_collection(collection_id: str, data: CollectionUpdate, auth: AuthResult = Depends(require_manage_permission)):
+    """Update a collection's name and/or description."""
+    try:
+        if collection_id == "default" and data.name and data.name != "default":
+            raise HTTPException(status_code=400, detail="Cannot rename the default collection")
+
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(neo4j.update_collection, collection_id, data.name, data.description)
+        if not result:
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        collection = await asyncio.to_thread(neo4j.get_collection, collection_id)
+        return collection
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating collection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/collections/{collection_id}")
 async def delete_collection(collection_id: str, auth: AuthResult = Depends(require_manage_permission)):
     """

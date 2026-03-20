@@ -108,6 +108,12 @@ curl "http://localhost:8000/api/collections/coll_abc123" \
 
 ### Update a Collection
 
+Rename a collection or update its description. Both fields are optional — only the provided fields are changed.
+
+**In the UI:** Click the pencil icon on a collection card to rename it inline. Press Enter to save or Escape to cancel.
+
+**Via API:**
+
 ```bash
 curl -X PUT "http://localhost:8000/api/collections/coll_abc123" \
   -H "X-API-Key: your-api-key" \
@@ -117,6 +123,20 @@ curl -X PUT "http://localhost:8000/api/collections/coll_abc123" \
     "description": "Updated description"
   }'
 ```
+
+**Response:**
+
+```json
+{
+  "id": "coll_abc123",
+  "name": "AI Research Papers",
+  "description": "Updated description",
+  "document_count": 45,
+  "entity_count": 892
+}
+```
+
+> **Note:** The default collection cannot be renamed.
 
 ### Delete a Collection
 

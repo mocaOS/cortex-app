@@ -134,6 +134,13 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     }
   };
 
+  const handleRename = async (id: string, name: string) => {
+    const updated = await api.updateCollection(id, { name });
+    setCollections((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, name: updated.name } : c))
+    );
+  };
+
   const handleDelete = async (id: string) => {
     const collection = collections.find((c) => c.id === id);
     const message = `Delete collection "${collection?.name}"? Documents will be moved to the default collection.`;
@@ -279,6 +286,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
               entities={entities[collection.id] || []}
               onToggleExpand={() => toggleExpand(collection.id)}
               onDelete={() => handleDelete(collection.id)}
+              onRename={(name) => handleRename(collection.id, name)}
             />
           ))
         )}

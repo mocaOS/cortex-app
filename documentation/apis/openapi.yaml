@@ -760,6 +760,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CollectionDetails'
+    put:
+      tags: [Collections]
+      summary: Update collection name or description
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionUpdate'
+      responses:
+        '200':
+          description: Collection updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetails'
+        '400':
+          description: Cannot rename the default collection
+        '404':
+          description: Collection not found
     delete:
       tags: [Collections]
       summary: Delete collection
@@ -1781,6 +1807,16 @@ components:
           type: string
       required:
         - name
+
+    CollectionUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          description: New collection name (1-100 characters)
+        description:
+          type: string
+          description: New collection description (max 500 characters)
 
     Collection:
       type: object

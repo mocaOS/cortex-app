@@ -510,6 +510,13 @@ class ApiClient {
     });
   }
 
+  async updateCollection(id: string, data: { name?: string; description?: string }): Promise<Collection> {
+    return this.request<Collection>(`/api/collections/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
   async deleteCollection(id: string): Promise<{ message: string; documents_moved: number }> {
     return this.request<{ message: string; documents_moved: number }>(
       `/api/collections/${id}`,

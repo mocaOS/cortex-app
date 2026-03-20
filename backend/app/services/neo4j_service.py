@@ -2540,6 +2540,31 @@ class Neo4jService:
             """)
             return [dict(record) for record in result]
     
+    def update_collection(self, collection_id: str, name: str = None, description: str = None) -> dict:
+        """Update a collection's name and/or description."""
+        with self.driver.session() as session:
+            set_clauses = []
+            params = {"id": collection_id}
+            if name is not None:
+                set_clauses.append("col.name = $name")
+                params["name"] = name
+            if description is not None:
+                set_clauses.append("col.description = $description")
+                params["description"] = description
+            if not set_clauses:
+                return self.get_collection(collection_id)
+
+            result = session.run(f"""
+                MATCH (col:Collection {{id: $id}})
+                SET {', '.join(set_clauses)}
+                RETURN col.id as id, col.name as name, col.description as description,
+                       col.created_at as created_at
+            """, **params)
+            record = result.single()
+            if not record:
+                return None
+            return dict(record)
+
     def delete_collection(self, collection_id: str) -> dict:
         """
         Delete a collection and move all its documents to the default collection.
