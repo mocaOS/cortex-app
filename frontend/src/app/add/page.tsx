@@ -290,6 +290,7 @@ export default function AddPage() {
                 value={form.collectionId}
                 onChange={(id) => setForm({ ...form, collectionId: id })}
                 allowCreate={true}
+                autoSelectDefault={true}
               />
             </div>
 

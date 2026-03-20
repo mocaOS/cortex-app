@@ -269,6 +269,7 @@ export default function FileUpload({ onUpload }: FileUploadProps) {
           value={selectedCollection}
           onChange={setSelectedCollection}
           allowCreate={true}
+          autoSelectDefault={true}
           className="w-64"
         />
       </div>

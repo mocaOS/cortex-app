@@ -106,6 +106,7 @@ export default function UploadModal({ isOpen, onClose, onFilesSelected }: Upload
               value={selectedCollection}
               onChange={setSelectedCollection}
               allowCreate={true}
+              autoSelectDefault={true}
               className="w-64"
             />
           </div>

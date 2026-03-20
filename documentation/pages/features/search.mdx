@@ -148,9 +148,18 @@ RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 
 ## Collection-Scoped Search
 
-Search within a specific collection:
+By default, search queries span **all collections**. To narrow results to a specific collection, pass `collection_id`:
 
 ```bash
+# Search all collections (default — omit collection_id)
+curl -X POST "http://localhost:8000/api/search" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "quarterly results"
+  }'
+
+# Search a specific collection
 curl -X POST "http://localhost:8000/api/search" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
@@ -185,7 +194,7 @@ When graph search is enabled, results may include entity relationships:
 
 ## Performance Tips
 
-1. **Use collection scoping** - Narrow search to relevant collections
+1. **Use collection scoping when needed** - Search spans all collections by default; narrow to a specific collection for focused results
 2. **Adjust weights** - Tune `VECTOR_WEIGHT`, `KEYWORD_WEIGHT`, `GRAPH_WEIGHT` for your use case
 3. **Limit results** - Start with smaller limits and paginate
 4. **Enable re-ranking** - Improves precision for the final results

@@ -20,10 +20,11 @@ Both modes share a simplified input interface with:
 - A text input field (placeholder varies by mode)
 - A **Settings** button (cog icon) to configure collection scope and streaming
 - A **Send** button that activates when you type
+- A **collection indicator** below the input showing the active search scope
 
 The settings dropdown allows you to:
 - Toggle **Stream responses** on/off (for debugging)
-- Select a **Collection Scope** to limit search to specific documents
+- Select a **Collection Scope** — defaults to **All Collections** so searches span the entire knowledge base. Select a specific collection to narrow results to that collection's documents only.
 
 ### Response Layout
 
@@ -261,9 +262,11 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
 
 The backend automatically trims conversation history to the most recent messages (default: 6, configurable via `MAX_CONVERSATION_HISTORY`).
 
-## Collection-Scoped Questions
+## Collection Scope
 
-Scope questions to a specific collection so only its documents, chunks, and entities are searched:
+By default, both Chat and Deep Research search across **all collections** in your knowledge base. This means every document you've ingested is available for retrieval regardless of which collection it belongs to.
+
+To narrow results to a specific collection, pass `collection_id` in your API request:
 
 ```bash
 curl -X POST "http://localhost:8000/api/ask/stream" \
@@ -275,9 +278,9 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
   }' --no-buffer
 ```
 
-Collection scoping works with both modes. When a collection is selected, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data.
+When `collection_id` is omitted (or `null`), all collections are searched. When provided, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data. Collection scoping works identically in both Chat and Deep Research modes.
 
-**In the UI:** Click the Settings (cog) icon next to the send button and use the **Collection Scope** dropdown.
+**In the UI:** Click the Settings (cog) icon next to the send button and use the **Collection Scope** dropdown. The dropdown defaults to **All Collections** and shows a persistent indicator below the input confirming the active scope. Select a specific collection to filter, or select "All Collections" to search everything.
 
 ## Frontend Integration (JavaScript/TypeScript)
 
