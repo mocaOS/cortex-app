@@ -51,29 +51,28 @@ MOCA uses LLMs for Q&A, entity extraction, relationship analysis, and image unde
 
 ```bash
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
-OPENAI_API_KEY=sk-your-openai-api-key-here
-OPENAI_API_BASE=https://api.openai.com/v1   # or any OpenAI-compatible endpoint
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=
+OPENAI_API_BASE=https://api.example.com/v1
+OPENAI_MODEL=
 
 # ── Graph Extraction (entity & relationship discovery) ───────────
-ENABLE_GRAPH_EXTRACTION=true
+ENABLE_GRAPH_EXTRACTION=                     # true = extract entities/relationships, false = skip
 GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
 GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
 GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
 
-# Context budgets — raise these for models with large context windows
-EXTRACTION_MAX_CONTEXT=256000
-RELATIONSHIP_MAX_CONTEXT=198000
+# Context budgets — must match the context window of their respective models
+EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=198000              # must match OPENAI_MODEL context window
 
 # ── Vision (image analysis during document ingestion) ────────────
-VISION_MODEL=gpt-4o
+VISION_MODEL=
 VISION_MODEL_API_BASE=                       # defaults to OPENAI_API_BASE
 VISION_MODEL_API_KEY=                        # defaults to OPENAI_API_KEY
 
 # ── Embeddings ───────────────────────────────────────────────────
-USE_OPENAI_EMBEDDINGS=true
-EMBEDDING_MODEL=openai/text-embedding-3-small
-EMBEDDING_DIMENSION=1536
+EMBEDDING_MODEL=
+EMBEDDING_DIMENSION=
 EMBEDDING_SEND_DIMENSIONS=true               # set false for models with fixed output dim
 EMBEDDING_API_BASE=                          # defaults to OPENAI_API_BASE
 EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
