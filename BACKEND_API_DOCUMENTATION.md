@@ -534,6 +534,24 @@ MOCA (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combine
 
 ---
 
+### System Configuration
+
+#### `GET /api/admin/config`
+**Description**: Get system configuration (read-only, no secrets exposed)
+**Authentication**: `require_admin`
+**Response**: `SystemConfigResponse`
+
+Returns current system settings grouped into:
+- **LLM**: `openai_model`, `openai_api_base`, `relationship_max_context`, `parallel_relationship_batches`
+- **Extraction**: `extraction_model`, `extraction_api_base`, `extraction_max_context`, `batch_processing_concurrency`
+- **Vision**: `vision_model`, `vision_api_base`, `vision_max_concurrent`, `vision_model_available`
+- **Embeddings**: `embedding_model`, `embedding_dimension`, `embedding_api_base`, `embedding_send_dimensions`
+- Plus: chunking, search/RAG, graph, community detection, entity resolution, collections, features, turbo mode settings
+
+**Note**: API keys, passwords, and secrets are never included in the response.
+
+---
+
 ### Admin API Key Management
 
 #### `GET /api/admin/api-keys`

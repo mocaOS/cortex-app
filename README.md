@@ -344,6 +344,7 @@ npm run dev
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
+| GET | `/api/admin/config` | System configuration (model names, API base URLs, context windows — no secrets) | Admin |
 | POST | `/api/admin/reset` | System reset — selective deletion of all data | Admin |
 | GET | `/api/admin/api-keys` | List all API keys | Admin |
 | POST | `/api/admin/api-keys` | Create new API key | Admin |
