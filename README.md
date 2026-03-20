@@ -118,7 +118,6 @@ Edit `.env` with your settings:
 ```env
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password123
-OPENAI_API_KEY=sk-your-key-here  # Required for AI answers
 
 # Admin Authentication
 ADMIN_EMAIL=admin@example.com
@@ -127,13 +126,58 @@ ADMIN_API_KEY=moca_admin_your-secret-key
 SESSION_SECRET=at-least-32-characters-secret
 ```
 
-3. **Start with Docker Compose**
+3. **Configure LLM providers**
+
+MOCA uses LLMs for Q&A, entity extraction, relationship analysis, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API).
+
+```env
+# ── Primary LLM (Q&A, research, chat) ───────────────────────────
+OPENAI_API_KEY=sk-your-key-here
+OPENAI_API_BASE=https://api.openai.com/v1   # or any OpenAI-compatible endpoint
+OPENAI_MODEL=gpt-4o-mini
+
+# ── Graph Extraction (entity & relationship discovery) ───────────
+ENABLE_GRAPH_EXTRACTION=true
+GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
+GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
+GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
+
+# Context budgets — raise these for models with large context windows
+EXTRACTION_MAX_CONTEXT=256000
+RELATIONSHIP_MAX_CONTEXT=198000
+
+# ── Vision (image analysis during document ingestion) ────────────
+VISION_MODEL=gpt-4o
+VISION_MODEL_API_BASE=                       # defaults to OPENAI_API_BASE
+VISION_MODEL_API_KEY=                        # defaults to OPENAI_API_KEY
+
+# ── Embeddings ───────────────────────────────────────────────────
+USE_OPENAI_EMBEDDINGS=true
+EMBEDDING_MODEL=openai/text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_SEND_DIMENSIONS=true               # set false for models with fixed output dim
+EMBEDDING_API_BASE=                          # defaults to OPENAI_API_BASE
+EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
+```
+
+**Performance tuning** — controls how much work runs in parallel:
+
+```env
+BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
+CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
+VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
+PARALLEL_RELATIONSHIP_BATCHES=1              # relationship analysis batches in parallel (1 = sequential)
+```
+
+> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up relationship analysis — increase it to run multiple LLM calls concurrently.
+
+4. **Start with Docker Compose**
 
 ```bash
 docker compose up -d
 ```
 
-4. **Access the application**
+5. **Access the application**
 
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
