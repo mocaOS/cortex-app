@@ -296,6 +296,7 @@ interface ForceGraphMethods {
   centerAt: (x: number, y: number, duration?: number) => void;
   zoomToFit: (duration?: number, padding?: number) => void;
   screen2GraphCoords: (x: number, y: number) => { x: number; y: number };
+  d3ReheatSimulation: () => void;
 }
 
 const CLICK_THRESHOLD = 5; // px — distinguishes click from drag
@@ -380,6 +381,11 @@ export default function KnowledgeGraph({
         community_id: n.community_id,
         mention_count: mc,
         val: getHitVal(mc),
+        // Preserve initial x/y for expanded nodes so they spawn near the anchor
+        // (only set when defined — omitting keeps force graph from overwriting
+        // positions on existing nodes during its Object.assign merge)
+        ...(n.x !== undefined && { x: n.x }),
+        ...(n.y !== undefined && { y: n.y }),
       };
     });
 
@@ -395,7 +401,6 @@ export default function KnowledgeGraph({
     }
     for (const e of expandedEdges) {
       const key = `${e.source}|${e.target}|${e.type}`;
-      // Also check reverse direction for undirected dedup
       if (!edgeSet.has(key)) {
         // Only add if both endpoints exist in our node set
         if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
@@ -658,9 +663,61 @@ export default function KnowledgeGraph({
     [hoveredNode, selectedNode]
   );
 
+  // Ref to track which entity to navigate to after graph expansion
+  const pendingNavigateRef = useRef<string | null>(null);
+  const pendingCenterRef = useRef<string | null>(null);
+
+  // After graph data changes, check if we have a pending navigation target.
+  // The force graph's React wrapper processes the new graphData prop via
+  // Object.assign into internal nodes — so the useMemo node objects ARE the
+  // live objects the simulation mutates. We can select them directly.
+  useEffect(() => {
+    const pending = pendingNavigateRef.current;
+    if (!pending) return;
+
+    const node = graphData.nodes.find(
+      (n) => n.label.toLowerCase() === pending
+    );
+    if (!node) return;
+
+    pendingNavigateRef.current = null;
+    pendingCenterRef.current = pending;
+
+    // Select node to show the panel and fetch details
+    setSelectedNode(node);
+
+    // Reheat simulation so new links get force-directed layout
+    fgRef.current?.d3ReheatSimulation?.();
+  }, [graphData.nodes]);
+
+  // Separate effect to center the view — runs after the render that set
+  // selectedNode, so the force graph has processed the updated graphData.
+  // The node object is mutated in-place by the simulation, so we poll
+  // until x/y are assigned by the force engine.
+  useEffect(() => {
+    const pending = pendingCenterRef.current;
+    if (!pending || !selectedNode) return;
+    if (selectedNode.label.toLowerCase() !== pending) return;
+
+    pendingCenterRef.current = null;
+
+    const intervalId = setInterval(() => {
+      if (selectedNode.x !== undefined && selectedNode.y !== undefined) {
+        clearInterval(intervalId);
+        fgRef.current?.centerAt(selectedNode.x!, selectedNode.y!, 500);
+        fgRef.current?.zoom(2.5, 500);
+      }
+    }, 50);
+    const timeoutId = setTimeout(() => clearInterval(intervalId), 3000);
+    return () => {
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
+  }, [selectedNode]);
+
   // Navigate to entity by name (used by EntityPanel clicks).
   // If the entity isn't loaded in the graph yet, fetch it and its neighbors
-  // from the backend, merge them into the graph, then navigate.
+  // from the backend, add to state, and let the effects handle navigation.
   const handleEntityNavigate = useCallback(async (entityName: string) => {
     // First check if the node is already in the graph
     const existingNode = graphData.nodes.find(
@@ -677,30 +734,42 @@ export default function KnowledgeGraph({
       const data = await api.getEntityRelationships(entityName, 1, 50);
       if (!data.entity) return;
 
-      // Build new nodes from the response
-      const newNodes: GraphNode[] = [];
-      // Add the target entity itself
-      newNodes.push({
+      // Position near the currently selected node
+      const anchorX = selectedNode?.x ?? 0;
+      const anchorY = selectedNode?.y ?? 0;
+
+      // IDs of nodes already on the canvas (props + previously expanded)
+      const displayedIds = new Set(graphData.nodes.map((n) => n.id));
+
+      // Build new nodes: the target entity + any 1-hop neighbors that
+      // aren't already displayed. Without the neighbors, edges to entities
+      // outside the current graph would be silently dropped.
+      const newNodes: GraphNode[] = [{
         id: data.entity.name,
         label: data.entity.name,
         type: data.entity.type,
         description: data.entity.description,
         community_id: data.entity.community_id,
         mention_count: data.entity.mention_count || 1,
-      });
-      // Add its related entities
+        x: anchorX + (Math.random() - 0.5) * 80,
+        y: anchorY + (Math.random() - 0.5) * 80,
+      }];
+
       for (const rel of data.related_entities) {
-        newNodes.push({
-          id: rel.name,
-          label: rel.name,
-          type: rel.type,
-          description: rel.description,
-          community_id: rel.community_id,
-          mention_count: 1,
-        });
+        if (!displayedIds.has(rel.name)) {
+          newNodes.push({
+            id: rel.name,
+            label: rel.name,
+            type: rel.type,
+            description: rel.description,
+            community_id: rel.community_id,
+            mention_count: 1,
+            x: anchorX + (Math.random() - 0.5) * 200,
+            y: anchorY + (Math.random() - 0.5) * 200,
+          });
+        }
       }
 
-      // Build new edges from the response
       const newEdges: GraphEdge[] = data.relationships.map((r) => ({
         source: r.source,
         target: r.target,
@@ -709,34 +778,18 @@ export default function KnowledgeGraph({
         weight: r.weight,
       }));
 
-      // Merge into expanded state
+      // Mark pending navigation — the useEffect watching graphData.nodes
+      // will pick this up after React re-renders with the new data
+      pendingNavigateRef.current = entityName.toLowerCase();
+
       setExpandedNodes((prev) => [...prev, ...newNodes]);
       setExpandedEdges((prev) => [...prev, ...newEdges]);
-
-      // After state update, find the newly added node and navigate to it.
-      // We need to wait for the next render cycle so graphData includes the new node.
-      // Use a ref-based approach via setTimeout to let React process the state update.
-      setTimeout(() => {
-        // The node should now be in graphData after re-render
-        // We need to find it from the force graph's internal data
-        const fg = fgRef.current as ForceGraphMethods & { graphData?: () => { nodes: ForceGraphNode[] } };
-        let newNode: ForceGraphNode | undefined;
-        if (fg && typeof fg.graphData === "function") {
-          const currentData = fg.graphData();
-          newNode = currentData.nodes.find(
-            (n: ForceGraphNode) => n.label.toLowerCase() === entityName.toLowerCase()
-          );
-        }
-        if (newNode) {
-          handleNodeClick(newNode);
-        }
-      }, 200);
     } catch (error) {
       console.error("Failed to expand graph for entity:", entityName, error);
     } finally {
       setExpandLoading(false);
     }
-  }, [graphData.nodes, handleNodeClick]);
+  }, [graphData.nodes, handleNodeClick, selectedNode]);
 
   // Custom link rendering
   const linkCanvasObject = useCallback(
