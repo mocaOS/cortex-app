@@ -1,0 +1,373 @@
+# Chapter 3: Getting Started (Administrators)
+
+This chapter covers deploying your own Cortex Library instance. Whether you're setting up a development environment or a production deployment, this guide walks you through every step.
+
+## Prerequisites
+
+| Requirement | Development | Production |
+|-------------|-------------|------------|
+| **Docker & Docker Compose** | Required | Required |
+| **RAM** | 4 GB minimum | 8 GB+ recommended |
+| **LLM API Key** | Required | Required |
+| **Domain Name** | Not needed | Required (for SSL) |
+| **Node.js 20+** | Only for local dev (no Docker) | Not needed |
+| **Python 3.11+** | Only for local dev (no Docker) | Not needed |
+
+**LLM Provider**: You need an API key from OpenAI, Anthropic (via LiteLLM), Azure OpenAI, or any OpenAI-compatible API provider. The Library is LLM-agnostic — any provider that exposes an OpenAI-compatible `/v1/chat/completions` endpoint will work.
+
+## Quick Start (5 Minutes with Docker)
+
+### Step 1: Clone and Configure
+
+```bash
+git clone https://github.com/mocaOS/library.git
+cd library
+cp .env.example .env
+```
+
+### Step 2: Set Required Environment Variables
+
+Open `.env` in your editor and set these minimum required variables:
+
+```env
+# ── Database ────────────────────────────────────────────────────
+NEO4J_PASSWORD=your-secure-neo4j-password
+
+# ── Admin Authentication ────────────────────────────────────────
+ADMIN_EMAIL=admin@yourdomain.com
+ADMIN_PASSWORD=your-secure-admin-password
+ADMIN_API_KEY=moca_admin_your-secret-key-here
+SESSION_SECRET=at-least-32-characters-long-random-secret
+
+# ── Primary LLM ─────────────────────────────────────────────────
+OPENAI_API_KEY=sk-your-openai-key
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+```
+
+**Generating secure secrets:**
+
+```bash
+# Generate a secure admin API key
+echo "moca_admin_$(openssl rand -hex 32)"
+
+# Generate a session secret
+openssl rand -hex 32
+```
+
+### Step 3: Start All Services
+
+```bash
+docker compose up -d
+```
+
+This starts three services:
+- **Neo4j** (graph database) on port 7474 (browser) and 7687 (bolt)
+- **Backend** (FastAPI) on port 8000
+- **Frontend** (Next.js) on port 3000
+
+### Step 4: Verify the Deployment
+
+```bash
+# Check backend health
+curl http://localhost:8000/health
+# Expected: {"status": "healthy", "neo4j_connected": true, "version": "1.0.0"}
+
+# Open the web interface
+open http://localhost:3000
+```
+
+Sign in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you configured.
+
+### Step 5: Upload Your First Document
+
+1. Click the **Upload** button on the Documents page
+2. Drag and drop a PDF, Word doc, or text file
+3. Watch the processing progress inline
+4. Navigate to **Manage > Knowledge Graph** to build the graph
+5. Click **Generate Graph** to run the full pipeline
+
+Congratulations — you have a working Cortex Library instance!
+
+## Deployment Options
+
+### Option 1: Docker Compose — Development
+
+Best for local development and testing. Includes hot reload for both frontend and backend.
+
+```bash
+docker compose up --build
+```
+
+**What's included:**
+- Neo4j Community Edition (5.15.0) with APOC plugin
+- Backend with live code mounting (changes reflect immediately)
+- Frontend with live code mounting and `.next` cache
+- Shared volumes for uploads and custom inputs
+
+**Service URLs:**
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs (Swagger) | http://localhost:8000/docs |
+| API Docs (ReDoc) | http://localhost:8000/redoc |
+| Neo4j Browser | http://localhost:7474 |
+
+### Option 2: Docker Compose — Production
+
+Best for standalone production deployments. Includes Nginx reverse proxy with SSL support and optimized builds.
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+**What's included:**
+- Neo4j Enterprise Edition (5.15.0) with optimized memory settings (512MB initial heap, 2GB max, 512MB page cache)
+- Production-optimized Docker builds (multi-stage, smaller images)
+- Nginx Alpine reverse proxy on ports 80/443
+- SSL/TLS support (place certificates in `nginx/ssl/`)
+- Named Docker volumes for persistent data
+- Restart policies (`unless-stopped`)
+- Health checks on all services
+
+**Production environment variables:**
+
+```env
+# All variables from Step 2, plus:
+NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+
+# Neo4j memory tuning
+NEO4J_server_memory_heap_initial__size=512m
+NEO4J_server_memory_heap_max__size=2G
+NEO4J_server_memory_pagecache_size=512m
+```
+
+**Nginx configuration essentials:**
+- `client_max_body_size 50M` — Matches `MAX_FILE_SIZE_MB` for uploads
+- `proxy_buffering off` — Required for SSE streaming endpoints (`/api/ask/stream`)
+- SSL termination with your domain certificates
+
+### Option 3: Coolify (PaaS)
+
+Best for teams already using Coolify as their self-hosting platform. Provides automatic domain routing, SSL certificates, and managed deployments.
+
+**Setup steps:**
+
+1. **Create a new resource** in your Coolify dashboard
+2. **Select Docker Compose** as the project type
+3. **Connect your git repository** (or use the MOCA Library repo URL)
+4. **Set the compose file path** to `coolify/docker-compose.coolify.yml`
+5. **Configure environment variables** in the Coolify UI:
+
+```env
+# Required
+OPENAI_API_KEY=sk-your-key
+ADMIN_EMAIL=admin@yourdomain.com
+ADMIN_PASSWORD=your-secure-password
+ADMIN_API_KEY=moca_admin_$(openssl rand -hex 32)
+SESSION_SECRET=$(openssl rand -hex 32)
+
+# Domain configuration
+BACKEND_URL=https://api.cortex.yourdomain.com
+FRONTEND_URL=https://cortex.yourdomain.com
+```
+
+6. **Configure domains** in Coolify's domain settings
+7. **Deploy**
+
+**Critical Coolify notes:**
+
+| Issue | Solution |
+|-------|----------|
+| Neo4j startup failure | Do NOT set `NEO4J_USER` — Coolify manages the default user. Use `SERVICE_PASSWORD_NEO4J` for the password. |
+| 504 Gateway Timeout | Ensure services with `SERVICE_FQDN_*` have the `traefik.docker.network=coolify` label and join the external `coolify` network |
+| Password management | Use Coolify's auto-generated `SERVICE_PASSWORD_NEO4J` — do not hardcode |
+
+**Coolify magic variables:**
+
+| Variable | Purpose |
+|----------|---------|
+| `SERVICE_FQDN_FRONTEND_3000` | Auto-generated frontend domain |
+| `SERVICE_FQDN_BACKEND_8000` | Auto-generated backend domain |
+| `SERVICE_PASSWORD_NEO4J` | Auto-generated secure Neo4j password |
+| `SERVICE_URL_API_8000` | Internal backend URL for frontend-to-backend communication |
+
+### Option 4: Local Development (No Docker)
+
+For developers who prefer running services natively.
+
+**Backend:**
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate    # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+npm install
+npm run dev    # Dev server on :3000
+```
+
+**Neo4j** (still via Docker, as it requires the APOC plugin):
+
+```bash
+docker run -d \
+  --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/password123 \
+  -e NEO4J_PLUGINS='["apoc"]' \
+  -e NEO4J_dbms_security_procedures_unrestricted=apoc.* \
+  neo4j:5.15.0-community
+```
+
+Set environment variables:
+
+```bash
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_USER=neo4j
+export NEO4J_PASSWORD=password123
+export OPENAI_API_KEY=sk-your-key
+```
+
+## LLM Provider Configuration
+
+The Library is LLM-agnostic. Each capability can point to a different model or provider:
+
+### Separate Model Configuration
+
+```env
+# ── Primary LLM (Q&A, research, chat) ─────────────────────────
+OPENAI_API_KEY=sk-your-key
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL_FAST_MODE=gpt-4o-mini    # Optional: faster model for "Fast Mode"
+
+# ── Graph Extraction (entity & relationship discovery) ─────────
+# Defaults to Primary LLM if not set
+GRAPH_EXTRACTION_MODEL=gpt-4o          # Larger model for better extraction
+GRAPH_EXTRACTION_API_BASE=https://api.openai.com/v1
+GRAPH_EXTRACTION_API_KEY=sk-your-key
+
+# ── Vision (image analysis during document ingestion) ──────────
+# Defaults to Primary LLM if not set. Leave empty to use Docling's built-in.
+VISION_MODEL=gpt-4o
+VISION_MODEL_API_BASE=https://api.openai.com/v1
+VISION_MODEL_API_KEY=sk-your-key
+
+# ── Embeddings ─────────────────────────────────────────────────
+EMBEDDING_MODEL=openai/text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_SEND_DIMENSIONS=true         # Set false for models with fixed output dim
+EMBEDDING_API_BASE=https://api.openai.com/v1
+EMBEDDING_API_KEY=sk-your-key
+
+# ── Community Summarization ────────────────────────────────────
+COMMUNITY_SUMMARY_MODEL=gpt-4o-mini   # Defaults to OPENAI_MODEL if not set
+```
+
+### Using Alternative Providers
+
+| Provider | `OPENAI_API_BASE` | Model Prefix | Notes |
+|----------|-------------------|-------------|-------|
+| **OpenAI** | `https://api.openai.com/v1` | None | Default; all models supported |
+| **Anthropic** (via LiteLLM) | Your LiteLLM proxy URL | `anthropic/` | Requires LiteLLM proxy |
+| **Azure OpenAI** | `https://your-resource.openai.azure.com/...` | None | Set API key to Azure key |
+| **Ollama** (local) | `http://localhost:11434/v1` | None | Free; may lack function calling |
+| **vLLM** (local GPU) | `http://localhost:8000/v1` | None | High performance, open models |
+| **Together AI** | `https://api.together.xyz/v1` | None | Cloud-hosted open models |
+| **Groq** | `https://api.groq.com/openai/v1` | None | Fast inference |
+
+**Important**: The agent research pipeline requires a model that supports **function calling / tool use** (OpenAI `tools` parameter). Models like GPT-4o, GPT-4o-mini, Claude (via LiteLLM), and Mistral Large support this. Many local models do not — set `ENABLE_AGENT_RESEARCH=false` to use the legacy pipeline.
+
+### Context Window Configuration
+
+These must match the actual context window of their respective models:
+
+```env
+EXTRACTION_MAX_CONTEXT=256000          # Must match GRAPH_EXTRACTION_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=198000        # Must match OPENAI_MODEL context window
+RELATIONSHIP_MAX_OUTPUT_TOKENS=8000    # Max output tokens for relationship analysis
+```
+
+Setting these values higher than the model's actual context window will cause errors. Setting them lower wastes capacity.
+
+## Performance Tuning
+
+### Concurrency Settings
+
+```env
+BATCH_PROCESSING_CONCURRENCY=2        # Documents processed in parallel
+CONCURRENT_EXTRACTIONS=3              # Entity extraction thread pool size
+VISION_MAX_CONCURRENT=3               # Concurrent vision API calls (system-wide)
+PARALLEL_RELATIONSHIP_BATCHES=2       # Relationship analysis batches in parallel
+PROCESSING_THREAD_WORKERS=4           # Thread pool workers for CPU operations
+```
+
+**How they interact:**
+
+```
+Document Pipeline (controlled by BATCH_PROCESSING_CONCURRENCY):
+  ├─ Document 1 ──────────────────────────────────────────────────
+  │  ├─ Conversion (subprocess, semaphore=1)
+  │  ├─ Chunking
+  │  ├─ Embedding (thread pool)
+  │  ├─ Entity Extraction (CONCURRENT_EXTRACTIONS threads)
+  │  └─ Image Analysis (VISION_MAX_CONCURRENT semaphore, shared)
+  │
+  └─ Document 2 ──────────────────────────────────────────────────
+     ├─ Conversion (waits for semaphore)
+     ├─ Chunking
+     ├─ Embedding (thread pool)
+     ├─ Entity Extraction (CONCURRENT_EXTRACTIONS threads)
+     └─ Image Analysis (shares VISION_MAX_CONCURRENT semaphore)
+```
+
+**Tuning guidance:**
+
+| Setting | Increase When | Decrease When |
+|---------|--------------|---------------|
+| `BATCH_PROCESSING_CONCURRENCY` | You have many documents to process and sufficient RAM/API quota | Limited RAM or hitting API rate limits |
+| `CONCURRENT_EXTRACTIONS` | Entity extraction is the bottleneck | LLM API rate limits are being hit |
+| `VISION_MAX_CONCURRENT` | Image-heavy documents need faster processing | Vision API rate limits are being hit |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Relationship analysis takes too long (**most impactful lever**) | LLM API costs need to be controlled |
+
+### Memory Requirements
+
+| Workload | Recommended RAM | Neo4j Heap | Neo4j Page Cache |
+|----------|----------------|-----------|-----------------|
+| Small (< 100 docs) | 4 GB | 512 MB | 256 MB |
+| Medium (100-1000 docs) | 8 GB | 1 GB | 512 MB |
+| Large (1000+ docs) | 16 GB+ | 2 GB | 1 GB |
+| Enterprise (10000+ docs) | 32 GB+ | 4 GB | 4 GB |
+
+## First Steps After Deployment
+
+1. **Sign in** at http://localhost:3000 with your admin credentials
+2. **Upload a test document** — Try a PDF or Markdown file
+3. **Navigate to Knowledge Graph** — Click "Generate Graph" to run the full 3-step pipeline
+4. **Explore the graph** — Go to Explore > Knowledge Graph to see your entities and relationships
+5. **Ask a question** — Go to Explore > Chat or Deep Research
+6. **Create an API key** — Go to Settings > API Key Management for programmatic access
+
+## Common Setup Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Neo4j won't start | Password mismatch with existing data | Delete the `neo4j_data` volume: `docker volume rm library_neo4j_data` |
+| Backend can't connect to Neo4j | Neo4j not ready yet | Backend waits for Neo4j health check; ensure `depends_on` is configured |
+| LLM API errors during extraction | Invalid API key or wrong base URL | Verify `OPENAI_API_KEY` and `OPENAI_API_BASE` |
+| Frontend shows "Network Error" | Backend URL misconfigured | Check `NEXT_PUBLIC_API_URL` points to the correct backend URL |
+| Port 3000/8000 already in use | Another service on those ports | Stop the conflicting service or change ports in `docker-compose.yml` |
+
+## What's Next
+
+- **Configure all options** — Continue to [Chapter 4: Configuration Reference](04-configuration.md)
+- **Secure your deployment** — Continue to [Chapter 5: Security and Authentication](05-security.md)
+- **Start using the Library** — Jump to [Chapter 6: The Web Interface](06-web-interface.md)

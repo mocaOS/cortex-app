@@ -74,6 +74,7 @@ class Settings(BaseSettings):
             ".htm",  # Web pages
             ".txt",
             ".md",
+            ".mdx",
             ".markdown",
             ".rst",  # Text files
             ".png",

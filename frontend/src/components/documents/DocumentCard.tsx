@@ -412,7 +412,7 @@ export function DocumentCard({
                     type="file"
                     className="hidden"
                     onChange={handleFileSelect}
-                    accept=".pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.xls"
+                    accept=".pdf,.doc,.docx,.txt,.md,.mdx,.csv,.xlsx,.xls"
                   />
                   <button
                     onClick={() => fileInputRef.current?.click()}

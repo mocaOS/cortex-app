@@ -9,7 +9,7 @@ import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 const ALLOWED_TYPES = [
   ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
   ".html", ".htm",
-  ".txt", ".md", ".markdown", ".rst",
+  ".txt", ".md", ".mdx", ".markdown", ".rst",
   ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
   ".wav", ".mp3", ".webvtt", ".vtt",
   ".tex", ".latex",

@@ -749,6 +749,7 @@ class DocumentProcessor:
         # Text files
         ".txt",
         ".md",
+        ".mdx",
         ".markdown",
         ".rst",
         # Images (OCR)

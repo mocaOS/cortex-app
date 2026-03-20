@@ -230,6 +230,21 @@ def _convert_chunk(
     return md_text, images
 
 
+def _convert_mdx_fallback(file_path: str) -> dict:
+    """Read MDX files as plain text (Markdown with JSX).
+
+    Docling doesn't recognise .mdx, but the content is mostly Markdown
+    so reading it verbatim works well for chunking and extraction.
+    """
+    path = Path(file_path)
+    logger.info(f"Using MDX plain-text fallback for {path.name}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = path.read_text(encoding="latin-1")
+    return {"markdown": text, "filename": path.name, "images": [], "error": None}
+
+
 def _convert_xml_fallback(file_path: str) -> dict:
     """Fallback for XML files that Docling can't auto-detect (not USPTO/JATS/XBRL).
 
@@ -287,6 +302,10 @@ def convert(file_path: str, use_vision: bool):
         convert_kwargs = {"max_num_pages": 500}  # Safety limit
         if max_file_size > 0 and max_file_size < (2**31 - 1):
             convert_kwargs["max_file_size"] = max_file_size
+        # MDX files are Markdown + JSX; Docling doesn't recognise the extension
+        if path.suffix.lower() == ".mdx":
+            return _convert_mdx_fallback(file_path)
+
         try:
             result = converter.convert(file_path, **convert_kwargs)
         except Exception as exc:

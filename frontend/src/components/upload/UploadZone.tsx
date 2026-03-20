@@ -11,7 +11,7 @@ const ALLOWED_TYPES = [
   // Web pages
   ".html", ".htm",
   // Text files
-  ".txt", ".md", ".markdown", ".rst",
+  ".txt", ".md", ".mdx", ".markdown", ".rst",
   // Images (OCR)
   ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
   // Audio (ASR)
