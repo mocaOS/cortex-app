@@ -832,6 +832,7 @@ class ApiClient {
       conversationHistory?: ConversationMessage[];
       useGraph?: boolean;
       maxHops?: number;
+      collectionId?: string;
     } = {}
   ): AsyncGenerator<ThinkingStreamEvent, void, unknown> {
     const {
@@ -839,6 +840,7 @@ class ApiClient {
       conversationHistory,
       useGraph = true,
       maxHops = 2,
+      collectionId,
     } = options;
 
     const apiKey = getAdminApiKey();
@@ -855,6 +857,7 @@ class ApiClient {
         use_graph: useGraph,
         max_hops: maxHops,
         use_agentic: true,
+        ...(collectionId ? { collection_id: collectionId } : {}),
       }),
     });
 

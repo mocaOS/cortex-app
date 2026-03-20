@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Zap, Settings2, FolderOpen, RotateCcw, ArrowUp } from "lucide-react";
+import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConversationMessage, GraphContext } from "@/types";
 import { ChatMessage, EmptyChat } from "./ask";
@@ -463,6 +463,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
                           value={selectedCollectionId}
                           onChange={handleCollectionChange}
                           allowCreate={false}
+                          showAllOption={true}
                           placeholder="All Collections"
                         />
                         <p className="text-xs text-muted-foreground mt-1">
@@ -496,12 +497,19 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
         </div>
 
         {/* Active collection indicator */}
-        {selectedCollectionId && selectedCollectionName && (
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <FolderOpen className="w-3 h-3 text-blue-500" />
-            <span>Searching in: <span className="text-blue-500">{selectedCollectionName}</span></span>
-          </div>
-        )}
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          {selectedCollectionId && selectedCollectionName ? (
+            <>
+              <FolderOpen className="w-3 h-3 text-blue-500" />
+              <span>Searching in: <span className="text-blue-500">{selectedCollectionName}</span></span>
+            </>
+          ) : (
+            <>
+              <Layers className="w-3 h-3" />
+              <span>Searching across all collections</span>
+            </>
+          )}
+        </div>
       </form>
     </div>
   );

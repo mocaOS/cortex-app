@@ -8,6 +8,7 @@ import {
   Plus,
   Check,
   Loader2,
+  Layers,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,8 @@ interface CollectionSelectorProps {
   value?: string;
   onChange: (collectionId: string | undefined) => void;
   allowCreate?: boolean;
+  autoSelectDefault?: boolean;
+  showAllOption?: boolean;
   className?: string;
   placeholder?: string;
 }
@@ -26,6 +29,8 @@ export default function CollectionSelector({
   value,
   onChange,
   allowCreate = true,
+  autoSelectDefault = false,
+  showAllOption = false,
   className,
   placeholder = "Select collection...",
 }: CollectionSelectorProps) {
@@ -59,8 +64,7 @@ export default function CollectionSelector({
     try {
       const data = await api.getCollections();
       setCollections(data.collections);
-      // Auto-select the default collection if no value is set
-      if (!value) {
+      if (autoSelectDefault && !value) {
         const defaultCol = data.collections.find((c: Collection) => c.id === "default");
         if (defaultCol) {
           onChange(defaultCol.id);
@@ -108,14 +112,18 @@ export default function CollectionSelector({
           isOpen && "border-foreground ring-1 ring-foreground/20"
         )}
       >
-        <FolderOpen className="w-4 h-4 text-muted-foreground" />
+        {selectedCollection || !showAllOption ? (
+          <FolderOpen className="w-4 h-4 text-muted-foreground" />
+        ) : (
+          <Layers className="w-4 h-4 text-muted-foreground" />
+        )}
         <span className="flex-1 text-left truncate">
           {isLoading ? (
             "Loading..."
           ) : selectedCollection ? (
             selectedCollection.name
           ) : (
-            <span className="text-muted-foreground">{placeholder}</span>
+            <span className={showAllOption ? "text-foreground" : "text-muted-foreground"}>{placeholder}</span>
           )}
         </span>
         <ChevronDown
@@ -192,26 +200,44 @@ export default function CollectionSelector({
                   <Loader2 className="w-5 h-5 text-accent animate-spin" />
                 </div>
               ) : (
-                collections.map((collection) => (
-                  <button
-                    type="button"
-                    key={collection.id}
-                    onClick={() => handleSelect(collection.id)}
-                    className={cn(
-                      "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
-                      value === collection.id
-                        ? "bg-muted text-foreground"
-                        : "text-foreground hover:bg-muted"
-                    )}
-                  >
-                    <FolderOpen className="w-4 h-4" />
-                    <span className="flex-1 text-left truncate">{collection.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {collection.document_count} docs
-                    </span>
-                    {value === collection.id && <Check className="w-4 h-4" />}
-                  </button>
-                ))
+                <>
+                  {showAllOption && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelect(undefined)}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        !value
+                          ? "bg-muted text-foreground"
+                          : "text-foreground hover:bg-muted"
+                      )}
+                    >
+                      <Layers className="w-4 h-4" />
+                      <span className="flex-1 text-left truncate">All Collections</span>
+                      {!value && <Check className="w-4 h-4" />}
+                    </button>
+                  )}
+                  {collections.map((collection) => (
+                    <button
+                      type="button"
+                      key={collection.id}
+                      onClick={() => handleSelect(collection.id)}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors",
+                        value === collection.id
+                          ? "bg-muted text-foreground"
+                          : "text-foreground hover:bg-muted"
+                      )}
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      <span className="flex-1 text-left truncate">{collection.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {collection.document_count} docs
+                      </span>
+                      {value === collection.id && <Check className="w-4 h-4" />}
+                    </button>
+                  ))}
+                </>
               )}
 
               {!isLoading && collections.length === 0 && (

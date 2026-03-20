@@ -105,10 +105,15 @@ export default function AskSettings({
                 Deep Research
               </span>
             )}
-            {selectedCollectionId && selectedCollectionName && (
+            {selectedCollectionId && selectedCollectionName ? (
               <span className="flex items-center gap-1 text-blue-500">
                 <FolderOpen className="w-3 h-3" />
                 {selectedCollectionName}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <Layers className="w-3 h-3" />
+                All Collections
               </span>
             )}
           </div>
@@ -199,6 +204,7 @@ export default function AskSettings({
                       value={selectedCollectionId}
                       onChange={onCollectionChange}
                       allowCreate={false}
+                      showAllOption={true}
                       placeholder="All Collections"
                     />
                   </div>
