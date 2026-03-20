@@ -365,19 +365,21 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
 ### Batch Processing
 
 ```python
-# Process multiple images concurrently
+# Images are processed concurrently, controlled by VISION_MAX_CONCURRENT (default 3).
+# The built-in analyze_all_images() uses asyncio.gather with a global semaphore.
+# Example of the same pattern for custom usage:
 async def analyze_images_batch(
     images: list[ExtractedImage],
     max_concurrent: int = 3
 ) -> list[ImageAnalysisResult]:
     """Process images with controlled concurrency."""
-    
+
     semaphore = asyncio.Semaphore(max_concurrent)
-    
+
     async def analyze_with_limit(img):
         async with semaphore:
             return await analyzer.analyze_image(img)
-    
+
     return await asyncio.gather(*[
         analyze_with_limit(img) for img in images
     ])

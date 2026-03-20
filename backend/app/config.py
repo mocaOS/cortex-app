@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     vision_model_api_key: str = Field(
         default=""
     )  # API key for vision model (defaults to openai_api_key if empty)
+    vision_max_concurrent: int = Field(
+        default=3
+    )  # Max concurrent vision API calls system-wide (controls semaphore + thread pool sizing)
 
     # Upload Configuration
     upload_dir: str = Field(default="./uploads")

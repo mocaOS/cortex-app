@@ -12,6 +12,7 @@ import base64
 import functools
 import io
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,10 +54,12 @@ class ImageAnalysisResult:
 _vision_semaphore: Optional[asyncio.Semaphore] = None
 
 
-def _get_vision_semaphore(max_concurrent: int = 3) -> asyncio.Semaphore:
+def _get_vision_semaphore(max_concurrent: int | None = None) -> asyncio.Semaphore:
     """Global semaphore shared across all documents to limit total concurrent vision API calls."""
     global _vision_semaphore
     if _vision_semaphore is None:
+        if max_concurrent is None:
+            max_concurrent = get_settings().vision_max_concurrent
         _vision_semaphore = asyncio.Semaphore(max_concurrent)
     return _vision_semaphore
 
@@ -66,7 +69,9 @@ class VisionAnalyzer:
 
     def __init__(self):
         self.settings = get_settings()
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vision_")
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.settings.vision_max_concurrent, thread_name_prefix="vision_"
+        )
 
     @property
     def is_vision_model_available(self) -> bool:
@@ -219,7 +224,15 @@ class VisionAnalyzer:
         return f"data:{mime_type};base64,{base64_data}"
 
     def _get_http_client(self) -> httpx.AsyncClient:
-        """Get or create a shared async HTTP client for vision API calls."""
+        """Get or create an async HTTP client for vision API calls.
+
+        Uses thread-local client when called from analyze_image_sync (thread pool),
+        falls back to shared instance for main event loop usage.
+        """
+        # Prefer thread-local client (set by analyze_image_sync) to avoid cross-loop errors
+        thread_client = getattr(self._thread_local, "http_client", None)
+        if thread_client is not None and not thread_client.is_closed:
+            return thread_client
         if not hasattr(self, "_http_client") or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=120.0)
         return self._http_client
@@ -403,6 +416,8 @@ class VisionAnalyzer:
             analysis_method=analysis_method,
         )
 
+    _thread_local = threading.local()
+
     def analyze_image_sync(
         self,
         extracted_image: ExtractedImage,
@@ -413,6 +428,7 @@ class VisionAnalyzer:
 
         This runs the async analyze_image in a new event loop within the thread,
         preventing the main event loop from being blocked by long HTTP calls.
+        Uses a thread-local HTTP client to avoid cross-loop conflicts.
 
         IMPORTANT: This method must only be called from within a ThreadPoolExecutor
         to avoid blocking the main event loop.
@@ -421,10 +437,17 @@ class VisionAnalyzer:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
-                self.analyze_image(extracted_image, force_vision_model, custom_prompt)
-            )
-            return result
+            # Thread-local HTTP client avoids "Event loop is closed" errors
+            # when multiple threads each run their own event loop
+            client = httpx.AsyncClient(timeout=120.0)
+            self._thread_local.http_client = client
+            try:
+                result = loop.run_until_complete(
+                    self.analyze_image(extracted_image, force_vision_model, custom_prompt)
+                )
+                return result
+            finally:
+                loop.run_until_complete(client.aclose())
         finally:
             loop.close()
 
@@ -437,9 +460,8 @@ class VisionAnalyzer:
         """Extract and analyze all images from a document.
 
         Uses a global semaphore (shared across all documents) to limit total
-        concurrent vision API calls. Images are processed sequentially within
-        each document to avoid creating hundreds of pending coroutines that
-        starve the event loop.
+        concurrent vision API calls. Images are processed concurrently within
+        each document, gated by the semaphore.
 
         Args:
             docling_doc: The converted DoclingDocument
@@ -447,7 +469,7 @@ class VisionAnalyzer:
             custom_prompt: Custom prompt for vision model analysis
 
         Returns:
-            List of ImageAnalysisResult objects
+            List of ImageAnalysisResult objects (in original order)
         """
         extracted_images = await asyncio.get_event_loop().run_in_executor(
             self._executor,
@@ -465,19 +487,18 @@ class VisionAnalyzer:
             f"(force_vision_model={force_vision_model}, vision_available={self.is_vision_model_available})"
         )
 
-        results = []
-        for idx, img in enumerate(extracted_images):
+        async def analyze_one(idx: int, img: ExtractedImage) -> ImageAnalysisResult:
             async with semaphore:
                 logger.info(f"Analyzing image {idx + 1}/{total}: {img.image_id} (page {img.page_number})")
                 result = await self.analyze_image(
                     img, force_vision_model=force_vision_model, custom_prompt=custom_prompt
                 )
                 logger.info(f"Image {idx + 1} result: method={result.analysis_method}, description_length={len(result.description)}")
-                results.append(result)
-            # Yield control between images so the event loop can serve other requests
-            await asyncio.sleep(0)
+                return result
 
-        return results
+        tasks = [analyze_one(idx, img) for idx, img in enumerate(extracted_images)]
+        results = await asyncio.gather(*tasks)
+        return list(results)
 
     def extract_and_save_images(
         self,

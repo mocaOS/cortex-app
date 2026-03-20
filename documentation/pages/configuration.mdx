@@ -296,6 +296,9 @@ VISION_MODEL=gpt-4o
 # API configuration (falls back to OPENAI settings if not set)
 VISION_MODEL_API_BASE=https://api.openai.com/v1
 VISION_MODEL_API_KEY=sk-your-api-key-here
+
+# Concurrency for vision API calls (default: 3)
+# VISION_MAX_CONCURRENT=10
 ```
 
 ### Vision Model Options
@@ -305,6 +308,7 @@ VISION_MODEL_API_KEY=sk-your-api-key-here
 | `VISION_MODEL` | No | - | Vision model for image analysis (e.g., `gpt-4o`, `claude-3-5-sonnet`) |
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | API endpoint for vision model |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | API key for vision model |
+| `VISION_MAX_CONCURRENT` | No | `3` | Max concurrent vision API calls system-wide. Increase for faster image-heavy document processing |
 
 When no vision model is configured, Docling's built-in image description (SmolDocling) is used automatically. See [Image Analysis Guide](/guides/image-analysis) for details.
 
@@ -412,6 +416,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `VISION_MODEL` | No | - | Vision model for image analysis |
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | Vision model API endpoint |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | Vision model API key |
+| `VISION_MAX_CONCURRENT` | No | `3` | Max concurrent vision API calls |
 | `ADMIN_EMAIL` | Yes | - | Admin login email |
 | `ADMIN_PASSWORD` | Yes | - | Admin login password |
 | `ADMIN_API_KEY` | Yes | - | Admin API key |

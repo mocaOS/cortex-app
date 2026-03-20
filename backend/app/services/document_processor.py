@@ -230,8 +230,9 @@ def _get_image_executor() -> ThreadPoolExecutor:
     """Get or create a dedicated thread pool for background image analysis."""
     global _image_executor
     if _image_executor is None:
+        settings = get_settings()
         _image_executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="imgproc"
+            max_workers=settings.vision_max_concurrent, thread_name_prefix="imgproc"
         )
     return _image_executor
 
@@ -1570,6 +1571,7 @@ class DocumentProcessor:
 
         Images arrive as dicts with base64-encoded PNG data. We reconstruct
         ExtractedImage objects and feed them through the vision analyzer.
+        Images are processed concurrently, gated by the global vision semaphore.
         """
         import base64
         import io
@@ -1581,7 +1583,10 @@ class DocumentProcessor:
         img_executor = _get_image_executor()
         total = len(serialized_images)
         semaphore = _get_vision_semaphore()
-        stored = 0
+
+        # Thread-safe progress tracking for concurrent image tasks
+        progress = {"stored": 0, "processed": 0}
+        progress_lock = asyncio.Lock()
 
         logger.info(f"Document {doc_id}: starting background analysis of {total} images")
 
@@ -1598,7 +1603,8 @@ class DocumentProcessor:
         except Exception:
             pass
 
-        for idx, img_data in enumerate(serialized_images):
+        async def process_single_image(idx: int, img_data: dict):
+            """Process a single image: vision -> embed -> store -> graph extract -> progress."""
             try:
                 pil_image = Image.open(
                     io.BytesIO(base64.b64decode(img_data["base64_png"]))
@@ -1612,13 +1618,12 @@ class DocumentProcessor:
                     existing_description=img_data.get("existing_description"),
                 )
 
+                # Vision API call gated by global semaphore
                 async with semaphore:
                     logger.info(
                         f"Document {doc_id}: analyzing image {idx + 1}/{total}: "
                         f"{extracted.image_id} (page {extracted.page_number})"
                     )
-                    # Vision calls can take 10+ minutes - run in executor to not block event loop
-                    # create_task here results in a ~20 min HTTP request blocking the main event loop
                     analysis = await loop.run_in_executor(
                         img_executor,
                         functools.partial(
@@ -1628,6 +1633,7 @@ class DocumentProcessor:
                         ),
                     )
 
+                # Post-vision processing (fast, no semaphore needed)
                 image_chunk_id = f"{doc_id}_image_{idx}"
                 if analysis.analysis_method == "vision_model":
                     image_content = f"[Image Analysis (Vision Model)]\n{analysis.description}"
@@ -1669,7 +1675,7 @@ class DocumentProcessor:
                     img_executor,
                     functools.partial(self.neo4j.store_chunk, image_chunk),
                 )
-                stored += 1
+
                 logger.info(
                     f"Document {doc_id}: stored image {idx + 1}/{total} "
                     f"(method={analysis.analysis_method}, len={len(analysis.description)})"
@@ -1705,14 +1711,19 @@ class DocumentProcessor:
                             f"image {idx + 1}: {e}"
                         )
 
-                # Update image progress after each image
+                # Update progress atomically
+                async with progress_lock:
+                    progress["stored"] += 1
+                    progress["processed"] += 1
+                    current_stored = progress["stored"]
+
                 try:
                     await loop.run_in_executor(
                         img_executor,
                         functools.partial(
                             self.neo4j.update_image_progress,
-                            doc_id, stored, total,
-                            f"Analyzed {stored}/{total} image{'s' if total != 1 else ''}",
+                            doc_id, current_stored, total,
+                            f"Analyzed {current_stored}/{total} image{'s' if total != 1 else ''}",
                         ),
                     )
                 except Exception:
@@ -1720,22 +1731,30 @@ class DocumentProcessor:
 
             except Exception as e:
                 logger.error(f"Document {doc_id}: failed to process image {idx + 1}/{total}: {e}")
-                # Still update progress on failure
+                async with progress_lock:
+                    progress["processed"] += 1
+                    current_processed = progress["processed"]
                 try:
                     await loop.run_in_executor(
                         img_executor,
                         functools.partial(
                             self.neo4j.update_image_progress,
-                            doc_id, idx + 1, total,
-                            f"Analyzed {idx + 1}/{total} images ({stored} stored)",
+                            doc_id, current_processed, total,
+                            f"Analyzed {current_processed}/{total} images ({progress['stored']} stored)",
                         ),
                     )
                 except Exception:
                     pass
 
-            await asyncio.sleep(0)
+        # Launch all image tasks concurrently -- semaphore limits actual parallelism
+        tasks = [
+            process_single_image(idx, img_data)
+            for idx, img_data in enumerate(serialized_images)
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         # Final image progress update + refresh chunk count to include image chunks
+        stored = progress["stored"]
         final_msg = f"Complete - {stored}/{total} image{'s' if total != 1 else ''} analyzed"
         try:
             await loop.run_in_executor(

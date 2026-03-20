@@ -7,6 +7,18 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## March 20, 2026
+
+### Parallel Image Analysis Within Documents
+
+- Images within a single document are now analyzed concurrently using `asyncio.gather`, replacing the previous sequential for-loop
+- Added `VISION_MAX_CONCURRENT` environment variable (default: 3) to control the maximum number of concurrent vision API calls system-wide
+- Thread pool sizes for image processing now scale automatically with `VISION_MAX_CONCURRENT`
+- Fixed "Event loop is closed" errors during concurrent image analysis by using thread-local HTTP clients
+- For a document with 200 images at ~30s per image: processing time reduced from ~100 minutes (sequential) to ~10 minutes (with `VISION_MAX_CONCURRENT=10`)
+
+---
+
 ## March 18, 2026
 
 ### Entity Deduplication

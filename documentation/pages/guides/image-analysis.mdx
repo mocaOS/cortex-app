@@ -104,7 +104,7 @@ Docling Conversion (with do_picture_description=True)
     ↓
 Text Processing Completes (status: "completed")
     ↓
-Background Image Analysis (async, 3-concurrent semaphore)
+Background Image Analysis (async, concurrent via VISION_MAX_CONCURRENT, default 3)
     ├── Vision Model Analysis (if configured, takes precedence)
     ├── Docling Description (fallback)
     └── Basic Metadata (last resort)
@@ -326,9 +326,9 @@ for image_id, file_path in saved:
 
 **Solutions**:
 
+- Increase `VISION_MAX_CONCURRENT` (default 3) to process more images in parallel
+- Use a faster vision model
 - Reduce image resolution before upload
-- Use faster vision model
-- Process documents during off-peak hours
 - Consider local vision model (Ollama/LLaVA)
 
 ## Performance Considerations
@@ -337,7 +337,7 @@ for image_id, file_path in saved:
 
 - Each image adds 2-5 seconds processing time
 - Depends on vision model response time
-- Sequential processing (one image at a time)
+- Images within a document are processed concurrently (controlled by `VISION_MAX_CONCURRENT`, default 3)
 
 ### API Costs
 
