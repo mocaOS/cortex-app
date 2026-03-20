@@ -90,7 +90,7 @@ Copy `.env.example` to `.env`. Key variables:
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 2), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 10) — agent loop iteration caps
 - `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
 - `EXTRACTION_MAX_CONTEXT` (default: 32768), `RELATIONSHIP_MAX_CONTEXT` (default: 65536), `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 8000) — context window and output budgets for graph extraction
-- `PARALLEL_RELATIONSHIP_BATCHES` (default: 1) — number of relationship analysis batches to process in parallel (1 = sequential)
+- `PARALLEL_RELATIONSHIP_BATCHES` (default: 2) — number of relationship analysis batches to process in parallel (1 = sequential)
 - `VISION_MAX_CONCURRENT` (default: 3) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing

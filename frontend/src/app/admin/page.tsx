@@ -31,18 +31,29 @@ import {
   XCircle,
   Layers,
   Share2,
+  Info,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { api, clearAdminApiKey } from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import type { SystemConfig, Stats } from "@/types";
 
-// Helper component for displaying config items
-function ConfigItem({ label, value, type = "text" }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list" }) {
+// Helper component for displaying config items with optional tooltip
+function ConfigItem({ label, value, type = "text", tooltip }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list"; tooltip?: string }) {
   if (type === "boolean") {
     return (
       <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-        <span className="text-muted-foreground text-sm">{label}</span>
+        <span className="text-muted-foreground text-sm flex items-center gap-1.5">
+          {label}
+          {tooltip && (
+            <span className="relative group">
+              <Info className="w-3 h-3 text-muted-foreground/50 cursor-help" />
+              <span className="absolute top-full left-0 mt-1.5 px-2.5 py-1.5 bg-popover border border-border text-popover-foreground text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-normal w-56 z-50 leading-relaxed">
+                {tooltip}
+              </span>
+            </span>
+          )}
+        </span>
         {value ? (
           <span className="flex items-center gap-1 text-green-500 text-sm">
             <Check className="w-3.5 h-3.5" /> Enabled
@@ -55,25 +66,37 @@ function ConfigItem({ label, value, type = "text" }: { label: string; value: str
       </div>
     );
   }
-  
+
   return (
     <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="text-muted-foreground text-sm flex items-center gap-1.5">
+        {label}
+        {tooltip && (
+          <span className="relative group">
+            <Info className="w-3 h-3 text-muted-foreground/50 cursor-help" />
+            <span className="absolute top-full left-0 mt-1.5 px-2.5 py-1.5 bg-popover border border-border text-popover-foreground text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-normal w-56 z-50 leading-relaxed">
+              {tooltip}
+            </span>
+          </span>
+        )}
+      </span>
       <span className="text-foreground text-sm font-mono">{String(value)}</span>
     </div>
   );
 }
 
 // Collapsible config section
-function ConfigSection({ 
-  title, 
-  icon: Icon, 
+function ConfigSection({
+  title,
+  description,
+  icon: Icon,
   children,
   isOpen,
   onToggle,
-}: { 
-  title: string; 
-  icon: React.ElementType; 
+}: {
+  title: string;
+  description?: string;
+  icon: React.ElementType;
   children: React.ReactNode;
   isOpen: boolean;
   onToggle: () => void;
@@ -99,6 +122,9 @@ function ConfigSection({
             transition={{ duration: 0.2 }}
           >
             <div className="px-4 py-3 bg-card">
+              {description && (
+                <p className="text-muted-foreground text-xs mb-3">{description}</p>
+              )}
               {children}
             </div>
           </motion.div>
@@ -109,7 +135,7 @@ function ConfigSection({
 }
 
 // Config section IDs for expand/collapse tracking
-type ConfigSectionId = "llm" | "embeddings" | "documents" | "search" | "graph" | "features" | "turbo" | "vision";
+type ConfigSectionId = "llm" | "documents" | "search" | "graph" | "features" | "turbo";
 
 export default function AdminPage() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -119,7 +145,7 @@ export default function AdminPage() {
   const [configError, setConfigError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [openSections, setOpenSections] = useState<Set<ConfigSectionId>>(new Set(["llm", "vision", "embeddings"]));
+  const [openSections, setOpenSections] = useState<Set<ConfigSectionId>>(new Set(["llm"]));
   const [graphStatsOpen, setGraphStatsOpen] = useState(false);
 
   const toggleSection = (id: ConfigSectionId) => {
@@ -134,10 +160,9 @@ export default function AdminPage() {
     });
   };
 
-  const allSectionIds: ConfigSectionId[] = ["llm", "embeddings", "documents", "search", "graph", "features", "turbo", "vision"];
+  const allSectionIds: ConfigSectionId[] = ["llm", "documents", "search", "graph", "features", "turbo"];
   const visibleSectionIds = allSectionIds.filter(id => {
     if (id === "turbo" && !config?.turbo_mode_available) return false;
-    if (id === "vision" && !config?.vision_model_available) return false;
     return true;
   });
   const allExpanded = visibleSectionIds.every(id => openSections.has(id));
@@ -411,22 +436,45 @@ export default function AdminPage() {
                 <div className="space-y-3">
                   {/* LLM Configuration */}
                   <ConfigSection title="LLM Configuration" icon={Brain} isOpen={openSections.has("llm")} onToggle={() => toggleSection("llm")}>
-                    <ConfigItem label="Primary Model" value={config.openai_model} />
-                    <ConfigItem label="Extraction Model" value={config.extraction_model} />
-                  </ConfigSection>
+                    {/* Primary Model */}
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
+                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, chat, relationship analysis, and community summarization.</p>
+                      <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, chat, and relationship analysis (OPENAI_MODEL)" />
+                      <ConfigItem label="API Base" value={config.openai_api_base} tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
+                      <ConfigItem label="Relationship Context" value={config.relationship_max_context.toLocaleString()} tooltip="Max context window tokens for relationship analysis. Must match this model's context window (RELATIONSHIP_MAX_CONTEXT)" />
+                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Number of relationship analysis batches processed concurrently. Higher values speed up analysis but increase API load (PARALLEL_RELATIONSHIP_BATCHES)" />
+                    </div>
 
-                  {/* Vision Model - between LLM and Embeddings */}
-                  {config.vision_model_available && (
-                    <ConfigSection title="Vision Model" icon={Eye} isOpen={openSections.has("vision")} onToggle={() => toggleSection("vision")}>
-                      <ConfigItem label="Model" value={config.vision_model} />
-                      <ConfigItem label="Image Analysis" value={true} type="boolean" />
-                    </ConfigSection>
-                  )}
+                    {/* Extraction Model */}
+                    <div className="mb-4 pt-3">
+                      <h4 className="text-sm font-medium text-foreground mb-0.5">Extraction Model</h4>
+                      <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion. Defaults to the primary model if not set separately.</p>
+                      <ConfigItem label="Model" value={config.extraction_model} tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
+                      <ConfigItem label="API Base" value={config.extraction_api_base} tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
+                      <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Must match this model's context window (EXTRACTION_MAX_CONTEXT)" />
+                      <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the extraction pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
+                    </div>
 
-                  {/* Embedding Configuration */}
-                  <ConfigSection title="Embeddings" icon={Database} isOpen={openSections.has("embeddings")} onToggle={() => toggleSection("embeddings")}>
-                    <ConfigItem label="Model" value={config.embedding_model} />
-                    <ConfigItem label="Dimension" value={config.embedding_dimension} />
+                    {/* Vision Model */}
+                    {config.vision_model_available && (
+                      <div className="mb-4 pt-3">
+                        <h4 className="text-sm font-medium text-foreground mb-0.5">Vision Model</h4>
+                        <p className="text-muted-foreground text-xs mb-2">Analyzes images extracted from documents during ingestion, generating descriptions and running OCR in the background.</p>
+                        <ConfigItem label="Model" value={config.vision_model} tooltip="Vision-capable model used for image analysis during document ingestion (VISION_MODEL)" />
+                        <ConfigItem label="API Base" value={config.vision_api_base} tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
+                        <ConfigItem label="Max Concurrent" value={config.vision_max_concurrent} tooltip="System-wide cap on concurrent vision API calls. Controls how many images are analyzed in parallel across all documents (VISION_MAX_CONCURRENT)" />
+                      </div>
+                    )}
+
+                    {/* Embeddings */}
+                    <div className="pt-3">
+                      <h4 className="text-sm font-medium text-foreground mb-0.5">Embeddings</h4>
+                      <p className="text-muted-foreground text-xs mb-2">Converts text into vector representations for semantic search, powering hybrid retrieval across chunks and entities.</p>
+                      <ConfigItem label="Model" value={config.embedding_model} tooltip="Model used to generate vector embeddings for chunks and entities (EMBEDDING_MODEL)" />
+                      <ConfigItem label="Dimension" value={config.embedding_dimension} tooltip="Output dimension of the embedding vectors. Must match the model's supported dimensions (EMBEDDING_DIMENSION)" />
+                      <ConfigItem label="API Base" value={config.embedding_api_base} tooltip="API endpoint for the embedding model. Defaults to primary API base if not set (EMBEDDING_API_BASE)" />
+                    </div>
                   </ConfigSection>
 
                   {/* Document Processing */}
@@ -437,8 +485,8 @@ export default function AdminPage() {
                     <ConfigItem label="Chunk Overlap" value={config.chunk_overlap} />
                     <ConfigItem label="Chunk Method" value={config.chunk_by} />
                     <ConfigItem label="Sentences per Chunk" value={config.sentences_per_chunk} />
-                    <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} />
-                    <ConfigItem label="Thread Workers" value={config.processing_thread_workers} />
+                    <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
+                    <ConfigItem label="Thread Workers" value={config.processing_thread_workers} tooltip="Size of the thread pool for CPU-intensive processing operations (PROCESSING_THREAD_WORKERS)" />
                   </ConfigSection>
 
                   {/* Search Configuration */}
@@ -458,7 +506,7 @@ export default function AdminPage() {
                   <ConfigSection title="Knowledge Graph" icon={Network} isOpen={openSections.has("graph")} onToggle={() => toggleSection("graph")}>
                     <ConfigItem label="Graph Extraction" value={config.enable_graph_extraction} type="boolean" />
                     <ConfigItem label="Max Graph Hops" value={config.max_graph_hops} />
-                    <ConfigItem label="Concurrent Extractions" value={config.concurrent_extractions} />
+                    <ConfigItem label="Concurrent Extractions" value={config.concurrent_extractions} tooltip="Thread pool size for entity extraction LLM calls within each document (CONCURRENT_EXTRACTIONS)" />
                     <ConfigItem label="Community Detection" value={config.enable_community_detection} type="boolean" />
                     <ConfigItem label="Min Community Size" value={config.min_community_size} />
                     <ConfigItem label="Max Communities" value={config.max_communities} />

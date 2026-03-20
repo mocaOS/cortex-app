@@ -591,13 +591,26 @@ export interface SystemResetResponse {
 export interface SystemConfig {
   // LLM Configuration
   openai_model: string;
+  openai_api_base: string;
   extraction_model: string;
-  
+  extraction_api_base: string;
+  extraction_max_context: number;
+  relationship_max_context: number;
+  parallel_relationship_batches: number;
+
+  // Vision Model
+  vision_model_available: boolean;
+  vision_model: string;
+  vision_api_base: string;
+  vision_max_concurrent: number;
+
   // Embedding Configuration
   embedding_model: string;
   embedding_dimension: number;
+  embedding_api_base: string;
+  embedding_send_dimensions: boolean;
   use_openai_embeddings: boolean;
-  
+
   // Upload Configuration
   max_file_size_mb: number;
   allowed_extensions: string[];
@@ -655,8 +668,4 @@ export interface SystemConfig {
   compute3_gpu_count: number;
   compute3_model: string;
   compute3_default_runtime: number;
-  
-  // Vision Model
-  vision_model_available: boolean;
-  vision_model: string;
 }

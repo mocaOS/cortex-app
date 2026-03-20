@@ -86,7 +86,7 @@ Controls how much work runs in parallel:
 BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
-PARALLEL_RELATIONSHIP_BATCHES=1              # relationship analysis batches in parallel (1 = sequential)
+PARALLEL_RELATIONSHIP_BATCHES=2              # relationship analysis batches in parallel (1 = sequential)
 ```
 
 > `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up relationship analysis — increase it to run multiple LLM calls concurrently.

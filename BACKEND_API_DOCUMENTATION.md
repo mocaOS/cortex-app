@@ -1135,7 +1135,7 @@ curl -H "X-API-Key: moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `4000`)
 
 #### Relationship Analysis
-- `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 1 = sequential (default: `1`)
+- `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 1 = sequential (default: `2`)
 
 #### Community Detection & Graph Summarization
 - `ENABLE_COMMUNITY_DETECTION`: Enable community detection (default: `True`)

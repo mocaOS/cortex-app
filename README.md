@@ -165,7 +165,7 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
-PARALLEL_RELATIONSHIP_BATCHES=1              # relationship analysis batches in parallel (1 = sequential)
+PARALLEL_RELATIONSHIP_BATCHES=2              # relationship analysis batches in parallel (1 = sequential)
 ```
 
 > `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up relationship analysis — increase it to run multiple LLM calls concurrently.
@@ -664,7 +664,7 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 |----------|-------------|----------|---------|
 | `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `8000` |
-| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (1 = sequential) | No | `1` |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (1 = sequential) | No | `2` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 

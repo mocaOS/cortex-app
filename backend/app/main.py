@@ -3209,11 +3209,24 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
     return SystemConfigResponse(
         # LLM Configuration
         openai_model=settings.openai_model,
+        openai_api_base=settings.openai_api_base,
         extraction_model=settings.extraction_model,
-        
+        extraction_api_base=settings.extraction_api_base,
+        extraction_max_context=settings.extraction_max_context,
+        relationship_max_context=settings.relationship_max_context,
+        parallel_relationship_batches=settings.parallel_relationship_batches,
+
+        # Vision Model
+        vision_model_available=settings.vision_model_available,
+        vision_model=settings.vision_model or "Not configured",
+        vision_api_base=settings.vision_model_api_base or settings.openai_api_base,
+        vision_max_concurrent=settings.vision_max_concurrent,
+
         # Embedding Configuration
         embedding_model=settings.embedding_model,
         embedding_dimension=settings.embedding_dimension,
+        embedding_api_base=settings.embed_api_base,
+        embedding_send_dimensions=settings.embedding_send_dimensions,
         use_openai_embeddings=settings.use_openai_embeddings,
         
         # Upload Configuration
@@ -3273,10 +3286,6 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         compute3_gpu_count=settings.compute3_gpu_count,
         compute3_model=settings.compute3_model,
         compute3_default_runtime=settings.compute3_default_runtime,
-        
-        # Vision Model
-        vision_model_available=settings.vision_model_available,
-        vision_model=settings.vision_model or "Not configured",
     )
 
 

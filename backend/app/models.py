@@ -663,13 +663,26 @@ class SystemConfigResponse(BaseModel):
     
     # LLM Configuration
     openai_model: str = Field(..., description="Primary LLM model")
+    openai_api_base: str = Field(..., description="Primary LLM API base URL")
     extraction_model: str = Field(..., description="Model used for entity/relationship extraction")
-    
+    extraction_api_base: str = Field(..., description="Extraction model API base URL")
+    extraction_max_context: int = Field(..., description="Max context window tokens for entity extraction")
+    relationship_max_context: int = Field(..., description="Max context window tokens for relationship analysis")
+    parallel_relationship_batches: int = Field(..., description="Number of relationship batches processed in parallel")
+
+    # Vision Model
+    vision_model_available: bool = Field(..., description="Whether a vision model is configured")
+    vision_model: str = Field(..., description="Vision model name for image analysis")
+    vision_api_base: str = Field(..., description="Vision model API base URL")
+    vision_max_concurrent: int = Field(..., description="Max concurrent vision API calls")
+
     # Embedding Configuration
     embedding_model: str = Field(..., description="Embedding model")
     embedding_dimension: int = Field(..., description="Embedding vector dimension")
+    embedding_api_base: str = Field(..., description="Embedding API base URL")
+    embedding_send_dimensions: bool = Field(..., description="Whether dimensions param is sent to embedding API")
     use_openai_embeddings: bool = Field(..., description="Whether OpenAI embeddings are enabled")
-    
+
     # Upload Configuration
     max_file_size_mb: int = Field(..., description="Maximum file size in MB")
     allowed_extensions: List[str] = Field(..., description="Allowed file extensions")
@@ -727,11 +740,7 @@ class SystemConfigResponse(BaseModel):
     compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
     compute3_model: str = Field(..., description="Model for turbo mode")
     compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
-    
-    # Vision Model
-    vision_model_available: bool = Field(..., description="Whether a vision model is configured")
-    vision_model: str = Field(..., description="Vision model name for image analysis")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
