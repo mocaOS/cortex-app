@@ -106,7 +106,7 @@ function ExplorePageContent() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [nodeLimit, setNodeLimit] = useState(2000);
+  const [nodeLimit, setNodeLimit] = useState(100);
   const [includeNeighbors] = useState(true);
   const [hideDisconnected, setHideDisconnected] = useState(true);
   

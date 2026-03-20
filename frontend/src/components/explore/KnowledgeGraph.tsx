@@ -83,11 +83,13 @@ interface EntityPanelProps {
   entity: ForceGraphNode | null;
   details: EntityDetails | null;
   loading: boolean;
+  expandLoading: boolean;
+  loadedNodeLabels: Set<string>;
   onClose: () => void;
   onEntityNavigate?: (entityName: string) => void;
 }
 
-function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: EntityPanelProps) {
+function EntityPanel({ entity, details, loading, expandLoading, loadedNodeLabels, onClose, onEntityNavigate }: EntityPanelProps) {
   if (!entity) return null;
 
   return (
@@ -133,25 +135,50 @@ function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: En
           </div>
         )}
 
-        {details && !loading && (
+        {details && !loading && (() => {
+          // Filter out the current entity from the related entities list
+          const relatedEntities = details.entities.filter(
+            (e) => e.name.toLowerCase() !== entity.label.toLowerCase()
+          );
+          return (
           <>
-            {details.entities.length > 0 && (
+            {relatedEntities.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Related Entities</h4>
+                {expandLoading && (
+                  <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Loading entity into graph...</span>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1.5">
-                  {details.entities.slice(0, 10).map((e, i) => (
-                    <button
-                      key={i}
-                      onClick={() => onEntityNavigate?.(e.name)}
-                      className="px-2 py-1 text-xs rounded-lg bg-muted text-muted-foreground hover:bg-accent/20 hover:text-foreground transition-colors cursor-pointer"
-                      title={e.description || `Navigate to ${e.name}`}
-                    >
-                      {e.name}
-                    </button>
-                  ))}
-                  {details.entities.length > 10 && (
+                  {relatedEntities.slice(0, 10).map((e, i) => {
+                    const isLoaded = loadedNodeLabels.has(e.name.toLowerCase());
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => !expandLoading && onEntityNavigate?.(e.name)}
+                        disabled={expandLoading}
+                        className={cn(
+                          "px-2 py-1 text-xs rounded-lg transition-colors cursor-pointer",
+                          isLoaded
+                            ? "bg-muted text-muted-foreground hover:bg-accent/20 hover:text-foreground"
+                            : "bg-muted/60 text-muted-foreground border border-dashed border-border hover:bg-accent/20 hover:text-foreground",
+                          expandLoading && "opacity-50 cursor-wait"
+                        )}
+                        title={
+                          isLoaded
+                            ? (e.description || `Navigate to ${e.name}`)
+                            : `Load ${e.name} into graph`
+                        }
+                      >
+                        {e.name}
+                      </button>
+                    );
+                  })}
+                  {relatedEntities.length > 10 && (
                     <span className="px-2 py-1 text-xs rounded-lg bg-muted text-muted-foreground">
-                      +{details.entities.length - 10} more
+                      +{relatedEntities.length - 10} more
                     </span>
                   )}
                 </div>
@@ -168,8 +195,12 @@ function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: En
                       className="text-xs text-muted-foreground flex items-center gap-1 font-mono"
                     >
                       <button
-                        onClick={() => onEntityNavigate?.(r.source)}
-                        className="truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer"
+                        onClick={() => !expandLoading && onEntityNavigate?.(r.source)}
+                        disabled={expandLoading}
+                        className={cn(
+                          "truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer",
+                          expandLoading && "opacity-50 cursor-wait"
+                        )}
                       >
                         {r.source}
                       </button>
@@ -177,8 +208,12 @@ function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: En
                       <span className="text-accent font-medium">{r.type}</span>
                       <span className="text-accent">→</span>
                       <button
-                        onClick={() => onEntityNavigate?.(r.target)}
-                        className="truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer"
+                        onClick={() => !expandLoading && onEntityNavigate?.(r.target)}
+                        disabled={expandLoading}
+                        className={cn(
+                          "truncate max-w-[120px] hover:text-foreground transition-colors cursor-pointer",
+                          expandLoading && "opacity-50 cursor-wait"
+                        )}
                       >
                         {r.target}
                       </button>
@@ -205,7 +240,8 @@ function EntityPanel({ entity, details, loading, onClose, onEntityNavigate }: En
               </div>
             )}
           </>
-        )}
+          );
+        })()}
 
         <div className="pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground font-mono truncate">
@@ -280,6 +316,11 @@ export default function KnowledgeGraph({
   const [hoveredNode, setHoveredNode] = useState<ForceGraphNode | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Dynamically expanded nodes/edges loaded when navigating to entities not in the initial graph
+  const [expandedNodes, setExpandedNodes] = useState<GraphNode[]>([]);
+  const [expandedEdges, setExpandedEdges] = useState<GraphEdge[]>([]);
+  const [expandLoading, setExpandLoading] = useState(false);
+
   // Handle fullscreen toggle
   const toggleFullscreen = useCallback(async () => {
     if (!containerRef.current) return;
@@ -305,13 +346,31 @@ export default function KnowledgeGraph({
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
+  // Reset expanded state when props change (e.g. user changes node limit or search)
+  const prevNodesRef = useRef(nodes);
+  useEffect(() => {
+    if (prevNodesRef.current !== nodes) {
+      prevNodesRef.current = nodes;
+      setExpandedNodes([]);
+      setExpandedEdges([]);
+    }
+  }, [nodes]);
+
   // Convert nodes and edges to force-graph format.
+  // Merges prop data with dynamically expanded nodes/edges.
   // The `val` property is read by the library's shadow graph (separate instance
   // with default accessor 'val' and nodeRelSize=4) to size the invisible hit-
   // detection circles.  We inflate it so the shadow circle fully covers (and
   // slightly exceeds) the visible node, giving comfortable click/hover targets.
   const graphData = useMemo(() => {
-    const forceNodes: ForceGraphNode[] = nodes.map((n) => {
+    // Merge prop nodes with expanded nodes, deduplicating by id
+    const nodeMap = new Map<string, GraphNode>();
+    for (const n of nodes) nodeMap.set(n.id, n);
+    for (const n of expandedNodes) {
+      if (!nodeMap.has(n.id)) nodeMap.set(n.id, n);
+    }
+
+    const forceNodes: ForceGraphNode[] = Array.from(nodeMap.values()).map((n) => {
       const mc = Math.max(n.mention_count || 1, 1);
       return {
         id: n.id,
@@ -324,7 +383,29 @@ export default function KnowledgeGraph({
       };
     });
 
-    const forceLinks: ForceGraphLink[] = edges.map((e) => ({
+    // Merge prop edges with expanded edges, deduplicating by source+target+type
+    const edgeSet = new Set<string>();
+    const allEdges: GraphEdge[] = [];
+    for (const e of edges) {
+      const key = `${e.source}|${e.target}|${e.type}`;
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        allEdges.push(e);
+      }
+    }
+    for (const e of expandedEdges) {
+      const key = `${e.source}|${e.target}|${e.type}`;
+      // Also check reverse direction for undirected dedup
+      if (!edgeSet.has(key)) {
+        // Only add if both endpoints exist in our node set
+        if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
+          edgeSet.add(key);
+          allEdges.push(e);
+        }
+      }
+    }
+
+    const forceLinks: ForceGraphLink[] = allEdges.map((e) => ({
       source: e.source,
       target: e.target,
       type: e.type,
@@ -332,12 +413,17 @@ export default function KnowledgeGraph({
     }));
 
     return { nodes: forceNodes, links: forceLinks };
-  }, [nodes, edges]);
+  }, [nodes, edges, expandedNodes, expandedEdges]);
 
   // Get all unique entity types for legend
   const entityTypes = useMemo(() => {
     return nodes.map((n) => n.type);
   }, [nodes]);
+
+  // Set of lowercase node labels currently in the graph (for EntityPanel to indicate loaded vs unloaded)
+  const loadedNodeLabels = useMemo(() => {
+    return new Set(graphData.nodes.map((n) => n.label.toLowerCase()));
+  }, [graphData.nodes]);
 
   // Handle container resize
   useEffect(() => {
@@ -474,6 +560,8 @@ export default function KnowledgeGraph({
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      // Only track pointer on the canvas itself, not on UI overlays (panels, buttons, etc.)
+      if ((e.target as HTMLElement).tagName !== "CANVAS") return;
       downX = e.clientX;
       downY = e.clientY;
       const coords = toGraphCoords(e);
@@ -482,6 +570,8 @@ export default function KnowledgeGraph({
 
     const onPointerUp = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      // Only handle clicks on the canvas itself, not on UI overlays
+      if ((e.target as HTMLElement).tagName !== "CANVAS") return;
       const dx = e.clientX - downX;
       const dy = e.clientY - downY;
       const isClick = Math.sqrt(dx * dx + dy * dy) < CLICK_THRESHOLD;
@@ -568,13 +658,83 @@ export default function KnowledgeGraph({
     [hoveredNode, selectedNode]
   );
 
-  // Navigate to entity by name (used by EntityPanel clicks)
-  const handleEntityNavigate = useCallback((entityName: string) => {
-    const node = graphData.nodes.find(
+  // Navigate to entity by name (used by EntityPanel clicks).
+  // If the entity isn't loaded in the graph yet, fetch it and its neighbors
+  // from the backend, merge them into the graph, then navigate.
+  const handleEntityNavigate = useCallback(async (entityName: string) => {
+    // First check if the node is already in the graph
+    const existingNode = graphData.nodes.find(
       (n) => n.label.toLowerCase() === entityName.toLowerCase()
     );
-    if (node) {
-      handleNodeClick(node);
+    if (existingNode) {
+      handleNodeClick(existingNode);
+      return;
+    }
+
+    // Node not in graph — fetch it and its relationships from the backend
+    setExpandLoading(true);
+    try {
+      const data = await api.getEntityRelationships(entityName, 1, 50);
+      if (!data.entity) return;
+
+      // Build new nodes from the response
+      const newNodes: GraphNode[] = [];
+      // Add the target entity itself
+      newNodes.push({
+        id: data.entity.name,
+        label: data.entity.name,
+        type: data.entity.type,
+        description: data.entity.description,
+        community_id: data.entity.community_id,
+        mention_count: data.entity.mention_count || 1,
+      });
+      // Add its related entities
+      for (const rel of data.related_entities) {
+        newNodes.push({
+          id: rel.name,
+          label: rel.name,
+          type: rel.type,
+          description: rel.description,
+          community_id: rel.community_id,
+          mention_count: 1,
+        });
+      }
+
+      // Build new edges from the response
+      const newEdges: GraphEdge[] = data.relationships.map((r) => ({
+        source: r.source,
+        target: r.target,
+        type: r.type,
+        description: r.description,
+        weight: r.weight,
+      }));
+
+      // Merge into expanded state
+      setExpandedNodes((prev) => [...prev, ...newNodes]);
+      setExpandedEdges((prev) => [...prev, ...newEdges]);
+
+      // After state update, find the newly added node and navigate to it.
+      // We need to wait for the next render cycle so graphData includes the new node.
+      // Use a ref-based approach via setTimeout to let React process the state update.
+      setTimeout(() => {
+        // The node should now be in graphData after re-render
+        // We need to find it from the force graph's internal data
+        const fg = fgRef.current as ForceGraphMethods & { graphData?: () => { nodes: ForceGraphNode[] } };
+        let newNode: ForceGraphNode | undefined;
+        if (fg && typeof fg.graphData === "function") {
+          const currentData = fg.graphData();
+          newNode = currentData.nodes.find(
+            (n: ForceGraphNode) => n.label.toLowerCase() === entityName.toLowerCase()
+          );
+        }
+        if (newNode) {
+          handleNodeClick(newNode);
+        }
+      }, 200);
+    } catch (error) {
+      console.error("Failed to expand graph for entity:", entityName, error);
+    } finally {
+      setExpandLoading(false);
     }
   }, [graphData.nodes, handleNodeClick]);
 
@@ -700,6 +860,8 @@ export default function KnowledgeGraph({
         entity={selectedNode}
         details={entityDetails}
         loading={detailsLoading}
+        expandLoading={expandLoading}
+        loadedNodeLabels={loadedNodeLabels}
         onClose={() => setSelectedNode(null)}
         onEntityNavigate={handleEntityNavigate}
       />
