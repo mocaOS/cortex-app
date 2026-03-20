@@ -1167,33 +1167,43 @@ class Neo4jService:
         entity_names: List[str],
         max_hops: int = 2,
         limit: int = 50,
-        collection_id: Optional[str] = None
+        collection_id: Optional[str] = None,
+        entity_paths_only: bool = False
     ) -> dict:
         """
         Traverse the graph from given entities to find related context.
         Optionally scoped to a specific collection.
-        
+
+        Args:
+            entity_paths_only: If True, only follow paths where ALL intermediate
+                nodes are Entity nodes (excludes paths through Chunks/Documents).
+                Use for graph visualization; leave False for RAG context.
+
         Returns:
             Dict with 'entities', 'relationships', and 'chunks'
         """
         if not entity_names:
             return {"entities": [], "relationships": [], "chunks": []}
-        
+
         with self.driver.session() as session:
             # Find related entities and relationships within max_hops
             # Note: max_hops must be injected as literal - Neo4j doesn't allow parameters in variable-length patterns
-            
+
             # Collection scoping for chunks
             collection_clause = ""
             if collection_id:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-            
+
+            # Optionally constrain traversal to Entity-only paths
+            path_filter = "WHERE ALL(n IN nodes(path) WHERE n:Entity)" if entity_paths_only else ""
+
             result = session.run(f"""
                 MATCH (start:Entity)
                 WHERE start.name IN $entity_names
                 CALL {{
                     WITH start
                     MATCH path = (start)-[r*1..{int(max_hops)}]-(related:Entity)
+                    {path_filter}
                     RETURN related, relationships(path) as rels
                     LIMIT $limit
                 }}
@@ -2316,6 +2326,7 @@ class Neo4jService:
                 CALL {{
                     WITH start
                     MATCH path = (start)-[r*1..{max_depth}]-(related:Entity)
+                    WHERE ALL(n IN nodes(path) WHERE n:Entity)
                     RETURN DISTINCT related,
                            [rel IN relationships(path) | {{
                                source: startNode(rel).name,

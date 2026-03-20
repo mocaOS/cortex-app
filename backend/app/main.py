@@ -2066,7 +2066,7 @@ async def get_entity_details(entity_name: str, max_hops: int = Query(default=2, 
     """Get details about a specific entity and its relationships."""
     try:
         neo4j = get_neo4j_service()
-        context = await asyncio.to_thread(neo4j.traverse_from_entities, [entity_name], max_hops)
+        context = await asyncio.to_thread(neo4j.traverse_from_entities, [entity_name], max_hops, entity_paths_only=True)
         
         if not context["entities"]:
             raise HTTPException(status_code=404, detail="Entity not found")

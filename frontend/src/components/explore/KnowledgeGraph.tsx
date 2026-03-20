@@ -728,10 +728,19 @@ export default function KnowledgeGraph({
       return;
     }
 
-    // Node not in graph — fetch it and its relationships from the backend
+    // Node not in graph — fetch it and its 1-hop relationships.
+    // Also fetch the subgraph connecting both entities so we get any
+    // intermediate bridge nodes/edges (the panel shows related entities
+    // up to 2 hops, so A→C→B needs C as a bridge).
     setExpandLoading(true);
     try {
-      const data = await api.getEntityRelationships(entityName, 1, 50);
+      const selectedName = selectedNode?.label;
+      const [data, bridgeGraph] = await Promise.all([
+        api.getEntityRelationships(entityName, 1, 50),
+        selectedName
+          ? api.getGraphSubgraph([selectedName, entityName], true)
+          : Promise.resolve(null),
+      ]);
       if (!data.entity) return;
 
       // Position near the currently selected node
@@ -741,9 +750,8 @@ export default function KnowledgeGraph({
       // IDs of nodes already on the canvas (props + previously expanded)
       const displayedIds = new Set(graphData.nodes.map((n) => n.id));
 
-      // Build new nodes: the target entity + any 1-hop neighbors that
-      // aren't already displayed. Without the neighbors, edges to entities
-      // outside the current graph would be silently dropped.
+      // Build new nodes: the target entity + its 1-hop neighbors that
+      // aren't already displayed.
       const newNodes: GraphNode[] = [{
         id: data.entity.name,
         label: data.entity.name,
@@ -777,6 +785,38 @@ export default function KnowledgeGraph({
         description: r.description,
         weight: r.weight,
       }));
+
+      // Bridge: the subgraph of [A, B] with connections includes ALL
+      // 1-hop neighbors of both entities and ALL edges between them.
+      // Add any nodes/edges from the subgraph that aren't already
+      // covered — this naturally includes intermediate bridge entities.
+      if (bridgeGraph?.nodes && bridgeGraph?.edges) {
+        const newNodeIds = new Set(newNodes.map((n) => n.id));
+        for (const n of bridgeGraph.nodes) {
+          if (!displayedIds.has(n.id) && !newNodeIds.has(n.id)) {
+            newNodes.push({
+              id: n.id,
+              label: n.label,
+              type: n.type,
+              description: n.description,
+              community_id: n.community_id,
+              mention_count: n.mention_count || 1,
+              x: anchorX + (Math.random() - 0.5) * 150,
+              y: anchorY + (Math.random() - 0.5) * 150,
+            });
+            newNodeIds.add(n.id);
+          }
+        }
+        for (const e of bridgeGraph.edges) {
+          newEdges.push({
+            source: e.source,
+            target: e.target,
+            type: e.type,
+            description: e.description,
+            weight: e.weight,
+          });
+        }
+      }
 
       // Mark pending navigation — the useEffect watching graphData.nodes
       // will pick this up after React re-renders with the new data
