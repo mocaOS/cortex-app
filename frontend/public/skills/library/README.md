@@ -1,17 +1,37 @@
-# OpenClaw Library Skill
+# Cortex Library Skill
 
-An OpenClaw/Moltbot skill that syncs memory files **exclusively to the `OpenClaw` collection** in the MOCA Library knowledge graph.
+An [AgentSkills](https://agentskills.io)-compatible skill that syncs agent memory files to a Cortex Library knowledge graph.
 
 ## What It Does
 
-This skill enables OpenClaw AI agents to:
+This skill enables AI agents to:
 
-- **Upload memory files** to the dedicated `OpenClaw` collection for organized storage
-- **Search their knowledge** using hybrid vector + keyword + graph search
-- **Ask AI questions** about their accumulated memories with RAG
+- **Upload memory files** to a dedicated collection for organized storage
+- **Search knowledge** using hybrid search (vector + keyword + graph traversal with RRF fusion)
+- **Ask AI questions** with agentic deep research (multi-step reasoning, up to 10 iterations)
 - **Auto-sync** new memories during periodic heartbeat cycles
+- **Manage collections** to organize documents into logical groups
+- **Add custom inputs** (Q&A pairs, text, markdown) without uploading files
 
-**Important:** All files are uploaded ONLY to the `OpenClaw` collection. The skill automatically finds or creates this collection before any uploads.
+## AgentSkills Standard
+
+This skill follows the [AgentSkills open standard](https://agentskills.io/specification):
+
+```
+library/
+  SKILL.md            # Required: metadata + instructions
+  HEARTBEAT.md        # Periodic sync workflow
+  references/         # Detailed documentation (progressive disclosure)
+    API.md            # Full API reference (60+ endpoints)
+    SYNC.md           # Detailed sync workflow and troubleshooting
+  scripts/            # Executable sync scripts
+    sync.sh           # Bash sync script
+    sync.py           # Python sync script
+    sync_bulk.py      # Python bulk sync script
+  state/              # Runtime state
+    credentials.example.json
+    uploaded_files.json
+```
 
 ## Quick Start
 
@@ -22,72 +42,44 @@ mkdir -p ~/.openclaw/skills/library
 cp -r . ~/.openclaw/skills/library/
 ```
 
-### 2. Configure API Key
+### 2. Configure Credentials
 
-Get an API key from https://library.moca.qwellco.de/admin/api-keys, then:
+Get an API key from your Cortex Library instance (`YOUR_BASE_URL/admin` -> API Keys):
 
 ```bash
 cp state/credentials.example.json state/credentials.json
-# Edit state/credentials.json and add your API key
+# Edit state/credentials.json and add your API key AND base URL
 ```
 
 ### 3. Start Syncing
 
 The skill will automatically:
-- **Find or create the "OpenClaw" collection** (all files go here exclusively)
+- Find or create the collection (all files go here exclusively)
 - Scan memory directories for `.md`, `.txt`, `.json` files
-- Upload new/modified files to the OpenClaw collection only
-- Track uploads to avoid duplicates
+- Upload new/modified files with SHA-256 dedup tracking
+- Trigger batch processing
 
-## Files
+## Cortex Library Features
 
-| File | Purpose |
-|------|---------|
-| `SKILL.md` | Full documentation and API reference |
-| `HEARTBEAT.md` | Periodic sync workflow |
-| `skill.json` | Skill metadata and configuration |
-| `state/credentials.example.json` | Template for API credentials |
-| `state/uploaded_files.json` | Upload tracking state |
-
-## API Base URL
-
-```
-https://library.moca.qwellco.de
-```
+| Feature | Description |
+|---------|-------------|
+| **Document Processing** | PDF, DOCX, TXT, MD, XLSX, PPTX, images (50MB max) |
+| **Hybrid Search** | Vector (0.5) + Keyword (0.3) + Graph (0.2) with reranking |
+| **AI Q&A** | Chat mode (fast) and Deep Research mode (agentic, 10 iterations) |
+| **Knowledge Graph** | 10 entity types, 15 relationship types, community detection |
+| **Collections** | Multi-tenant document organization with scoped search |
+| **Entity Dedup** | Fuzzy matching with merge/dismiss workflow |
+| **Image Analysis** | Concurrent vision model processing, integrated into RAG |
+| **Streaming** | SSE for real-time Q&A, reasoning, and token delivery |
+| **GPU Acceleration** | Compute3 integration (H100/A100) |
+| **60+ API Endpoints** | Full REST API with auth and permissions |
 
 ## Requirements
 
 - `curl` - For API requests
-- `jq` - For JSON parsing
-- A valid MOCA Library API key with READ and MANAGE permissions
-
-## Memory Directories
-
-By default, the skill scans:
-- `~/.openclaw/memory/`
-- `~/.openclaw/conversations/`
-
-Supported file types: `.md`, `.txt`, `.json`
-
-## Usage Examples
-
-### Search Knowledge
-
-```bash
-curl -X POST "https://library.moca.qwellco.de/api/search" \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "project notes"}'
-```
-
-### Ask AI
-
-```bash
-curl -X POST "https://library.moca.qwellco.de/api/ask" \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What do I know about machine learning?"}'
-```
+- `jq` - For JSON parsing (falls back to `python3`)
+- A valid Cortex Library API key with READ and MANAGE permissions
+- Network access to a Cortex Library instance
 
 ## License
 

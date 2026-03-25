@@ -1,40 +1,40 @@
 ---
-name: openclaw-library
-version: 1.3.0
-description: Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval and search. Now with QMD (Quick Memory Daemon) support.
-metadata: {"openclaw":{"emoji":"📚","category":"knowledge"}}
+name: library
+description: >
+  Sync agent memory files to a Cortex Library knowledge graph for enhanced retrieval,
+  hybrid search (vector + keyword + graph), AI-powered Q&A with agentic deep research,
+  and knowledge graph exploration. Use when uploading documents, searching knowledge,
+  asking questions about accumulated memories, or syncing memory files to a knowledge base.
+license: MIT
+compatibility: >
+  Requires curl, jq (or python3 as fallback), and network access to a Cortex Library instance.
+  Works with any agent that can execute shell commands.
+metadata:
+  author: Cortex
+  version: "2.0.0"
+  category: knowledge
+  emoji: "\U0001F4DA"
+allowed-tools: Bash Read Write
 ---
 
-# OpenClaw Library Skill
+# Cortex Library Skill
 
-Sync your OpenClaw memory files **exclusively to the `OpenClaw` collection** in the MOCA Library knowledge graph. Upload documents, search your knowledge base, and ask AI-powered questions about your accumulated memories.
+Sync your agent memory files to a **Cortex Library** knowledge graph. Upload documents, search your knowledge base, and ask AI-powered questions with agentic deep research capabilities.
 
-All memory files are organized within a single dedicated collection named **OpenClaw**. If this collection doesn't exist, the skill automatically creates it.
+All memory files are organized within a single dedicated collection (default: **OpenClaw**). If this collection doesn't exist, the skill automatically creates it.
 
 ## Skill Files
 
 | File | Description |
 |------|-------------|
-| **SKILL.md** (this file) | Main skill documentation and API reference |
+| **SKILL.md** (this file) | Main skill documentation |
 | **HEARTBEAT.md** | Periodic sync tasks and memory upload workflow |
-| **skill.json** | Skill metadata and configuration |
-| **state/credentials.example.json** | Example credentials file - copy to `credentials.json` and add your API key and base URL |
-| **state/uploaded_files.json** | Tracks uploaded files to avoid duplicates (auto-updated during sync) |
-
-**Install locally:**
-```bash
-mkdir -p ~/.openclaw/skills/library/state
-
-# Download skill files from your MOCA Library instance
-# Replace YOUR_BASE_URL with your actual library URL (e.g., https://library.example.com)
-curl -s YOUR_BASE_URL/skills/openclaw-library/SKILL.md > ~/.openclaw/skills/library/SKILL.md
-curl -s YOUR_BASE_URL/skills/openclaw-library/HEARTBEAT.md > ~/.openclaw/skills/library/HEARTBEAT.md
-curl -s YOUR_BASE_URL/skills/openclaw-library/skill.json > ~/.openclaw/skills/library/skill.json
-
-# Download example state files
-curl -s YOUR_BASE_URL/skills/openclaw-library/state/credentials.example.json > ~/.openclaw/skills/library/state/credentials.example.json
-curl -s YOUR_BASE_URL/skills/openclaw-library/state/uploaded_files.json > ~/.openclaw/skills/library/state/uploaded_files.json
-```
+| **references/API.md** | Full API reference (60+ endpoints) |
+| **references/SYNC.md** | Detailed sync workflow, scripts, and troubleshooting |
+| **scripts/sync.sh** | Bash sync script |
+| **scripts/sync_bulk.py** | Python bulk sync script |
+| **scripts/sync_memory.js** | Node.js sync script |
+| **state/credentials.example.json** | Example credentials file |
 
 ---
 
@@ -42,36 +42,14 @@ curl -s YOUR_BASE_URL/skills/openclaw-library/state/uploaded_files.json > ~/.ope
 
 ### Step 1: Get Your Base URL and API Key
 
-**IMPORTANT:** You need BOTH a base URL AND an API key to use this skill.
+You need **both** a base URL and an API key.
 
 Ask your human to provide:
 
-1. **Base URL** - The full URL to their MOCA Library instance
-   - Example: `https://library.example.com`
-   - This is where the Library is hosted
-
-2. **API Key** - A MOCA Library API key
-   - Log into the Library at YOUR_BASE_URL
-   - Go to Admin → API Keys
-   - Create a new API key with **READ** and **MANAGE** permissions
-   - Copy the API key (it's only shown once!)
+1. **Base URL** - The full URL to their Cortex Library instance (e.g., `https://library.example.com`)
+2. **API Key** - From `YOUR_BASE_URL/admin` -> API Keys, with **READ** and **MANAGE** permissions
 
 ### Step 2: Configure Credentials
-
-When you first use this skill, check if credentials exist:
-
-```bash
-cat ~/.openclaw/skills/library/state/credentials.json
-```
-
-**If the file doesn't exist or is missing `api_key` OR `base_url`:**
-
-Tell your human:
-> "I need BOTH a MOCA Library base URL AND an API key to sync memories. Please provide:
-> 1. The base URL of your MOCA Library (e.g., https://library.example.com)
-> 2. An API key from YOUR_BASE_URL/admin/api-keys"
-
-Once they provide BOTH values, save them:
 
 ```bash
 mkdir -p ~/.openclaw/skills/library/state
@@ -84,343 +62,103 @@ cat > ~/.openclaw/skills/library/state/credentials.json << 'EOF'
 EOF
 ```
 
-**CRITICAL:** Both `api_key` AND `base_url` are REQUIRED. Do not proceed without both values.
-
 ### Step 3: Validate the Connection
-
-Test the connection using BOTH values:
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
 API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 
-# Validate credentials are present
 if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
+  echo "Missing credentials. Both api_key and base_url are required."
   exit 1
 fi
 
-curl -s "$API_BASE/health" \
-  -H "X-API-Key: $API_KEY"
+curl -s "$API_BASE/health" -H "X-API-Key: $API_KEY"
 ```
 
-Expected response:
-```json
-{"status": "healthy", "neo4j_connected": true, "version": "2.0.0"}
-```
+Expected: `{"status": "healthy", "neo4j_connected": true, "version": "2.0.0"}`
 
-**If you get an error:** Either the base URL is incorrect or the API key is invalid. Ask your human for valid credentials.
-
-### Step 4: Find or Create OpenClaw Collection (REQUIRED)
-
-**This step is mandatory.** All memory files MUST be uploaded to the `OpenClaw` collection.
-
-**IMPORTANT:** ALWAYS look up the collection by NAME, not by cached ID. This ensures you always have the correct collection.
+### Step 4: Find or Create Collection
 
 ```bash
 API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
 API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
 COLLECTION_NAME="OpenClaw"
 
-# Validate both credentials are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-
-# ALWAYS query the API to find the collection by name
-echo "🔍 Finding OpenClaw collection..."
 COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
-
-# Find collection by exact name match
 COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r ".collections[] | select(.name == \"$COLLECTION_NAME\") | .id" | head -n1)
 
-# If not found, create it
 if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-  echo "📚 Creating OpenClaw collection..."
   CREATE_RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"$COLLECTION_NAME\", \"description\": \"Memory files synced from OpenClaw agent\"}")
-  
+    -d "{\"name\": \"$COLLECTION_NAME\", \"description\": \"Memory files synced from agent\"}")
   COLLECTION_ID=$(echo "$CREATE_RESULT" | jq -r '.id')
-  
-  if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-    echo "❌ Failed to create collection"
-    echo "   Error: $(echo "$CREATE_RESULT" | jq -r '.detail // .message // "Unknown"')"
-    exit 1
-  fi
-  echo "✅ Created OpenClaw collection: $COLLECTION_ID"
-else
-  echo "✅ Found OpenClaw collection: $COLLECTION_ID"
 fi
 
-# Save the verified collection ID to credentials
 jq --arg cid "$COLLECTION_ID" '.collection_id = $cid' \
   ~/.openclaw/skills/library/state/credentials.json > ~/.openclaw/skills/library/state/credentials.json.tmp
 mv ~/.openclaw/skills/library/state/credentials.json.tmp ~/.openclaw/skills/library/state/credentials.json
-echo "💾 Collection ID saved: $COLLECTION_ID"
-
-# Verify we have a valid ID
-if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-  echo "❌ FATAL: No valid collection ID. Cannot proceed."
-  exit 1
-fi
+echo "Collection ID: $COLLECTION_ID"
 ```
-
-**CRITICAL:** Never proceed with uploads if `collection_id` is null or empty. Always ensure the OpenClaw collection exists first.
-
----
-
-## The OpenClaw Collection
-
-**IMPORTANT:** All memory files are uploaded EXCLUSIVELY to the `OpenClaw` collection in the MOCA Library. This keeps your memories organized and separate from other content.
-
-**Before any upload operation:**
-1. Check if `collection_id` exists in credentials
-2. If not, search for a collection named "OpenClaw"
-3. If "OpenClaw" doesn't exist, create it
-4. Save the `collection_id` to credentials for future use
-
-**Never upload to other collections.** The skill automatically ensures all files go to the OpenClaw collection.
 
 ---
 
 ## Memory Directories
 
-This skill syncs files from your memory directories to the OpenClaw collection in the knowledge graph.
-
-**Default memory locations:**
+Default memory locations scanned for sync:
 - `~/.openclaw/memory/` - Primary memory storage
 - `~/.openclaw/conversations/` - Conversation logs
 - **QMD sessions**: `~/.openclaw/agents/main/qmd/sessions/` - When QMD is enabled
-- Custom paths configured by your human
 
-**QMD (Quick Memory Daemon) Support:**
-When `memory.backend = "qmd"` in `openclaw.json`, the skill automatically detects and syncs session exports from the QMD storage directory. These are markdown transcripts of your conversations.
-
-**Supported file types:**
-- `.md` - Markdown files
-- `.txt` - Plain text files
-- `.json` - JSON data files
+**Supported file types:** `.md`, `.txt`, `.json`
 
 ---
 
-## Upload Tracking
+## Upload API
 
-To avoid uploading the same file twice, this skill tracks uploaded files in:
+**CRITICAL:** Upload parameters (`collection_id`, `start_processing`) MUST be URL query parameters, NOT form fields:
 
-```
-~/.openclaw/skills/library/state/uploaded_files.json
-```
-
-Format:
-```json
-{
-  "files": {
-    "/path/to/memory.md": {
-      "hash": "sha256_hash_of_content",
-      "document_id": "doc_xxx",
-      "uploaded_at": "2026-02-05T10:30:00Z",
-      "status": "completed"
-    }
-  },
-  "last_sync": "2026-02-05T10:30:00Z"
-}
-```
-
-**How it works:**
-1. Calculate SHA-256 hash of file content
-2. Check if hash exists in `uploaded_files.json`
-3. If hash matches → file already uploaded, skip
-4. If hash differs or file is new → upload and update tracking
-
----
-
-## API Reference
-
-All requests require:
-1. The `X-API-Key` header with your API key
-2. The base URL from your credentials
-
-### ⚠️ CRITICAL: Upload API Parameter Format
-
-**For file uploads, parameters MUST be passed as URL query parameters, NOT as form fields:**
-
-| Parameter | Correct Usage | Wrong Usage |
-|-----------|---------------|-------------|
-| `collection_id` | `?collection_id=xxx` in URL | ~~`-F "collection_id=xxx"`~~ |
-| `start_processing` | `?start_processing=true` in URL | ~~`-F "start_processing=true"`~~ |
-| `file` | `-F "file=@/path/to/file"` | (this is correct) |
-
-**✅ CORRECT:**
 ```bash
+# CORRECT:
 curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/file.md"
+
+# WRONG (will not work):
+# curl -X POST "$API_BASE/api/upload" -F "collection_id=$COLLECTION_ID" -F "file=@..."
 ```
 
-**❌ WRONG (will not work):**
-```bash
-curl -X POST "$API_BASE/api/upload" \
-  -H "X-API-Key: $API_KEY" \
-  -F "collection_id=$COLLECTION_ID" \
-  -F "start_processing=true" \
-  -F "file=@/path/to/file.md"
-```
-
-**Before making any API calls, load your credentials:**
+### Single File Upload
 
 ```bash
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-
-# Validate both are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-```
-
-### Health Check
-
-```bash
-curl "$API_BASE/health"
-```
-
-### List Collections
-
-```bash
-curl "$API_BASE/api/collections" \
-  -H "X-API-Key: $API_KEY"
-```
-
-### Create Collection
-
-```bash
-curl -X POST "$API_BASE/api/collections" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "OpenClaw", "description": "Memory files from OpenClaw agent"}'
-```
-
-### Upload a File (Single)
-
-For uploading a single file with immediate processing:
-
-**⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:**
-- `collection_id` and `start_processing` MUST be in the URL as query parameters
-- NEVER use `-F collection_id=...` or `-F start_processing=...` - this will NOT work
-- The ONLY `-F` flag should be for the file itself: `-F "file=@..."`
-
-```bash
-# CORRECT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
 curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
   -H "X-API-Key: $API_KEY" \
   -F "file=@/path/to/memory.md"
-
-# ❌ WRONG - NEVER DO THIS:
-# curl -X POST "$API_BASE/api/upload" \
-#   -F "collection_id=$COLLECTION_ID" \
-#   -F "start_processing=true" \
-#   -F "file=@/path/to/memory.md"
 ```
 
-Response:
-```json
-{
-  "document_id": "doc_xxx",
-  "filename": "memory.md",
-  "status": "processing",
-  "message": "Document uploaded and processing started"
-}
-```
+### Bulk Upload (Recommended for Multiple Files)
 
-### Upload Files (Bulk - Recommended for Multiple Files)
-
-For uploading multiple files efficiently, upload without processing first, then trigger batch processing:
-
-**⚠️ CRITICAL - URL QUERY PARAMETERS ONLY:**
-- `collection_id` and `start_processing` MUST be in the URL as query parameters
-- NEVER use `-F collection_id=...` or `-F start_processing=...` - this will NOT work
-- The ONLY `-F` flag should be for the file itself: `-F "file=@..."`
-
-**Step 1: Upload files without processing**
+1. Upload all files without processing:
 ```bash
-# CORRECT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
 curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
   -H "X-API-Key: $API_KEY" \
-  -F "file=@/path/to/memory.md"
-
-# ❌ WRONG - NEVER DO THIS:
-# curl -X POST "$API_BASE/api/upload" \
-#   -F "collection_id=$COLLECTION_ID" \
-#   -F "start_processing=false" \
-#   -F "file=@/path/to/memory.md"
+  -F "file=@/path/to/file.md"
 ```
 
-Response:
-```json
-{
-  "document_id": "doc_xxx",
-  "filename": "memory.md",
-  "status": "pending",
-  "message": "Document uploaded successfully"
-}
-```
-
-**Step 2: Trigger batch processing**
+2. Trigger batch processing:
 ```bash
 curl -X POST "$API_BASE/api/documents/process-pending" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Response:
-```json
-{
-  "task_id": "task_xxx",
-  "status": "running",
-  "pending_count": 5,
-  "concurrency": 10,
-  "message": "Processing 5 pending documents"
-}
-```
+---
 
-### Get Pending Documents
+## Search & Ask
 
-Check which documents are waiting to be processed:
+### Hybrid Search
 
-```bash
-curl "$API_BASE/api/documents/pending" \
-  -H "X-API-Key: $API_KEY"
-```
-
-Response:
-```json
-{
-  "pending_count": 3,
-  "documents": [
-    {"id": "doc_xxx", "filename": "memory1.md", "status": "pending"},
-    {"id": "doc_yyy", "filename": "memory2.md", "status": "pending"}
-  ]
-}
-```
-
-### Check Document Status
-
-```bash
-curl "$API_BASE/api/documents/DOCUMENT_ID" \
-  -H "X-API-Key: $API_KEY"
-```
-
-Status values:
-- `pending` - Waiting for processing
-- `processing` - Currently being processed
-- `extracting` - Extracting entities and relationships
-- `completed` - Successfully processed
-- `failed` - Processing failed
-
-### Search Knowledge Base
+Combines vector (0.5), keyword (0.3), and graph traversal (0.2) with cross-encoder reranking.
 
 ```bash
 curl -X POST "$API_BASE/api/search" \
@@ -429,469 +167,129 @@ curl -X POST "$API_BASE/api/search" \
   -d '{"query": "your search query", "top_k": 10}'
 ```
 
+**Collection-scoped search** - add `"collection_id": "col_xxx"` to search within a specific collection.
+
 ### Ask AI (RAG Query)
 
+Two modes available:
+- **Chat mode** (speed): 2 research iterations, 1200 token answers
+- **Deep Research mode** (quality): Up to 10 agentic iterations with reasoning, 4000 token answers
+
 ```bash
 curl -X POST "$API_BASE/api/ask" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "question": "What do I know about topic X?",
-    "top_k": 5,
-    "use_graph": true
-  }'
+  -d '{"question": "What do I know about topic X?", "mode": "speed"}'
 ```
 
-Response:
-```json
-{
-  "question": "What do I know about topic X?",
-  "answer": "Based on your memories...",
-  "sources": [...],
-  "graph_context": {...}
-}
-```
-
-### Get Statistics
-
+**Streaming** - use `/api/ask/stream` for real-time SSE responses:
 ```bash
-curl "$API_BASE/api/stats" \
-  -H "X-API-Key: $API_KEY"
-```
-
----
-
-## Common Operations
-
-### Upload All New Memory Files (Bulk Upload)
-
-For efficiency, upload all files first without processing, then trigger batch processing.
-
-**All files are uploaded to the OpenClaw collection ONLY.**
-
-```bash
-# Get credentials - BOTH api_key and base_url are REQUIRED
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-
-# Validate both credentials are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-
-# ALWAYS look up the OpenClaw collection by name (don't trust cached ID)
-echo "🔍 Finding OpenClaw collection by name..."
-COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
-
-# Find collection by exact name match
-COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r '.collections[] | select(.name == "OpenClaw") | .id' | head -n1)
-
-# If not found, create it
-if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-  echo "📚 Creating OpenClaw collection..."
-  CREATE_RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
-    -H "X-API-Key: $API_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "OpenClaw", "description": "Memory files synced from OpenClaw agent"}')
-  COLLECTION_ID=$(echo "$CREATE_RESULT" | jq -r '.id')
-  
-  if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-    echo "❌ Failed to create collection. Cannot proceed."
-    exit 1
-  fi
-  echo "✅ Created OpenClaw collection: $COLLECTION_ID"
-else
-  echo "✅ Found OpenClaw collection: $COLLECTION_ID"
-fi
-
-# Save the verified collection ID to credentials
-jq --arg cid "$COLLECTION_ID" '.collection_id = $cid' \
-  ~/.openclaw/skills/library/state/credentials.json > ~/.openclaw/skills/library/state/credentials.json.tmp
-mv ~/.openclaw/skills/library/state/credentials.json.tmp ~/.openclaw/skills/library/state/credentials.json
-
-# Step 1: Upload all files to OpenClaw collection WITHOUT processing (faster)
-echo "📤 Uploading to collection: $COLLECTION_ID"
-UPLOADED_COUNT=0
-for file in ~/.openclaw/memory/*.{md,txt,json} 2>/dev/null; do
-  if [ -f "$file" ]; then
-    echo "   📄 $(basename "$file") -> $COLLECTION_ID"
-    # IMPORTANT: collection_id and start_processing are URL QUERY PARAMETERS (after the ?)
-    # NEVER use -F for collection_id - only -F "file=@..." is correct
-    RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
-      -H "X-API-Key: $API_KEY" \
-      -F "file=@$file")
-    
-    # Verify the upload succeeded and went to the right collection
-    DOC_COLLECTION=$(echo "$RESULT" | jq -r '.collection_id // "unknown"')
-    if [ "$DOC_COLLECTION" != "$COLLECTION_ID" ] && [ "$DOC_COLLECTION" != "unknown" ]; then
-      echo "      ⚠️ Warning: Document uploaded to $DOC_COLLECTION instead of $COLLECTION_ID"
-    fi
-    
-    UPLOADED_COUNT=$((UPLOADED_COUNT + 1))
-  fi
-done
-
-echo ""
-echo "📦 Uploaded $UPLOADED_COUNT files. Starting batch processing..."
-
-# Step 2: Trigger processing for all pending documents
-PROCESS_RESULT=$(curl -s -X POST "$API_BASE/api/documents/process-pending" \
-  -H "X-API-Key: $API_KEY")
-
-TASK_ID=$(echo "$PROCESS_RESULT" | jq -r '.task_id')
-echo "🔄 Processing started. Task ID: $TASK_ID"
-
-# Step 3: Wait for processing to complete (optional)
-while true; do
-  TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" \
-    -H "X-API-Key: $API_KEY")
-  
-  STATUS=$(echo "$TASK_STATUS" | jq -r '.status')
-  PROGRESS=$(echo "$TASK_STATUS" | jq -r '.progress_percent // 0')
-  
-  echo "   Progress: ${PROGRESS}%"
-  
-  if [ "$STATUS" = "completed" ] || [ "$STATUS" = "COMPLETED" ]; then
-    echo "✅ All documents processed!"
-    break
-  elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "FAILED" ]; then
-    echo "❌ Processing failed"
-    break
-  fi
-  
-  sleep 5
-done
-```
-
-### Upload Single File (Immediate Processing)
-
-For a single file with immediate processing (uploads to OpenClaw collection ONLY):
-
-```bash
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-COLLECTION_NAME="OpenClaw"
-
-# Validate both credentials are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-
-# ALWAYS look up the OpenClaw collection by name before uploading
-echo "🔍 Finding OpenClaw collection..."
-COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
-COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r ".collections[] | select(.name == \"$COLLECTION_NAME\") | .id" | head -n1)
-
-if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
-  echo "❌ Error: OpenClaw collection not found. Create it first."
-  exit 1
-fi
-
-echo "✅ Uploading to OpenClaw collection: $COLLECTION_ID"
-
-# Upload to OpenClaw collection
-# IMPORTANT: collection_id and start_processing MUST be URL QUERY PARAMETERS
-# NEVER use -F for collection_id or start_processing - only -F "file=@..." is correct
-curl -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=true" \
-  -H "X-API-Key: $API_KEY" \
-  -F "file=@/path/to/memory.md"
-```
-
-### Search Your Memories
-
-```bash
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-
-# Validate both credentials are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-
-curl -X POST "$API_BASE/api/search" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "what I discussed about project X"}'
-```
-
-### Ask a Question About Your Knowledge
-
-```bash
-API_KEY=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.api_key')
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-
-# Validate both credentials are present
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ] || [ -z "$API_BASE" ] || [ "$API_BASE" = "null" ]; then
-  echo "❌ Missing credentials. Both api_key and base_url are required."
-  exit 1
-fi
-
-curl -X POST "$API_BASE/api/ask" \
+curl -N "$API_BASE/api/ask/stream" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "Summarize what I know about machine learning"}'
 ```
 
+SSE events: `content`, `sources`, `graph_context`, `thinking`, `sub_questions`, `retrieval`, `done`, `error`
+
+---
+
+## Knowledge Graph Features
+
+Cortex Library builds a knowledge graph from your documents with:
+
+- **Entity extraction** - 10 types: Person, Organization, Concept, Technology, Location, Event, Product, Document, System, Process
+- **Relationship analysis** - 15 standard types with cross-document relationship discovery
+- **Community detection** - Leiden/Louvain clustering with LLM-generated summaries
+- **Entity deduplication** - Fuzzy matching (rapidfuzz) with merge/dismiss workflow
+- **Graph visualization** - Interactive force-graph with dynamic expansion
+
+### Pipeline (3 steps)
+
+1. **Entity Extraction** - Per-document, with fuzzy entity resolution (85% Levenshtein)
+2. **Relationship Analysis** - Cross-document, batched (120 entities/batch), supports incremental or rebuild
+3. **Community Detection** - Weighted graph clustering with automatic summarization
+
+---
+
+## Upload Tracking
+
+Files are tracked in `~/.openclaw/skills/library/state/uploaded_files.json` using SHA-256 hashes to avoid duplicates. Tracking is updated immediately after each upload to survive interruptions.
+
+---
+
+## Collections
+
+Organize documents into logical groups. Each collection has its own scoped search and entity graph.
+
+```bash
+# List collections
+curl "$API_BASE/api/collections" -H "X-API-Key: $API_KEY"
+
+# Create collection
+curl -X POST "$API_BASE/api/collections" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Collection", "description": "Description"}'
+```
+
+---
+
+## Custom Inputs
+
+Add knowledge manually without uploading files (Q&A pairs, text, markdown):
+
+```bash
+curl -X POST "$API_BASE/api/custom-input" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "qa", "question": "What is X?", "answer": "X is..."}'
+```
+
+---
+
+## Authentication
+
+All API requests require an API key via `X-API-Key` header.
+
+**Permission levels:** `read` (search, view), `write` (upload, create), `delete` (remove), `admin` (full access including key management).
+
 ---
 
 ## Error Handling
 
-### Missing Credentials
-
-If `credentials.json` doesn't exist or is missing `api_key` OR `base_url`:
-
-```
-⚠️ MOCA Library credentials not configured!
-
-I need BOTH a base URL AND an API key to sync memories to the Library. Please provide:
-
-1. Base URL - The full URL to your MOCA Library instance (e.g., https://library.example.com)
-2. API Key - Get from YOUR_BASE_URL/admin/api-keys with READ and MANAGE permissions
-
-Without both values, I cannot upload memories or search the knowledge base.
-```
-
-### Invalid Base URL
-
-If the connection fails or returns 404:
-
-```
-⚠️ Cannot connect to MOCA Library!
-
-The base URL you provided is not reachable or incorrect.
-Please verify the URL is correct and the service is running.
-```
-
-### Invalid API Key
-
-If health check fails with 401:
-
-```
-⚠️ Invalid MOCA Library API key!
-
-The API key you provided is not valid or has been revoked.
-Please provide a new API key from YOUR_BASE_URL/admin/api-keys
-```
-
-### Collection Not Found
-
-If the OpenClaw collection was deleted:
-
-```
-📚 OpenClaw collection not found. Creating a new one...
-```
-
-Then create the collection and update `credentials.json` with the new `collection_id`.
-
-### Upload Failed
-
-If an upload fails:
-
-```
-❌ Failed to upload {filename}: {error message}
-Will retry on next sync.
-```
-
-Don't add failed files to `uploaded_files.json` so they'll be retried.
+| Error | Action |
+|-------|--------|
+| Missing credentials | Ask human for both base URL and API key |
+| 401 Unauthorized | API key invalid or expired, request a new one |
+| Connection refused | Service may be down, retry later |
+| Collection not found | Skill auto-creates the collection |
+| Upload failed | File not tracked, retried on next sync |
 
 ---
 
 ## When to Sync
 
-**Automatic sync (via heartbeat):**
-- Every 4+ hours during normal operation
-- Check for new/modified files in memory directories
-
-**Manual sync:**
-- When your human says "sync memories to library"
-- When you've written important new memories
-- Before answering questions that might benefit from historical context
-
-**Don't sync:**
-- Every few minutes (too frequent, wastes resources)
-- Empty or temporary files
-- Files that are still being written
+- **Automatic:** Every 4+ hours via heartbeat (see [HEARTBEAT.md](HEARTBEAT.md))
+- **Manual:** When human says "sync memories" or before answering questions needing historical context
+- **Don't sync:** Every few minutes, empty/temporary files, or files still being written
 
 ---
 
-## QMD Memory Detection
+## Full API Reference
 
-The skill automatically detects if QMD is enabled and includes QMD session files in the sync.
+See [references/API.md](references/API.md) for the complete 60+ endpoint API reference.
 
-### Check if QMD is Enabled
+## Detailed Sync Workflow
 
-```bash
-# Read memory backend from openclaw.json
-MEMORY_BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"')
-
-if [ "$MEMORY_BACKEND" = "qmd" ]; then
-  echo "QMD is enabled - will sync session files"
-  
-  # Determine the agent ID (default to "main" if not specified)
-  AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"')
-  
-  # QMD sessions directory
-  QMD_SESSIONS_DIR="$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
-  
-  if [ -d "$QMD_SESSIONS_DIR" ]; then
-    echo "QMD sessions found at: $QMD_SESSIONS_DIR"
-    # Add to memory directories for sync
-    MEMORY_DIRS+=("$QMD_SESSIONS_DIR")
-  fi
-else
-  echo "Using standard memory backend: $MEMORY_BACKEND"
-fi
-```
-
-### Get QMD Sessions Directory
-
-Returns the path to QMD session exports if QMD is enabled:
-
-```bash
-get_qmd_sessions_dir() {
-  # Check if QMD is the active backend
-  local BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"')
-  
-  if [ "$BACKEND" != "qmd" ]; then
-    return 1  # QMD not enabled
-  fi
-  
-  # Get agent ID (default to "main")
-  local AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"')
-  
-  # Return QMD sessions path
-  echo "$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
-}
-
-# Usage
-if QMD_DIR=$(get_qmd_sessions_dir); then
-  echo "QMD sessions: $QMD_DIR"
-  MEMORY_DIRS+=("$QMD_DIR")
-fi
-```
-
----
-
-## Integration with Heartbeat
-
-Add this to your HEARTBEAT.md:
-
-```markdown
-## Library Sync (every 4+ hours)
-If 4+ hours since last library sync:
-1. Fetch HEARTBEAT.md from library skill and follow it
-2. Update lastLibrarySync timestamp in memory
-```
-
-See [HEARTBEAT.md](./HEARTBEAT.md) for detailed sync instructions.
-
----
-
-## Rate Limits
-
-The MOCA Library API has reasonable rate limits:
-- Normal operations: 100+ requests/minute
-- File uploads: No specific limit, but be respectful
-- Large batch uploads: Use `start_processing=false` and batch process
-
----
-
-## Your Human Can Ask Anytime
-
-Your human might prompt you to:
-- "Sync your memories to the library"
-- "Search your knowledge for X"
-- "What do you know about Y?"
-- "Upload this conversation to your memory"
-- "Check if your memories are up to date"
-
-You don't have to wait for heartbeat - if they ask, do it!
-
----
-
-## Troubleshooting
-
-### Can't connect to API
-
-```bash
-# Check if the API is reachable (use your configured base_url)
-API_BASE=$(cat ~/.openclaw/skills/library/state/credentials.json | jq -r '.base_url')
-curl -v "$API_BASE/health"
-```
-
-If connection fails, either the base URL is incorrect or the service might be down. Verify the URL and try again later.
-
-### File not appearing in library
-
-1. Check upload status: `GET /api/documents/{document_id}`
-2. If status is "failed", check `error_message` field
-3. Try reprocessing: `POST /api/documents/{document_id}/reprocess`
-
-### Out of sync with uploaded_files.json
-
-If the tracking file gets corrupted or out of sync:
-
-```bash
-# Reset tracking (will re-upload all files on next sync)
-echo '{"files": {}, "last_sync": null}' > ~/.openclaw/skills/library/state/uploaded_files.json
-```
-
----
-
-## Privacy & Security
-
-- Your memories are stored in your own MOCA Library instance
-- API keys should be kept secure and not shared
-- The skill only uploads files from designated memory directories
-- You control what gets synced
-
----
-
-## Dependencies
-
-This skill requires the following tools to be available:
-
-| Tool | Purpose | Fallback Behavior |
-|------|---------|-------------------|
-| `jq` | JSON parsing | Uses `python3` as fallback |
-| `python3` | JSON fallback, tracking updates | Required - sync will fail without it |
-| `sha256sum` or `shasum` | File hash calculation | Required for duplicate detection |
-| `curl` | API requests | Required - sync will fail without it |
-
-**Note on jq vs python3:** If `jq` is not installed, the skill automatically falls back to Python for JSON operations. This is handled transparently in the sync script.
-
----
-
-## Lessons Learned & Implementation Notes
-
-### Tracking File Updates Should Be Immediate
-
-Upload tracking must be saved **immediately after each file upload**, not batched at the end. If the sync is interrupted mid-run:
-- Files that were uploaded will be tracked
-- Re-running won't re-upload already-synced files
-- Avoids duplicate uploads on retry
-
-### File Pattern Matching Gotchas
-
-Bash brace expansion `*.{md,txt,json}` can cause issues when files are missing:
-- Use explicit loops: `for file in "$DIR"/*.md "$DIR"/*.txt; do`
-- Always check `if [ -f "$file" ]` before processing
-
-### QMD Sessions Included Automatically
-
-When QMD is enabled, session transcripts are exported to `~/.openclaw/agents/<agentId>/qmd/sessions/`. These contain full conversation history and can be large in number (70+ files). Sync handles this properly by:
-- Bulk uploading without processing first
-- Triggering background batch processing
-- Not waiting indefinitely for processing to complete
+See [references/SYNC.md](references/SYNC.md) for complete sync scripts, QMD support, and troubleshooting.
 
 ---
 
 ## Version History
 
-- **1.3.0** - Added QMD (Quick Memory Daemon) support - automatically detects when QMD is enabled and syncs session files from `~/.openclaw/agents/<agentId>/qmd/sessions/`
-- **1.2.0** - Clarified API parameter format (URL query params only, never -F for collection_id), added state file downloads to installation
-- **1.1.0** - Added base_url configuration, improved collection lookup by name
-- **1.0.0** - Initial release with memory sync, search, and RAG capabilities
+- **2.0.0** - Rewritten for AgentSkills open standard; renamed to Cortex Library; added deep research, collections, communities, custom inputs, image analysis, streaming, entity dedup
+- **1.3.0** - Added QMD (Quick Memory Daemon) support
+- **1.2.0** - Clarified API parameter format (URL query params)
+- **1.1.0** - Added base_url configuration
+- **1.0.0** - Initial release

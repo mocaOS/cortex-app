@@ -1,11 +1,14 @@
 #!/bin/bash
-# OpenClaw Library Sync Script (Bulk Upload Version)
+# Cortex Library Sync Script
+# Syncs agent memory files to Cortex Library knowledge graph.
+# Reads base_url from credentials (no hardcoded URLs).
+# Uses URL query parameters for upload API (NOT form fields).
 set -e
 
 STATE_DIR="$HOME/.openclaw/skills/library/state"
 CREDENTIALS="$STATE_DIR/credentials.json"
 TRACKING="$STATE_DIR/uploaded_files.json"
-API_BASE="https://library.moca.qwellco.de"
+COLLECTION_NAME="OpenClaw"
 
 # Memory directories to scan
 MEMORY_DIRS=(
@@ -13,45 +16,77 @@ MEMORY_DIRS=(
   "$HOME/.openclaw/conversations"
 )
 
+# Detect QMD and add sessions directory
+MEMORY_BACKEND=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.memory.backend // "sqlite"' 2>/dev/null || echo "sqlite")
+if [ "$MEMORY_BACKEND" = "qmd" ]; then
+  AGENT_ID=$(cat ~/.openclaw/openclaw.json 2>/dev/null | jq -r '.agents.defaults.id // "main"' 2>/dev/null || echo "main")
+  QMD_DIR="$HOME/.openclaw/agents/$AGENT_ID/qmd/sessions"
+  [ -d "$QMD_DIR" ] && MEMORY_DIRS+=("$QMD_DIR")
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📚 Cortex Library Sync"
+echo "   Target collection: $COLLECTION_NAME"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
 # Load credentials
 if [ ! -f "$CREDENTIALS" ]; then
-  echo "❌ No credentials found. Please provide an API key."
+  echo "❌ No credentials found. Please provide api_key and base_url."
   exit 1
 fi
 
 API_KEY=$(jq -r '.api_key' "$CREDENTIALS")
-COLLECTION_ID=$(jq -r '.collection_id' "$CREDENTIALS")
+API_BASE=$(jq -r '.base_url' "$CREDENTIALS")
 
 if [ "$API_KEY" = "null" ] || [ -z "$API_KEY" ]; then
-  echo "❌ No API key configured. Please provide an API key."
+  echo "❌ No API key configured."
   exit 1
 fi
+
+if [ "$API_BASE" = "null" ] || [ -z "$API_BASE" ]; then
+  echo "❌ No base URL configured."
+  exit 1
+fi
+
+echo "   Base URL: $API_BASE"
+echo ""
 
 # Initialize tracking if needed
 if [ ! -f "$TRACKING" ]; then
   echo '{"files": {}, "last_sync": null}' > "$TRACKING"
 fi
 
+# ============================================================================
 # Ensure collection exists
-if [ "$COLLECTION_ID" = "null" ] || [ -z "$COLLECTION_ID" ]; then
-  echo "🔍 Looking for OpenClaw collection..."
-  COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
-  COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r '.collections[] | select(.name == "OpenClaw") | .id')
+# ============================================================================
+echo "🔍 Finding $COLLECTION_NAME collection..."
 
-  if [ -z "$COLLECTION_ID" ]; then
-    echo "📚 Creating OpenClaw collection..."
-    RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
-      -H "X-API-Key: $API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{"name": "OpenClaw", "description": "Memory files synced from OpenClaw agent"}')
-    COLLECTION_ID=$(echo "$RESULT" | jq -r '.id')
+COLLECTIONS=$(curl -s "$API_BASE/api/collections" -H "X-API-Key: $API_KEY")
+COLLECTION_ID=$(echo "$COLLECTIONS" | jq -r ".collections[] | select(.name == \"$COLLECTION_NAME\") | .id" | head -n1)
+
+if [ -z "$COLLECTION_ID" ] || [ "$COLLECTION_ID" = "null" ]; then
+  echo "   📚 Creating $COLLECTION_NAME collection..."
+  RESULT=$(curl -s -X POST "$API_BASE/api/collections" \
+    -H "X-API-Key: $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"name\": \"$COLLECTION_NAME\", \"description\": \"Memory files synced from agent\"}")
+  COLLECTION_ID=$(echo "$RESULT" | jq -r '.id')
+
+  if [ "$COLLECTION_ID" = "null" ] || [ -z "$COLLECTION_ID" ]; then
+    echo "   ❌ Failed to create collection"
+    exit 1
   fi
-  
-  # Save to credentials
-  jq --arg cid "$COLLECTION_ID" '.collection_id = $cid' "$CREDENTIALS" > "$CREDENTIALS.tmp"
-  mv "$CREDENTIALS.tmp" "$CREDENTIALS"
-  echo "✅ Using collection: $COLLECTION_ID"
+  echo "   ✅ Created: $COLLECTION_ID"
+else
+  echo "   ✅ Found: $COLLECTION_ID"
 fi
+
+# Save to credentials
+jq --arg cid "$COLLECTION_ID" '.collection_id = $cid' "$CREDENTIALS" > "$CREDENTIALS.tmp"
+mv "$CREDENTIALS.tmp" "$CREDENTIALS"
+
+echo ""
 
 # Arrays to track uploads
 declare -a UPLOADED_FILES
@@ -66,12 +101,12 @@ SKIP_COUNT=0
 echo "📤 Phase 1: Uploading new files..."
 
 for DIR in "${MEMORY_DIRS[@]}"; do
-  if [ ! -d "$DIR" ]; then continue fi
-  
-  for FILE in "$DIR"/*.{md,txt,json} 2>/dev/null; do
-    if [ ! -f "$FILE" ]; then continue fi
+  if [ ! -d "$DIR" ]; then continue; fi
 
-    # Calculate hash (use shasum on macOS, sha256sum on Linux)
+  for FILE in "$DIR"/*.md "$DIR"/*.txt "$DIR"/*.json; do
+    if [ ! -f "$FILE" ]; then continue; fi
+
+    # Calculate hash
     if command -v sha256sum &> /dev/null; then
       CURRENT_HASH=$(sha256sum "$FILE" | cut -d' ' -f1)
     else
@@ -79,29 +114,27 @@ for DIR in "${MEMORY_DIRS[@]}"; do
     fi
 
     STORED_HASH=$(jq -r --arg path "$FILE" '.files[$path].hash // ""' "$TRACKING")
-    
+
     if [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
       SKIP_COUNT=$((SKIP_COUNT + 1))
       continue
     fi
 
-    echo "  📄 $(basename "$FILE")"
+    echo "   📄 $(basename "$FILE")"
 
-    # Upload file WITHOUT processing (start_processing=false)
-    RESULT=$(curl -s -X POST "$API_BASE/api/upload" \
+    # Upload file WITHOUT processing
+    # CRITICAL: collection_id and start_processing are URL QUERY PARAMETERS
+    RESULT=$(curl -s -X POST "$API_BASE/api/upload?collection_id=$COLLECTION_ID&start_processing=false" \
       -H "X-API-Key: $API_KEY" \
-      -F "file=@$FILE" \
-      -F "collection_id=$COLLECTION_ID" \
-      -F "start_processing=false")
-      
+      -F "file=@$FILE")
+
     DOCUMENT_ID=$(echo "$RESULT" | jq -r '.document_id // .doc_id')
-    
+
     if [ "$DOCUMENT_ID" = "null" ] || [ -z "$DOCUMENT_ID" ]; then
-      echo "  ❌ Upload failed: $(echo "$RESULT" | jq -r '.detail // .message // "Unknown error"')"
+      echo "      ❌ Upload failed: $(echo "$RESULT" | jq -r '.detail // .message // "Unknown error"')"
       continue
     fi
-    
-    # Track for later processing
+
     UPLOADED_FILES+=("$FILE")
     UPLOADED_DOC_IDS+=("$DOCUMENT_ID")
     UPLOADED_HASHES+=("$CURRENT_HASH")
@@ -113,23 +146,21 @@ echo ""
 echo "📦 Uploaded $UPLOAD_COUNT files, $SKIP_COUNT already synced"
 
 # ============================================================================
-# PHASE 2: Trigger batch processing for all pending documents
+# PHASE 2: Trigger batch processing
 # ============================================================================
-
 if [ $UPLOAD_COUNT -gt 0 ]; then
   echo ""
   echo "🔄 Phase 2: Triggering batch processing..."
-  
+
   PROCESS_RESULT=$(curl -s -X POST "$API_BASE/api/documents/process-pending" \
     -H "X-API-Key: $API_KEY")
-    
+
   TASK_ID=$(echo "$PROCESS_RESULT" | jq -r '.task_id')
   PENDING_COUNT=$(echo "$PROCESS_RESULT" | jq -r '.pending_count // 0')
 
   if [ "$TASK_ID" = "null" ] || [ -z "$TASK_ID" ]; then
-    echo "  ⚠️ Could not start batch processing: $(echo "$PROCESS_RESULT" | jq -r '.detail // .message // "Unknown error"')"
-    
-    # Fall back: update tracking with pending status
+    echo "   ⚠️ Could not start batch processing"
+
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     for i in "${!UPLOADED_FILES[@]}"; do
       jq --arg path "${UPLOADED_FILES[$i]}" \
@@ -141,66 +172,61 @@ if [ $UPLOAD_COUNT -gt 0 ]; then
       mv "$TRACKING.tmp" "$TRACKING"
     done
   else
-    echo "  📊 Processing $PENDING_COUNT documents (Task: $TASK_ID)"
-    
+    echo "   📊 Processing $PENDING_COUNT documents (Task: $TASK_ID)"
+
     # ============================================================================
-    # PHASE 3: Wait for batch processing to complete
+    # PHASE 3: Wait for processing
     # ============================================================================
     echo ""
-    echo "⏳ Phase 3: Waiting for processing to complete..."
-    
-    MAX_ATTEMPTS=120 # 10 minutes at 5s intervals
+    echo "⏳ Phase 3: Waiting for processing..."
+
+    MAX_ATTEMPTS=120
     ATTEMPT=0
-    
+    FINAL_STATUS="processing"
+
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
       TASK_STATUS=$(curl -s "$API_BASE/api/tasks/$TASK_ID" -H "X-API-Key: $API_KEY")
       STATUS=$(echo "$TASK_STATUS" | jq -r '.status' | tr '[:upper:]' '[:lower:]')
       PROGRESS=$(echo "$TASK_STATUS" | jq -r '.progress_percent // 0')
-      MESSAGE=$(echo "$TASK_STATUS" | jq -r '.message // ""')
-      
-      # Only print progress updates every few iterations to reduce noise
+
       if [ $((ATTEMPT % 3)) -eq 0 ]; then
-        echo "  Progress: ${PROGRESS}% - $MESSAGE"
+        echo "   Progress: ${PROGRESS}%"
       fi
-      
+
       if [ "$STATUS" = "completed" ]; then
         echo ""
-        echo "  ✅ All documents processed successfully!"
+        echo "   ✅ All documents processed!"
         FINAL_STATUS="completed"
         break
       elif [ "$STATUS" = "failed" ]; then
         echo ""
-        ERROR=$(echo "$TASK_STATUS" | jq -r '.error // "Unknown error"')
-        echo "  ❌ Processing failed: $ERROR"
+        echo "   ❌ Processing failed"
         FINAL_STATUS="failed"
         break
       fi
-      
+
       ATTEMPT=$((ATTEMPT + 1))
       sleep 5
     done
-    
+
     if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-      echo "  ⏳ Processing still in progress (will continue in background)"
-      FINAL_STATUS="processing"
+      echo "   ⏳ Processing continues in background"
     fi
-    
+
     # ============================================================================
-    # PHASE 4: Update tracking for all uploaded files
+    # PHASE 4: Update tracking
     # ============================================================================
     echo ""
-    echo "📝 Updating tracking records..."
-    
+    echo "📝 Updating tracking..."
+
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
     for i in "${!UPLOADED_FILES[@]}"; do
-      # Check individual document status if batch completed
       if [ "$FINAL_STATUS" = "completed" ]; then
         DOC_STATUS=$(curl -s "$API_BASE/api/documents/${UPLOADED_DOC_IDS[$i]}" -H "X-API-Key: $API_KEY" | jq -r '.processing_status // .status' | tr '[:upper:]' '[:lower:]')
       else
         DOC_STATUS="$FINAL_STATUS"
       fi
-      
+
       jq --arg path "${UPLOADED_FILES[$i]}" \
          --arg hash "${UPLOADED_HASHES[$i]}" \
          --arg docid "${UPLOADED_DOC_IDS[$i]}" \
@@ -216,6 +242,6 @@ fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📊 Sync complete!"
-echo "  📤 Uploaded: $UPLOAD_COUNT files"
-echo "  ⏭️ Skipped: $SKIP_COUNT files (already synced)"
+echo "   📤 Uploaded: $UPLOAD_COUNT files"
+echo "   ⏭️  Skipped: $SKIP_COUNT files (already synced)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

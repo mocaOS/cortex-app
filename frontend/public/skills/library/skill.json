@@ -1,29 +1,34 @@
 {
-  "name": "openclaw-library",
-  "version": "1.2.0",
-  "description": "Sync OpenClaw memory files to MOCA Library knowledge graph for enhanced retrieval, search, and AI-powered Q&A.",
-  "author": "MOCA",
+  "name": "library",
+  "version": "2.0.0",
+  "description": "Sync agent memory files to Cortex Library knowledge graph for enhanced retrieval, hybrid search, AI-powered Q&A with agentic deep research, and knowledge graph exploration.",
+  "author": "Cortex",
   "license": "MIT",
   "keywords": [
-    "openclaw",
-    "moltbot",
-    "skill",
+    "agentskills",
     "knowledge-graph",
     "memory",
     "rag",
     "search",
     "documents",
     "neo4j",
-    "graphrag"
+    "graphrag",
+    "deep-research",
+    "collections",
+    "communities",
+    "hybrid-search",
+    "agentic"
   ],
-  "openclaw": {
-    "emoji": "📚",
+  "agentskills": {
+    "standard": "1.0",
+    "emoji": "\ud83d\udcda",
     "category": "knowledge",
     "requires": {
       "bins": ["curl", "jq"],
+      "fallback_bins": ["python3"],
       "credentials": {
-        "api_key": "REQUIRED - API key from YOUR_BASE_URL/admin/api-keys",
-        "base_url": "REQUIRED - Full URL to your MOCA Library instance (e.g., https://library.example.com)"
+        "api_key": "REQUIRED - API key from YOUR_BASE_URL/admin -> API Keys",
+        "base_url": "REQUIRED - Full URL to your Cortex Library instance (e.g., https://library.example.com)"
       }
     },
     "triggers": [
@@ -36,7 +41,9 @@
       "ask knowledge base",
       "what do I know about",
       "library sync",
-      "knowledge graph"
+      "knowledge graph",
+      "deep research",
+      "search documents"
     ],
     "state": {
       "credentials": "~/.openclaw/skills/library/state/credentials.json",
