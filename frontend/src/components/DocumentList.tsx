@@ -686,7 +686,6 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           onDeleteSelected={handleDeleteSelected}
           onDownloadSelected={handleDownloadSelected}
           onMoveToCollection={handleMoveToCollection}
-          onRefresh={fetchDocuments}
         />
       </div>
 

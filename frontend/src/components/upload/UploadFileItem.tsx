@@ -80,7 +80,7 @@ export default function UploadFileItem({
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">
+          <p className="text-sm font-medium text-foreground truncate" title={uf.file.name}>
             {uf.file.name}
           </p>
           <p

@@ -260,8 +260,8 @@ export function DocumentCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-medium text-foreground truncate max-w-[40vw]" title={doc.filename}>
+              <div className="flex items-center gap-2 min-w-0">
+                <h4 className="text-sm font-medium text-foreground truncate" title={doc.filename}>
                   {doc.filename}
                 </h4>
                 {isCustomInput && (

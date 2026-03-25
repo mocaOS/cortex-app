@@ -6,10 +6,10 @@ import {
   Loader2,
   RefreshCw,
   Square,
+  CheckSquare,
   XCircle,
   Clock,
   ArrowRight,
-  RefreshCcw,
   ChevronDown,
   Download,
 } from "lucide-react";
@@ -38,7 +38,6 @@ interface DocumentBulkActionsProps {
   onDeleteSelected: () => void;
   onDownloadSelected: () => void;
   onMoveToCollection: (collectionId: string) => void;
-  onRefresh: () => void;
 }
 
 // Move dropdown component
@@ -118,7 +117,6 @@ export function DocumentBulkActions({
   onDeleteSelected,
   onDownloadSelected,
   onMoveToCollection,
-  onRefresh,
 }: DocumentBulkActionsProps) {
   const isLoading = isReprocessing || isDeletingSelected || isMoving || isDownloading;
 
@@ -129,11 +127,17 @@ export function DocumentBulkActions({
         onClick={onToggleSelectAll}
         className={cn(
           "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors",
-          "text-muted-foreground hover:text-foreground hover:bg-muted"
+          allFilteredSelected
+            ? "text-accent hover:text-accent/80 hover:bg-accent/10"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted"
         )}
       >
-        <Square className="w-4 h-4" />
-        Select All
+        {allFilteredSelected ? (
+          <CheckSquare className="w-4 h-4" />
+        ) : (
+          <Square className="w-4 h-4" />
+        )}
+        {allFilteredSelected ? "Deselect All" : "Select All"}
       </button>
 
       {/* Bulk actions when items selected */}
@@ -190,14 +194,6 @@ export function DocumentBulkActions({
         </>
       )}
 
-      {/* Refresh button */}
-      <button
-        onClick={onRefresh}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ml-auto"
-      >
-        <RefreshCcw className="w-4 h-4" />
-        Refresh
-      </button>
     </div>
   );
 }
