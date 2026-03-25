@@ -562,6 +562,18 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    def get_documents_file_paths(self, doc_ids: list) -> list:
+        """Get file paths and filenames for multiple documents by ID."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE d.id IN $ids
+                RETURN d.id as id,
+                       coalesce(d.filename, '') as filename,
+                       coalesce(d.file_path, '') as file_path
+            """, ids=doc_ids)
+            return [dict(record) for record in result]
+
     def get_document_content(self, doc_id: str) -> Optional[dict]:
         """
         Get a document with all its chunk content, ordered by chunk index.

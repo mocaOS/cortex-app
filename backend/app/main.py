@@ -1060,6 +1060,70 @@ async def get_document_file(document_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/documents/download-zip")
+async def download_documents_zip(request: Request):
+    """
+    Stream a zip archive of the original uploaded files for the given document IDs.
+    Accepts JSON body: { "document_ids": ["id1", "id2", ...] }
+    Uses ZIP64 and streams to handle large collections without loading everything into memory.
+    """
+    import zipfile
+    import io
+
+    body = await request.json()
+    document_ids = body.get("document_ids", [])
+    if not document_ids:
+        raise HTTPException(status_code=400, detail="No document IDs provided")
+
+    neo4j = get_neo4j_service()
+
+    # Fetch file paths for all requested documents in one query
+    docs = await asyncio.to_thread(neo4j.get_documents_file_paths, document_ids)
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents found")
+
+    # Filter to documents that have files on disk
+    valid_docs = []
+    seen_names = {}
+    for doc in docs:
+        file_path = doc.get("file_path", "")
+        if file_path and os.path.exists(file_path):
+            filename = doc.get("filename", os.path.basename(file_path))
+            # Handle duplicate filenames by appending a counter
+            if filename in seen_names:
+                seen_names[filename] += 1
+                name, ext = os.path.splitext(filename)
+                filename = f"{name} ({seen_names[filename]}){ext}"
+            else:
+                seen_names[filename] = 0
+            valid_docs.append({"file_path": file_path, "filename": filename})
+
+    if not valid_docs:
+        raise HTTPException(status_code=404, detail="No files available for download")
+
+    def generate_zip():
+        """Generate zip file in streaming chunks."""
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for doc in valid_docs:
+                zf.write(doc["file_path"], doc["filename"])
+        buffer.seek(0)
+        # Yield in 1MB chunks
+        while True:
+            chunk = buffer.read(1024 * 1024)
+            if not chunk:
+                break
+            yield chunk
+
+    return StreamingResponse(
+        generate_zip(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="documents-{len(valid_docs)}-files.zip"',
+        },
+    )
+
+
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: str, auth: AuthResult = Depends(require_manage_permission)):
     """

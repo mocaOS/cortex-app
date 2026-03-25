@@ -251,6 +251,33 @@ class ApiClient {
     });
   }
 
+  async downloadDocumentsZip(documentIds: string[]): Promise<void> {
+    const apiKey = getAdminApiKey();
+    const res = await fetch(`${API_BASE}/api/documents/download-zip`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
+      body: JSON.stringify({ document_ids: documentIds }),
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Download failed" }));
+      throw new Error(error.detail || `HTTP ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] || "documents.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Reprocess multiple documents using their stored original files.
    * No file re-upload needed - files are stored permanently.

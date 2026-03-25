@@ -11,6 +11,7 @@ import {
   ArrowRight,
   RefreshCcw,
   ChevronDown,
+  Download,
 } from "lucide-react";
 import type { Collection } from "@/types";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ interface DocumentBulkActionsProps {
   isReprocessing: boolean;
   isDeletingSelected: boolean;
   isMoving: boolean;
+  isDownloading: boolean;
   availableTargetCollections: Collection[];
   hasFilters: boolean;
   onToggleSelectAll: () => void;
@@ -34,6 +36,7 @@ interface DocumentBulkActionsProps {
   onReprocessSelected: () => void;
   onRestartSelected: () => void;
   onDeleteSelected: () => void;
+  onDownloadSelected: () => void;
   onMoveToCollection: (collectionId: string) => void;
   onRefresh: () => void;
 }
@@ -108,14 +111,16 @@ export function DocumentBulkActions({
   isReprocessing,
   isDeletingSelected,
   isMoving,
+  isDownloading,
   availableTargetCollections,
   onToggleSelectAll,
   onReprocessSelected,
   onDeleteSelected,
+  onDownloadSelected,
   onMoveToCollection,
   onRefresh,
 }: DocumentBulkActionsProps) {
-  const isLoading = isReprocessing || isDeletingSelected || isMoving;
+  const isLoading = isReprocessing || isDeletingSelected || isMoving || isDownloading;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -146,6 +151,20 @@ export function DocumentBulkActions({
               <RefreshCw className="w-4 h-4" />
             )}
             Reprocess
+          </button>
+
+          {/* Download selected */}
+          <button
+            onClick={onDownloadSelected}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-muted/50 hover:bg-muted border border-border transition-colors disabled:opacity-50"
+          >
+            {isDownloading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            Download
           </button>
 
           {/* Move to collection */}

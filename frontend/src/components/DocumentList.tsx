@@ -98,6 +98,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFileEntry[]>([]);
   const [isStartingProcessing, setIsStartingProcessing] = useState(false);
@@ -502,6 +503,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     }
   };
 
+  const handleDownloadSelected = async () => {
+    if (selectedIds.size === 0) return;
+
+    setIsDownloading(true);
+    try {
+      await api.downloadDocumentsZip(Array.from(selectedIds));
+    } catch (error) {
+      console.error("Failed to download documents:", error);
+      alert(`Download failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleReprocessWithFile = async (docId: string, file: File) => {
     setReprocessingIds((prev) => new Set(prev).add(docId));
     try {
@@ -660,6 +675,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           isReprocessing={isReprocessing}
           isDeletingSelected={isDeletingSelected}
           isMoving={isMoving}
+          isDownloading={isDownloading}
           availableTargetCollections={availableTargetCollections}
           hasFilters={hasFilters}
           onToggleSelectAll={toggleSelectAll}
@@ -668,6 +684,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           onReprocessSelected={handleReprocessSelected}
           onRestartSelected={handleRestartSelected}
           onDeleteSelected={handleDeleteSelected}
+          onDownloadSelected={handleDownloadSelected}
           onMoveToCollection={handleMoveToCollection}
           onRefresh={fetchDocuments}
         />
