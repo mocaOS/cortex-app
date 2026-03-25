@@ -222,6 +222,21 @@ curl -X POST "http://localhost:8000/api/documents/doc_abc123/reprocess" \
   -H "X-API-Key: your-api-key"
 ```
 
+### Bulk Download (ZIP)
+
+Download multiple documents as a ZIP archive. Supports large instances (1000+ documents) with ZIP64 and streaming:
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/download-zip" \
+  -H "Content-Type: application/json" \
+  -d '{"document_ids": ["doc_abc123", "doc_def456"]}' \
+  -o documents.zip
+```
+
+**Response:** A streamed `application/zip` file containing the original uploaded files. Duplicate filenames are automatically disambiguated (e.g., `report.pdf`, `report (1).pdf`).
+
+In the UI, select documents on the **Documents** page and click the **Download** button in the bulk actions toolbar.
+
 ### Bulk Delete
 
 Delete multiple documents at once. All active processing is cancelled before deletion:

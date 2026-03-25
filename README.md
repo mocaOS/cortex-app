@@ -68,6 +68,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
 - **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
+- **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
 - **🧹 Smart Cleanup**: Automatic task cancellation and complete graph cleanup on document deletion
 

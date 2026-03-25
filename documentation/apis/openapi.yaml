@@ -292,6 +292,38 @@ paths:
         '200':
           description: Documents moved
 
+  /api/documents/download-zip:
+    post:
+      tags: [Documents]
+      summary: Download documents as ZIP
+      description: Stream a ZIP archive of the original uploaded files for the given document IDs. Uses ZIP64 for large collections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                document_ids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of document IDs to include in the ZIP
+              required:
+                - document_ids
+      responses:
+        '200':
+          description: ZIP archive streamed successfully
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: No document IDs provided
+        '404':
+          description: No documents found or no files available
+
   /api/documents/pending:
     get:
       tags: [Documents]
