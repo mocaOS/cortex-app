@@ -218,23 +218,22 @@ Now extract all entities:"""
 # Relationship Analysis Prompt (Phase B - cross-document relationship discovery)
 # =============================================================================
 
-RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to find as many valid relationships as possible between the given entities.
+RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to identify meaningful, direct relationships between the given entities.
 
 # Goal
-Identify ALL meaningful semantic relationships between the provided entities using the allowed relationship types.
+Identify DIRECT semantic relationships between the provided entities using the allowed relationship types. Focus on quality: every relationship must be supported by evidence in the entity descriptions or source text context.
 
 # Rules
 - ONLY use entities from the provided list.
 - ONLY use these relationship types: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, CREATED_BY, IMPLEMENTS, MENTIONS, DEPENDS_ON, IS_A, HAS_PROPERTY, FOUNDED_BY, FEATURES, CONTAINS, INTERACTS_WITH. Use RELATED_TO only when no better type fits.
-- Be aggressive. Create a relationship if there is any plausible semantic connection based on descriptions and context.
-- Use the provided chunk context and existing relationships to infer new connections.
-- Each entity should end up with at least 1-3 relationships when possible.
-- Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection).
+- Only create a relationship when there is clear evidence of a DIRECT connection between two entities — not because they happen to appear in the same context or share a common third entity.
+- Do NOT route relationships through hub/intermediary entities. If Entity A and Entity B have a direct relationship, connect them directly even if they both also relate to Entity C.
+- Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection). Weight should reflect how direct and well-evidenced the relationship is.
 
 Output ONLY XML relationships. No explanations, no chain-of-thought, no other text."""
 
 
-RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract as many relationships as possible from the following entities. Use the provided context and existing relationships to discover new connections.
+RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract direct, evidence-based relationships between the following entities. Only include relationships that are clearly supported by entity descriptions or source text.
 
 Relation Types (use only these): {relation_types}
 
@@ -246,28 +245,29 @@ Relation Types (use only these): {relation_types}
 Example Output:
 <relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
 
-Now extract relationships. Find every meaningful connection possible:"""
+Now extract relationships. Prioritize direct, well-evidenced connections:"""
 
 
 # =============================================================================
 # Phase 1: Candidate Pair Scanning (fast, uses extraction model)
 # =============================================================================
 
-CANDIDATE_SCAN_SYSTEM_PROMPT = """You are a knowledge graph analyst. Your task is to scan a list of entities and identify ALL pairs that likely share a meaningful relationship.
+CANDIDATE_SCAN_SYSTEM_PROMPT = """You are a knowledge graph analyst. Your task is to scan a list of entities and identify pairs that share a direct, meaningful relationship.
 
 # Rules
 - ONLY use entity names from the provided list — do not invent entities.
 - Use entity descriptions AND the provided source text context to judge relatedness.
-- Be aggressive — if two entities could plausibly be connected, include them.
+- Only include pairs where there is evidence of a DIRECT relationship — not merely co-occurrence in the same document or shared association with a third entity.
 - Do NOT output relationship types, descriptions, or weights — just the pairs.
-- Each entity should appear in at least 1-2 pairs when possible.
+- Avoid creating star patterns where one popular entity connects to everything. Two entities sharing a common third entity does NOT make them directly related.
+- It is OK for some entities to have no pairs if there is no direct evidence of a relationship.
 
 Output ONLY pairs, one per line in this exact format:
 EntityA | EntityB
 
 No explanations, no numbering, no other text."""
 
-CANDIDATE_SCAN_USER_PROMPT = """Identify all entity pairs that likely have a meaningful relationship.
+CANDIDATE_SCAN_USER_PROMPT = """Identify entity pairs that have a direct, meaningful relationship supported by evidence in the descriptions or source text.
 
 {context_section}
 
@@ -276,7 +276,7 @@ CANDIDATE_SCAN_USER_PROMPT = """Identify all entity pairs that likely have a mea
 
 {existing_section}
 
-Output ALL likely related pairs (one per line, format: EntityA | EntityB):"""
+Output directly related pairs (one per line, format: EntityA | EntityB):"""
 
 
 class GraphExtractor:
@@ -2084,8 +2084,9 @@ Respond with ONLY the community name, nothing else."""
         )
 
         # --- Co-occurrence based entity ordering ---
+        co_connection_count: dict[str, int] = {}
         if entity_co_occurrence:
-            sorted_entities = self._sort_entities_by_cooccurrence(
+            sorted_entities, co_connection_count = self._sort_entities_by_cooccurrence(
                 all_entities, entity_co_occurrence
             )
         else:
@@ -2110,17 +2111,33 @@ Respond with ONLY the community name, nothing else."""
             formatted = self._format_entity_for_prompt(e)
             entity_tokens.append((e, count_tokens(formatted)))
 
-        # Batch entities by Phase 1 entity token budget AND hard entity cap
+        # Batch entities by Phase 1 entity token budget AND hard entity cap.
+        # Overlap reduced from 15% to 5% and excludes entities already in 2+ batches.
         MAX_ENTITIES_PER_BATCH = 120
         batches: List[List[dict]] = []
         current_batch: List[dict] = []
         current_tokens = 0
+        entity_batch_count: dict[str, int] = {}
 
         for entity, tokens in entity_tokens:
             if current_batch and ((current_tokens + tokens) > entity_token_budget or len(current_batch) >= MAX_ENTITIES_PER_BATCH):
                 batches.append(current_batch)
-                overlap_count = max(2, len(current_batch) * 15 // 100)
-                overlap_entities = current_batch[-overlap_count:]
+                # Reduced overlap: 5% instead of 15%, prefer low-connection entities
+                overlap_target = max(2, len(current_batch) * 5 // 100)
+                # Wider candidate pool from tail, filtered by batch appearance
+                candidate_pool = current_batch[-(overlap_target * 3):]
+                overlap_candidates = [
+                    e for e in candidate_pool
+                    if entity_batch_count.get(e.get("name", ""), 0) < 2
+                ]
+                # Sort by co-occurrence connection count ASC (prefer low-degree for overlap)
+                overlap_candidates.sort(
+                    key=lambda e: co_connection_count.get(e.get("name", ""), 0)
+                )
+                overlap_entities = overlap_candidates[:overlap_target]
+                if not overlap_entities:
+                    # Fallback: just take the last 2 entities
+                    overlap_entities = current_batch[-2:]
                 overlap_tokens = sum(
                     count_tokens(self._format_entity_for_prompt(e))
                     for e in overlap_entities
@@ -2130,6 +2147,9 @@ Respond with ONLY the community name, nothing else."""
 
             current_batch.append(entity)
             current_tokens += tokens
+            entity_batch_count[entity.get("name", "")] = (
+                entity_batch_count.get(entity.get("name", ""), 0) + 1
+            )
 
         if current_batch:
             batches.append(current_batch)
@@ -2255,12 +2275,16 @@ Respond with ONLY the community name, nothing else."""
         self,
         entities: List[dict],
         co_occurrence: dict,
-    ) -> List[dict]:
+    ) -> tuple:
         """Sort entities so those sharing chunks are adjacent.
 
         Uses Union-Find to cluster entities that share chunks, then outputs
-        clusters largest-first with entities ordered by connection count.
-        O(n * avg_chunks) — scales to 100k+ entities.
+        clusters largest-first with entities interleaved by connection count
+        (high/low alternating) to prevent hub entities from concentrating at
+        the front of batches.
+
+        Returns:
+            (sorted_entities, connection_count_dict)
         """
         # Union-Find with path compression
         parent: dict[str, str] = {}
@@ -2300,15 +2324,24 @@ Respond with ONLY the community name, nothing else."""
             total = sum(len(chunk_to_entities.get(cid, [])) - 1 for cid in chunks)
             connection_count[name] = total
 
-        # Output: largest clusters first, within cluster by connection count
+        # Output: largest clusters first, within cluster interleave high/low
+        # connection count to spread hub entities across batch positions
         ordered: List[dict] = []
         for cluster in sorted(clusters.values(), key=len, reverse=True):
             cluster.sort(key=lambda n: connection_count.get(n, 0), reverse=True)
-            for name in cluster:
+            mid = len(cluster) // 2
+            high, low = cluster[:mid], cluster[mid:]
+            interleaved = [x for pair in zip(high, low) for x in pair]
+            # Append any leftover from the longer half
+            if len(high) > len(low):
+                interleaved.append(high[-1])
+            elif len(low) > len(high):
+                interleaved.append(low[-1])
+            for name in interleaved:
                 if name in entity_map:
                     ordered.append(entity_map[name])
 
-        return ordered
+        return ordered, connection_count
 
 
 # Singleton instance

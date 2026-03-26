@@ -42,10 +42,10 @@ Discovers relationships between entities across your entire collection.
 
 1. All entities in the collection are fetched
 2. Entities are **interleaved by type** (round-robin merge) to ensure cross-type relationship discovery
-3. Entities are grouped into batches of up to 120, with 15% overlap between batches
+3. Entities are grouped into batches of up to 120, with 5% degree-aware overlap between batches (entities in 2+ batches excluded from overlap, low-connection entities preferred)
 4. For each batch, the system:
-   - Fetches **co-mention chunks** — chunks where batch entities appear together (up to 10 chunks, 500 chars each)
-   - Fetches existing relationships involving batch entities (up to 400) to avoid rediscovery
+   - Fetches **co-mention chunks** with greedy entity-coverage-diversity selection (maximizes coverage of different entities rather than always picking hub-dominated chunks)
+   - Fetches existing relationships involving batch entities (capped at 20 per entity, highest weight first) to avoid rediscovery without reinforcing hub patterns
    - Sends entities + source context + existing relationships to the LLM
 5. The LLM returns relationships in XML format:
    ```xml

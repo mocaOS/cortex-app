@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useActionState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useActionState, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { login, LoginResult } from "@/lib/auth";
 import { motion } from "framer-motion";
 import Image from "next/image";
@@ -10,11 +10,19 @@ import { Lock, LogIn, Loader2 } from "lucide-react";
 function LoginForm() {
   const searchParams = useSearchParams();
   const from = searchParams.get("from") || "/";
+  const router = useRouter();
 
   const [state, formAction, isPending] = useActionState<
     LoginResult | null,
     FormData
   >(login, null);
+
+  // Redirect on successful login (client-side to avoid redirect() error in server action)
+  useEffect(() => {
+    if (state?.success) {
+      router.push("/");
+    }
+  }, [state?.success, router]);
 
   // Helper to extract file extension from URL
   const getLogoExtension = (url: string): string => {

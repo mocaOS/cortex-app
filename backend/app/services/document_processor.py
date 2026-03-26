@@ -1444,6 +1444,7 @@ class DocumentProcessor:
         collection_id: Optional[str] = None,
         scope: str = "full",
         progress_callback: Optional[Callable] = None,
+        rebuild: bool = False,
     ) -> dict:
         """Run Phase B relationship analysis for a collection.
 
@@ -1483,11 +1484,16 @@ class DocumentProcessor:
         target_ratio = self.settings.relationship_target_ratio
         max_hours = self.settings.relationship_max_hours
 
-        # Multi-round only for initial analysis (no existing relationships).
-        # Re-analyze (relationships already exist) always does 1 round.
+        # Multi-round for initial analysis or rebuild (fresh start).
+        # Re-analyze (incremental, relationships already exist) always does 1 round.
         existing_rel_count = self.neo4j.get_relationship_count()
-        if existing_rel_count == 0:
+        if existing_rel_count == 0 or rebuild:
             max_rounds = max(1, self.settings.relationship_max_rounds)
+            if rebuild and existing_rel_count > 0:
+                logger.info(
+                    f"Rebuild mode: {existing_rel_count} existing relationships, "
+                    f"running {max_rounds} round(s) as fresh analysis"
+                )
         else:
             max_rounds = 1
             logger.info(
@@ -1510,6 +1516,12 @@ class DocumentProcessor:
         total_stored = 0
         rounds_completed = 0
         analysis_start = time.monotonic()
+        max_per_entity = self.settings.relationship_max_per_entity
+
+        # Cumulative progress tracking across all rounds.
+        cumulative_batches_done = 0
+        cumulative_total_batches = 0
+        batches_per_round = 0  # Set after first round's batching is computed
 
         for round_num in range(1, max_rounds + 1):
             # Check time budget
@@ -1533,31 +1545,57 @@ class DocumentProcessor:
                     )
                     break
 
+            # round_prefix used only in backend logs, not shown in UI progress
             round_prefix = f"[Round {round_num}/{max_rounds}] " if max_rounds > 1 else ""
 
-            # Fetch existing relationships (refreshed each round)
+            # Fetch existing relationships (refreshed each round).
+            # Cap per entity to prevent hub entities from dominating the LLM context.
+            llm_cap = min(20, max_per_entity) if max_per_entity > 0 else 0
             existing_relationships = self.neo4j.get_existing_relationships_for_entities(
-                entity_names
+                entity_names, max_per_entity=llm_cap,
             )
+
+            # Fetch current degree map for per-entity storage cap
+            if max_per_entity > 0:
+                entity_degrees = await asyncio.to_thread(
+                    self.neo4j.get_entity_degree_map, entity_names
+                )
+            else:
+                entity_degrees = {}
 
             if progress_callback:
                 progress_callback(
-                    0, 1,
-                    f"{round_prefix}Analyzing {entity_count} entities..."
+                    cumulative_batches_done, max(1, cumulative_total_batches),
+                    f"Analyzing {entity_count} entities..."
                 )
 
-            # Per-round storage stats
+            # Per-round storage stats (batches_done/total_batches are round-local,
+            # but we accumulate into cumulative counters for progress display)
             storage_stats = {"stored": 0, "discovered": 0, "batches_done": 0, "total_batches": 0}
             _round_start = time.monotonic()
 
             async def store_batch_relationships(batch_rels: list):
                 """Callback to store relationships incrementally as each batch completes."""
                 nonlocal storage_stats, total_stored, total_discovered
+                nonlocal cumulative_batches_done, cumulative_total_batches, batches_per_round
                 storage_stats["discovered"] += len(batch_rels)
                 storage_stats["batches_done"] += 1
+                cumulative_batches_done += 1
                 total_discovered += len(batch_rels)
 
+                # On first batch of first round, learn the per-round batch count
+                # and estimate total across all rounds
+                if batches_per_round == 0 and storage_stats["total_batches"] > 0:
+                    batches_per_round = storage_stats["total_batches"]
+                    cumulative_total_batches = batches_per_round * max_rounds
+
                 for rel in batch_rels:
+                    # Per-entity degree cap: skip if BOTH endpoints are saturated
+                    if max_per_entity > 0:
+                        src_deg = entity_degrees.get(rel.source, 0)
+                        tgt_deg = entity_degrees.get(rel.target, 0)
+                        if src_deg >= max_per_entity and tgt_deg >= max_per_entity:
+                            continue
                     try:
                         if self.neo4j.store_relationship(
                             rel,
@@ -1565,18 +1603,21 @@ class DocumentProcessor:
                         ):
                             storage_stats["stored"] += 1
                             total_stored += 1
+                            # Update local degree tracking
+                            entity_degrees[rel.source] = entity_degrees.get(rel.source, 0) + 1
+                            entity_degrees[rel.target] = entity_degrees.get(rel.target, 0) + 1
                     except Exception as e:
                         logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
 
-                # Update progress with ETA
+                # Update progress with ETA across all rounds
                 if progress_callback:
-                    total_batches = storage_stats["total_batches"]
-                    if total_batches <= 0:
-                        total_batches = max(1, storage_stats["batches_done"] + 1)
+                    display_total = cumulative_total_batches
+                    if display_total <= 0:
+                        display_total = max(1, cumulative_batches_done + 1)
 
-                    elapsed = time.monotonic() - _round_start
-                    avg_per_batch = elapsed / storage_stats["batches_done"]
-                    remaining = total_batches - storage_stats["batches_done"]
+                    elapsed = time.monotonic() - analysis_start
+                    avg_per_batch = elapsed / cumulative_batches_done
+                    remaining = display_total - cumulative_batches_done
                     eta_seconds = int(avg_per_batch * remaining)
 
                     if eta_seconds > 60:
@@ -1587,9 +1628,9 @@ class DocumentProcessor:
                         eta_str = "almost done"
 
                     progress_callback(
-                        storage_stats["batches_done"],
-                        total_batches,
-                        f"{round_prefix}Batch {storage_stats['batches_done']}/{total_batches}, "
+                        cumulative_batches_done,
+                        display_total,
+                        f"Batch {cumulative_batches_done}/{display_total}, "
                         f"{eta_str}"
                     )
 

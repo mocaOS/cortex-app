@@ -1100,19 +1100,74 @@ class Neo4jService:
     def get_existing_relationships_for_entities(
         self,
         entity_names: List[str],
+        max_per_entity: int = 0,
     ) -> List[dict]:
-        """Get all existing relationships between the given entities."""
+        """Get existing relationships between the given entities.
+
+        Args:
+            entity_names: Entity names to query.
+            max_per_entity: If > 0, return at most this many relationships per
+                source entity (highest-weight first). 0 = no cap.
+        """
         if not entity_names:
             return []
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (s:Entity)-[r]->(t:Entity)
-                WHERE s.name IN $names AND t.name IN $names
-                RETURN s.name as source, t.name as target,
-                       coalesce(r.type, type(r)) as type,
-                       r.description as description, r.weight as weight
-            """, names=entity_names)
-            return [dict(record) for record in result]
+            if max_per_entity > 0:
+                # Cap per source entity to prevent hub entities from dominating
+                result = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE s.name IN $names AND t.name IN $names
+                    WITH s.name as source, t.name as target,
+                         coalesce(r.type, type(r)) as type,
+                         r.description as description,
+                         coalesce(r.weight, 5.0) as weight
+                    ORDER BY source, weight DESC
+                    WITH source, collect({
+                        target: target, type: type,
+                        description: description, weight: weight
+                    }) as rels
+                    WITH source, rels[0..$max_per] as capped_rels
+                    UNWIND capped_rels as rel
+                    RETURN source, rel.target as target, rel.type as type,
+                           rel.description as description, rel.weight as weight
+                """, names=entity_names, max_per=max_per_entity)
+                # Deduplicate: a relationship A->B may appear via source=A and source=B
+                seen = set()
+                relationships = []
+                for record in result:
+                    key = (record["source"], record["target"], record["type"])
+                    if key not in seen:
+                        seen.add(key)
+                        relationships.append(dict(record))
+                return relationships
+            else:
+                result = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE s.name IN $names AND t.name IN $names
+                    RETURN s.name as source, t.name as target,
+                           coalesce(r.type, type(r)) as type,
+                           r.description as description, r.weight as weight
+                """, names=entity_names)
+                return [dict(record) for record in result]
+
+    def get_entity_degree_map(self, entity_names: List[str]) -> dict:
+        """Return {entity_name: relationship_count} for given entities."""
+        if not entity_names:
+            return {}
+        degree_map: dict[str, int] = {}
+        batch_size = 500
+        for i in range(0, len(entity_names), batch_size):
+            batch = entity_names[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names
+                    OPTIONAL MATCH (e)-[r]-(:Entity)
+                    RETURN e.name as name, count(r) as degree
+                """, names=batch)
+                for record in result:
+                    degree_map[record["name"]] = record["degree"]
+        return degree_map
 
     def get_entities_without_relationships(self, limit: int = 500) -> List[dict]:
         """Get entities that have no relationships (prime targets for Phase B analysis)."""
@@ -1599,28 +1654,60 @@ class Neo4jService:
         content_limit = max_content_length if token_budget <= 0 else 2000
 
         with self.driver.session() as session:
+            # Fetch chunks with the entities they mention (from our batch).
+            # We collect entity names per chunk so we can diversify selection
+            # instead of always picking chunks dominated by hub entities.
             result = session.run("""
                 MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
                 WHERE e.name IN $entity_names
-                WITH c, count(DISTINCT e) as mention_count
+                WITH c, collect(DISTINCT e.name) as mentioned_entities, count(DISTINCT e) as mention_count
                 ORDER BY mention_count DESC
                 LIMIT $max_chunks
-                RETURN c.content as content, mention_count
+                RETURN c.content as content, mention_count, mentioned_entities
             """, entity_names=entity_names, max_chunks=fetch_limit)
 
-            chunks = []
-            total_chars = 0
-            # Conservative: 1 token ≈ 3 chars (avoids overshooting context window)
-            char_budget = token_budget * 3 if token_budget > 0 else 0
-
+            # Collect all candidate chunks
+            candidate_chunks = []
             for record in result:
                 content = (record["content"] or "")[:content_limit]
-                if not content:
-                    continue
+                if content:
+                    candidate_chunks.append({
+                        "content": content,
+                        "mention_count": record["mention_count"],
+                        "mentioned_entities": set(record["mentioned_entities"]),
+                    })
 
+            # Greedy selection: pick chunks that maximize entity coverage diversity.
+            # At each step, pick the chunk covering the most uncovered entities.
+            # This prevents hub-entity chunks from monopolizing the context.
+            chunks = []
+            total_chars = 0
+            char_budget = token_budget * 3 if token_budget > 0 else 0
+            covered_entities: set = set()
+            used_indices: set = set()
+
+            while len(used_indices) < len(candidate_chunks):
+                best_idx = -1
+                best_new_coverage = -1
+                best_mention_count = -1
+
+                for i, c in enumerate(candidate_chunks):
+                    if i in used_indices:
+                        continue
+                    new_coverage = len(c["mentioned_entities"] - covered_entities)
+                    # Prefer chunks covering new entities; break ties by mention_count
+                    if (new_coverage > best_new_coverage or
+                        (new_coverage == best_new_coverage and c["mention_count"] > best_mention_count)):
+                        best_idx = i
+                        best_new_coverage = new_coverage
+                        best_mention_count = c["mention_count"]
+
+                if best_idx < 0:
+                    break
+
+                content = candidate_chunks[best_idx]["content"]
                 if char_budget > 0:
                     if total_chars + len(content) > char_budget:
-                        # Include partial if we have room for at least 200 chars
                         remaining = char_budget - total_chars
                         if remaining >= 200:
                             chunks.append(content[:remaining])
@@ -1628,6 +1715,8 @@ class Neo4jService:
                     total_chars += len(content)
 
                 chunks.append(content)
+                used_indices.add(best_idx)
+                covered_entities.update(candidate_chunks[best_idx]["mentioned_entities"])
 
             return "\n---\n".join(chunks) if chunks else ""
 
@@ -1790,6 +1879,8 @@ class Neo4jService:
                     MATCH (e:Entity)
                     OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
                     WITH e, count(c) as mention_count
+                    OPTIONAL MATCH (e)-[r]-(:Entity)
+                    WITH e, mention_count, count(r) as degree
                     RETURN e.name as id,
                            e.name as label,
                            e.type as type,
@@ -1799,17 +1890,25 @@ class Neo4jService:
                     ORDER BY mention_count DESC
                 """)
             else:
+                # Diversity score: penalize high-degree hubs so the default
+                # view shows a diverse set of entities, not just the most connected ones.
                 result = session.run("""
                     MATCH (e:Entity)
                     OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
                     WITH e, count(c) as mention_count
+                    OPTIONAL MATCH (e)-[r]-(:Entity)
+                    WITH e, mention_count, count(r) as degree
+                    WITH e, mention_count, degree,
+                         CASE WHEN degree = 0 THEN mention_count * 1.0
+                              ELSE mention_count * 1.0 / (1.0 + log(1.0 + toFloat(degree)))
+                         END as diversity_score
                     RETURN e.name as id,
                            e.name as label,
                            e.type as type,
                            e.description as description,
                            e.community_id as community_id,
                            mention_count
-                    ORDER BY mention_count DESC
+                    ORDER BY diversity_score DESC
                     LIMIT $limit
                 """, limit=limit)
             

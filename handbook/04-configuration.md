@@ -39,9 +39,9 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RELATIONSHIP_MAX_CONTEXT` | `65536` | Max input context window tokens for relationship analysis batching. Must match the primary model's context window. |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `8000` | Max output tokens for relationship analysis LLM responses. |
-| `RELATIONSHIP_ANALYSIS_BATCH_SIZE` | `100` | Max entities per relationship analysis LLM call (hard cap: 120). |
-| `PARALLEL_RELATIONSHIP_BATCHES` | `2` | Number of relationship batches to process in parallel. Set to `1` for sequential processing. **Most impactful lever for relationship analysis speed.** |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `16000` | Max output tokens for relationship analysis LLM responses. |
+| `RELATIONSHIP_MAX_PER_ENTITY` | `50` | Soft cap on relationships per entity. Prevents hub entities from accumulating disproportionate connections. 0 = no cap. |
+| `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | `false` | Automatically run relationship analysis after batch document processing completes. |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | `false` | Automatically run community detection after relationship analysis completes. |
 

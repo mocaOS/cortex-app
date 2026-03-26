@@ -150,7 +150,7 @@ Manually add knowledge without file uploads:
 An interactive force-directed 2D graph visualization using react-force-graph-2d:
 
 **Display:**
-- Default 100 nodes, sorted by mention count
+- Default 100 nodes, selected by diversity score (balances mention count against connection degree to prevent hub entities from dominating the view)
 - Nodes colored by entity type (Person: orange, Organization: cyan, Concept: pink, etc.)
 - Node size based on `log(mention_count)` for visual scaling
 - Relationships shown as labeled edges

@@ -2533,6 +2533,7 @@ async def _run_relationship_analysis_task(
             collection_id=collection_id,
             scope=scope,
             progress_callback=progress_cb,
+            rebuild=rebuild,
         )
 
         # Persist the analysis timestamp

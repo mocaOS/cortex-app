@@ -27,11 +27,13 @@ MOCA uses a two-phase approach for building the knowledge graph:
 1. **Candidate scanning** — The extraction model scans entity pairs with their co-occurring chunk context and proposes candidate relationships.
 2. **Structured confirmation** — The extraction model confirms candidates with structured XML output, grounding each relationship in source text.
 
-Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, ensuring the LLM sees the most relevant entity pairs. Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget).
+Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
 
-Supports **multi-round discovery**: each batch runs multiple rounds (default 3 for initial analysis, 1 for re-analyze) to progressively find relationships, guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
+Supports **multi-round discovery**: initial analysis runs multiple rounds (default 3, configurable via `RELATIONSHIP_MAX_ROUNDS`), re-analyze always does 1 round. Progress is tracked cumulatively across all rounds (e.g., "Batch 400/861" for 3 rounds of 287 batches). Guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
 
-Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
+**Anti-hub protections**: A per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`, default 50) prevents any single entity from accumulating disproportionate connections — relationships are skipped when both endpoints exceed the cap. Existing relationships shown to the LLM between rounds are capped at 20 per entity (highest weight first) to prevent hub reinforcement. Prompts emphasize direct, evidence-based relationships and explicitly discourage star patterns through common intermediary entities.
+
+Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh, runs multi-round). Relationship types are constrained to 15 standard types via fuzzy matching. A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -398,6 +400,7 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 # RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
 # RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
 # RELATIONSHIP_MAX_HOURS=0              # Max hours for relationship analysis (0 = no limit)
+# RELATIONSHIP_MAX_PER_ENTITY=50        # Soft cap on relationships per entity (0 = no cap)
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
 # AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
 ```

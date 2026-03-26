@@ -297,6 +297,8 @@ interface ForceGraphMethods {
   zoomToFit: (duration?: number, padding?: number) => void;
   screen2GraphCoords: (x: number, y: number) => { x: number; y: number };
   d3ReheatSimulation: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  d3Force: (forceName: string, force?: any) => any;
 }
 
 const CLICK_THRESHOLD = 5; // px — distinguishes click from drag
@@ -429,6 +431,27 @@ export default function KnowledgeGraph({
   const loadedNodeLabels = useMemo(() => {
     return new Set(graphData.nodes.map((n) => n.label.toLowerCase()));
   }, [graphData.nodes]);
+
+  // Configure d3 forces for better spacing — default charge is too weak,
+  // causing nodes to clump into an unreadable mass
+  const forcesConfigured = useRef(false);
+  const configureForces = useCallback((fg: ForceGraphMethods | null) => {
+    if (!fg) return;
+    const nodeCount = graphData.nodes.length;
+    const chargeStrength = nodeCount > 50 ? -300 : -200;
+    fg.d3Force("charge")?.strength(chargeStrength).distanceMax(500);
+    fg.d3Force("link")?.distance(120);
+    fg.d3Force("center")?.strength(0.05);
+    fg.d3ReheatSimulation();
+  }, [graphData.nodes.length]);
+
+  useEffect(() => {
+    forcesConfigured.current = false;
+    if (fgRef.current) {
+      forcesConfigured.current = true;
+      configureForces(fgRef.current);
+    }
+  }, [configureForces]);
 
   // Handle container resize
   useEffect(() => {
@@ -925,7 +948,14 @@ export default function KnowledgeGraph({
       className={cn("relative w-full h-full bg-[#0a0a0f] rounded-b-xl overflow-hidden", className)}
     >
       <ForceGraph2D
-        ref={(el: unknown) => { fgRef.current = el as ForceGraphMethods | null; }}
+        ref={(el: unknown) => {
+          const instance = el as ForceGraphMethods | null;
+          fgRef.current = instance;
+          if (instance && !forcesConfigured.current) {
+            forcesConfigured.current = true;
+            configureForces(instance);
+          }
+        }}
         graphData={graphData}
         width={dimensions.width}
         height={dimensions.height}

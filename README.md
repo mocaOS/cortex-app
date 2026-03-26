@@ -60,7 +60,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Levenshtein fuzzy deduplication (85% threshold) during entity extraction with alias tracking
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz), with LLM-generated combined descriptions, review-and-merge UI, inline entity search to manually add entities to merge groups, and full merge history with audit trail
-- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target Entity-Relationship Ratio (ERR) is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
+- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. Re-analyze always does 1 round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (from scratch) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page with color-coded health indicator
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection

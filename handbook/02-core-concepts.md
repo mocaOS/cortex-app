@@ -190,7 +190,7 @@ Each relationship includes:
 For large knowledge bases, relationship analysis processes entities in batches:
 
 - **120 entities per batch** (hard cap)
-- **15% overlap** between batches to catch cross-batch relationships
+- **5% degree-aware overlap** between batches to catch cross-batch relationships (hub entities excluded from overlap after 2+ appearances)
 - **Sequential or parallel** execution (configurable via `PARALLEL_RELATIONSHIP_BATCHES`)
 - **Source text context**: For each batch, the system fetches co-mention chunks (chunks where batch entities appear together) and provides them to the LLM alongside the entity list
 - **Existing relationship filtering**: Up to 400 existing relationships per batch are provided to avoid rediscovery

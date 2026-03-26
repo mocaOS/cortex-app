@@ -51,8 +51,10 @@ export async function login(
   // Create session
   await createSession(email);
 
-  // Redirect to home page
-  redirect("/");
+  // Return success — client handles redirect to avoid
+  // redirect() throwing inside useActionState which causes
+  // "Application error: a client-side exception has occurred"
+  return { success: true };
 }
 
 /**

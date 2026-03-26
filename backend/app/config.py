@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     relationship_max_hours: float = Field(
         default=0
     )  # Max hours for relationship generation (0 = no time limit, completes all rounds)
+    relationship_max_per_entity: int = Field(
+        default=50
+    )  # Soft cap on relationships per entity during analysis. 0 = no cap.
 
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking

@@ -82,7 +82,7 @@ ss -tlnp | grep 3000
 **Checklist:**
 - [ ] Entities exist (run Step 1 first)
 - [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window
-- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient (default: 8000)
+- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient (default: 16000)
 - [ ] LLM API key has sufficient credits/quota
 - [ ] Check task status for error messages: `GET /api/tasks/{task_id}`
 

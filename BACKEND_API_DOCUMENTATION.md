@@ -1161,6 +1161,7 @@ curl -H "X-API-Key: moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `RELATIONSHIP_TARGET_RATIO`: Target entity-to-relationship ratio (default: `1.0`)
 - `RELATIONSHIP_MAX_ROUNDS`: Maximum analysis rounds (default: `3`)
 - `RELATIONSHIP_MAX_HOURS`: Maximum hours for relationship analysis (default: not set)
+- `RELATIONSHIP_MAX_PER_ENTITY`: Soft cap on relationships per entity (default: `50`, 0 = no cap)
 - `RELATIONSHIP_MAX_OUTPUT_TOKENS`: Max output tokens per relationship batch (default: `16000`)
 
 #### Community Detection & Graph Summarization

@@ -293,7 +293,7 @@ These must match the actual context window of their respective models:
 ```env
 EXTRACTION_MAX_CONTEXT=256000          # Must match GRAPH_EXTRACTION_MODEL context window
 RELATIONSHIP_MAX_CONTEXT=198000        # Must match OPENAI_MODEL context window
-RELATIONSHIP_MAX_OUTPUT_TOKENS=8000    # Max output tokens for relationship analysis
+RELATIONSHIP_MAX_OUTPUT_TOKENS=16000   # Max output tokens for relationship analysis
 ```
 
 Setting these values higher than the model's actual context window will cause errors. Setting them lower wastes capacity.
