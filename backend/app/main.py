@@ -490,6 +490,8 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
             last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
             last_community_detection_at=stats.get("last_community_detection_at"),
             last_entity_merge_at=stats.get("last_entity_merge_at"),
+            entity_relationship_ratio=stats.get("entity_relationship_ratio", 0.0),
+            relationship_target_ratio=stats.get("relationship_target_ratio", 3.0),
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -3300,6 +3302,9 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         extraction_max_context=settings.extraction_max_context,
         relationship_max_context=settings.relationship_max_context,
         parallel_relationship_batches=settings.parallel_relationship_batches,
+        relationship_target_ratio=settings.relationship_target_ratio,
+        relationship_max_rounds=settings.relationship_max_rounds,
+        relationship_max_hours=settings.relationship_max_hours,
 
         # Vision Model
         vision_model_available=settings.vision_model_available,

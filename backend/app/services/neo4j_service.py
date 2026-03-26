@@ -1063,23 +1063,29 @@ class Neo4jService:
     def get_all_entities_for_collection(
         self,
         collection_id: Optional[str] = None,
-        limit: int = 5000,
+        limit: int = 0,
     ) -> List[dict]:
-        """Get all entities in a collection (or globally if collection_id is None)."""
+        """Get all entities in a collection (or globally if collection_id is None).
+
+        Args:
+            collection_id: Scope to a specific collection (None = global)
+            limit: Max entities to return (0 = no limit, returns all)
+        """
         with self.driver.session() as session:
+            limit_clause = f"LIMIT {limit}" if limit > 0 else ""
             if collection_id:
-                result = session.run("""
-                    MATCH (col:Collection {id: $col_id})-[:CONTAINS]->(d:Document)
+                result = session.run(f"""
+                    MATCH (col:Collection {{id: $col_id}})-[:CONTAINS]->(d:Document)
                           -[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                     RETURN DISTINCT e.name as name, e.type as type,
                            e.description as description,
                            e.community_id as community_id,
                            count(DISTINCT d) as document_count
                     ORDER BY document_count DESC
-                    LIMIT $limit
-                """, col_id=collection_id, limit=limit)
+                    {limit_clause}
+                """, col_id=collection_id)
             else:
-                result = session.run("""
+                result = session.run(f"""
                     MATCH (e:Entity)
                     OPTIONAL MATCH (e)<-[:MENTIONS]-(c:Chunk)<-[:HAS_CHUNK]-(d:Document)
                     RETURN DISTINCT e.name as name, e.type as type,
@@ -1087,16 +1093,15 @@ class Neo4jService:
                            e.community_id as community_id,
                            count(DISTINCT d) as document_count
                     ORDER BY document_count DESC
-                    LIMIT $limit
-                """, limit=limit)
+                    {limit_clause}
+                """)
             return [dict(record) for record in result]
 
     def get_existing_relationships_for_entities(
         self,
         entity_names: List[str],
-        limit: int = 500,
     ) -> List[dict]:
-        """Get existing relationships between the given entities."""
+        """Get all existing relationships between the given entities."""
         if not entity_names:
             return []
         with self.driver.session() as session:
@@ -1106,8 +1111,7 @@ class Neo4jService:
                 RETURN s.name as source, t.name as target,
                        coalesce(r.type, type(r)) as type,
                        r.description as description, r.weight as weight
-                LIMIT $limit
-            """, names=entity_names, limit=limit)
+            """, names=entity_names)
             return [dict(record) for record in result]
 
     def get_entities_without_relationships(self, limit: int = 500) -> List[dict]:
@@ -1572,15 +1576,28 @@ class Neo4jService:
         entity_names: List[str],
         max_chunks: int = 10,
         max_content_length: int = 500,
+        token_budget: int = 0,
     ) -> str:
         """Retrieve the most relevant chunk text for a set of entities.
 
         Prioritizes chunks that mention the most entities in the batch
         (co-mention chunks), as these are most likely to contain
         relationship-relevant context.
+
+        Args:
+            entity_names: Entity names to find context for
+            max_chunks: Max number of chunks to return (used when token_budget=0)
+            max_content_length: Max chars per chunk (used when token_budget=0)
+            token_budget: If > 0, dynamically fill chunks up to this token count,
+                          overriding max_chunks and max_content_length.
         """
         if not entity_names:
             return ""
+
+        # When token budget is provided, fetch more chunks and fill to budget
+        fetch_limit = max_chunks if token_budget <= 0 else min(200, max(50, token_budget // 20))
+        content_limit = max_content_length if token_budget <= 0 else 2000
+
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
@@ -1589,15 +1606,70 @@ class Neo4jService:
                 ORDER BY mention_count DESC
                 LIMIT $max_chunks
                 RETURN c.content as content, mention_count
-            """, entity_names=entity_names, max_chunks=max_chunks)
+            """, entity_names=entity_names, max_chunks=fetch_limit)
 
             chunks = []
+            total_chars = 0
+            # Conservative: 1 token ≈ 3 chars (avoids overshooting context window)
+            char_budget = token_budget * 3 if token_budget > 0 else 0
+
             for record in result:
-                content = (record["content"] or "")[:max_content_length]
-                if content:
-                    chunks.append(content)
+                content = (record["content"] or "")[:content_limit]
+                if not content:
+                    continue
+
+                if char_budget > 0:
+                    if total_chars + len(content) > char_budget:
+                        # Include partial if we have room for at least 200 chars
+                        remaining = char_budget - total_chars
+                        if remaining >= 200:
+                            chunks.append(content[:remaining])
+                        break
+                    total_chars += len(content)
+
+                chunks.append(content)
 
             return "\n---\n".join(chunks) if chunks else ""
+
+    def get_entity_co_occurrence(
+        self,
+        entity_names: List[str],
+    ) -> dict:
+        """Get chunk co-occurrence map for entities.
+
+        Returns a dict mapping entity name -> set of chunk IDs where it appears.
+        Used for co-occurrence-based batching in relationship analysis.
+        """
+        if not entity_names:
+            return {}
+
+        co_occurrence: dict[str, set] = {}
+        # Process in batches to avoid huge Cypher parameter lists
+        batch_size = 500
+        for i in range(0, len(entity_names), batch_size):
+            batch = entity_names[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+                    WHERE e.name IN $names
+                    RETURN e.name as name, collect(DISTINCT c.id) as chunk_ids
+                """, names=batch)
+                for record in result:
+                    name = record["name"]
+                    chunk_ids = record["chunk_ids"] or []
+                    co_occurrence[name] = set(chunk_ids)
+
+        return co_occurrence
+
+    def get_relationship_count(self) -> int:
+        """Get total count of Entity-Entity relationships."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                RETURN count(r) as cnt
+            """)
+            record = result.single()
+            return record["cnt"] if record else 0
 
     def store_entity_with_resolution(
         self,
@@ -3506,6 +3578,10 @@ class Neo4jService:
                 "last_relationship_analysis_at": self._get_or_seed_analysis_timestamp(record["relationship_count"]),
                 "last_community_detection_at": self._get_or_seed_detection_timestamp(record["community_count"]),
                 "last_entity_merge_at": self._get_meta("last_entity_merge_at"),
+                "entity_relationship_ratio": round(
+                    record["relationship_count"] / entity_count, 2
+                ) if entity_count > 0 else 0.0,
+                "relationship_target_ratio": get_settings().relationship_target_ratio,
             }
 
     def _get_or_seed_analysis_timestamp(self, relationship_count: int) -> str | None:

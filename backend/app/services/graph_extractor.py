@@ -249,6 +249,36 @@ Example Output:
 Now extract relationships. Find every meaningful connection possible:"""
 
 
+# =============================================================================
+# Phase 1: Candidate Pair Scanning (fast, uses extraction model)
+# =============================================================================
+
+CANDIDATE_SCAN_SYSTEM_PROMPT = """You are a knowledge graph analyst. Your task is to scan a list of entities and identify ALL pairs that likely share a meaningful relationship.
+
+# Rules
+- ONLY use entity names from the provided list — do not invent entities.
+- Use entity descriptions AND the provided source text context to judge relatedness.
+- Be aggressive — if two entities could plausibly be connected, include them.
+- Do NOT output relationship types, descriptions, or weights — just the pairs.
+- Each entity should appear in at least 1-2 pairs when possible.
+
+Output ONLY pairs, one per line in this exact format:
+EntityA | EntityB
+
+No explanations, no numbering, no other text."""
+
+CANDIDATE_SCAN_USER_PROMPT = """Identify all entity pairs that likely have a meaningful relationship.
+
+{context_section}
+
+=== Entities ===
+{entity_list}
+
+{existing_section}
+
+Output ALL likely related pairs (one per line, format: EntityA | EntityB):"""
+
+
 class GraphExtractor:
     """Extract entities and relationships from text using LLM prompts."""
     
@@ -522,7 +552,47 @@ class GraphExtractor:
                         "description": description,
                         "weight": min(10.0, max(0.0, weight_val))
                     })
-        
+
+        # Fallback: parse plaintext arrow format if no XML relationships found
+        # Handles: EntityA --[TYPE]--> EntityB - Description
+        # and:     **EntityA --[TYPE]--> EntityB** - Description
+        if not relationships and content:
+            arrow_pattern = r'\*{0,2}(.+?)\s*--\[([A-Z_]+)\]-->\s*(.+?)\*{0,2}\s*(?:[-–—]\s*(.+))?$'
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line or "--[" not in line:
+                    continue
+                # Strip leading numbering
+                line = re.sub(r"^[\d]+[\.\)]\s*", "", line)
+                line = re.sub(r"^[-*]\s*", "", line)
+
+                m = re.match(arrow_pattern, line)
+                if not m:
+                    continue
+                source = m.group(1).strip().strip("*")
+                rtype = m.group(2).strip().upper().replace(" ", "_")
+                target = m.group(3).strip().strip("*")
+                description = (m.group(4) or "").strip()
+
+                if rtype not in DEFAULT_RELATION_TYPES:
+                    from rapidfuzz import process as fuzz_process
+                    closest, score, _ = fuzz_process.extractOne(rtype, DEFAULT_RELATION_TYPES)
+                    rtype = closest if score >= 80 else "RELATED_TO"
+
+                key = (source.lower(), target.lower(), rtype)
+                if key not in existing and source and target:
+                    existing.add(key)
+                    relationships.append({
+                        "source": source,
+                        "target": target,
+                        "relationship_type": rtype,
+                        "description": description,
+                        "weight": 5.0,
+                    })
+
+            if relationships:
+                logger.info(f"Plaintext fallback parsed {len(relationships)} relationships (no XML found)")
+
         return relationships
     
     def _extract_xml_entity_names(self, content: str) -> List[str]:
@@ -1665,31 +1735,38 @@ Respond with ONLY the community name, nothing else."""
         desc = (entity.get("description") or "")[:max_desc_len]
         return f"- {name} ({etype}): {desc}"
 
-    async def analyze_relationships_async(
+    async def scan_candidate_pairs_async(
         self,
         entities: List[dict],
         context: str = "",
         existing_relationships: List[dict] = None,
-        max_output_tokens: int = 8000,
-    ) -> List[Relationship]:
-        """Analyze entities and discover relationships using the main (large) model.
+        max_output_tokens: int = 4000,
+    ) -> List[tuple]:
+        """Phase 1: Fast candidate pair scanning using the extraction model.
+
+        Scans all entities and identifies pairs that likely have a relationship.
+        Outputs only (source, target) tuples — no types, descriptions, or weights.
 
         Args:
             entities: List of {name, type, description} dicts
-            context: Optional collection/document summary context
-            existing_relationships: Optional list of already-known relationships to avoid duplicates
-            max_output_tokens: Max output tokens for the LLM response
+            context: Source text context for the batch
+            existing_relationships: Already-known relationships to exclude
+            max_output_tokens: Max output tokens for the response
 
         Returns:
-            List of discovered Relationship objects
+            List of (source_name, target_name) candidate pairs
         """
-        if not self.async_client:
-            logger.warning("No async client available for relationship analysis")
+        # Use extraction model (fast, cheap, larger context)
+        if self.async_extraction_client:
+            client = self.async_extraction_client
+            model = self.extraction_model_name
+        elif self.async_client:
+            client = self.async_client
+            model = self.current_model
+        else:
+            logger.warning("No async client available for candidate scanning")
             return []
 
-        r_types = self.relation_types
-
-        # Format entity list with truncated descriptions
         entity_list = "\n".join([
             self._format_entity_for_prompt(e) for e in entities
         ])
@@ -1697,7 +1774,153 @@ Respond with ONLY the community name, nothing else."""
         # Build context section
         context_section = ""
         if context:
-            context_section = f"Context:\n{context}\n"
+            context_section = f"=== Source Text Context ===\n{context}\n"
+
+        # Build existing relationships section
+        existing_section = ""
+        if existing_relationships:
+            existing_text = "\n".join([
+                f"- {r.get('source', '')} | {r.get('target', '')}"
+                for r in existing_relationships[:400]
+            ])
+            existing_section = (
+                f"The following pairs are ALREADY connected — "
+                f"find NEW pairs not listed here:\n{existing_text}"
+            )
+
+        user_prompt = CANDIDATE_SCAN_USER_PROMPT.format(
+            context_section=context_section,
+            entity_list=entity_list,
+            existing_section=existing_section,
+        )
+
+        entity_name_set = {e.get("name", "").lower(): e.get("name", "") for e in entities}
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": CANDIDATE_SCAN_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=max_output_tokens,
+            )
+
+            content = self._extract_response_content(response)
+            if not content:
+                logger.warning("Candidate scan: LLM returned empty content")
+                return []
+
+            # Parse "EntityA | EntityB" lines
+            pairs = []
+            seen_pairs = set()
+            for line in content.strip().split("\n"):
+                line = line.strip()
+                if not line or "|" not in line:
+                    continue
+                # Remove leading numbering like "1. " or "- "
+                line = re.sub(r"^[\d]+[\.\)]\s*", "", line)
+                line = re.sub(r"^[-*]\s*", "", line)
+
+                parts = line.split("|", 1)
+                if len(parts) != 2:
+                    continue
+
+                source = parts[0].strip()
+                target = parts[1].strip()
+
+                # Validate both entities exist (case-insensitive)
+                source_canonical = entity_name_set.get(source.lower())
+                target_canonical = entity_name_set.get(target.lower())
+
+                if source_canonical and target_canonical and source_canonical != target_canonical:
+                    pair_key = tuple(sorted([source.lower(), target.lower()]))
+                    if pair_key not in seen_pairs:
+                        seen_pairs.add(pair_key)
+                        pairs.append((source_canonical, target_canonical))
+
+            logger.info(
+                f"Candidate scan: {len(pairs)} candidate pairs from "
+                f"{len(entities)} entities (model={model})"
+            )
+            return pairs
+
+        except Exception as e:
+            logger.error(f"Error during candidate pair scanning: {e}")
+            return []
+
+    async def analyze_relationships_async(
+        self,
+        entities: List[dict],
+        context: str = "",
+        existing_relationships: List[dict] = None,
+        max_output_tokens: int = 8000,
+        candidate_pairs: List[tuple] = None,
+    ) -> List[Relationship]:
+        """Phase 2: Structured relationship extraction using the extraction model.
+
+        Uses the extraction (instruction-following) model for reliable XML output.
+        When candidate_pairs is provided (two-phase mode), only analyzes
+        the candidate entity pairs — producing a focused, smaller prompt.
+
+        Args:
+            entities: Full batch of {name, type, description} dicts
+            context: Source text context for the batch
+            existing_relationships: Already-known relationships to avoid
+            max_output_tokens: Max output tokens for the LLM response
+            candidate_pairs: If provided, only analyze these (source, target) pairs.
+                             Entities not in any pair are excluded from the prompt.
+
+        Returns:
+            List of discovered Relationship objects
+        """
+        # Use extraction model — it's instruction-following and produces clean XML
+        # Main model tends to over-reason and output plaintext instead of XML
+        if self.async_extraction_client:
+            client = self.async_extraction_client
+            model = self.extraction_model_name
+        elif self.async_client:
+            client = self.async_client
+            model = self.current_model
+        else:
+            logger.warning("No async client available for relationship analysis")
+            return []
+
+        r_types = self.relation_types
+
+        # When candidate pairs provided, only include entities that appear in pairs
+        if candidate_pairs:
+            candidate_names = set()
+            for src, tgt in candidate_pairs:
+                candidate_names.add(src.lower())
+                candidate_names.add(tgt.lower())
+            focused_entities = [
+                e for e in entities
+                if e.get("name", "").lower() in candidate_names
+            ]
+            # Also include a hint about which pairs to analyze
+            pairs_hint = "\n".join([
+                f"- {src} <-> {tgt}" for src, tgt in candidate_pairs
+            ])
+        else:
+            focused_entities = entities
+            pairs_hint = None
+
+        # Format entity list with truncated descriptions
+        entity_list = "\n".join([
+            self._format_entity_for_prompt(e) for e in focused_entities
+        ])
+
+        # Build context section
+        context_section = ""
+        if context:
+            context_section = f"=== Source Text Context ===\n{context}\n"
+        if pairs_hint:
+            context_section += (
+                f"\n=== Candidate Pairs to Analyze ===\n"
+                f"Focus on confirming and classifying these specific entity pairs:\n{pairs_hint}\n"
+            )
         if existing_relationships:
             existing_text = "\n".join([
                 f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
@@ -1714,11 +1937,11 @@ Respond with ONLY the community name, nothing else."""
             entity_list=entity_list,
         )
 
-        entity_name_set = {e.get("name", "").lower() for e in entities}
+        entity_name_set = {e.get("name", "").lower() for e in focused_entities}
 
         try:
-            response = await self.async_client.chat.completions.create(
-                model=self.current_model,
+            response = await client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -1778,25 +2001,34 @@ Respond with ONLY the community name, nothing else."""
         max_output_tokens: int = 8000,
         existing_relationships: List[dict] = None,
         on_batch_complete: Optional[Callable[[List[Relationship]], Awaitable[None]]] = None,
-        get_batch_context: Optional[Callable[[List[dict]], Awaitable[str]]] = None,
+        get_batch_context: Optional[Callable[[List[dict], int], Awaitable[str]]] = None,
         progress_stats: Optional[dict] = None,
         parallel_batches: int = 1,
+        entity_co_occurrence: Optional[dict] = None,
+        extraction_max_context: int = 0,
     ) -> List[Relationship]:
-        """Analyze relationships in batches using token-based context window management.
+        """Two-phase relationship analysis in batches.
 
-        Splits entities into batches based on token count (like entity extraction),
-        with 10% entity overlap between batches for relationship continuity.
+        Phase 1 (Extraction Model): Scans entities to find candidate pairs.
+        Phase 2 (Main Model): Deep analysis of candidate pairs to confirm
+        relationships and assign types, descriptions, weights.
+
+        Batching uses the extraction model's context window (larger) for Phase 1,
+        and the main model's context window for Phase 2.
 
         Args:
             all_entities: List of {name, type, description} dicts
             context: Optional collection/document summary context
-            max_context_tokens: Max INPUT context window tokens for batching
-            max_output_tokens: Max OUTPUT tokens for LLM responses
-            existing_relationships: Optional list of already-known relationships
-            on_batch_complete: Optional callback(batch_relationships) called after each batch
-                               for incremental storage. Receives list of Relationship objects.
-            get_batch_context: Optional async callback(entity_batch) -> str that fetches
-                               relevant source text for the current entity batch.
+            max_context_tokens: Max INPUT context tokens for Phase 2 (main model)
+            max_output_tokens: Max OUTPUT tokens for Phase 2 LLM responses
+            existing_relationships: Already-known relationships
+            on_batch_complete: Callback(batch_relationships) after each batch
+            get_batch_context: Async callback(entity_batch, token_budget) -> str
+            progress_stats: Dict for progress tracking
+            parallel_batches: Number of batches to process in parallel
+            entity_co_occurrence: Entity name -> chunk IDs for co-occurrence batching
+            extraction_max_context: Max context tokens for Phase 1 (extraction model).
+                                    If 0, uses max_context_tokens as fallback.
 
         Returns:
             Deduplicated list of all discovered Relationship objects
@@ -1804,11 +2036,14 @@ Respond with ONLY the community name, nothing else."""
         if not all_entities:
             return []
 
-        # Token estimation (same approach as entity extraction)
-        model = self.current_model
+        # Phase 1 uses extraction model context (typically larger)
+        # Phase 2 uses main model context
+        phase1_context_budget = extraction_max_context if extraction_max_context > 0 else max_context_tokens
+
+        # Token estimation (use fallback estimator — works across models)
         try:
             import tiktoken
-            enc = tiktoken.encoding_for_model(model)
+            enc = tiktoken.encoding_for_model(self.current_model)
             def count_tokens(text: str) -> int:
                 return len(enc.encode(text))
         except Exception:
@@ -1817,47 +2052,57 @@ Respond with ONLY the community name, nothing else."""
 
         r_types = self.relation_types
 
-        # Calculate prompt overhead
-        system_tokens = count_tokens(RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT)
-        template_tokens = count_tokens(RELATIONSHIP_ANALYSIS_USER_PROMPT.format(
-            relation_types=", ".join(r_types),
-            context_section=context or "",
-            entity_list="",
+        # Calculate prompt overhead for Phase 1 (candidate scan)
+        p1_system_tokens = count_tokens(CANDIDATE_SCAN_SYSTEM_PROMPT)
+        p1_template_tokens = count_tokens(CANDIDATE_SCAN_USER_PROMPT.format(
+            context_section="", entity_list="", existing_section="",
         ))
-        # Account for existing relationships context (up to 400 per batch)
         existing_context_tokens = 0
         if existing_relationships:
             existing_text = "\n".join([
-                f"- {r.get('source', '')} --[{r.get('type', '')}]--> {r.get('target', '')}"
+                f"- {r.get('source', '')} | {r.get('target', '')}"
                 for r in existing_relationships[:400]
             ])
-            existing_context_tokens = count_tokens(existing_text) + 100  # Extra for header text
+            existing_context_tokens = count_tokens(existing_text) + 100
 
-        prompt_overhead = system_tokens + template_tokens + existing_context_tokens
-        output_reserve = max_output_tokens
-        available_tokens = int(max_context_tokens * 0.8) - prompt_overhead - output_reserve
+        p1_overhead = p1_system_tokens + p1_template_tokens + existing_context_tokens
+        p1_output_reserve = 4000  # Candidate pairs are compact
+        p1_available = int(phase1_context_budget * 0.8) - p1_overhead - p1_output_reserve
 
-        if available_tokens < 500:
-            available_tokens = 2000  # Fallback minimum
-            logger.warning(f"Very limited context budget ({available_tokens} tokens), using minimum")
+        if p1_available < 500:
+            p1_available = 2000
+            logger.warning(f"Very limited Phase 1 context budget ({p1_available} tokens)")
 
-        # Interleave entity types for cross-type relationship discovery
-        by_type: dict[str, List[dict]] = {}
-        for e in all_entities:
-            t = e.get("type", "Other")
-            by_type.setdefault(t, []).append(e)
+        # Phase 1: 60% entities, 40% context
+        entity_token_budget = int(p1_available * 0.6)
+        context_token_budget = int(p1_available * 0.4)
 
-        # Round-robin interleave so each batch contains a diverse mix of types
-        sorted_entities = []
-        iterators = [iter(v) for v in by_type.values()]
-        while iterators:
-            next_round = []
-            for it in iterators:
-                val = next(it, None)
-                if val is not None:
-                    sorted_entities.append(val)
-                    next_round.append(it)
-            iterators = next_round
+        logger.info(
+            f"Two-phase token budget — Phase 1 (extraction): total={p1_available}, "
+            f"entities={entity_token_budget}, context={context_token_budget} | "
+            f"Phase 2 (main): max_context={max_context_tokens}, max_output={max_output_tokens}"
+        )
+
+        # --- Co-occurrence based entity ordering ---
+        if entity_co_occurrence:
+            sorted_entities = self._sort_entities_by_cooccurrence(
+                all_entities, entity_co_occurrence
+            )
+        else:
+            by_type: dict[str, List[dict]] = {}
+            for e in all_entities:
+                t = e.get("type", "Other")
+                by_type.setdefault(t, []).append(e)
+            sorted_entities = []
+            iterators = [iter(v) for v in by_type.values()]
+            while iterators:
+                next_round = []
+                for it in iterators:
+                    val = next(it, None)
+                    if val is not None:
+                        sorted_entities.append(val)
+                        next_round.append(it)
+                iterators = next_round
 
         # Pre-compute token count for each entity
         entity_tokens = []
@@ -1865,16 +2110,15 @@ Respond with ONLY the community name, nothing else."""
             formatted = self._format_entity_for_prompt(e)
             entity_tokens.append((e, count_tokens(formatted)))
 
-        # Batch entities by token budget AND hard entity cap for quality
+        # Batch entities by Phase 1 entity token budget AND hard entity cap
         MAX_ENTITIES_PER_BATCH = 120
         batches: List[List[dict]] = []
         current_batch: List[dict] = []
         current_tokens = 0
 
         for entity, tokens in entity_tokens:
-            if current_batch and ((current_tokens + tokens) > available_tokens or len(current_batch) >= MAX_ENTITIES_PER_BATCH):
+            if current_batch and ((current_tokens + tokens) > entity_token_budget or len(current_batch) >= MAX_ENTITIES_PER_BATCH):
                 batches.append(current_batch)
-                # 15% overlap: keep last ~15% of entities for cross-batch relationship continuity
                 overlap_count = max(2, len(current_batch) * 15 // 100)
                 overlap_entities = current_batch[-overlap_count:]
                 overlap_tokens = sum(
@@ -1892,32 +2136,33 @@ Respond with ONLY the community name, nothing else."""
 
         logger.info(
             f"Relationship analysis: {len(all_entities)} entities split into "
-            f"{len(batches)} batch(es) (context_budget={max_context_tokens}, "
-            f"available={available_tokens} tokens)"
+            f"{len(batches)} batch(es) (Phase 1 budget={entity_token_budget} entity tokens)"
         )
 
-        # Report real batch count back to caller for accurate progress
         if progress_stats is not None:
             progress_stats["total_batches"] = len(batches)
 
-        # Process batches (sequentially or in parallel)
+        # Process batches
         all_relationships: List[Relationship] = []
-        seen_keys: set[tuple] = set()  # For deduplication
+        seen_keys: set[tuple] = set()
         parallel_batches = max(1, parallel_batches)
 
         async def process_single_batch(batch_idx: int, batch: List[dict]) -> List[Relationship]:
-            """Process a single batch and return unique relationships."""
-            # Fetch per-batch source text context if callback provided
+            """Two-phase processing of a single batch."""
+            # Context budget for Phase 1
+            remaining_for_context = min(context_token_budget, max(1000, p1_available // 3))
+
+            # Fetch per-batch source text context
             if get_batch_context:
                 try:
-                    batch_context = await get_batch_context(batch)
+                    batch_context = await get_batch_context(batch, remaining_for_context)
                 except Exception as e:
                     logger.warning(f"Failed to fetch batch context: {e}")
                     batch_context = context
             else:
                 batch_context = context
 
-            # Filter existing relationships to those involving entities in this batch
+            # Filter existing relationships to this batch
             batch_existing = existing_relationships
             if existing_relationships:
                 batch_names = {e.get("name", "").lower() for e in batch}
@@ -1927,18 +2172,33 @@ Respond with ONLY the community name, nothing else."""
                     or r.get("target", "").lower() in batch_names
                 ][:400]
 
+            # --- Phase 1: Candidate scan (extraction model) ---
+            candidates = await self.scan_candidate_pairs_async(
+                batch, batch_context, batch_existing, max_output_tokens=4000,
+            )
+
+            if not candidates:
+                logger.info(
+                    f"Batch {batch_idx + 1}/{len(batches)}: Phase 1 found 0 candidates "
+                    f"({len(batch)} entities) — skipping Phase 2"
+                )
+                return []
+
+            # --- Phase 2: Deep analysis (main model) ---
             rels = await self.analyze_relationships_async(
-                batch, batch_context, batch_existing, max_output_tokens
+                batch, batch_context, batch_existing, max_output_tokens,
+                candidate_pairs=candidates,
             )
 
             logger.info(
-                f"Batch {batch_idx + 1}/{len(batches)}: {len(rels)} discovered "
+                f"Batch {batch_idx + 1}/{len(batches)}: "
+                f"Phase 1: {len(candidates)} candidates → "
+                f"Phase 2: {len(rels)} relationships "
                 f"({len(batch)} entities)"
             )
             return rels
 
         if parallel_batches <= 1:
-            # Sequential processing (original behavior)
             for batch_idx, batch in enumerate(batches):
                 rels = await process_single_batch(batch_idx, batch)
 
@@ -1959,7 +2219,6 @@ Respond with ONLY the community name, nothing else."""
                 del batch_unique
                 del rels
         else:
-            # Parallel processing with semaphore
             import asyncio as _asyncio
             semaphore = _asyncio.Semaphore(parallel_batches)
             dedup_lock = _asyncio.Lock()
@@ -1969,7 +2228,6 @@ Respond with ONLY the community name, nothing else."""
                 async with semaphore:
                     rels = await process_single_batch(batch_idx, batch)
 
-                # Dedup and report progress as each batch completes
                 async with dedup_lock:
                     batch_unique: List[Relationship] = []
                     for rel in rels:
@@ -1992,6 +2250,65 @@ Respond with ONLY the community name, nothing else."""
             f"Relationship analysis complete: {len(all_relationships)} unique relationships"
         )
         return all_relationships
+
+    def _sort_entities_by_cooccurrence(
+        self,
+        entities: List[dict],
+        co_occurrence: dict,
+    ) -> List[dict]:
+        """Sort entities so those sharing chunks are adjacent.
+
+        Uses Union-Find to cluster entities that share chunks, then outputs
+        clusters largest-first with entities ordered by connection count.
+        O(n * avg_chunks) — scales to 100k+ entities.
+        """
+        # Union-Find with path compression
+        parent: dict[str, str] = {}
+
+        def find(x: str) -> str:
+            while parent.get(x, x) != x:
+                parent[x] = parent.get(parent[x], parent[x])
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # Build chunk→entities map and union entities sharing chunks
+        chunk_to_entities: dict[str, list] = {}
+        for name, chunks in co_occurrence.items():
+            for cid in chunks:
+                chunk_to_entities.setdefault(cid, []).append(name)
+
+        for entities_in_chunk in chunk_to_entities.values():
+            first = entities_in_chunk[0]
+            for other in entities_in_chunk[1:]:
+                union(first, other)
+
+        # Group entities into clusters by root
+        entity_map = {e.get("name", ""): e for e in entities}
+        clusters: dict[str, list] = {}
+        for name in entity_map:
+            root = find(name)
+            clusters.setdefault(root, []).append(name)
+
+        # Pre-compute connection count per entity (how many co-occurring entities)
+        connection_count: dict[str, int] = {}
+        for name, chunks in co_occurrence.items():
+            total = sum(len(chunk_to_entities.get(cid, [])) - 1 for cid in chunks)
+            connection_count[name] = total
+
+        # Output: largest clusters first, within cluster by connection count
+        ordered: List[dict] = []
+        for cluster in sorted(clusters.values(), key=len, reverse=True):
+            cluster.sort(key=lambda n: connection_count.get(n, 0), reverse=True)
+            for name in cluster:
+                if name in entity_map:
+                    ordered.append(entity_map[name])
+
+        return ordered
 
 
 # Singleton instance

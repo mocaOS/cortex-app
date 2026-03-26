@@ -1447,8 +1447,12 @@ class DocumentProcessor:
     ) -> dict:
         """Run Phase B relationship analysis for a collection.
 
-        Uses token-based batching to maximize context utilization and
-        incremental storage to minimize memory usage.
+        Supports multi-round discovery: runs up to `relationship_max_rounds` rounds
+        until the entity/relationship ratio reaches `relationship_target_ratio` or
+        the time budget (`relationship_max_hours`) is exhausted.
+
+        Uses co-occurrence-based batching, dynamic chunk context filling,
+        and optionally the extraction model for faster/cheaper processing.
 
         Args:
             collection_id: Scope to a specific collection (None = global)
@@ -1456,8 +1460,10 @@ class DocumentProcessor:
             progress_callback: For progress reporting
 
         Returns:
-            Dict with relationship counts and stats
+            Dict with relationship counts, ratio stats, and round info
         """
+        import time
+
         # Fetch entities
         entities = self.neo4j.get_all_entities_for_collection(collection_id)
 
@@ -1467,97 +1473,180 @@ class DocumentProcessor:
                 "relationships_stored": 0,
                 "entities_analyzed": 0,
                 "collection_id": collection_id,
+                "entity_relationship_ratio": 0.0,
+                "target_ratio": self.settings.relationship_target_ratio,
+                "rounds_completed": 0,
             }
 
         entity_names = [e.get("name") for e in entities if e.get("name")]
+        entity_count = len(entities)
+        target_ratio = self.settings.relationship_target_ratio
+        max_hours = self.settings.relationship_max_hours
 
-        # Fetch existing relationships to avoid duplicates
-        existing_relationships = self.neo4j.get_existing_relationships_for_entities(
-            entity_names
-        )
-
-        if progress_callback:
-            progress_callback(0, 1, f"Analyzing {len(entities)} entities, estimating duration...")
-
-        # Track storage stats for incremental callback
-        import time
-        storage_stats = {"stored": 0, "discovered": 0, "batches_done": 0, "total_batches": 0}
-        _analysis_start_time = time.monotonic()
-
-        async def store_batch_relationships(batch_rels: list):
-            """Callback to store relationships incrementally as each batch completes."""
-            nonlocal storage_stats
-            storage_stats["discovered"] += len(batch_rels)
-            storage_stats["batches_done"] += 1
-
-            for rel in batch_rels:
-                try:
-                    if self.neo4j.store_relationship(
-                        rel,
-                        extraction_method="cross_collection",
-                    ):
-                        storage_stats["stored"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
-
-            # Update progress with ETA
-            if progress_callback:
-                total_batches = storage_stats["total_batches"]
-                if total_batches <= 0:
-                    # Fallback estimate until real count is known
-                    total_batches = max(1, storage_stats["batches_done"] + 1)
-
-                elapsed = time.monotonic() - _analysis_start_time
-                avg_per_batch = elapsed / storage_stats["batches_done"]
-                remaining = total_batches - storage_stats["batches_done"]
-                eta_seconds = int(avg_per_batch * remaining)
-
-                if eta_seconds > 60:
-                    eta_str = f"~{eta_seconds // 60}m remaining"
-                elif eta_seconds > 0:
-                    eta_str = f"~{eta_seconds}s remaining"
-                else:
-                    eta_str = "almost done"
-
-                progress_callback(
-                    storage_stats["batches_done"],
-                    total_batches,
-                    f"Batch {storage_stats['batches_done']}/{total_batches}, {eta_str}"
-                )
-
-        # Callback to fetch relevant source text for each entity batch
-        async def get_batch_context(entity_batch: list) -> str:
-            """Fetch relevant chunk text for the current entity batch."""
-            batch_names = [e.get("name") for e in entity_batch if e.get("name")]
-            return await asyncio.to_thread(
-                self.neo4j.get_chunk_context_for_entities,
-                batch_names,
-                max_chunks=10,
-                max_content_length=500,
+        # Multi-round only for initial analysis (no existing relationships).
+        # Re-analyze (relationships already exist) always does 1 round.
+        existing_rel_count = self.neo4j.get_relationship_count()
+        if existing_rel_count == 0:
+            max_rounds = max(1, self.settings.relationship_max_rounds)
+        else:
+            max_rounds = 1
+            logger.info(
+                f"Re-analyze mode: {existing_rel_count} existing relationships, running 1 round"
             )
 
-        # Run batched relationship analysis with incremental storage
-        # Uses token-based batching (not entity count) for optimal context utilization
-        relationships = await self.graph_extractor.analyze_relationships_batched_async(
-            all_entities=entities,
-            context="",
-            max_context_tokens=self.settings.relationship_max_context,
-            max_output_tokens=self.settings.relationship_max_output_tokens,
-            existing_relationships=existing_relationships,
-            on_batch_complete=store_batch_relationships,
-            get_batch_context=get_batch_context,
-            progress_stats=storage_stats,
-            parallel_batches=self.settings.parallel_relationship_batches,
+        # Build co-occurrence map for smart batching
+        if progress_callback:
+            progress_callback(0, 1, f"Building co-occurrence map for {entity_count} entities...")
+        entity_co_occurrence = await asyncio.to_thread(
+            self.neo4j.get_entity_co_occurrence, entity_names
+        )
+        co_occurrence_entities = sum(1 for v in entity_co_occurrence.values() if v)
+        logger.info(
+            f"Co-occurrence map: {co_occurrence_entities}/{entity_count} entities have chunk mentions"
         )
 
+        # Track cumulative stats across all rounds
+        total_discovered = 0
+        total_stored = 0
+        rounds_completed = 0
+        analysis_start = time.monotonic()
+
+        for round_num in range(1, max_rounds + 1):
+            # Check time budget
+            if max_hours > 0:
+                elapsed_hours = (time.monotonic() - analysis_start) / 3600
+                if elapsed_hours >= max_hours:
+                    logger.info(
+                        f"Time budget exhausted ({elapsed_hours:.1f}h >= {max_hours}h), "
+                        f"stopping after {rounds_completed} rounds"
+                    )
+                    break
+
+            # Check current ratio (after round 1+)
+            if round_num > 1:
+                current_rel_count = self.neo4j.get_relationship_count()
+                current_ratio = current_rel_count / entity_count if entity_count > 0 else 0
+                if current_ratio >= target_ratio:
+                    logger.info(
+                        f"Target ratio reached ({current_ratio:.2f} >= {target_ratio}), "
+                        f"stopping after {rounds_completed} rounds"
+                    )
+                    break
+
+            round_prefix = f"[Round {round_num}/{max_rounds}] " if max_rounds > 1 else ""
+
+            # Fetch existing relationships (refreshed each round)
+            existing_relationships = self.neo4j.get_existing_relationships_for_entities(
+                entity_names
+            )
+
+            if progress_callback:
+                progress_callback(
+                    0, 1,
+                    f"{round_prefix}Analyzing {entity_count} entities..."
+                )
+
+            # Per-round storage stats
+            storage_stats = {"stored": 0, "discovered": 0, "batches_done": 0, "total_batches": 0}
+            _round_start = time.monotonic()
+
+            async def store_batch_relationships(batch_rels: list):
+                """Callback to store relationships incrementally as each batch completes."""
+                nonlocal storage_stats, total_stored, total_discovered
+                storage_stats["discovered"] += len(batch_rels)
+                storage_stats["batches_done"] += 1
+                total_discovered += len(batch_rels)
+
+                for rel in batch_rels:
+                    try:
+                        if self.neo4j.store_relationship(
+                            rel,
+                            extraction_method="cross_collection",
+                        ):
+                            storage_stats["stored"] += 1
+                            total_stored += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to store relationship {rel.source} -> {rel.target}: {e}")
+
+                # Update progress with ETA
+                if progress_callback:
+                    total_batches = storage_stats["total_batches"]
+                    if total_batches <= 0:
+                        total_batches = max(1, storage_stats["batches_done"] + 1)
+
+                    elapsed = time.monotonic() - _round_start
+                    avg_per_batch = elapsed / storage_stats["batches_done"]
+                    remaining = total_batches - storage_stats["batches_done"]
+                    eta_seconds = int(avg_per_batch * remaining)
+
+                    if eta_seconds > 60:
+                        eta_str = f"~{eta_seconds // 60}m remaining"
+                    elif eta_seconds > 0:
+                        eta_str = f"~{eta_seconds}s remaining"
+                    else:
+                        eta_str = "almost done"
+
+                    progress_callback(
+                        storage_stats["batches_done"],
+                        total_batches,
+                        f"{round_prefix}Batch {storage_stats['batches_done']}/{total_batches}, "
+                        f"{eta_str}"
+                    )
+
+            # Callback to fetch relevant source text with dynamic token budget
+            async def get_batch_context(entity_batch: list, token_budget: int = 0) -> str:
+                """Fetch relevant chunk text for the current entity batch."""
+                batch_names = [e.get("name") for e in entity_batch if e.get("name")]
+                return await asyncio.to_thread(
+                    self.neo4j.get_chunk_context_for_entities,
+                    batch_names,
+                    token_budget=token_budget,
+                )
+
+            # Run two-phase batched relationship analysis
+            # Phase 1 uses extraction model context (larger), Phase 2 uses main model context
+            relationships = await self.graph_extractor.analyze_relationships_batched_async(
+                all_entities=entities,
+                context="",
+                max_context_tokens=self.settings.relationship_max_context,
+                max_output_tokens=self.settings.relationship_max_output_tokens,
+                existing_relationships=existing_relationships,
+                on_batch_complete=store_batch_relationships,
+                get_batch_context=get_batch_context,
+                progress_stats=storage_stats,
+                parallel_batches=self.settings.parallel_relationship_batches or self.settings.concurrent_extractions,
+                entity_co_occurrence=entity_co_occurrence,
+                extraction_max_context=self.settings.extraction_max_context,
+            )
+
+            rounds_completed += 1
+            round_elapsed = time.monotonic() - _round_start
+            logger.info(
+                f"{round_prefix}Complete: {len(relationships)} discovered, "
+                f"{storage_stats['stored']} stored in {round_elapsed:.1f}s"
+            )
+
+        # Calculate final ratio
+        final_rel_count = self.neo4j.get_relationship_count()
+        final_ratio = final_rel_count / entity_count if entity_count > 0 else 0
+
         if progress_callback:
-            progress_callback(len(entities), len(entities), "Relationship analysis complete")
+            ratio_str = f"ratio {final_ratio:.1f}/{target_ratio}"
+            progress_callback(
+                entity_count, entity_count,
+                f"Relationship analysis complete — {total_stored} stored, "
+                f"{rounds_completed} round(s), {ratio_str}"
+            )
 
         result = {
-            "relationships_discovered": len(relationships),
-            "relationships_stored": storage_stats["stored"],
-            "entities_analyzed": len(entities),
+            "relationships_discovered": total_discovered,
+            "relationships_stored": total_stored,
+            "entities_analyzed": entity_count,
             "collection_id": collection_id,
+            "entity_relationship_ratio": round(final_ratio, 2),
+            "target_ratio": target_ratio,
+            "rounds_completed": rounds_completed,
+            "total_relationships": final_rel_count,
         }
         logger.info(f"Relationship analysis complete: {result}")
         return result

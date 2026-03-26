@@ -154,6 +154,8 @@ export interface Stats {
   last_relationship_analysis_at?: string | null;
   last_community_detection_at?: string | null;
   last_entity_merge_at?: string | null;
+  entity_relationship_ratio?: number;
+  relationship_target_ratio?: number;
 }
 
 export interface HealthResponse {

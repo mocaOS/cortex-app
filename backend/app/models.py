@@ -298,6 +298,9 @@ class GraphStatsResponse(BaseModel):
     last_relationship_analysis_at: Optional[str] = Field(default=None, description="ISO timestamp of last relationship analysis")
     last_community_detection_at: Optional[str] = Field(default=None, description="ISO timestamp of last community detection")
     last_entity_merge_at: Optional[str] = Field(default=None, description="ISO timestamp of last entity merge/deduplication")
+    # Relationship health metrics
+    entity_relationship_ratio: float = Field(default=0.0, description="Current relationships-per-entity ratio")
+    relationship_target_ratio: float = Field(default=3.0, description="Target relationships-per-entity ratio from config")
 
 
 class UploadResponse(BaseModel):
@@ -669,6 +672,9 @@ class SystemConfigResponse(BaseModel):
     extraction_max_context: int = Field(..., description="Max context window tokens for entity extraction")
     relationship_max_context: int = Field(..., description="Max context window tokens for relationship analysis")
     parallel_relationship_batches: int = Field(..., description="Number of relationship batches processed in parallel")
+    relationship_target_ratio: float = Field(default=3.0, description="Target relationships-per-entity ratio")
+    relationship_max_rounds: int = Field(default=1, description="Max auto-discovery rounds per analysis run")
+    relationship_max_hours: float = Field(default=0, description="Max hours for relationship generation (0 = no limit)")
 
     # Vision Model
     vision_model_available: bool = Field(..., description="Whether a vision model is configured")

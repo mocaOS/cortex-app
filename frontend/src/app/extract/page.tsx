@@ -936,28 +936,69 @@ export default function ExtractAnalyzePage() {
               )}
 
               {relationshipCount > 0 && newDocsSinceAnalysis === 0 && !analyzingRelationships && (
-                <div className="flex items-center gap-4 mt-3">
-                  <p className="text-sm text-green-400">
-                    {relationshipCount} relationships discovered.
-                  </p>
-                  <button
-                    onClick={() => handleAnalyzeRelationships(false)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Re-analyze
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm("CAREFUL! This will delete all existing relationships and reconnect the entities in your graph from scratch. Continue?")) {
-                        handleAnalyzeRelationships(true);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-foreground"
-                  >
-                    <AlertCircle className="w-3 h-3" />
-                    Rebuild from scratch
-                  </button>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-4">
+                    <p className="text-sm text-green-400">
+                      {relationshipCount} relationships discovered.
+                    </p>
+                    {/* Entity-Relationship Ratio (ERR) Indicator */}
+                    {stats && (stats.entity_count ?? 0) > 0 && (
+                      <div className="relative group flex items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">ERR</span>
+                        <span className={cn(
+                          "text-xs font-mono font-medium px-2 py-0.5 rounded",
+                          (stats.entity_relationship_ratio ?? 0) >= 0.69
+                            ? "bg-green-500/10 text-green-400"
+                            : (stats.entity_relationship_ratio ?? 0) >= 0.29
+                              ? "bg-yellow-500/10 text-yellow-400"
+                              : "bg-red-500/10 text-red-400"
+                        )}>
+                          {(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')} / {(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}
+                        </span>
+                        {(stats.entity_relationship_ratio ?? 0) < (stats.relationship_target_ratio ?? 3) && (
+                          <span className="text-xs text-muted-foreground">
+                            — consider re-analyzing to reveal more relationships
+                          </span>
+                        )}
+                        {/* Tooltip */}
+                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                          <div className="bg-popover border border-border rounded-lg shadow-lg px-3 py-2 text-xs w-64">
+                            <p className="font-medium text-foreground mb-1">Entity-Relationship Ratio (ERR)</p>
+                            <p className="text-muted-foreground leading-relaxed">
+                              Average number of relationships per entity. A ratio of{" "}
+                              <span className="font-mono text-foreground">{(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')}</span> means
+                              each entity has ~{(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')} connections on average.
+                              Target is{" "}
+                              <span className="font-mono text-foreground">{(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}</span>.
+                              {(stats.entity_relationship_ratio ?? 0) < (stats.relationship_target_ratio ?? 3)
+                                ? " Run additional rounds of relationship analysis to improve graph connectivity."
+                                : " Your graph is well-connected."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleAnalyzeRelationships(false)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Re-analyze
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm("CAREFUL! This will delete all existing relationships and reconnect the entities in your graph from scratch. Continue?")) {
+                          handleAnalyzeRelationships(true);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-foreground"
+                    >
+                      <AlertCircle className="w-3 h-3" />
+                      Rebuild from scratch
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

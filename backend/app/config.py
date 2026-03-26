@@ -149,7 +149,7 @@ class Settings(BaseSettings):
         default=65536
     )  # Max context window tokens for relationship analysis INPUT batching
     relationship_max_output_tokens: int = Field(
-        default=8000
+        default=16000
     )  # Max output tokens for relationship analysis LLM responses
 
     # Batch Processing Configuration
@@ -165,14 +165,23 @@ class Settings(BaseSettings):
         default=100
     )  # Max entities per relationship analysis LLM call
     parallel_relationship_batches: int = Field(
-        default=2
-    )  # Number of relationship analysis batches to process in parallel (1 = sequential)
+        default=0
+    )  # Number of relationship analysis batches to process in parallel (0 = use CONCURRENT_EXTRACTIONS)
     auto_relationship_analysis_after_batch: bool = Field(
         default=False
     )  # Auto-trigger relationship analysis after batch processing completes
     auto_community_detection_after_batch: bool = Field(
         default=False
     )  # Auto-trigger community detection after relationship analysis
+    relationship_target_ratio: float = Field(
+        default=1.0
+    )  # Target relationships-per-entity ratio. Admins can use this to gauge if more rounds are needed.
+    relationship_max_rounds: int = Field(
+        default=3
+    )  # Max auto-discovery rounds for initial analysis (1 = single pass, 2+ = multi-round until target ratio or limit). Re-analyze always does 1 round.
+    relationship_max_hours: float = Field(
+        default=0
+    )  # Max hours for relationship generation (0 = no time limit, completes all rounds)
 
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking
