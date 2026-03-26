@@ -46,7 +46,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
-- **🧠 GraphRAG**: LLM-powered entity and relationship extraction for knowledge graph construction
+- **🧠 GraphRAG**: LLM-powered entity extraction and two-phase relationship analysis (candidate scanning → XML-confirmed extraction) for knowledge graph construction
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
@@ -60,7 +60,8 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Levenshtein fuzzy deduplication (85% threshold) during entity extraction with alias tracking
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz), with LLM-generated combined descriptions, review-and-merge UI, inline entity search to manually add entities to merge groups, and full merge history with audit trail
-- **🔄 Incremental & Rebuild Modes**: Relationship analysis supports building on existing relationships or full rebuild from scratch
+- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target Entity-Relationship Ratio (ERR) is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
+- **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page with color-coded health indicator
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 
@@ -166,10 +167,10 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
-PARALLEL_RELATIONSHIP_BATCHES=2              # relationship analysis batches in parallel (1 = sequential)
+PARALLEL_RELATIONSHIP_BATCHES=0              # relationship analysis batches in parallel (0 = use CONCURRENT_EXTRACTIONS)
 ```
 
-> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up relationship analysis — increase it to run multiple LLM calls concurrently.
+> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` controls relationship analysis parallelism — set to `0` (default) to use `CONCURRENT_EXTRACTIONS`, or set an explicit number.
 
 4. **Start with Docker Compose**
 
@@ -307,7 +308,7 @@ npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/graph/relationships/analyze` | Analyze cross-document relationships (Phase B). Params: `rebuild=true` for full rebuild |
+| POST | `/api/graph/relationships/analyze` | Two-phase relationship analysis: Phase 1 scans candidate pairs, Phase 2 confirms with XML output. Params: `rebuild=true` for full rebuild. Multi-round discovery up to `RELATIONSHIP_MAX_ROUNDS`. |
 | DELETE | `/api/graph/relationships` | Delete ALL entity relationships |
 
 ### Community Detection Endpoints
@@ -665,8 +666,10 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `8000` |
-| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (1 = sequential) | No | `2` |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `16000` |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_EXTRACTIONS`) | No | `0` |
+| `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached | No | `1.0` |
+| `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) | No | `3` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `false` |
 
@@ -853,7 +856,7 @@ When a document is uploaded (or custom input is added), the following pipeline e
 8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed concurrently via vision model (configurable concurrency via `VISION_MAX_CONCURRENT`, default 3). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
 9. **Collection Assignment** - Optionally add document to a collection scope
 10. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
-11. **Relationship Analysis** (separate step via Knowledge Graph page) - LLM discovers relationships between entities using source text context from co-mention chunks. Batched at 120 entities/batch with 15% overlap. Supports incremental (build on existing) and rebuild (from scratch) modes.
+11. **Relationship Analysis** (separate step via Knowledge Graph page) - Two-phase pipeline using the extraction model: Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser). Entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities). Token budget is split 60/40 between entities and dynamic chunk context per batch. Runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target ERR is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
 12. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
 
 ### Query Pipeline (Agent Architecture)

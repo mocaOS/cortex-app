@@ -22,7 +22,16 @@ MOCA uses a two-phase approach for building the knowledge graph:
 
 **Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Fuzzy entity resolution (Levenshtein 85%) deduplicates entities at storage time, merging variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching.
 
-**Phase B (per-collection, on demand):** Cross-document relationship analysis using the main (large) model. Discovers relationships between all entities using source text context — relevant chunk text is fetched per batch so the LLM can ground relationships in actual document content. Batched at 120 entities per batch with 15% overlap for cross-batch continuity. Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. Triggered via API or the Knowledge Graph page after document processing.
+**Phase B (per-collection, on demand):** Cross-document relationship analysis using the extraction model (instruction-following). Uses a two-phase approach per batch:
+
+1. **Candidate scanning** — The extraction model scans entity pairs with their co-occurring chunk context and proposes candidate relationships.
+2. **Structured confirmation** — The extraction model confirms candidates with structured XML output, grounding each relationship in source text.
+
+Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, ensuring the LLM sees the most relevant entity pairs. Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget).
+
+Supports **multi-round discovery**: each batch runs multiple rounds (default 3 for initial analysis, 1 for re-analyze) to progressively find relationships, guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
+
+Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh). Relationship types are constrained to 15 standard types via fuzzy matching. A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -36,7 +45,7 @@ flowchart TD
     H --> I["🏘️ Community Detection"]
 
     C -.-> C1["Per-document (1-4 LLM calls)"]
-    G -.-> G1["Per-collection (main model)"]
+    G -.-> G1["Per-collection (extraction model)"]
 `} />
 
 ## Entity Types
@@ -384,7 +393,11 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 
 # Relationship analysis (Phase B)
 # RELATIONSHIP_MAX_CONTEXT=65536        # Max INPUT context tokens for batching
-# RELATIONSHIP_MAX_OUTPUT_TOKENS=8000   # Max OUTPUT tokens for LLM responses
+# RELATIONSHIP_MAX_OUTPUT_TOKENS=16000  # Max OUTPUT tokens for LLM responses
+# PARALLEL_RELATIONSHIP_BATCHES=0       # 0 = use CONCURRENT_EXTRACTIONS
+# RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
+# RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
+# RELATIONSHIP_MAX_HOURS=0              # Max hours for relationship analysis (0 = no limit)
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
 # AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
 ```

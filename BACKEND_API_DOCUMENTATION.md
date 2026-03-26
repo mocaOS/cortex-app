@@ -47,6 +47,8 @@ MOCA (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combine
 - `community_count`: int
 - `collection_count`: int
 - `pending_count`: int
+- `entity_relationship_ratio`: float
+- `relationship_target_ratio`: float
 
 ---
 
@@ -542,7 +544,7 @@ MOCA (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combine
 **Response**: `SystemConfigResponse`
 
 Returns current system settings grouped into:
-- **LLM**: `openai_model`, `openai_api_base`, `relationship_max_context`, `parallel_relationship_batches`
+- **LLM**: `openai_model`, `openai_api_base`, `relationship_max_context`, `parallel_relationship_batches`, `relationship_target_ratio`, `relationship_max_rounds`, `relationship_max_hours`
 - **Extraction**: `extraction_model`, `extraction_api_base`, `extraction_max_context`, `batch_processing_concurrency`
 - **Vision**: `vision_model`, `vision_api_base`, `vision_max_concurrent`, `vision_model_available`
 - **Embeddings**: `embedding_model`, `embedding_dimension`, `embedding_api_base`, `embedding_send_dimensions`
@@ -858,6 +860,8 @@ Returns current system settings grouped into:
 - `community_count`: int
 - `collection_count`: int
 - `pending_count`: int
+- `entity_relationship_ratio`: float
+- `relationship_target_ratio`: float
 
 ---
 
@@ -1153,7 +1157,11 @@ curl -H "X-API-Key: moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `4000`)
 
 #### Relationship Analysis
-- `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 1 = sequential (default: `2`)
+- `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 0 = auto (default: `0`)
+- `RELATIONSHIP_TARGET_RATIO`: Target entity-to-relationship ratio (default: `1.0`)
+- `RELATIONSHIP_MAX_ROUNDS`: Maximum analysis rounds (default: `3`)
+- `RELATIONSHIP_MAX_HOURS`: Maximum hours for relationship analysis (default: not set)
+- `RELATIONSHIP_MAX_OUTPUT_TOKENS`: Max output tokens per relationship batch (default: `16000`)
 
 #### Community Detection & Graph Summarization
 - `ENABLE_COMMUNITY_DETECTION`: Enable community detection (default: `True`)

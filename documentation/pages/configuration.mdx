@@ -133,20 +133,31 @@ CONCURRENT_EXTRACTIONS=3
 
 ### Relationship Analysis
 
-Cross-document relationship discovery (Phase B). Run after document processing
-to build the relationship graph:
+Cross-document relationship discovery (Phase B) using the extraction model.
+Two-phase pipeline (candidate scanning + structured confirmation) with
+co-occurrence batching and multi-round discovery:
 
 ```bash
 # Max INPUT context window tokens for relationship analysis batching
-# Increase if your main model supports a larger context window
+# Increase if your extraction model supports a larger context window
 # RELATIONSHIP_MAX_CONTEXT=65536
 
 # Max OUTPUT tokens for relationship analysis LLM responses
-# RELATIONSHIP_MAX_OUTPUT_TOKENS=8000
+# RELATIONSHIP_MAX_OUTPUT_TOKENS=16000
 
 # Number of relationship analysis batches to process in parallel
-# Set to 1 for sequential processing, increase for multi-GPU or high-rate-limit setups
-# PARALLEL_RELATIONSHIP_BATCHES=2
+# Set to 0 to use CONCURRENT_EXTRACTIONS value, or set explicitly
+# PARALLEL_RELATIONSHIP_BATCHES=0
+
+# Target entity-to-relationship ratio (ERR metric)
+# Higher values = more relationships discovered per entity
+# RELATIONSHIP_TARGET_RATIO=1.0
+
+# Max discovery rounds per batch (default 3 for initial, 1 for re-analyze)
+# RELATIONSHIP_MAX_ROUNDS=3
+
+# Max hours for relationship analysis (0 = no time limit)
+# RELATIONSHIP_MAX_HOURS=0
 
 # Auto-trigger relationship analysis after batch processing
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
@@ -398,8 +409,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `GRAPH_EXTRACTION_API_KEY` | No | `OPENAI_API_KEY` | API key for extraction model |
 | `EXTRACTION_MAX_CONTEXT` | No | `32768` | Max context window tokens for entity extraction batching |
 | `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max INPUT context window tokens for relationship analysis batching |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `8000` | Max OUTPUT tokens for relationship analysis LLM responses |
-| `PARALLEL_RELATIONSHIP_BATCHES` | No | `2` | Parallel relationship analysis batches (1 = sequential) |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `16000` | Max OUTPUT tokens for relationship analysis LLM responses |
+| `PARALLEL_RELATIONSHIP_BATCHES` | No | `0` | Parallel relationship analysis batches (0 = use CONCURRENT_EXTRACTIONS) |
+| `RELATIONSHIP_TARGET_RATIO` | No | `1.0` | Target entity-to-relationship ratio (ERR) |
+| `RELATIONSHIP_MAX_ROUNDS` | No | `3` | Max discovery rounds per batch |
+| `RELATIONSHIP_MAX_HOURS` | No | `0` | Max hours for analysis (0 = no limit) |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | No | `false` | Auto-analyze after batch processing |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
