@@ -199,7 +199,7 @@ SSE events: `content`, `sources`, `graph_context`, `thinking`, `sub_questions`, 
 Cortex Library builds a knowledge graph from your documents with:
 
 - **Entity extraction** - 10 types: Person, Organization, Concept, Technology, Location, Event, Product, Document, System, Process
-- **Relationship analysis** - 15 standard types with cross-document relationship discovery
+- **Relationship analysis** - 14 standard types with per-chunk and cross-document relationship discovery, confidence scoring (< 0.5 filtered)
 - **Community detection** - Leiden/Louvain clustering with LLM-generated summaries
 - **Entity deduplication** - Fuzzy matching (rapidfuzz) with merge/dismiss workflow
 - **Graph visualization** - Interactive force-graph with dynamic expansion

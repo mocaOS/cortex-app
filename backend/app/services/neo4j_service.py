@@ -1169,6 +1169,40 @@ class Neo4jService:
                     degree_map[record["name"]] = record["degree"]
         return degree_map
 
+    def create_cooccurrence_relationships(self, min_shared_chunks: int = 2) -> int:
+        """Create RELATED_TO relationships between entities that co-occur in chunks.
+
+        Based on FastGraphRAG approach: entities sharing text units are likely related.
+        Only creates relationships that don't already exist (MERGE).
+
+        Args:
+            min_shared_chunks: Minimum shared chunks to create a relationship.
+
+        Returns:
+            Number of relationships created.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e1:Entity)<-[:MENTIONS]-(c:Chunk)-[:MENTIONS]->(e2:Entity)
+                WHERE id(e1) < id(e2)
+                WITH e1, e2, count(DISTINCT c) as shared_chunks
+                WHERE shared_chunks >= $min_shared
+                MERGE (e1)-[r:RELATED_TO]->(e2)
+                ON CREATE SET r.weight = CASE
+                    WHEN shared_chunks >= 5 THEN 7.0
+                    WHEN shared_chunks >= 3 THEN 5.0
+                    ELSE 3.0
+                END,
+                r.description = 'Co-occurrence: entities appear together in ' + toString(shared_chunks) + ' text chunks',
+                r.extraction_method = 'co_occurrence',
+                r.extracted_at = datetime()
+                RETURN count(r) as created
+            """, min_shared=min_shared_chunks)
+            record = result.single()
+            created = record["created"] if record else 0
+            logger.info(f"Co-occurrence seeding: created {created} relationships (min_shared={min_shared_chunks})")
+            return created
+
     def get_entities_without_relationships(self, limit: int = 500) -> List[dict]:
         """Get entities that have no relationships (prime targets for Phase B analysis)."""
         with self.driver.session() as session:
@@ -3535,49 +3569,84 @@ class Neo4jService:
                     embedding,
                     threshold=self.settings.entity_similarity_threshold
                 )
-                
+
                 if similar:
                     # Merge into existing entity
                     canonical_name = similar[0]["name"]
-                    
+
                     # Add as alias if names are different
                     if canonical_name.lower() != entity.name.lower():
                         self._add_entity_alias(canonical_name, entity.name)
-                    
-                    # Link to chunk
+
+                    # Link to chunk if provided
+                    if chunk_id:
+                        session.run("""
+                            MATCH (e:Entity {name: $name})
+                            MATCH (c:Chunk {id: $chunk_id})
+                            MERGE (c)-[:MENTIONS]->(e)
+                        """, name=canonical_name, chunk_id=chunk_id)
+
+                    logger.debug(f"Merged entity '{entity.name}' into '{canonical_name}' (similarity: {similar[0]['similarity']:.3f})")
+                    return (canonical_name, False)
+
+            # Also check Levenshtein as backup (catches typo variants)
+            lev_similar = self.find_similar_entities(entity.name, threshold=0.85)
+            if lev_similar and lev_similar[0]["similarity"] >= 0.85:
+                canonical_name = lev_similar[0]["name"]
+                if canonical_name.lower() != entity.name.lower():
+                    self._add_entity_alias(canonical_name, entity.name)
+                if chunk_id:
                     session.run("""
                         MATCH (e:Entity {name: $name})
                         MATCH (c:Chunk {id: $chunk_id})
                         MERGE (c)-[:MENTIONS]->(e)
                     """, name=canonical_name, chunk_id=chunk_id)
-                    
-                    logger.debug(f"Merged entity '{entity.name}' into '{canonical_name}' (similarity: {similar[0]['similarity']:.3f})")
-                    return (canonical_name, False)
-            
+                return (canonical_name, False)
+
             # Create new entity with embedding
-            result = session.run("""
-                MERGE (e:Entity {name: $name})
-                ON CREATE SET 
-                    e.type = $type,
-                    e.description = $description,
-                    e.embedding = $embedding,
-                    e.created_at = datetime()
-                ON MATCH SET
-                    e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
-                    e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
-                    e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
-                WITH e
-                MATCH (c:Chunk {id: $chunk_id})
-                MERGE (c)-[:MENTIONS]->(e)
-                RETURN e.name as name
-            """,
-                name=entity.name,
-                type=entity.type,
-                description=entity.description,
-                embedding=embedding,
-                chunk_id=chunk_id
-            )
-            
+            if chunk_id:
+                result = session.run("""
+                    MERGE (e:Entity {name: $name})
+                    ON CREATE SET
+                        e.type = $type,
+                        e.description = $description,
+                        e.embedding = $embedding,
+                        e.created_at = datetime()
+                    ON MATCH SET
+                        e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
+                        e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
+                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
+                    WITH e
+                    MATCH (c:Chunk {id: $chunk_id})
+                    MERGE (c)-[:MENTIONS]->(e)
+                    RETURN e.name as name
+                """,
+                    name=entity.name,
+                    type=entity.type,
+                    description=entity.description,
+                    embedding=embedding,
+                    chunk_id=chunk_id
+                )
+            else:
+                result = session.run("""
+                    MERGE (e:Entity {name: $name})
+                    ON CREATE SET
+                        e.type = $type,
+                        e.description = $description,
+                        e.embedding = $embedding,
+                        e.created_at = datetime()
+                    ON MATCH SET
+                        e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
+                        e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
+                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
+                    RETURN e.name as name
+                """,
+                    name=entity.name,
+                    type=entity.type,
+                    description=entity.description,
+                    embedding=embedding,
+                )
+
             record = result.single()
             return (record["name"] if record else entity.name, True)
     

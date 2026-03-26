@@ -53,7 +53,6 @@ DEFAULT_RELATION_TYPES = [
     "PART_OF",
     "CREATED_BY",
     "IMPLEMENTS",
-    "MENTIONS",
     "DEPENDS_ON",
     "IS_A",
     "HAS_PROPERTY",
@@ -218,22 +217,25 @@ Now extract all entities:"""
 # Relationship Analysis Prompt (Phase B - cross-document relationship discovery)
 # =============================================================================
 
-RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to identify meaningful, direct relationships between the given entities.
+RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT = """You are an expert knowledge graph builder. Your task is to identify meaningful relationships between the given entities.
 
 # Goal
-Identify DIRECT semantic relationships between the provided entities using the allowed relationship types. Focus on quality: every relationship must be supported by evidence in the entity descriptions or source text context.
+Identify semantic relationships between the provided entities using the allowed relationship types. Each relationship must represent a real, factual connection — not just co-occurrence in text.
 
 # Rules
 - ONLY use entities from the provided list.
-- ONLY use these relationship types: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, CREATED_BY, IMPLEMENTS, MENTIONS, DEPENDS_ON, IS_A, HAS_PROPERTY, FOUNDED_BY, FEATURES, CONTAINS, INTERACTS_WITH. Use RELATED_TO only when no better type fits.
-- Only create a relationship when there is clear evidence of a DIRECT connection between two entities — not because they happen to appear in the same context or share a common third entity.
-- Do NOT route relationships through hub/intermediary entities. If Entity A and Entity B have a direct relationship, connect them directly even if they both also relate to Entity C.
-- Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection). Weight should reflect how direct and well-evidenced the relationship is.
+- ONLY use these relationship types: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, CREATED_BY, IMPLEMENTS, DEPENDS_ON, IS_A, HAS_PROPERTY, FOUNDED_BY, FEATURES, CONTAINS, INTERACTS_WITH. Use RELATED_TO only when no better type fits.
+- Create a relationship ONLY when there is a factual, semantic connection between two entities (e.g., one created the other, one is part of the other, one works for the other).
+- Do NOT create a relationship just because two entities are mentioned in the same text. Co-occurrence is not a relationship.
+- If no clear relationship exists between a pair of entities, do not create one. It is better to have fewer high-quality relationships than many weak ones.
+- Prefer direct relationships: if A and B are directly connected, link them directly rather than routing through C.
+- Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection).
+- Include a confidence score (0.0-1.0) for each relationship: 1.0 = explicitly stated in text, 0.8+ = strongly implied, 0.5 = uncertain. Do not create relationships you are less than 0.5 confident about.
 
 Output ONLY XML relationships. No explanations, no chain-of-thought, no other text."""
 
 
-RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract direct, evidence-based relationships between the following entities. Only include relationships that are clearly supported by entity descriptions or source text.
+RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract relationships between the following entities based on their descriptions and source text context.
 
 Relation Types (use only these): {relation_types}
 
@@ -242,32 +244,36 @@ Relation Types (use only these): {relation_types}
 === Entities ===
 {entity_list}
 
-Example Output:
-<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
+Good examples (create these — real factual connections):
+<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight><confidence>0.95</confidence></relationship>
+<relationship><source>Vitalik Buterin</source><target>Ethereum</target><type>FOUNDED_BY</type><description>Vitalik Buterin co-founded the Ethereum blockchain.</description><weight>10</weight><confidence>1.0</confidence></relationship>
 
-Now extract relationships. Prioritize direct, well-evidenced connections:"""
+Bad examples (do NOT create these — co-occurrence is not a relationship):
+- "SuperRare" and "Twitter" both appear in an article → NOT a relationship
+- "Museum" and "ChatGPT" are in the same document → NOT a relationship unless one actually uses/features the other
+
+Now extract relationships:"""
 
 
 # =============================================================================
 # Phase 1: Candidate Pair Scanning (fast, uses extraction model)
 # =============================================================================
 
-CANDIDATE_SCAN_SYSTEM_PROMPT = """You are a knowledge graph analyst. Your task is to scan a list of entities and identify pairs that share a direct, meaningful relationship.
+CANDIDATE_SCAN_SYSTEM_PROMPT = """You are a knowledge graph analyst. Your task is to scan a list of entities and identify pairs that share a meaningful, factual relationship.
 
 # Rules
 - ONLY use entity names from the provided list — do not invent entities.
 - Use entity descriptions AND the provided source text context to judge relatedness.
-- Only include pairs where there is evidence of a DIRECT relationship — not merely co-occurrence in the same document or shared association with a third entity.
+- Include pairs where there is a described factual connection (e.g., one entity created/uses/employs/is part of/founded the other, they collaborated on something specific).
+- Two entities appearing in the same text is NOT enough — there must be a described interaction or factual link between them.
 - Do NOT output relationship types, descriptions, or weights — just the pairs.
-- Avoid creating star patterns where one popular entity connects to everything. Two entities sharing a common third entity does NOT make them directly related.
-- It is OK for some entities to have no pairs if there is no direct evidence of a relationship.
 
 Output ONLY pairs, one per line in this exact format:
 EntityA | EntityB
 
 No explanations, no numbering, no other text."""
 
-CANDIDATE_SCAN_USER_PROMPT = """Identify entity pairs that have a direct, meaningful relationship supported by evidence in the descriptions or source text.
+CANDIDATE_SCAN_USER_PROMPT = """Identify entity pairs that have a meaningful relationship based on evidence in the descriptions or source text.
 
 {context_section}
 
@@ -276,7 +282,16 @@ CANDIDATE_SCAN_USER_PROMPT = """Identify entity pairs that have a direct, meanin
 
 {existing_section}
 
-Output directly related pairs (one per line, format: EntityA | EntityB):"""
+Good examples (pairs with real factual connections):
+OpenAI | GPT-4
+Vitalik Buterin | Ethereum
+Tesla | Elon Musk
+
+Bad examples (do NOT include — co-occurrence is not a relationship):
+SuperRare | Twitter
+Museum | ChatGPT
+
+Output related pairs (one per line, format: EntityA | EntityB):"""
 
 
 class GraphExtractor:
@@ -541,7 +556,15 @@ class GraphExtractor:
                         weight_val = float(weight_match.group(1).strip())
                     except ValueError:
                         pass
-                
+
+                confidence_match = re.search(r'<confidence>([^<]*)</confidence>', block, re.IGNORECASE)
+                confidence_val = 1.0
+                if confidence_match and confidence_match.group(1).strip():
+                    try:
+                        confidence_val = min(1.0, max(0.0, float(confidence_match.group(1).strip())))
+                    except ValueError:
+                        pass
+
                 key = (source.lower(), target.lower(), rtype)
                 if key not in existing:
                     existing.add(key)
@@ -550,7 +573,8 @@ class GraphExtractor:
                         "target": target,
                         "relationship_type": rtype,
                         "description": description,
-                        "weight": min(10.0, max(0.0, weight_val))
+                        "weight": min(10.0, max(0.0, weight_val)),
+                        "confidence": confidence_val,
                     })
 
         # Fallback: parse plaintext arrow format if no XML relationships found
@@ -1844,10 +1868,149 @@ Respond with ONLY the community name, nothing else."""
                 f"Candidate scan: {len(pairs)} candidate pairs from "
                 f"{len(entities)} entities (model={model})"
             )
+
+            # Gleaning pass (Microsoft GraphRAG approach): if the initial scan
+            # found very few pairs for a large batch, do a second pass with
+            # the initial results as context to catch missed relationships.
+            if len(pairs) < 5 and len(entities) >= 50:
+                found_text = "\n".join([f"- {s} | {t}" for s, t in pairs]) if pairs else "(none)"
+                gleaning_prompt = (
+                    f"The following pairs were already identified:\n{found_text}\n\n"
+                    f"Some relationships may have been missed. Please review the entities "
+                    f"and context again carefully and identify any ADDITIONAL pairs not "
+                    f"listed above.\n\n{context_section}\n\n=== Entities ===\n{entity_list}\n\n"
+                    f"Output additional related pairs (one per line, format: EntityA | EntityB):"
+                )
+
+                try:
+                    gleaning_response = await client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": CANDIDATE_SCAN_SYSTEM_PROMPT},
+                            {"role": "user", "content": gleaning_prompt},
+                        ],
+                        temperature=0.4,
+                        max_tokens=max_output_tokens,
+                    )
+                    gleaning_content = self._extract_response_content(gleaning_response)
+                    gleaning_new = 0
+                    if gleaning_content:
+                        for line in gleaning_content.strip().split("\n"):
+                            line = line.strip()
+                            if not line or "|" not in line:
+                                continue
+                            line = re.sub(r"^[\d]+[\.\)]\s*", "", line)
+                            line = re.sub(r"^[-*]\s*", "", line)
+                            parts = line.split("|", 1)
+                            if len(parts) != 2:
+                                continue
+                            source = parts[0].strip()
+                            target = parts[1].strip()
+                            source_canonical = entity_name_set.get(source.lower())
+                            target_canonical = entity_name_set.get(target.lower())
+                            if source_canonical and target_canonical and source_canonical != target_canonical:
+                                pair_key = tuple(sorted([source.lower(), target.lower()]))
+                                if pair_key not in seen_pairs:
+                                    seen_pairs.add(pair_key)
+                                    pairs.append((source_canonical, target_canonical))
+                                    gleaning_new += 1
+                    if gleaning_new > 0:
+                        logger.info(
+                            f"Gleaning pass: +{gleaning_new} additional pairs "
+                            f"(total now {len(pairs)})"
+                        )
+                except Exception as gleaning_err:
+                    logger.warning(f"Gleaning pass failed: {gleaning_err}")
+
             return pairs
 
         except Exception as e:
             logger.error(f"Error during candidate pair scanning: {e}")
+            return []
+
+    async def extract_chunk_relationships_async(
+        self,
+        chunk_text: str,
+        entities: List[dict],
+        max_output_tokens: int = 2000,
+    ) -> List[Relationship]:
+        """Extract relationships from a single chunk using entities found in it.
+
+        Based on LangChain LLMGraphTransformer approach: the source text IS the
+        evidence, so relationships are higher quality than cross-document batches.
+
+        Args:
+            chunk_text: The raw text of the chunk.
+            entities: Entity dicts ({name, type, description}) found in this chunk.
+            max_output_tokens: Max output tokens for the LLM.
+
+        Returns:
+            List of discovered Relationship objects.
+        """
+        if len(entities) < 2 or not chunk_text.strip():
+            return []
+
+        # Use extraction model
+        if self.async_extraction_client:
+            client = self.async_extraction_client
+            model = self.extraction_model_name
+        elif self.async_client:
+            client = self.async_client
+            model = self.current_model
+        else:
+            return []
+
+        r_types = self.relation_types
+        entity_list = "\n".join([self._format_entity_for_prompt(e) for e in entities])
+        entity_name_set = {e.get("name", "").lower() for e in entities}
+
+        user_prompt = f"""Extract relationships between the following entities based on the source text.
+
+Relation Types (use only these): {", ".join(r_types)}
+
+=== Source Text ===
+{chunk_text}
+
+=== Entities in this text ===
+{entity_list}
+
+Extract relationships supported by the text above:"""
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=max_output_tokens,
+            )
+
+            content = self._extract_response_content(response)
+            if not content:
+                return []
+
+            xml_relationships = self._extract_xml_relationships(content)
+            relationships = []
+            for r in xml_relationships:
+                source = r.get("source", "").strip()
+                target = r.get("target", "").strip()
+                if source.lower() in entity_name_set and target.lower() in entity_name_set:
+                    confidence = r.get("confidence", 1.0)
+                    if confidence >= 0.5:
+                        relationships.append(Relationship(
+                            source=source,
+                            target=target,
+                            relationship_type=r.get("relationship_type", "RELATED_TO"),
+                            description=r.get("description", ""),
+                            weight=r.get("weight", 5.0),
+                            confidence=confidence,
+                        ))
+            return relationships
+
+        except Exception as e:
+            logger.warning(f"Per-chunk relationship extraction failed: {e}")
             return []
 
     async def analyze_relationships_async(
@@ -1984,6 +2147,7 @@ Respond with ONLY the community name, nothing else."""
                         relationship_type=r.get("relationship_type", "RELATED_TO"),
                         description=r.get("description", ""),
                         weight=r.get("weight", 5.0),
+                        confidence=r.get("confidence", 1.0),
                     ))
 
             logger.info(f"Relationship analysis: discovered {len(relationships)} relationships from {len(entities)} entities")
@@ -2324,20 +2488,14 @@ Respond with ONLY the community name, nothing else."""
             total = sum(len(chunk_to_entities.get(cid, [])) - 1 for cid in chunks)
             connection_count[name] = total
 
-        # Output: largest clusters first, within cluster interleave high/low
-        # connection count to spread hub entities across batch positions
+        # Output: largest clusters first, within cluster by connection count DESC.
+        # Keeps co-occurring entities adjacent so they land in the same batch
+        # and the LLM sees shared chunk context. Hub accumulation is handled
+        # structurally by the per-entity relationship cap.
         ordered: List[dict] = []
         for cluster in sorted(clusters.values(), key=len, reverse=True):
             cluster.sort(key=lambda n: connection_count.get(n, 0), reverse=True)
-            mid = len(cluster) // 2
-            high, low = cluster[:mid], cluster[mid:]
-            interleaved = [x for pair in zip(high, low) for x in pair]
-            # Append any leftover from the longer half
-            if len(high) > len(low):
-                interleaved.append(high[-1])
-            elif len(low) > len(high):
-                interleaved.append(low[-1])
-            for name in interleaved:
+            for name in cluster:
                 if name in entity_map:
                     ordered.append(entity_map[name])
 

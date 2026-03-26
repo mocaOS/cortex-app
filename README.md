@@ -46,7 +46,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
-- **🧠 GraphRAG**: LLM-powered entity extraction and two-phase relationship analysis (candidate scanning → XML-confirmed extraction) for knowledge graph construction
+- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion, plus cross-document two-phase relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
@@ -58,7 +58,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📝 Graph Summarization**: LLM-generated summaries for entity communities with assistant prefill for reliable JSON output
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
-- **🎯 Semantic Entity Resolution**: Levenshtein fuzzy deduplication (85% threshold) during entity extraction with alias tracking
+- **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz), with LLM-generated combined descriptions, review-and-merge UI, inline entity search to manually add entities to merge groups, and full merge history with audit trail
 - **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. Re-analyze always does 1 round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (from scratch) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page with color-coded health indicator

@@ -66,7 +66,7 @@ The skill will automatically:
 | **Document Processing** | PDF, DOCX, TXT, MD, XLSX, PPTX, images (50MB max) |
 | **Hybrid Search** | Vector (0.5) + Keyword (0.3) + Graph (0.2) with reranking |
 | **AI Q&A** | Chat mode (fast) and Deep Research mode (agentic, 10 iterations) |
-| **Knowledge Graph** | 10 entity types, 15 relationship types, community detection |
+| **Knowledge Graph** | 10 entity types, 14 relationship types, confidence scoring, community detection |
 | **Collections** | Multi-tenant document organization with scoped search |
 | **Entity Dedup** | Fuzzy matching with merge/dismiss workflow |
 | **Image Analysis** | Concurrent vision model processing, integrated into RAG |

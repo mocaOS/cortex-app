@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useAuth } from "@/components/layout/AuthProvider";
 import type { Document, Stats } from "@/types";
 import {
   Loader2,

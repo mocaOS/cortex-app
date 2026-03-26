@@ -173,7 +173,10 @@ co-occurrence batching and multi-round discovery:
 ### Semantic Entity Resolution
 
 ```bash
-# Merge similar entities automatically
+# Enable embedding-based entity deduplication during storage
+# Uses vector similarity via Neo4j vector index to catch semantic matches
+# (e.g., "Museum of Crypto Art" ↔ "MOCA") that string similarity misses
+# Falls back to Levenshtein string matching when disabled
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 
 # Similarity threshold for merging (0.0-1.0)
@@ -408,6 +411,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `CHUNK_SIZE` | No | `500` | Tokens per chunk |
 | `CHUNK_OVERLAP` | No | `50` | Overlap tokens |
 | `ENABLE_GRAPH_EXTRACTION` | No | `true` | Enable GraphRAG |
+| `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | No | `true` | Use embedding-based vector similarity for entity dedup (falls back to Levenshtein) |
 | `GRAPH_EXTRACTION_MODEL` | No | `OPENAI_MODEL` | Model for entity extraction |
 | `GRAPH_EXTRACTION_API_BASE` | No | `OPENAI_API_BASE` | API base for extraction model |
 | `GRAPH_EXTRACTION_API_KEY` | No | `OPENAI_API_KEY` | API key for extraction model |

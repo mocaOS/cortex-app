@@ -20,12 +20,12 @@ GraphRAG uses Large Language Models to:
 
 MOCA uses a two-phase approach for building the knowledge graph:
 
-**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Fuzzy entity resolution (Levenshtein 85%) deduplicates entities at storage time, merging variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching.
+**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Entity resolution deduplicates entities at storage time using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as a fallback. This merges variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 
 **Phase B (per-collection, on demand):** Cross-document relationship analysis using the extraction model (instruction-following). Uses a two-phase approach per batch:
 
-1. **Candidate scanning** — The extraction model scans entity pairs with their co-occurring chunk context and proposes candidate relationships.
-2. **Structured confirmation** — The extraction model confirms candidates with structured XML output, grounding each relationship in source text.
+1. **Candidate scanning** — The extraction model scans entity pairs with their co-occurring chunk context and proposes candidate relationships. Includes few-shot good and bad examples to guide the LLM, plus anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
+2. **Structured confirmation** — The extraction model confirms candidates with structured XML output including confidence scores (0.0-1.0), grounding each relationship in source text. Relationships with confidence < 0.5 are filtered before storage.
 
 Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
 
@@ -33,7 +33,7 @@ Supports **multi-round discovery**: initial analysis runs multiple rounds (defau
 
 **Anti-hub protections**: A per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`, default 50) prevents any single entity from accumulating disproportionate connections — relationships are skipped when both endpoints exceed the cap. Existing relationships shown to the LLM between rounds are capped at 20 per entity (highest weight first) to prevent hub reinforcement. Prompts emphasize direct, evidence-based relationships and explicitly discourage star patterns through common intermediary entities.
 
-Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh, runs multi-round). Relationship types are constrained to 15 standard types via fuzzy matching. A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
+Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh, runs multi-round). Relationship types are constrained to 14 standard types via fuzzy matching (MENTIONS was removed as it was a lazy co-occurrence catch-all). A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -81,7 +81,6 @@ Common relationship types discovered:
 | `PART_OF` | Containment/membership |
 | `USES` | Utilization relationship |
 | `LOCATED_IN` | Geographic relationship |
-| `MENTIONS` | Reference relationship |
 | `IMPLEMENTS` | Implementation relationship |
 | `DEPENDS_ON` | Dependency relationship |
 | `IS_A` | Classification relationship |
@@ -91,7 +90,7 @@ Common relationship types discovered:
 | `CONTAINS` | Containment relationship |
 | `INTERACTS_WITH` | Interaction relationship |
 
-Relationship types are strictly enforced — the LLM is instructed to only use these types, and any non-standard types in the output are fuzzy-matched to the nearest allowed type (80% threshold, fallback to `RELATED_TO`).
+Relationship types are strictly enforced — the LLM is instructed to only use these 14 types, and any non-standard types in the output are fuzzy-matched to the nearest allowed type (80% threshold, fallback to `RELATED_TO`). The `MENTIONS` type was intentionally excluded as it was being used as a lazy catch-all for co-occurrence without meaningful semantic content.
 
 ## Graph Visualization
 
@@ -212,6 +211,8 @@ flowchart LR
     D --> F["Displayed in graph"]
 `} />
 
+When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` (default), entity resolution uses **embedding-based vector similarity** via Neo4j's vector index to catch semantic matches that string similarity misses (e.g., "Museum of Crypto Art" and "MOCA"). Levenshtein string matching is used as a fallback.
+
 Configuration:
 
 ```bash
@@ -221,7 +222,7 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 
 ## Entity Deduplication
 
-While MOCA automatically resolves many duplicates during extraction (via Levenshtein 85% fuzzy matching), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
+While MOCA automatically resolves many duplicates during extraction (via embedding-based semantic matching with Levenshtein 85% fallback), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
 
 ### Find Duplicate Candidates
 

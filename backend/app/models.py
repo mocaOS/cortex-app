@@ -39,7 +39,8 @@ class Relationship(BaseModel):
     relationship_type: str = Field(..., description="Type of relationship: WORKS_FOR, LOCATED_IN, USES, RELATED_TO, PART_OF, etc.")
     description: str = Field(default="", description="Description of how the entities are related")
     weight: float = Field(default=5.0, ge=0.0, le=10.0, description="Relationship strength score (0-10)")
-    
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="LLM confidence that this relationship is real (0-1)")
+
     class Config:
         json_schema_extra = {
             "example": {

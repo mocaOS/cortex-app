@@ -22,9 +22,10 @@ Extracts entities from each document's chunks using an LLM.
    </entity>
    ```
 4. The response is parsed, entity types are normalized to the 10 allowed types (rapidfuzz matching, 75% threshold, fallback to "Concept")
-5. Fuzzy entity resolution merges similar names (85% Levenshtein threshold). "OpenAI" and "Open AI" become a single entity with aliases.
+5. Entity resolution merges similar names using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as fallback. "OpenAI" and "Open AI" become a single entity with aliases.
 6. Entities are linked to the chunks that mention them via fuzzy substring matching (`partial_ratio >= 85%`)
-7. Entity provenance is tracked — each entity records which documents it was extracted from
+7. **Per-chunk relationship extraction**: Chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
+8. Entity provenance is tracked — each entity records which documents it was extracted from
 
 **Token budget calculation:**
 
@@ -46,8 +47,8 @@ Discovers relationships between entities across your entire collection.
 4. For each batch, the system:
    - Fetches **co-mention chunks** with greedy entity-coverage-diversity selection (maximizes coverage of different entities rather than always picking hub-dominated chunks)
    - Fetches existing relationships involving batch entities (capped at 20 per entity, highest weight first) to avoid rediscovery without reinforcing hub patterns
-   - Sends entities + source context + existing relationships to the LLM
-5. The LLM returns relationships in XML format:
+   - Sends entities + source context + existing relationships to the LLM. Phase 1 (candidate scan) includes few-shot good/bad examples to guide the LLM and anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
+5. The LLM returns relationships in XML format with confidence scores:
    ```xml
    <relationship>
      <source>Vitalik Buterin</source>
@@ -55,10 +56,12 @@ Discovers relationships between entities across your entire collection.
      <type>CREATED_BY</type>
      <description>Vitalik Buterin co-founded Ethereum in 2015.</description>
      <weight>9.5</weight>
+     <confidence>0.95</confidence>
    </relationship>
    ```
-6. Non-standard relationship types are fuzzy-matched to the 15 standard types (80% threshold)
-7. Results are deduplicated across batches using the key `(source.lower(), target.lower(), type)`
+6. Relationships with confidence < 0.5 are filtered before storage
+7. Non-standard relationship types are fuzzy-matched to the 14 standard types (80% threshold)
+8. Results are deduplicated across batches using the key `(source.lower(), target.lower(), type)`
 
 **Two modes:**
 - **Incremental** (default) — Builds on existing relationships, only analyzing gaps

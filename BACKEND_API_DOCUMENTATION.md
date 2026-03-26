@@ -649,9 +649,10 @@ Returns current system settings grouped into:
 #### `Relationship`
 - `source`: str
 - `target`: str
-- `relationship_type`: str (WORKS_FOR, LOCATED_IN, USES, RELATED_TO, etc.)
+- `relationship_type`: str (WORKS_FOR, LOCATED_IN, USES, RELATED_TO, etc. — 14 standard types; MENTIONS removed)
 - `description`: str
 - `weight`: float (0-10)
+- `confidence`: float (0.0-1.0, relationships below 0.5 are filtered before storage)
 
 #### `ExtractionResult`
 - `entities`: List[Entity]

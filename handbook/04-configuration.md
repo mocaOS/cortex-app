@@ -129,8 +129,8 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | `true` | Use fuzzy matching for entity deduplication during extraction. |
-| `ENTITY_SIMILARITY_THRESHOLD` | `0.85` | Levenshtein similarity threshold for automatic entity merging. |
+| `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | `true` | Use embedding-based vector similarity for entity deduplication during extraction (catches semantic matches like "Museum of Crypto Art" / "MOCA"; falls back to Levenshtein when disabled). |
+| `ENTITY_SIMILARITY_THRESHOLD` | `0.85` | Similarity threshold for automatic entity merging (applies to both embedding and Levenshtein modes). |
 
 ## Collections Configuration
 

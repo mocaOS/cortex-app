@@ -94,8 +94,9 @@ During document ingestion, an LLM reads each chunk and identifies entities withi
 2. **Sends each batch** with a structured prompt asking for entities in XML format
 3. **Parses the response** to extract entity names, types, and descriptions
 4. **Normalizes entity types** to the 10 allowed categories using fuzzy matching
-5. **Resolves duplicates** via Levenshtein fuzzy matching (85% threshold)
+5. **Resolves duplicates** via embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches, with Levenshtein fuzzy matching (85% threshold) as fallback
 6. **Links entities to chunks** that mention them via fuzzy substring matching
+7. **Extracts per-chunk relationships** — chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence (stored with `extraction_method='per_chunk'`)
 
 ### The 10 Entity Types
 
@@ -121,7 +122,7 @@ During storage, the Library automatically merges entities that are likely the sa
 - "OpenAI" and "Open AI" → merged into "OpenAI"
 - "Vitalik" and "Vitalik Buterin" → kept separate (below threshold)
 
-This uses Levenshtein string similarity with an 85% threshold (configurable via `ENTITY_SIMILARITY_THRESHOLD`). When entities are merged, the canonical entity gains aliases tracking all the variant names.
+When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` (default), this uses embedding-based vector similarity via Neo4j's vector index to catch semantic matches (e.g., "Museum of Crypto Art" and "MOCA"). Levenshtein string similarity with an 85% threshold (configurable via `ENTITY_SIMILARITY_THRESHOLD`) is used as a fallback. When entities are merged, the canonical entity gains aliases tracking all the variant names.
 
 ### Entity Storage in Neo4j
 
@@ -148,12 +149,12 @@ Relationships are typed, weighted connections between entities. They represent h
 
 Relationship discovery is a separate step from entity extraction:
 
-- **Phase A (Per-Document)**: Entity extraction happens during document ingestion — each document's chunks are analyzed individually
-- **Phase B (Per-Collection)**: Relationship analysis happens as a separate job — entities across the entire collection are analyzed together to discover cross-document connections
+- **Phase A (Per-Document)**: Entity extraction happens during document ingestion — each document's chunks are analyzed individually. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence (stored with `extraction_method='per_chunk'`).
+- **Phase B (Per-Collection)**: Cross-document relationship analysis happens as a separate job — entities across the entire collection are analyzed together to discover cross-document connections not visible within individual chunks.
 
-This two-phase approach means entities are discovered incrementally (as each document is processed), while relationships are discovered holistically (across all documents at once).
+This two-phase approach means entities and evidence-grounded per-chunk relationships are discovered incrementally (as each document is processed), while cross-document relationships are discovered holistically (across all documents at once).
 
-### The 15 Standard Relationship Types
+### The 14 Standard Relationship Types
 
 | Type | Description | Example |
 |------|-------------|---------|
@@ -170,20 +171,20 @@ This two-phase approach means entities are discovered incrementally (as each doc
 | `COLLABORATES_WITH` | Partnership/cooperation | "Polygon" → "Ethereum Foundation" |
 | `INFLUENCES` | Impact/effect | "Bitcoin Whitepaper" → "Cryptocurrency" |
 | `PRECEDES` | Temporal ordering | "Bitcoin" → "Ethereum" |
-| `FOLLOWS` | Temporal succession | "Proof of Stake" → "Proof of Work" |
 | `IMPLEMENTS` | Implementation | "Uniswap" → "Automated Market Maker" |
 
-Non-standard types from the LLM are fuzzy-matched to these 15 types (80% threshold via rapidfuzz), with a fallback to `RELATED_TO`.
+Non-standard types from the LLM are fuzzy-matched to these 14 types (80% threshold via rapidfuzz), with a fallback to `RELATED_TO`. The `MENTIONS` type was intentionally removed as it was being used as a lazy catch-all for co-occurrence without meaningful semantic content.
 
 ### Relationship Properties
 
 Each relationship includes:
 
-- **Type**: One of the 15 standard types
+- **Type**: One of the 14 standard types
 - **Description**: A natural language explanation of the connection
 - **Weight**: A 0-10 scale indicating the strength of the relationship (default: 5.0)
+- **Confidence**: A 0.0-1.0 score indicating how confident the LLM is in the relationship (relationships with confidence < 0.5 are filtered before storage)
 - **Source document**: The document(s) that evidence the relationship
-- **Extraction method**: How the relationship was discovered
+- **Extraction method**: How the relationship was discovered (`per_chunk` for Phase A chunk-level extraction, or Phase B cross-document analysis)
 
 ### Relationship Batching
 
@@ -313,7 +314,7 @@ The Library uses this graph structure:
 # Relationships
 (:Document)-[:HAS_CHUNK]->(:Chunk)
 (:Chunk)-[:MENTIONS]->(:Entity)
-(:Entity)-[:RELATED_TO|USES|CREATED_BY|...]->(:Entity)  -- 15 types, weighted
+(:Entity)-[:RELATED_TO|USES|CREATED_BY|...]->(:Entity)  -- 14 types, weighted with confidence
 (:Entity)-[:HAS_MEMBER]->(:Community)
 (:Collection)-[:CONTAINS]->(:Document)
 ```

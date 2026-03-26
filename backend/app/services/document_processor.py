@@ -1318,18 +1318,57 @@ class DocumentProcessor:
                     ),
                 )
 
-                # Store entities with provenance and fuzzy deduplication
+                # Store entities with provenance and fuzzy deduplication.
+                # Uses embedding-based semantic dedup when available (catches
+                # "Museum of Crypto Art" ↔ "MOCA"), falls back to Levenshtein.
+                use_embedding_dedup = (
+                    self.settings.enable_semantic_entity_resolution
+                    and self.graph_extractor.async_extraction_client is not None
+                )
+
                 for entity in entities:
                     self._check_cancellation(doc_id)
-                    await loop.run_in_executor(
-                        _get_processing_executor(),
-                        functools.partial(
-                            self.neo4j.store_entity_with_resolution,
-                            entity,
-                            document_id=doc_id,
-                            similarity_threshold=0.85,
-                        ),
-                    )
+
+                    if use_embedding_dedup:
+                        try:
+                            embedding = await self.graph_extractor.generate_entity_embedding_async(
+                                entity.name, entity.type, entity.description
+                            )
+                        except Exception:
+                            embedding = None
+
+                        if embedding:
+                            await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.store_entity_with_embedding,
+                                    entity,
+                                    chunk_id=None,
+                                    embedding=embedding,
+                                ),
+                            )
+                        else:
+                            # Fallback to Levenshtein if embedding failed
+                            await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.store_entity_with_resolution,
+                                    entity,
+                                    document_id=doc_id,
+                                    similarity_threshold=0.85,
+                                ),
+                            )
+                    else:
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.store_entity_with_resolution,
+                                entity,
+                                document_id=doc_id,
+                                similarity_threshold=0.85,
+                            ),
+                        )
+
                     total_entities += 1
 
                 await loop.run_in_executor(
@@ -1355,12 +1394,91 @@ class DocumentProcessor:
                         ),
                     )
 
-                # Relationships are NOT extracted during upload (Phase B only)
+                # Per-chunk relationship extraction (LLMGraphTransformer approach):
+                # For each chunk with 2+ entities, extract relationships using
+                # the chunk text as direct evidence.
                 total_relationships = 0
+                if self.settings.enable_graph_extraction and chunk_entity_links:
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.update_document_progress,
+                            doc_id, 90, 100,
+                            "Extracting per-chunk relationships...",
+                        ),
+                    )
+
+                    # Build chunk_id → [entity_dicts] map
+                    chunk_entities_map: dict[str, list] = {}
+                    entity_map = {e.name.lower(): {"name": e.name, "type": e.type, "description": e.description} for e in entities}
+                    for link_chunk_id, entity_name in chunk_entity_links:
+                        ent = entity_map.get(entity_name.lower())
+                        if ent:
+                            chunk_entities_map.setdefault(link_chunk_id, []).append(ent)
+
+                    # Extract relationships from chunks with 2+ entities
+                    chunk_content_map = {}
+                    for c in embedded_chunks:
+                        cid = c.meta.get("chunk_id") or c.id if hasattr(c, "meta") else c.id
+                        chunk_content_map[cid] = c.content or ""
+
+                    # Deduplicate entities per chunk (same entity can match multiple times)
+                    for cid in chunk_entities_map:
+                        seen_names = set()
+                        deduped = []
+                        for ent in chunk_entities_map[cid]:
+                            if ent["name"].lower() not in seen_names:
+                                seen_names.add(ent["name"].lower())
+                                deduped.append(ent)
+                        chunk_entities_map[cid] = deduped
+
+                    eligible_chunks = sum(1 for ents in chunk_entities_map.values() if len(ents) >= 2)
+                    logger.info(
+                        f"Document {doc_id}: per-chunk extraction — "
+                        f"{len(chunk_entities_map)} chunks mapped, {eligible_chunks} with 2+ unique entities"
+                    )
+
+                    seen_rels: set[tuple] = set()
+                    import asyncio as _asyncio
+                    sem = _asyncio.Semaphore(self.settings.concurrent_extractions)
+
+                    async def _extract_from_chunk(cid: str, ents: list):
+                        async with sem:
+                            text = chunk_content_map.get(cid, "")
+                            return await self.graph_extractor.extract_chunk_relationships_async(text, ents)
+
+                    # Gather all chunks with 2+ entities
+                    tasks = []
+                    for cid, ents in chunk_entities_map.items():
+                        if len(ents) >= 2:
+                            tasks.append(_extract_from_chunk(cid, ents))
+
+                    if tasks:
+                        results = await _asyncio.gather(*tasks, return_exceptions=True)
+                        for result in results:
+                            if isinstance(result, Exception):
+                                continue
+                            for rel in result:
+                                key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+                                if key not in seen_rels:
+                                    seen_rels.add(key)
+                                    try:
+                                        self.neo4j.store_relationship(
+                                            rel,
+                                            source_document_id=doc_id,
+                                            extraction_method="per_chunk",
+                                        )
+                                        total_relationships += 1
+                                    except Exception as e:
+                                        logger.warning(f"Failed to store per-chunk relationship: {e}")
+
+                    if total_relationships > 0:
+                        logger.info(f"Document {doc_id}: {total_relationships} per-chunk relationships extracted")
 
                 logger.info(
                     f"Document {doc_id}: entity extraction complete - "
-                    f"{total_entities} entities, {len(chunk_entity_links)} chunk links"
+                    f"{total_entities} entities, {len(chunk_entity_links)} chunk links, "
+                    f"{total_relationships} per-chunk relationships"
                 )
 
             await loop.run_in_executor(
@@ -1590,6 +1708,9 @@ class DocumentProcessor:
                     cumulative_total_batches = batches_per_round * max_rounds
 
                 for rel in batch_rels:
+                    # Skip low-confidence relationships
+                    if hasattr(rel, 'confidence') and rel.confidence < 0.5:
+                        continue
                     # Per-entity degree cap: skip if BOTH endpoints are saturated
                     if max_per_entity > 0:
                         src_deg = entity_degrees.get(rel.source, 0)
