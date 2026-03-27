@@ -42,11 +42,11 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: extract entities → analyze relationships → detect communities; "Regenerate Graph" deletes all communities, relationships, and entities for a true from-scratch rebuild), Entity Deduplication, Collections, Add
+  - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: entity extraction & relationship discovery → deep relationship analysis → detect communities; "Regenerate Graph" deletes all communities, relationships, and entities for a true from-scratch rebuild), Entity Deduplication, Collections, Add
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
-- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion, plus cross-document two-phase relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction
+- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document two-phase deep relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
@@ -55,10 +55,10 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 ### Advanced Features
 - **🌐 Community Detection**: Automatic grouping of related entities using Leiden/Louvain algorithms with weight-aware, undirected graph projection and co-mention edges
-- **📝 Graph Summarization**: LLM-generated summaries for entity communities with assistant prefill for reliable JSON output
+- **📝 Graph Summarization**: LLM-generated summaries for entity communities using the extraction model, with assistant prefill for reliable JSON output
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
-- **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
+- **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking and proper document provenance tracking (`source_documents`, `extraction_count`) — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz), with LLM-generated combined descriptions, review-and-merge UI, inline entity search to manually add entities to merge groups, and full merge history with audit trail
 - **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. Re-analyze always does 1 round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (from scratch) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page with color-coded health indicator
@@ -130,23 +130,31 @@ SESSION_SECRET=at-least-32-characters-secret
 
 3. **Configure LLM providers**
 
-MOCA uses LLMs for Q&A, entity extraction, relationship analysis, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API).
+MOCA uses LLMs for Q&A, entity extraction, relationship analysis, community summarization, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API). Entity extraction and community summarization use the extraction model, while all relationship work (per-chunk + batch analysis) uses the dedicated relationship model. Fallback chain: relationship model → extraction model → primary model.
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
+# Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.example.com/v1
 OPENAI_MODEL=
 
-# ── Graph Extraction (entity & relationship discovery) ───────────
+# ── Graph Extraction (entity extraction + community summarization) ─
+# Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B)
 ENABLE_GRAPH_EXTRACTION=                     # true = extract entities/relationships, false = skip
 GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
 GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
 GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
 
+# ── Relationship Model (per-chunk + cross-document analysis) ─────
+# Instruction-following models recommended (e.g. OpenAI GPT OSS 120B)
+RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODEL
+RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
+RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
+
 # Context budgets — must match the context window of their respective models
 EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000              # must match OPENAI_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=198000              # must match RELATIONSHIP_EXTRACTION_MODEL context window
 
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=
@@ -166,11 +174,12 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 ```env
 BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
+CONCURRENT_RELATIONS=3                       # relationship extraction thread pool size (separate from entity extraction)
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
-PARALLEL_RELATIONSHIP_BATCHES=0              # relationship analysis batches in parallel (0 = use CONCURRENT_EXTRACTIONS)
+PARALLEL_RELATIONSHIP_BATCHES=5              # relationship analysis batches in parallel (0 = use CONCURRENT_RELATIONS)
 ```
 
-> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` controls relationship analysis parallelism — set to `0` (default) to use `CONCURRENT_EXTRACTIONS`, or set an explicit number.
+> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the entity extraction thread pool and `CONCURRENT_RELATIONS` sizes the relationship extraction thread pool (separate rate limits). `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` controls relationship analysis parallelism — set to `0` to use `CONCURRENT_RELATIONS`, or set an explicit number (default: `5`).
 
 4. **Start with Docker Compose**
 
@@ -601,7 +610,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `NEO4J_PASSWORD` | Neo4j password | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | LLM model for generation | No | `openai/minimax-m21` |
+| `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (powerful reasoning models recommended, e.g. Minimax M2.7, GLM5, Kimi K2.5) | No | `openai/minimax-m21` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
 | `CUSTOM_INPUTS_DIR` | Directory for custom input files | No | `./custom_inputs` |
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
@@ -612,11 +621,15 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
-| `GRAPH_EXTRACTION_MODEL` | Model for extraction (defaults to `OPENAI_MODEL`) | No | - |
+| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction + community summarization (instruction-following recommended, e.g. Mistral Small 24B, Ministral 14B; defaults to `OPENAI_MODEL`) | No | - |
 | `GRAPH_EXTRACTION_API_BASE` | API base for extraction model (defaults to `OPENAI_API_BASE`) | No | - |
 | `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No | - |
+| `RELATIONSHIP_EXTRACTION_MODEL` | Model for all relationship discovery (instruction-following recommended, e.g. OpenAI GPT OSS 120B; defaults to `GRAPH_EXTRACTION_MODEL`) | No | - |
+| `RELATIONSHIP_EXTRACTION_API_BASE` | API base for relationship model (defaults to `GRAPH_EXTRACTION_API_BASE`) | No | - |
+| `RELATIONSHIP_EXTRACTION_API_KEY` | API key for relationship model (defaults to `GRAPH_EXTRACTION_API_KEY`) | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
-| `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for extraction | No | `20` |
+| `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `20` |
+| `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `EXTRACTION_MAX_CONTEXT` | Max context window tokens for entity extraction batching | No | `32768` |
 | `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
 | `CHUNK_OVERLAP` | Overlap between chunks | No | `50` |
@@ -667,7 +680,7 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 |----------|-------------|----------|---------|
 | `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `16000` |
-| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_EXTRACTIONS`) | No | `0` |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_RELATIONS`) | No | `5` |
 | `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached | No | `1.0` |
 | `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) | No | `3` |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `false` |
@@ -852,12 +865,12 @@ When a document is uploaded (or custom input is added), the following pipeline e
 4. **Entity Extraction** - LLM extracts entities with strict type enforcement (10 types: Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process). Non-standard types are fuzzy-matched to the nearest allowed type.
 5. **Fuzzy Entity Resolution** - Levenshtein similarity (85% threshold) deduplicates entities at storage time, merging "OpenAI" and "Open AI" into a single node with aliases
 6. **Entity-Chunk Linking** - Fuzzy string matching links entities to the chunks that mention them
-7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j
+7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j. Self-referential relationships (source == target) are filtered out at storage time and during extraction. Per-chunk relationship extraction tracks original-to-canonical entity name mapping during entity storage, remapping relationship source/target to canonical names before storing (prevents silent failures when entity names were merged during fuzzy resolution).
 8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed concurrently via vision model (configurable concurrency via `VISION_MAX_CONCURRENT`, default 3). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
 9. **Collection Assignment** - Optionally add document to a collection scope
 10. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
-11. **Relationship Analysis** (separate step via Knowledge Graph page) - Two-phase pipeline using the extraction model: Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser). Entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities). Token budget is split 60/40 between entities and dynamic chunk context per batch. Runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target ERR is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
-12. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. LLM generates community names and summaries.
+11. **Relationship Analysis** (separate step via Knowledge Graph page) - Two-phase pipeline using the relationship model: Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser). Entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities). Token budget is split 60/40 between entities and dynamic chunk context per batch. Runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target ERR is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
+12. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. Extraction model generates community names and summaries.
 
 ### Query Pipeline (Agent Architecture)
 
@@ -899,7 +912,7 @@ The system can automatically detect communities of related entities:
 2. **Graph Projection** - Project entities with undirected, weight-aware relationships plus co-mention edges (entities sharing a chunk get implicit connections)
 3. **Algorithm** - Try Leiden first (hierarchical, guaranteed connected communities), fall back to Louvain, then BFS. Relationship weights (0-10 scale) influence community membership.
 4. **Community Extraction** - Group entities that frequently co-occur or are connected (min size configurable, default 3)
-5. **Summary Generation** - LLM generates descriptive names and summaries for each community (assistant prefill technique for reliable JSON output)
+5. **Summary Generation** - Extraction model generates descriptive names and summaries for each community (assistant prefill technique for reliable JSON output)
 6. **Distribution Monitoring** - Log warnings for pathological distributions (mega-communities, all-minimum-size)
 7. **Context Enhancement** - Community summaries are used to enrich RAG answers
 

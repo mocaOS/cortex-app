@@ -44,7 +44,8 @@ SESSION_SECRET=your-session-secret-key-at-least-32-characters-long
 ### Model Selection
 
 ```bash
-# Primary model for GraphRAG features
+# Primary model for Q&A, research, chat
+# Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
 OPENAI_MODEL=gpt-4o-mini
 
 # Optional: Faster/cheaper model for "Fast Mode"
@@ -110,7 +111,9 @@ PROCESSING_THREAD_WORKERS=4
 # Enable/disable graph extraction
 ENABLE_GRAPH_EXTRACTION=true
 
-# Model for entity extraction (defaults to OPENAI_MODEL)
+# Model for entity extraction and community summarization (defaults to OPENAI_MODEL)
+# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
+# Also handles community summarization for consistent structured output
 # GRAPH_EXTRACTION_MODEL=gpt-4o-mini
 
 # API base/key for extraction model (defaults to OPENAI_API_BASE / OPENAI_API_KEY)
@@ -131,23 +134,43 @@ CONCURRENT_EXTRACTIONS=3
 # EXTRACTION_MAX_CONTEXT=32768
 ```
 
+### Relationship Model
+
+Optional dedicated model for all relationship extraction — both per-chunk extraction
+during document processing (Step 1) and batch cross-document analysis (Step 2).
+Runs on a separate rate limit from entity extraction. Falls back to the extraction
+model, then the primary model.
+
+```bash
+# Model for relationship extraction (defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL)
+# Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B)
+# RELATIONSHIP_EXTRACTION_MODEL=gpt-4o-mini
+
+# API configuration (defaults to GRAPH_EXTRACTION_API_BASE / GRAPH_EXTRACTION_API_KEY)
+# RELATIONSHIP_EXTRACTION_API_BASE=http://localhost:11434/v1
+# RELATIONSHIP_EXTRACTION_API_KEY=ollama
+
+# Concurrent per-chunk relationship extractions per document (default: 3)
+# CONCURRENT_RELATIONS=3
+```
+
 ### Relationship Analysis
 
-Cross-document relationship discovery (Phase B) using the extraction model.
-Two-phase pipeline (candidate scanning + structured confirmation) with
-co-occurrence batching and multi-round discovery:
+Cross-document relationship discovery (Phase B) using the relationship model
+(falls back to extraction model → primary model). Two-phase pipeline (candidate
+scanning + structured confirmation) with co-occurrence batching and multi-round
+discovery:
 
 ```bash
 # Max INPUT context window tokens for relationship analysis batching
-# Increase if your extraction model supports a larger context window
+# Increase if your relationship/extraction model supports a larger context window
 # RELATIONSHIP_MAX_CONTEXT=65536
 
 # Max OUTPUT tokens for relationship analysis LLM responses
 # RELATIONSHIP_MAX_OUTPUT_TOKENS=16000
 
 # Number of relationship analysis batches to process in parallel
-# Set to 0 to use CONCURRENT_EXTRACTIONS value, or set explicitly
-# PARALLEL_RELATIONSHIP_BATCHES=0
+# PARALLEL_RELATIONSHIP_BATCHES=5
 
 # Target entity-to-relationship ratio (ERR metric)
 # Higher values = more relationships discovered per entity
@@ -284,7 +307,8 @@ MAX_COMMUNITIES=50
 # Enable automatic summarization
 ENABLE_GRAPH_SUMMARIZATION=true
 
-# Model for summaries (defaults to OPENAI_MODEL)
+# Model for summaries (defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL)
+# Community summarization uses the extraction model for consistent structured output
 # COMMUNITY_SUMMARY_MODEL=gpt-4o-mini
 ```
 
@@ -412,13 +436,17 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `CHUNK_OVERLAP` | No | `50` | Overlap tokens |
 | `ENABLE_GRAPH_EXTRACTION` | No | `true` | Enable GraphRAG |
 | `ENABLE_SEMANTIC_ENTITY_RESOLUTION` | No | `true` | Use embedding-based vector similarity for entity dedup (falls back to Levenshtein) |
-| `GRAPH_EXTRACTION_MODEL` | No | `OPENAI_MODEL` | Model for entity extraction |
+| `GRAPH_EXTRACTION_MODEL` | No | `OPENAI_MODEL` | Model for entity extraction and community summarization |
 | `GRAPH_EXTRACTION_API_BASE` | No | `OPENAI_API_BASE` | API base for extraction model |
 | `GRAPH_EXTRACTION_API_KEY` | No | `OPENAI_API_KEY` | API key for extraction model |
+| `RELATIONSHIP_EXTRACTION_MODEL` | No | `GRAPH_EXTRACTION_MODEL` | Model for relationship extraction |
+| `RELATIONSHIP_EXTRACTION_API_BASE` | No | `GRAPH_EXTRACTION_API_BASE` | API base for relationship model |
+| `RELATIONSHIP_EXTRACTION_API_KEY` | No | `GRAPH_EXTRACTION_API_KEY` | API key for relationship model |
+| `CONCURRENT_RELATIONS` | No | `3` | Concurrent per-chunk relationship extractions per document |
 | `EXTRACTION_MAX_CONTEXT` | No | `32768` | Max context window tokens for entity extraction batching |
-| `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max INPUT context window tokens for relationship analysis batching |
+| `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max INPUT context window tokens for relationship analysis batching. Must match `RELATIONSHIP_EXTRACTION_MODEL` context window |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `16000` | Max OUTPUT tokens for relationship analysis LLM responses |
-| `PARALLEL_RELATIONSHIP_BATCHES` | No | `0` | Parallel relationship analysis batches (0 = use CONCURRENT_EXTRACTIONS) |
+| `PARALLEL_RELATIONSHIP_BATCHES` | No | `5` | Parallel relationship analysis batches |
 | `RELATIONSHIP_TARGET_RATIO` | No | `1.0` | Target entity-to-relationship ratio (ERR) |
 | `RELATIONSHIP_MAX_ROUNDS` | No | `3` | Max discovery rounds per batch |
 | `RELATIONSHIP_MAX_HOURS` | No | `0` | Max hours for analysis (0 = no limit) |

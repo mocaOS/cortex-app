@@ -244,14 +244,16 @@ The Library is LLM-agnostic. Each capability can point to a different model or p
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ─────────────────────────
+# Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
 OPENAI_API_KEY=sk-your-key
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_MODEL_FAST_MODE=gpt-4o-mini    # Optional: faster model for "Fast Mode"
 
-# ── Graph Extraction (entity & relationship discovery) ─────────
+# ── Graph Extraction (entity discovery + community summarization) ─
+# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
 # Defaults to Primary LLM if not set
-GRAPH_EXTRACTION_MODEL=gpt-4o          # Larger model for better extraction
+GRAPH_EXTRACTION_MODEL=gpt-4o          # Instruction-following model for extraction
 GRAPH_EXTRACTION_API_BASE=https://api.openai.com/v1
 GRAPH_EXTRACTION_API_KEY=sk-your-key
 
@@ -269,7 +271,7 @@ EMBEDDING_API_BASE=https://api.openai.com/v1
 EMBEDDING_API_KEY=sk-your-key
 
 # ── Community Summarization ────────────────────────────────────
-COMMUNITY_SUMMARY_MODEL=gpt-4o-mini   # Defaults to OPENAI_MODEL if not set
+COMMUNITY_SUMMARY_MODEL=gpt-4o-mini   # Defaults to GRAPH_EXTRACTION_MODEL if not set
 ```
 
 ### Using Alternative Providers
@@ -292,7 +294,7 @@ These must match the actual context window of their respective models:
 
 ```env
 EXTRACTION_MAX_CONTEXT=256000          # Must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000        # Must match OPENAI_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=198000        # Must match RELATIONSHIP_EXTRACTION_MODEL context window
 RELATIONSHIP_MAX_OUTPUT_TOKENS=16000   # Max output tokens for relationship analysis
 ```
 

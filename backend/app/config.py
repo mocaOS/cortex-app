@@ -134,6 +134,18 @@ class Settings(BaseSettings):
     graph_extraction_api_key: str = Field(
         default=""
     )  # API key for extraction model (defaults to openai_api_key if empty)
+    relationship_extraction_model: str = Field(
+        default=""
+    )  # Model for per-chunk relationship extraction (defaults to extraction model if empty)
+    relationship_extraction_api_base: str = Field(
+        default=""
+    )  # API base for relationship extraction model (defaults to extraction API base if empty)
+    relationship_extraction_api_key: str = Field(
+        default=""
+    )  # API key for relationship extraction model (defaults to extraction API key if empty)
+    concurrent_relations: int = Field(
+        default=3
+    )  # Number of per-chunk relationship extractions to run concurrently per document
     max_graph_hops: int = Field(
         default=2
     )  # Maximum hops for graph traversal in queries
@@ -165,8 +177,8 @@ class Settings(BaseSettings):
         default=100
     )  # Max entities per relationship analysis LLM call
     parallel_relationship_batches: int = Field(
-        default=0
-    )  # Number of relationship analysis batches to process in parallel (0 = use CONCURRENT_EXTRACTIONS)
+        default=5
+    )  # Number of relationship analysis batches to process in parallel
     auto_relationship_analysis_after_batch: bool = Field(
         default=False
     )  # Auto-trigger relationship analysis after batch processing completes
@@ -356,6 +368,21 @@ class Settings(BaseSettings):
     def extraction_api_key(self) -> str:
         """Get the API key for graph extraction."""
         return self.graph_extraction_api_key or self.openai_api_key
+
+    @property
+    def rel_extraction_model(self) -> str:
+        """Get the model for per-chunk relationship extraction."""
+        return self.relationship_extraction_model or self.extraction_model
+
+    @property
+    def rel_extraction_api_base(self) -> str:
+        """Get the API base URL for relationship extraction."""
+        return self.relationship_extraction_api_base or self.extraction_api_base
+
+    @property
+    def rel_extraction_api_key(self) -> str:
+        """Get the API key for relationship extraction."""
+        return self.relationship_extraction_api_key or self.extraction_api_key
 
     @property
     def summary_model(self) -> str:

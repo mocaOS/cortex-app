@@ -677,6 +677,11 @@ class SystemConfigResponse(BaseModel):
     relationship_max_rounds: int = Field(default=1, description="Max auto-discovery rounds per analysis run")
     relationship_max_hours: float = Field(default=0, description="Max hours for relationship generation (0 = no limit)")
 
+    # Relationship Extraction Model
+    relationship_model: str = Field(..., description="Model used for per-chunk relationship extraction")
+    relationship_api_base: str = Field(..., description="Relationship extraction model API base URL")
+    concurrent_relations: int = Field(..., description="Concurrent per-chunk relationship extractions per document")
+
     # Vision Model
     vision_model_available: bool = Field(..., description="Whether a vision model is configured")
     vision_model: str = Field(..., description="Vision model name for image analysis")

@@ -249,7 +249,8 @@ MAX_COMMUNITIES=50
 # Enable automatic summarization
 ENABLE_GRAPH_SUMMARIZATION=true
 
-# Model for summaries (defaults to OPENAI_MODEL)
+# Model for summaries (defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL)
+# Community summarization uses the extraction model for consistent structured output
 # COMMUNITY_SUMMARY_MODEL=gpt-4o-mini
 ```
 

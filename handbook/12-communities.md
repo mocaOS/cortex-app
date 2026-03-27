@@ -39,7 +39,7 @@ Communities smaller than `MIN_COMMUNITY_SIZE` (default: 3) are discarded. The sy
 
 ### Step 4: Summarization
 
-An LLM generates a name and summary for each community:
+The **extraction model** generates a name and summary for each community (configurable via `COMMUNITY_SUMMARY_MODEL`, defaults to `GRAPH_EXTRACTION_MODEL`):
 
 - Up to 30 member entities and 40 internal relationships are provided as context
 - The LLM returns `{"name": "...", "summary": "..."}`
@@ -151,7 +151,7 @@ ENABLE_COMMUNITY_DETECTION=true     # Enable/disable feature
 MIN_COMMUNITY_SIZE=3                 # Minimum entities per community
 MAX_COMMUNITIES=50                   # Maximum communities to track
 ENABLE_GRAPH_SUMMARIZATION=true     # Generate LLM summaries
-COMMUNITY_SUMMARY_MODEL=            # Defaults to OPENAI_MODEL
+COMMUNITY_SUMMARY_MODEL=            # Defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL
 ```
 
 ## Use Cases

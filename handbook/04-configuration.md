@@ -18,7 +18,7 @@ The Library uses Pydantic BaseSettings for configuration. Environment variables 
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | — | API key for the primary LLM provider. Required for Q&A, research, and graph operations. |
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | Base URL for the LLM API. Change for LiteLLM, Azure, or local providers. |
-| `OPENAI_MODEL` | `openai/minimax-m21` | Model name for Q&A, research, chat, and relationship analysis. |
+| `OPENAI_MODEL` | `openai/minimax-m21` | Model name for Q&A, research, and chat. Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5). |
 | `OPENAI_MODEL_FAST_MODE` | Same as `OPENAI_MODEL` | Optional faster/cheaper model for the "Fast Mode" search in Ask AI. |
 
 ## Graph Extraction Configuration
@@ -28,7 +28,7 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENABLE_GRAPH_EXTRACTION` | `true` | Enable LLM-powered entity extraction during document ingestion. Set `false` to skip extraction entirely. |
-| `GRAPH_EXTRACTION_MODEL` | Same as `OPENAI_MODEL` | Dedicated model for entity extraction. Use a larger model here for better extraction quality. |
+| `GRAPH_EXTRACTION_MODEL` | Same as `OPENAI_MODEL` | Dedicated model for entity extraction and community summarization. Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B). |
 | `GRAPH_EXTRACTION_API_BASE` | Same as `OPENAI_API_BASE` | API base URL for the extraction model. |
 | `GRAPH_EXTRACTION_API_KEY` | Same as `OPENAI_API_KEY` | API key for the extraction model. |
 | `EXTRACTION_MAX_CONTEXT` | `32768` | Max context window tokens for entity extraction batching. Must match the extraction model's actual context window. |
@@ -38,7 +38,8 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELATIONSHIP_MAX_CONTEXT` | `65536` | Max input context window tokens for relationship analysis batching. Must match the primary model's context window. |
+| `RELATIONSHIP_EXTRACTION_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for relationship extraction (per-chunk and cross-document). Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B). |
+| `RELATIONSHIP_MAX_CONTEXT` | `65536` | Max input context window tokens for relationship analysis batching. Must match the `RELATIONSHIP_EXTRACTION_MODEL` context window. |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `16000` | Max output tokens for relationship analysis LLM responses. |
 | `RELATIONSHIP_MAX_PER_ENTITY` | `50` | Soft cap on relationships per entity. Prevents hub entities from accumulating disproportionate connections. 0 = no cap. |
 | `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
@@ -123,7 +124,7 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | `MIN_COMMUNITY_SIZE` | `3` | Minimum entities for a valid community. |
 | `MAX_COMMUNITIES` | `50` | Maximum number of communities to track. |
 | `ENABLE_GRAPH_SUMMARIZATION` | `true` | Generate LLM summaries of communities. |
-| `COMMUNITY_SUMMARY_MODEL` | Same as `OPENAI_MODEL` | Model for community name/summary generation. |
+| `COMMUNITY_SUMMARY_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for community name/summary generation. Uses the extraction model for consistent structured output. |
 
 ## Entity Resolution Configuration
 

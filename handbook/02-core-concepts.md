@@ -96,7 +96,7 @@ During document ingestion, an LLM reads each chunk and identifies entities withi
 4. **Normalizes entity types** to the 10 allowed categories using fuzzy matching
 5. **Resolves duplicates** via embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches, with Levenshtein fuzzy matching (85% threshold) as fallback
 6. **Links entities to chunks** that mention them via fuzzy substring matching
-7. **Extracts per-chunk relationships** — chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence (stored with `extraction_method='per_chunk'`)
+7. **Extracts per-chunk relationships** — chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. Entity names are mapped to their canonical (dedup-resolved) names before storage, and self-referential relationships (source == target) are automatically filtered out. Stored with `extraction_method='per_chunk'`.
 
 ### The 10 Entity Types
 
@@ -149,7 +149,7 @@ Relationships are typed, weighted connections between entities. They represent h
 
 Relationship discovery is a separate step from entity extraction:
 
-- **Phase A (Per-Document)**: Entity extraction happens during document ingestion — each document's chunks are analyzed individually. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence (stored with `extraction_method='per_chunk'`).
+- **Phase A (Per-Document)**: Entity extraction happens during document ingestion — each document's chunks are analyzed individually. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. Entity names are mapped to their canonical (dedup-resolved) names before storage, and self-referential relationships are automatically filtered out. Stored with `extraction_method='per_chunk'`.
 - **Phase B (Per-Collection)**: Cross-document relationship analysis happens as a separate job — entities across the entire collection are analyzed together to discover cross-document connections not visible within individual chunks.
 
 This two-phase approach means entities and evidence-grounded per-chunk relationships are discovered incrementally (as each document is processed), while cross-document relationships are discovered holistically (across all documents at once).
@@ -182,7 +182,7 @@ Each relationship includes:
 - **Type**: One of the 14 standard types
 - **Description**: A natural language explanation of the connection
 - **Weight**: A 0-10 scale indicating the strength of the relationship (default: 5.0)
-- **Confidence**: A 0.0-1.0 score indicating how confident the LLM is in the relationship (relationships with confidence < 0.5 are filtered before storage)
+- **Confidence**: A 0.0-1.0 score indicating how confident the LLM is in the relationship (relationships with confidence < 0.5 are filtered before storage; self-referential relationships where source == target are also filtered out)
 - **Source document**: The document(s) that evidence the relationship
 - **Extraction method**: How the relationship was discovered (`per_chunk` for Phase A chunk-level extraction, or Phase B cross-document analysis)
 
@@ -208,7 +208,7 @@ Communities are clusters of entities that frequently appear together or are tigh
    - **Louvain** (fallback) — Classic modularity-based detection. Also via GDS.
    - **BFS** (last resort) — Simple connected-component detection using breadth-first search. Used when GDS is unavailable.
 3. **Size Filtering** — Communities below the minimum size (default: 3 entities) are discarded
-4. **Summarization** — An LLM generates a descriptive name and summary for each community
+4. **Summarization** — The extraction model generates a descriptive name and summary for each community
 
 ### Community Storage
 

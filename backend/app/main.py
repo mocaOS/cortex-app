@@ -2502,10 +2502,10 @@ async def _run_relationship_analysis_task(
         processor = get_document_processor()
         neo4j = get_neo4j_service()
 
-        # If rebuild mode, delete all existing relationships first
+        # If rebuild mode, delete batch-analysis relationships (preserve per-chunk from Step 1)
         if rebuild:
-            update_task_progress(task_id, 0, 1, "Clearing existing relationships for full rebuild...")
-            await asyncio.to_thread(neo4j.delete_all_relationships)
+            update_task_progress(task_id, 0, 1, "Clearing batch relationships for full rebuild (preserving per-chunk)...")
+            await asyncio.to_thread(neo4j.delete_batch_relationships)
 
         # Count entities for progress
         entities = await asyncio.to_thread(
@@ -3306,6 +3306,11 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         relationship_target_ratio=settings.relationship_target_ratio,
         relationship_max_rounds=settings.relationship_max_rounds,
         relationship_max_hours=settings.relationship_max_hours,
+
+        # Relationship Extraction Model
+        relationship_model=settings.rel_extraction_model,
+        relationship_api_base=settings.rel_extraction_api_base,
+        concurrent_relations=settings.concurrent_relations,
 
         # Vision Model
         vision_model_available=settings.vision_model_available,

@@ -600,6 +600,11 @@ export interface SystemConfig {
   relationship_max_context: number;
   parallel_relationship_batches: number;
 
+  // Relationship Extraction Model
+  relationship_model: string;
+  relationship_api_base: string;
+  concurrent_relations: number;
+
   // Vision Model
   vision_model_available: boolean;
   vision_model: string;

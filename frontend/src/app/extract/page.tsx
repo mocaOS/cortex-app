@@ -553,7 +553,7 @@ export default function ExtractAnalyzePage() {
     return imagesDone;
   });
 
-  // Step 1: Entity Extraction
+  // Step 1: Entity Extraction & Relationship Discovery
   const step1Stale = entityCount > 0 && pendingDocs.length > 0 && processingDocs.length === 0 && analyzingImagesDocs.length === 0 && !isExtractingEntities;
   const step1Status: StepStatus =
     processingDocs.length > 0 || documents.some((d) => d.processing_status === "extracting") || isExtractingEntities || analyzingImagesDocs.length > 0
@@ -562,7 +562,7 @@ export default function ExtractAnalyzePage() {
         ? "complete"
         : "pending";
 
-  // Step 2: Relationship Analysis
+  // Step 2: Deep Relationship Analysis
   const step2Blocked = step1Status !== "complete";
   const step2Stale = !step2Blocked && relationshipCount > 0 && newDocsSinceAnalysis > 0 && !analyzingRelationships;
   const step2Status: StepStatus = step2Blocked
@@ -636,8 +636,8 @@ export default function ExtractAnalyzePage() {
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Generating Knowledge Graph</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {regenerateStep === 1 ? "Step 1 of 3: Processing documents and extracting entities..." :
-                 regenerateStep === 2 ? "Step 2 of 3: Analyzing relationships between entities..." :
+                {regenerateStep === 1 ? "Step 1 of 3: Extracting entities and relationships from documents..." :
+                 regenerateStep === 2 ? "Step 2 of 3: Deep analysis of cross-document relationships..." :
                  "Step 3 of 3: Detecting communities in the knowledge graph..."}
               </p>
             </div>
@@ -657,7 +657,7 @@ export default function ExtractAnalyzePage() {
 
       {/* Pipeline Steps */}
       <div className="space-y-4">
-        {/* Step 1: Entity Extraction */}
+        {/* Step 1: Entity Extraction & Relationship Discovery */}
         <div className={cn("p-6 bg-card border rounded-xl transition-colors", step1Stale ? "border-yellow-500/30" : getStepBorder(step1Status))}>
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0 mt-0.5">
@@ -666,7 +666,7 @@ export default function ExtractAnalyzePage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-semibold">Step 1: Entity Extraction</h3>
+                  <h3 className="text-lg font-semibold">Step 1: Entity Extraction & Relationship Discovery</h3>
                   <span className={cn(
                     "px-2 py-0.5 text-xs rounded-full font-medium",
                     step1Stale ? "bg-yellow-500/20 text-yellow-400" :
@@ -685,7 +685,7 @@ export default function ExtractAnalyzePage() {
                 )}
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                Entities are automatically extracted when documents are processed. Upload documents and process them to extract entities like people, organizations, concepts, and more.
+                Extracts entities like people, organizations, and concepts from each document, and discovers within-document relationships grounded in the source text.
               </p>
 
               {/* Document processing summary */}
@@ -795,7 +795,7 @@ export default function ExtractAnalyzePage() {
                           }}
                           className="inline-flex items-center gap-2 px-3 py-2 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors text-muted-foreground"
                         >
-                          Continue with Entity Extraction Only
+                          Continue with Step 1 Only
                         </button>
                       </div>
                     </div>
@@ -812,7 +812,7 @@ export default function ExtractAnalyzePage() {
 
               {entityCount > 0 && (
                 <p className="text-sm text-green-400 mb-3">
-                  {entityCount} entities extracted from {completedDocs.length} document{completedDocs.length !== 1 ? "s" : ""}.
+                  {entityCount.toLocaleString()} entities extracted.
                 </p>
               )}
 
@@ -828,7 +828,7 @@ export default function ExtractAnalyzePage() {
           )} />
         </div>
 
-        {/* Step 2: Relationship Analysis */}
+        {/* Step 2: Deep Relationship Analysis */}
         <div className={cn(
           "p-6 bg-card border rounded-xl transition-colors",
           step2Blocked ? "opacity-40 border-border" : step2Stale ? "border-yellow-500/30" : getStepBorder(step2Status)
@@ -840,7 +840,7 @@ export default function ExtractAnalyzePage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-semibold">Step 2: Relationship Analysis</h3>
+                  <h3 className="text-lg font-semibold">Step 2: Deep Relationship Analysis</h3>
                   <span className={cn(
                     "px-2 py-0.5 text-xs rounded-full font-medium",
                     step2Stale ? "bg-yellow-500/20 text-yellow-400" :
@@ -861,14 +861,14 @@ export default function ExtractAnalyzePage() {
 
               {step2Blocked ? (
                 <p className="text-sm text-muted-foreground">
-                  Complete Step 1 first to extract entities, then analyze relationships here.
+                  Complete Step 1 first, then run deep analysis to discover cross-document relationships.
                 </p>
               ) : entityCount > 0 && relationshipCount === 0 && !analyzingRelationships ? (
                 <div className="flex items-center justify-between mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <p className="text-sm text-yellow-200">
-                      Entities have been extracted but relationships haven&apos;t been analyzed yet. Analyze to discover how entities connect across your documents.
+                      Step 1 relationships are extracted. Run deep analysis to discover additional cross-document connections.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-4">
@@ -883,7 +883,7 @@ export default function ExtractAnalyzePage() {
                 </div>
               ) : entityCount === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Waiting for entities to be extracted first. Process your documents in Step 1 to extract entities, then come back here to analyze relationships.
+                  Waiting for Step 1 to complete. Process your documents first, then run deep analysis here.
                 </p>
               ) : relationshipCount > 0 && newDocsSinceAnalysis > 0 && !analyzingRelationships ? (
                 <div className="mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">

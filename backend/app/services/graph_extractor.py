@@ -11,10 +11,11 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI, AsyncOpenAI
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
-from app.services.llm_config import get_llm_config, get_extraction_llm_config, is_turbo_mode_active
+from app.services.llm_config import get_llm_config, get_extraction_llm_config, get_relationship_llm_config, is_turbo_mode_active
 
 logger = logging.getLogger(__name__)
 
@@ -304,8 +305,10 @@ class GraphExtractor:
         self._extraction_client: Optional[OpenAI] = None
         self._async_extraction_client: Optional[AsyncOpenAI] = None
         self._async_embed_client: Optional[AsyncOpenAI] = None
+        self._async_relationship_client: Optional[AsyncOpenAI] = None
         self._last_config_hash: Optional[str] = None  # Track config changes for turbo mode
         self._last_extraction_config_hash: Optional[str] = None
+        self._last_relationship_config_hash: Optional[str] = None
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
 
@@ -339,6 +342,19 @@ class GraphExtractor:
             self._extraction_client = None
             self._async_extraction_client = None
         self._last_extraction_config_hash = current_hash
+
+    def _get_relationship_config_hash(self) -> str:
+        """Get a hash of relationship LLM config to detect changes."""
+        config = get_relationship_llm_config()
+        return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
+
+    def _reset_relationship_clients_if_config_changed(self):
+        """Reset relationship clients if the relationship LLM config has changed."""
+        current_hash = self._get_relationship_config_hash()
+        if self._last_relationship_config_hash and self._last_relationship_config_hash != current_hash:
+            logger.info("Relationship LLM configuration changed, recreating relationship clients")
+            self._async_relationship_client = None
+        self._last_relationship_config_hash = current_hash
     
     @property
     def client(self) -> Optional[OpenAI]:
@@ -426,6 +442,35 @@ class GraphExtractor:
     def extraction_model_name(self) -> str:
         """Get the current extraction model name."""
         config = get_extraction_llm_config()
+        return config.model
+
+    @property
+    def async_relationship_client(self) -> Optional[AsyncOpenAI]:
+        """
+        Lazy initialization of async OpenAI client for per-chunk relationship extraction.
+        Uses relationship-specific config (separate model/endpoint to avoid rate-limit
+        collisions with entity extraction).
+        """
+        self._reset_relationship_clients_if_config_changed()
+
+        config = get_relationship_llm_config()
+        if self._async_relationship_client is None and config.api_key:
+            self._async_relationship_client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                timeout=120.0,
+                max_retries=2,
+            )
+            if config.is_turbo:
+                logger.info(f"Async relationship client using Turbo Mode: {config.base_url}")
+            else:
+                logger.info(f"Relationship client initialized: {config.base_url} / {config.model}")
+        return self._async_relationship_client
+
+    @property
+    def relationship_model_name(self) -> str:
+        """Get the current relationship extraction model name."""
+        config = get_relationship_llm_config()
         return config.model
 
     @property
@@ -1237,9 +1282,12 @@ class GraphExtractor:
         Returns:
             Dict with 'name' and 'summary' keys
         """
-        if not self.is_available or not entities:
+        # Use extraction model for community summarization
+        client = self.extraction_client or self.client
+        model = self.extraction_model_name if self.extraction_client else self.current_model
+        if not client or not entities:
             return {"name": None, "summary": None}
-        
+
         # Format entity information
         entity_info = "\n".join([
             f"- {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}): {e.get('description', '')[:200]}"
@@ -1264,8 +1312,8 @@ Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just 
 Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.current_model,
+            response = client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
                     {"role": "user", "content": prompt},
@@ -1374,8 +1422,11 @@ Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}""
         entities: List[dict],
         relationships: List[dict]
     ) -> dict:
-        """Async version of generate_community_summary using AsyncOpenAI."""
-        if not self.async_client or not entities:
+        """Async version of generate_community_summary using extraction model."""
+        # Use extraction model for community summarization
+        client = self.async_extraction_client or self.async_client
+        model = self.extraction_model_name if self.async_extraction_client else self.current_model
+        if not client or not entities:
             return {"name": None, "summary": None}
         
         # Format entity information
@@ -1402,8 +1453,8 @@ Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just 
 Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
-            response = await self.async_client.chat.completions.create(
-                model=self.current_model,
+            response = await client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
                     {"role": "user", "content": prompt},
@@ -1780,8 +1831,11 @@ Respond with ONLY the community name, nothing else."""
         Returns:
             List of (source_name, target_name) candidate pairs
         """
-        # Use extraction model (fast, cheap, larger context)
-        if self.async_extraction_client:
+        # Use relationship model (separate rate limit from entity extraction)
+        if self.async_relationship_client:
+            client = self.async_relationship_client
+            model = self.relationship_model_name
+        elif self.async_extraction_client:
             client = self.async_extraction_client
             model = self.extraction_model_name
         elif self.async_client:
@@ -1950,8 +2004,11 @@ Respond with ONLY the community name, nothing else."""
         if len(entities) < 2 or not chunk_text.strip():
             return []
 
-        # Use extraction model
-        if self.async_extraction_client:
+        # Use dedicated relationship model (falls back to extraction, then main)
+        if self.async_relationship_client:
+            client = self.async_relationship_client
+            model = self.relationship_model_name
+        elif self.async_extraction_client:
             client = self.async_extraction_client
             model = self.extraction_model_name
         elif self.async_client:
@@ -1977,15 +2034,29 @@ Relation Types (use only these): {", ".join(r_types)}
 Extract relationships supported by the text above:"""
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=max_output_tokens,
+            # Retry with exponential backoff for rate limit (429) errors.
+            # OpenAI SDK raises openai.RateLimitError for 429 responses.
+            @retry(
+                retry=retry_if_exception_type(Exception),
+                stop=stop_after_attempt(4),
+                wait=wait_exponential(multiplier=2, min=2, max=30),
+                before_sleep=lambda rs: logger.debug(
+                    f"Per-chunk extraction retry #{rs.attempt_number} after {rs.outcome.exception().__class__.__name__}"
+                ),
+                reraise=True,
             )
+            async def _call_llm():
+                return await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=max_output_tokens,
+                )
+
+            response = await _call_llm()
 
             content = self._extract_response_content(response)
             if not content:
@@ -1996,7 +2067,7 @@ Extract relationships supported by the text above:"""
             for r in xml_relationships:
                 source = r.get("source", "").strip()
                 target = r.get("target", "").strip()
-                if source.lower() in entity_name_set and target.lower() in entity_name_set:
+                if source.lower() in entity_name_set and target.lower() in entity_name_set and source.lower() != target.lower():
                     confidence = r.get("confidence", 1.0)
                     if confidence >= 0.5:
                         relationships.append(Relationship(
@@ -2010,7 +2081,7 @@ Extract relationships supported by the text above:"""
             return relationships
 
         except Exception as e:
-            logger.warning(f"Per-chunk relationship extraction failed: {e}")
+            logger.warning(f"Per-chunk relationship extraction failed after retries: {e}")
             return []
 
     async def analyze_relationships_async(
@@ -2038,9 +2109,12 @@ Extract relationships supported by the text above:"""
         Returns:
             List of discovered Relationship objects
         """
-        # Use extraction model — it's instruction-following and produces clean XML
-        # Main model tends to over-reason and output plaintext instead of XML
-        if self.async_extraction_client:
+        # Use relationship model (separate rate limit from entity extraction)
+        # Falls back to extraction model, then main model
+        if self.async_relationship_client:
+            client = self.async_relationship_client
+            model = self.relationship_model_name
+        elif self.async_extraction_client:
             client = self.async_extraction_client
             model = self.extraction_model_name
         elif self.async_client:
@@ -2139,8 +2213,8 @@ Extract relationships supported by the text above:"""
                 source = r.get("source", "").strip()
                 target = r.get("target", "").strip()
 
-                # Only keep relationships where both entities are in the provided list
-                if source.lower() in entity_name_set and target.lower() in entity_name_set:
+                # Only keep relationships where both entities are in the provided list and not self-referential
+                if source.lower() in entity_name_set and target.lower() in entity_name_set and source.lower() != target.lower():
                     relationships.append(Relationship(
                         source=source,
                         target=target,

@@ -1200,9 +1200,18 @@ paths:
                   extraction_max_context:
                     type: integer
                     description: Max context window tokens for entity extraction
+                  relationship_model:
+                    type: string
+                    description: Relationship extraction model name
+                  relationship_api_base:
+                    type: string
+                    description: Relationship model API base URL
                   relationship_max_context:
                     type: integer
                     description: Max context window tokens for relationship analysis
+                  concurrent_relations:
+                    type: integer
+                    description: Concurrent per-chunk relationship extractions per document
                   parallel_relationship_batches:
                     type: integer
                     description: Relationship analysis batches processed in parallel

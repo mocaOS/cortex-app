@@ -47,23 +47,33 @@ SESSION_SECRET=a-random-string-at-least-32-characters-long
 
 #### LLM Configuration
 
-MOCA uses LLMs for Q&A, entity extraction, relationship analysis, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API).
+MOCA uses LLMs for Q&A, entity extraction, relationship extraction, image understanding, and embeddings. Each capability can point to a different model or provider (any OpenAI-compatible API), giving you 5 independently configurable model slots.
 
 ```bash
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
+# Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.example.com/v1
 OPENAI_MODEL=
 
-# ── Graph Extraction (entity & relationship discovery) ───────────
+# ── Graph Extraction (entity discovery + community summarization) ─
+# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
 ENABLE_GRAPH_EXTRACTION=                     # true = extract entities/relationships, false = skip
 GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
 GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
 GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
 
+# ── Relationship Model (relationship discovery) ─────────────────
+# Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B)
+# Used for per-chunk (Step 1) and cross-document (Step 2) relationship extraction
+# Runs on a separate rate limit from entity extraction
+RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL
+RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
+RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
+
 # Context budgets — must match the context window of their respective models
 EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000              # must match OPENAI_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=198000              # must match relationship/extraction model context window
 
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=
@@ -85,11 +95,12 @@ Controls how much work runs in parallel:
 ```bash
 BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
+CONCURRENT_RELATIONS=3                       # per-chunk relationship extractions per document
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
-PARALLEL_RELATIONSHIP_BATCHES=2              # relationship analysis batches in parallel (1 = sequential)
+PARALLEL_RELATIONSHIP_BATCHES=5              # relationship analysis batches in parallel (1 = sequential)
 ```
 
-> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the extraction thread pool. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up relationship analysis — increase it to run multiple LLM calls concurrently.
+> `BATCH_PROCESSING_CONCURRENCY` controls how many documents go through the pipeline simultaneously. Within each document, `CONCURRENT_EXTRACTIONS` sizes the entity extraction thread pool and `CONCURRENT_RELATIONS` controls per-chunk relationship extraction concurrency. `VISION_MAX_CONCURRENT` independently caps the background image analysis pipeline across all documents. `PARALLEL_RELATIONSHIP_BATCHES` is the most impactful lever for speeding up cross-document relationship analysis — increase it to run multiple LLM calls concurrently.
 
 See the [Configuration Reference](/configuration) for all 50+ environment variables.
 

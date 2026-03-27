@@ -1326,6 +1326,9 @@ class DocumentProcessor:
                     and self.graph_extractor.async_extraction_client is not None
                 )
 
+                # Track original → canonical name mapping for relationship extraction
+                entity_canonical_map: dict[str, str] = {}
+
                 for entity in entities:
                     self._check_cancellation(doc_id)
 
@@ -1338,18 +1341,21 @@ class DocumentProcessor:
                             embedding = None
 
                         if embedding:
-                            await loop.run_in_executor(
+                            result = await loop.run_in_executor(
                                 _get_processing_executor(),
                                 functools.partial(
                                     self.neo4j.store_entity_with_embedding,
                                     entity,
                                     chunk_id=None,
+                                    document_id=doc_id,
                                     embedding=embedding,
                                 ),
                             )
+                            canonical_name = result[0] if isinstance(result, tuple) else entity.name
+                            entity_canonical_map[entity.name.lower()] = canonical_name
                         else:
                             # Fallback to Levenshtein if embedding failed
-                            await loop.run_in_executor(
+                            canonical_name = await loop.run_in_executor(
                                 _get_processing_executor(),
                                 functools.partial(
                                     self.neo4j.store_entity_with_resolution,
@@ -1358,8 +1364,9 @@ class DocumentProcessor:
                                     similarity_threshold=0.85,
                                 ),
                             )
+                            entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
                     else:
-                        await loop.run_in_executor(
+                        canonical_name = await loop.run_in_executor(
                             _get_processing_executor(),
                             functools.partial(
                                 self.neo4j.store_entity_with_resolution,
@@ -1368,6 +1375,7 @@ class DocumentProcessor:
                                 similarity_threshold=0.85,
                             ),
                         )
+                        entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
 
                     total_entities += 1
 
@@ -1440,7 +1448,7 @@ class DocumentProcessor:
 
                     seen_rels: set[tuple] = set()
                     import asyncio as _asyncio
-                    sem = _asyncio.Semaphore(self.settings.concurrent_extractions)
+                    sem = _asyncio.Semaphore(self.settings.concurrent_relations)
 
                     async def _extract_from_chunk(cid: str, ents: list):
                         async with sem:
@@ -1455,22 +1463,30 @@ class DocumentProcessor:
 
                     if tasks:
                         results = await _asyncio.gather(*tasks, return_exceptions=True)
+                        failed_count = 0
                         for result in results:
                             if isinstance(result, Exception):
+                                failed_count += 1
                                 continue
                             for rel in result:
+                                # Remap to canonical entity names from dedup
+                                rel.source = entity_canonical_map.get(rel.source.lower(), rel.source)
+                                rel.target = entity_canonical_map.get(rel.target.lower(), rel.target)
                                 key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
                                 if key not in seen_rels:
                                     seen_rels.add(key)
                                     try:
-                                        self.neo4j.store_relationship(
+                                        stored = self.neo4j.store_relationship(
                                             rel,
                                             source_document_id=doc_id,
                                             extraction_method="per_chunk",
                                         )
-                                        total_relationships += 1
+                                        if stored:
+                                            total_relationships += 1
                                     except Exception as e:
                                         logger.warning(f"Failed to store per-chunk relationship: {e}")
+                        if failed_count:
+                            logger.warning(f"Document {doc_id}: {failed_count}/{len(tasks)} per-chunk extractions failed")
 
                     if total_relationships > 0:
                         logger.info(f"Document {doc_id}: {total_relationships} per-chunk relationships extracted")

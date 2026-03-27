@@ -439,21 +439,30 @@ export default function AdminPage() {
                     {/* Primary Model */}
                     <div className="mb-4">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, chat, relationship analysis, and community summarization.</p>
-                      <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, chat, and relationship analysis (OPENAI_MODEL)" />
+                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M2.7, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
+                      <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
                       <ConfigItem label="API Base" value={config.openai_api_base} tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
-                      <ConfigItem label="Relationship Context" value={config.relationship_max_context.toLocaleString()} tooltip="Max context window tokens for relationship analysis. Must match this model's context window (RELATIONSHIP_MAX_CONTEXT)" />
-                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Number of relationship analysis batches processed concurrently. Higher values speed up analysis but increase API load (PARALLEL_RELATIONSHIP_BATCHES)" />
                     </div>
 
                     {/* Extraction Model */}
                     <div className="mb-4 pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Extraction Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion. Defaults to the primary model if not set separately.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion, and generates community summaries. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to the primary model if not set separately.</p>
                       <ConfigItem label="Model" value={config.extraction_model} tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.extraction_api_base} tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Must match this model's context window (EXTRACTION_MAX_CONTEXT)" />
                       <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the extraction pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
+                    </div>
+
+                    {/* Relationship Model */}
+                    <div className="mb-4 pt-3">
+                      <h4 className="text-sm font-medium text-foreground mb-0.5">Relationship Model</h4>
+                      <p className="text-muted-foreground text-xs mb-2">Used for all relationship discovery (Step 1 per-chunk and Step 2 batch analysis). Separate rate limit from entity extraction. Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model.</p>
+                      <ConfigItem label="Model" value={config.relationship_model} tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
+                      <ConfigItem label="API Base" value={config.relationship_api_base} tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
+                      <ConfigItem label="Concurrency" value={config.concurrent_relations} tooltip="How many per-chunk relationship extractions run in parallel per document (CONCURRENT_RELATIONS)" />
+                      <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max context window tokens for relationship analysis. Must match this model's context window (RELATIONSHIP_MAX_CONTEXT)" />
+                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Number of relationship analysis batches processed concurrently in Step 2. Higher values speed up analysis but increase API load (PARALLEL_RELATIONSHIP_BATCHES)" />
                     </div>
 
                     {/* Vision Model */}

@@ -20,12 +20,12 @@ GraphRAG uses Large Language Models to:
 
 MOCA uses a two-phase approach for building the knowledge graph:
 
-**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Entity resolution deduplicates entities at storage time using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as a fallback. This merges variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
+**Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Entity resolution deduplicates entities at storage time using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as a fallback. This merges variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call using the **relationship model** (falls back to extraction model, then primary model) to extract relationships using the chunk text as direct evidence. Entity names in per-chunk relationships are automatically mapped to their canonical (dedup-resolved) names before storage, ensuring relationships reference the correct merged entities. Self-referential relationships (where source and target are the same entity) are automatically filtered out. Per-chunk extraction uses retry with exponential backoff (tenacity, 4 attempts, 2-30s wait) for rate limit errors, and concurrency is controlled by `CONCURRENT_RELATIONS` (default 3). These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 
-**Phase B (per-collection, on demand):** Cross-document relationship analysis using the extraction model (instruction-following). Uses a two-phase approach per batch:
+**Phase B (per-collection, on demand):** Cross-document relationship analysis using the **relationship model** (falls back to extraction model, then primary model). Uses a two-phase approach per batch:
 
-1. **Candidate scanning** — The extraction model scans entity pairs with their co-occurring chunk context and proposes candidate relationships. Includes few-shot good and bad examples to guide the LLM, plus anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
-2. **Structured confirmation** — The extraction model confirms candidates with structured XML output including confidence scores (0.0-1.0), grounding each relationship in source text. Relationships with confidence < 0.5 are filtered before storage.
+1. **Candidate scanning** — The relationship model scans entity pairs with their co-occurring chunk context and proposes candidate relationships. Includes few-shot good and bad examples to guide the LLM, plus anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
+2. **Structured confirmation** — The relationship model confirms candidates with structured XML output including confidence scores (0.0-1.0), grounding each relationship in source text. Relationships with confidence < 0.5 are filtered before storage. Self-referential relationships (where source and target are the same entity) are also automatically filtered out at both the extraction and storage levels.
 
 Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
 
@@ -47,7 +47,7 @@ flowchart TD
     H --> I["🏘️ Community Detection"]
 
     C -.-> C1["Per-document (1-4 LLM calls)"]
-    G -.-> G1["Per-collection (extraction model)"]
+    G -.-> G1["Per-collection (relationship model)"]
 `} />
 
 ## Entity Types
@@ -353,8 +353,8 @@ GRAPH_WEIGHT=0.2
 
 The **Knowledge Graph** page (under Manage) provides a one-click **"Generate Graph"** (or **"Regenerate Graph"**) button that runs the full 3-step pipeline in sequence:
 
-1. **Entity Extraction** — Process uploaded documents to extract entities. This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
-2. **Relationship Analysis** — Discover connections between entities across documents.
+1. **Entity Extraction & Relationship Discovery** — Process uploaded documents to extract entities and discover within-document relationships (per-chunk). This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
+2. **Deep Relationship Analysis** — Discover cross-document connections between entities using the relationship model.
 3. **Community Detection** — Group related entities into communities.
 
 The button label changes to "Regenerate Graph" when a graph already exists. When regenerating, Step 1 first **deletes all communities, relationships, and entities** (in that order) before reprocessing documents, ensuring a true from-scratch rebuild of the entire knowledge graph. The full cleanup order is: `DELETE /api/graph/communities` → `DELETE /api/graph/relationships` → `DELETE /api/graph/entities` → reprocess all documents → relationship analysis (rebuild mode) → community detection.
@@ -378,11 +378,22 @@ The **Explore** section provides an interactive graph visualization (Knowledge G
 # Enable/disable graph extraction
 ENABLE_GRAPH_EXTRACTION=true
 
-# Model for entity extraction (defaults to OPENAI_MODEL)
-# Use a small, fast model for Phase A entity extraction
+# Model for entity extraction and community summarization (defaults to OPENAI_MODEL)
+# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
 # GRAPH_EXTRACTION_MODEL=gpt-4o-mini
 # GRAPH_EXTRACTION_API_BASE=http://localhost:11434/v1
 # GRAPH_EXTRACTION_API_KEY=ollama
+
+# Model for relationship extraction (defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL)
+# Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B)
+# Used for both per-chunk (Step 1) and batch analysis (Step 2)
+# Runs on a separate rate limit from entity extraction
+# RELATIONSHIP_EXTRACTION_MODEL=gpt-4o-mini
+# RELATIONSHIP_EXTRACTION_API_BASE=http://localhost:11434/v1
+# RELATIONSHIP_EXTRACTION_API_KEY=ollama
+
+# Concurrent per-chunk relationship extractions per document (default: 3)
+# CONCURRENT_RELATIONS=3
 
 # Graph traversal depth
 MAX_GRAPH_HOPS=2
@@ -394,10 +405,10 @@ MAX_GRAPH_HOPS=2
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 ENTITY_SIMILARITY_THRESHOLD=0.85
 
-# Relationship analysis (Phase B)
+# Relationship analysis (Phase B / Step 2)
 # RELATIONSHIP_MAX_CONTEXT=65536        # Max INPUT context tokens for batching
 # RELATIONSHIP_MAX_OUTPUT_TOKENS=16000  # Max OUTPUT tokens for LLM responses
-# PARALLEL_RELATIONSHIP_BATCHES=0       # 0 = use CONCURRENT_EXTRACTIONS
+# PARALLEL_RELATIONSHIP_BATCHES=5       # Batches processed in parallel
 # RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
 # RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
 # RELATIONSHIP_MAX_HOURS=0              # Max hours for relationship analysis (0 = no limit)

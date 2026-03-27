@@ -973,6 +973,9 @@ class Neo4jService:
         Store a relationship between two entities.
         Creates a dynamic relationship type with weight and provenance.
         """
+        # Skip self-referential relationships
+        if relationship.source.strip().lower() == relationship.target.strip().lower():
+            return False
         with self.driver.session() as session:
             # Use APOC if available, otherwise use a workaround
             try:
@@ -1870,7 +1873,7 @@ class Neo4jService:
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
                 
-                OPTIONAL MATCH ()-[r:RELATED_TO]->()
+                OPTIONAL MATCH (:Entity)-[r]->(:Entity)
                 RETURN doc_count as document_count,
                        chunk_count,
                        total_size,
@@ -3446,6 +3449,26 @@ class Neo4jService:
             logger.info(f"Deleted {deleted} relationships")
             return {"relationships_deleted": deleted}
 
+    def delete_batch_relationships(self) -> dict:
+        """Delete only batch-analysis relationships, preserving per-chunk relationships from Step 1.
+
+        Returns:
+            Dict with count of deleted relationships.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE type(r) <> 'MENTIONS'
+                AND coalesce(r.extraction_method, 'batch') <> 'per_chunk'
+                WITH count(r) as total, collect(r) as rels
+                FOREACH (r IN rels | DELETE r)
+                RETURN total as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} batch relationships (preserved per-chunk)")
+            return {"relationships_deleted": deleted}
+
     def delete_all_entities(self) -> dict:
         """Delete ALL entities and their MENTIONS relationships from chunks.
 
@@ -3549,12 +3572,13 @@ class Neo4jService:
     def store_entity_with_embedding(
         self,
         entity: Entity,
-        chunk_id: str,
+        chunk_id: str = None,
+        document_id: str = None,
         embedding: Optional[List[float]] = None
     ) -> Tuple[str, bool]:
         """
         Store entity with embedding for semantic resolution.
-        
+
         Returns:
             Tuple of (entity_name, is_new_entity)
         """
@@ -3562,7 +3586,7 @@ class Neo4jService:
             # Convert embedding to list if numpy array
             if embedding is not None and hasattr(embedding, 'tolist'):
                 embedding = embedding.tolist()
-            
+
             # Check for existing similar entities by embedding
             if embedding and self.settings.enable_semantic_entity_resolution:
                 similar = self.find_similar_entities_by_embedding(
@@ -3586,6 +3610,19 @@ class Neo4jService:
                             MERGE (c)-[:MENTIONS]->(e)
                         """, name=canonical_name, chunk_id=chunk_id)
 
+                    # Update document provenance
+                    if document_id:
+                        session.run("""
+                            MATCH (e:Entity {name: $name})
+                            SET e.source_documents = CASE
+                                WHEN NOT $doc_id IN coalesce(e.source_documents, [])
+                                THEN coalesce(e.source_documents, []) + $doc_id
+                                ELSE coalesce(e.source_documents, [])
+                            END,
+                            e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                            e.last_extracted_at = datetime()
+                        """, name=canonical_name, doc_id=document_id)
+
                     logger.debug(f"Merged entity '{entity.name}' into '{canonical_name}' (similarity: {similar[0]['similarity']:.3f})")
                     return (canonical_name, False)
 
@@ -3601,6 +3638,18 @@ class Neo4jService:
                         MATCH (c:Chunk {id: $chunk_id})
                         MERGE (c)-[:MENTIONS]->(e)
                     """, name=canonical_name, chunk_id=chunk_id)
+                # Update document provenance
+                if document_id:
+                    session.run("""
+                        MATCH (e:Entity {name: $name})
+                        SET e.source_documents = CASE
+                            WHEN NOT $doc_id IN coalesce(e.source_documents, [])
+                            THEN coalesce(e.source_documents, []) + $doc_id
+                            ELSE coalesce(e.source_documents, [])
+                        END,
+                        e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                        e.last_extracted_at = datetime()
+                    """, name=canonical_name, doc_id=document_id)
                 return (canonical_name, False)
 
             # Create new entity with embedding
@@ -3611,11 +3660,21 @@ class Neo4jService:
                         e.type = $type,
                         e.description = $description,
                         e.embedding = $embedding,
-                        e.created_at = datetime()
+                        e.source_documents = CASE WHEN $doc_id IS NOT NULL THEN [$doc_id] ELSE [] END,
+                        e.extraction_count = 1,
+                        e.created_at = datetime(),
+                        e.last_extracted_at = datetime()
                     ON MATCH SET
                         e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
                         e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
-                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
+                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END,
+                        e.source_documents = CASE
+                            WHEN $doc_id IS NOT NULL AND NOT $doc_id IN coalesce(e.source_documents, [])
+                            THEN coalesce(e.source_documents, []) + $doc_id
+                            ELSE coalesce(e.source_documents, [])
+                        END,
+                        e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                        e.last_extracted_at = datetime()
                     WITH e
                     MATCH (c:Chunk {id: $chunk_id})
                     MERGE (c)-[:MENTIONS]->(e)
@@ -3625,7 +3684,8 @@ class Neo4jService:
                     type=entity.type,
                     description=entity.description,
                     embedding=embedding,
-                    chunk_id=chunk_id
+                    chunk_id=chunk_id,
+                    doc_id=document_id,
                 )
             else:
                 result = session.run("""
@@ -3634,17 +3694,28 @@ class Neo4jService:
                         e.type = $type,
                         e.description = $description,
                         e.embedding = $embedding,
-                        e.created_at = datetime()
+                        e.source_documents = CASE WHEN $doc_id IS NOT NULL THEN [$doc_id] ELSE [] END,
+                        e.extraction_count = 1,
+                        e.created_at = datetime(),
+                        e.last_extracted_at = datetime()
                     ON MATCH SET
                         e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
                         e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
-                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END
+                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END,
+                        e.source_documents = CASE
+                            WHEN $doc_id IS NOT NULL AND NOT $doc_id IN coalesce(e.source_documents, [])
+                            THEN coalesce(e.source_documents, []) + $doc_id
+                            ELSE coalesce(e.source_documents, [])
+                        END,
+                        e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                        e.last_extracted_at = datetime()
                     RETURN e.name as name
                 """,
                     name=entity.name,
                     type=entity.type,
                     description=entity.description,
                     embedding=embedding,
+                    doc_id=document_id,
                 )
 
             record = result.single()

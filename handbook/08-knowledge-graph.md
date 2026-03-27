@@ -24,7 +24,7 @@ Extracts entities from each document's chunks using an LLM.
 4. The response is parsed, entity types are normalized to the 10 allowed types (rapidfuzz matching, 75% threshold, fallback to "Concept")
 5. Entity resolution merges similar names using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as fallback. "OpenAI" and "Open AI" become a single entity with aliases.
 6. Entities are linked to the chunks that mention them via fuzzy substring matching (`partial_ratio >= 85%`)
-7. **Per-chunk relationship extraction**: Chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
+7. **Per-chunk relationship extraction**: Chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. Entity names in per-chunk relationships are automatically mapped to their canonical (dedup-resolved) names before storage, ensuring relationships reference the correct merged entities. Self-referential relationships (where source and target are the same entity) are automatically filtered out. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 8. Entity provenance is tracked — each entity records which documents it was extracted from
 
 **Token budget calculation:**
@@ -60,8 +60,9 @@ Discovers relationships between entities across your entire collection.
    </relationship>
    ```
 6. Relationships with confidence < 0.5 are filtered before storage
-7. Non-standard relationship types are fuzzy-matched to the 14 standard types (80% threshold)
-8. Results are deduplicated across batches using the key `(source.lower(), target.lower(), type)`
+7. Self-referential relationships (where source and target are the same entity) are automatically filtered out at both the extraction and storage levels
+8. Non-standard relationship types are fuzzy-matched to the 14 standard types (80% threshold)
+9. Results are deduplicated across batches using the key `(source.lower(), target.lower(), type)`
 
 **Two modes:**
 - **Incremental** (default) — Builds on existing relationships, only analyzing gaps
@@ -110,7 +111,7 @@ Groups related entities into thematic communities using graph algorithms.
 
 **Community summarization:**
 
-After detection, an LLM generates names and summaries:
+After detection, the **extraction model** generates names and summaries (configurable via `COMMUNITY_SUMMARY_MODEL`, defaults to `GRAPH_EXTRACTION_MODEL`):
 
 1. For each community, up to 30 entities and 40 relationships are collected
 2. The LLM is asked to return `{"name": "...", "summary": "..."}`

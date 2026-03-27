@@ -134,6 +134,32 @@ def get_extraction_llm_config() -> LLMConfig:
     )
 
 
+def get_relationship_llm_config() -> LLMConfig:
+    """
+    Get LLM config for per-chunk relationship extraction.
+
+    Falls back to extraction config, then main config.
+    Turbo mode takes priority when active.
+    """
+    settings = get_settings()
+
+    if _turbo_state["active"] and _turbo_state["base_url"]:
+        api_key = _turbo_state["api_key"] or settings.compute3_api_key
+        return LLMConfig(
+            api_key=api_key,
+            base_url=_turbo_state["base_url"],
+            model=settings.compute3_model,
+            is_turbo=True,
+        )
+
+    return LLMConfig(
+        api_key=settings.rel_extraction_api_key,
+        base_url=settings.rel_extraction_api_base,
+        model=settings.rel_extraction_model,
+        is_turbo=False,
+    )
+
+
 def get_llm_config_tuple() -> Tuple[str, str, str]:
     """
     Get LLM configuration as a tuple for backward compatibility.
