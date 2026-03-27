@@ -127,6 +127,9 @@ export interface StreamEvent {
     communities_used: number;
   };
   communities_used?: number[];
+  // Agent Skills events
+  skill_tool?: string;
+  skill_name?: string;
 }
 
 export interface UploadResponse {
