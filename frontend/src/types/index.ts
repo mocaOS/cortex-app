@@ -142,6 +142,7 @@ export interface Stats {
   total_size: number;
   entity_count?: number;
   relationship_count?: number;
+  per_chunk_relationship_count?: number;
   community_count?: number;
   collection_count?: number;
   pending_count?: number;

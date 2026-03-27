@@ -477,6 +477,7 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
             chunk_count=stats["chunk_count"],
             entity_count=stats.get("entity_count", 0),
             relationship_count=stats.get("relationship_count", 0),
+            per_chunk_relationship_count=stats.get("per_chunk_relationship_count", 0),
             total_size=stats["total_size"],
             community_count=stats.get("community_count", 0),
             collection_count=stats.get("collection_count", 0),

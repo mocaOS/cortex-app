@@ -280,12 +280,12 @@ export default function ExtractAnalyzePage() {
 
       const backendMsg = status.message || `Progress: ${status.progress_percent}%`;
       const countMsg = newlyDiscovered > 0
-        ? `${newlyDiscovered} new relationships found, still connecting the dots... (${backendMsg})`
+        ? `${newlyDiscovered} new cross-document relationships found, still connecting the dots... (${backendMsg})`
         : backendMsg;
       setRelationshipTaskMessage(countMsg);
 
       if (status.status === "completed") {
-        setRelationshipTaskMessage(`Analysis complete! ${currentRels - initialRelCount.current} relationships discovered.`);
+        setRelationshipTaskMessage(`Analysis complete! ${currentRels - initialRelCount.current} cross-document relationships discovered.`);
         setNewDocsSinceAnalysis(0);
         await fetchData(true);
         const isRegen = sessionStorage.getItem("regenerateStep") !== null;
@@ -313,7 +313,9 @@ export default function ExtractAnalyzePage() {
     try {
       setAnalyzingRelationships(true);
       setDiscoveredRelCount(0);
-      initialRelCount.current = rebuild ? 0 : (stats?.relationship_count ?? 0);
+      // Always start from current count so we only show newly discovered batch relationships
+      // (per-chunk relationships from Step 1 are preserved during rebuild)
+      initialRelCount.current = stats?.relationship_count ?? 0;
       setRelationshipTaskMessage(rebuild ? "Starting full rebuild..." : "Starting relationship analysis...");
       const result = await api.analyzeRelationships(undefined, "full", rebuild);
       setTimeout(() => pollRelationshipTask(result.task_id), 1500);
@@ -812,7 +814,7 @@ export default function ExtractAnalyzePage() {
 
               {entityCount > 0 && (
                 <p className="text-sm text-green-400 mb-3">
-                  {entityCount.toLocaleString()} entities extracted.
+                  {entityCount.toLocaleString()} entities and {(stats?.per_chunk_relationship_count ?? 0).toLocaleString()} within-document relationships extracted.
                 </p>
               )}
 
@@ -904,7 +906,7 @@ export default function ExtractAnalyzePage() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm("CAREFUL! This will delete all existing relationships and reconnect the entities in your graph from scratch. Continue?")) {
+                          if (confirm("This will delete cross-document relationships and run a full deep analysis. Within-document relationships from Step 1 are preserved. Continue?")) {
                             handleAnalyzeRelationships(true);
                           }
                         }}
@@ -940,7 +942,7 @@ export default function ExtractAnalyzePage() {
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center gap-4">
                     <p className="text-sm text-green-400">
-                      {relationshipCount} relationships discovered.
+                      {(relationshipCount - (stats?.per_chunk_relationship_count ?? 0)).toLocaleString()} cross-document relationships discovered.
                     </p>
                     {/* Entity-Relationship Ratio (ERR) Indicator */}
                     {stats && (stats.entity_count ?? 0) > 0 && (
@@ -954,7 +956,7 @@ export default function ExtractAnalyzePage() {
                               ? "bg-yellow-500/10 text-yellow-400"
                               : "bg-red-500/10 text-red-400"
                         )}>
-                          {(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')} / {(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}
+                          {(stats.entity_relationship_ratio ?? 0).toFixed(2)} / {(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}
                         </span>
                         {(stats.entity_relationship_ratio ?? 0) < (stats.relationship_target_ratio ?? 3) && (
                           <span className="text-xs text-muted-foreground">
@@ -967,8 +969,8 @@ export default function ExtractAnalyzePage() {
                             <p className="font-medium text-foreground mb-1">Entity-Relationship Ratio (ERR)</p>
                             <p className="text-muted-foreground leading-relaxed">
                               Average number of relationships per entity. A ratio of{" "}
-                              <span className="font-mono text-foreground">{(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')}</span> means
-                              each entity has ~{(stats.entity_relationship_ratio ?? 0).toFixed(1).replace(/\.0$/, '')} connections on average.
+                              <span className="font-mono text-foreground">{(stats.entity_relationship_ratio ?? 0).toFixed(2)}</span> means
+                              each entity has ~{(stats.entity_relationship_ratio ?? 0).toFixed(2)} connections on average.
                               Target is{" "}
                               <span className="font-mono text-foreground">{(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}</span>.
                               {(stats.entity_relationship_ratio ?? 0) < (stats.relationship_target_ratio ?? 3)
@@ -986,11 +988,11 @@ export default function ExtractAnalyzePage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 rounded-lg text-xs font-medium transition-colors"
                     >
                       <RefreshCw className="w-3 h-3" />
-                      Re-analyze
+                      Find more
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm("CAREFUL! This will delete all existing relationships and reconnect the entities in your graph from scratch. Continue?")) {
+                        if (confirm("This will delete cross-document relationships and run a full deep analysis. Within-document relationships from Step 1 are preserved. Continue?")) {
                           handleAnalyzeRelationships(true);
                         }
                       }}

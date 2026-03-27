@@ -29,11 +29,11 @@ MOCA uses a two-phase approach for building the knowledge graph:
 
 Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
 
-Supports **multi-round discovery**: initial analysis runs multiple rounds (default 3, configurable via `RELATIONSHIP_MAX_ROUNDS`), re-analyze always does 1 round. Progress is tracked cumulatively across all rounds (e.g., "Batch 400/861" for 3 rounds of 287 batches). Guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
+Supports **multi-round discovery**: initial analysis runs multiple rounds (default 3, configurable via `RELATIONSHIP_MAX_ROUNDS`), "Find more" (re-analyze) always does 1 round. Progress is tracked cumulatively across all rounds (e.g., "Batch 400/861" for 3 rounds of 287 batches). Guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
 
 **Anti-hub protections**: A per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`, default 50) prevents any single entity from accumulating disproportionate connections — relationships are skipped when both endpoints exceed the cap. Existing relationships shown to the LLM between rounds are capped at 20 per entity (highest weight first) to prevent hub reinforcement. Prompts emphasize direct, evidence-based relationships and explicitly discourage star patterns through common intermediary entities.
 
-Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes all relationships and starts fresh, runs multi-round). Relationship types are constrained to 14 standard types via fuzzy matching (MENTIONS was removed as it was a lazy co-occurrence catch-all). A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
+Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes only batch-analysis relationships, preserving per-chunk relationships from Step 1, then re-analyzes from scratch with multi-round). Relationship types are constrained to 14 standard types via fuzzy matching (MENTIONS was removed as it was a lazy co-occurrence catch-all). A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -121,6 +121,7 @@ curl "http://localhost:8000/api/stats" \
   "chunk_count": 4280,
   "entity_count": 1542,
   "relationship_count": 3891,
+  "per_chunk_relationship_count": 1204,
   "community_count": 23,
   "collection_count": 5
 }
@@ -353,8 +354,8 @@ GRAPH_WEIGHT=0.2
 
 The **Knowledge Graph** page (under Manage) provides a one-click **"Generate Graph"** (or **"Regenerate Graph"**) button that runs the full 3-step pipeline in sequence:
 
-1. **Entity Extraction & Relationship Discovery** — Process uploaded documents to extract entities and discover within-document relationships (per-chunk). This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
-2. **Deep Relationship Analysis** — Discover cross-document connections between entities using the relationship model.
+1. **Entity Extraction & Relationship Discovery** — Process uploaded documents to extract entities and discover within-document relationships (per-chunk). Shows entity and within-document relationship counts. This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
+2. **Deep Relationship Analysis** — Discover cross-document connections between entities using the relationship model. Shows only cross-document relationship counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR (Entity-Relationship Ratio) indicator is displayed to 2 decimal places.
 3. **Community Detection** — Group related entities into communities.
 
 The button label changes to "Regenerate Graph" when a graph already exists. When regenerating, Step 1 first **deletes all communities, relationships, and entities** (in that order) before reprocessing documents, ensuring a true from-scratch rebuild of the entire knowledge graph. The full cleanup order is: `DELETE /api/graph/communities` → `DELETE /api/graph/relationships` → `DELETE /api/graph/entities` → reprocess all documents → relationship analysis (rebuild mode) → community detection.

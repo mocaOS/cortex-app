@@ -1517,6 +1517,9 @@ components:
           type: integer
         relationship_count:
           type: integer
+        per_chunk_relationship_count:
+          type: integer
+          description: Relationships discovered within documents (Step 1, per-chunk extraction)
         collection_count:
           type: integer
 

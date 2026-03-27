@@ -1874,20 +1874,25 @@ class Neo4jService:
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
                 
                 OPTIONAL MATCH (:Entity)-[r]->(:Entity)
+                WITH doc_count, chunk_count, total_size, entity_count,
+                     count(r) as rel_count,
+                     count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END) as per_chunk_rel_count
                 RETURN doc_count as document_count,
                        chunk_count,
                        total_size,
                        entity_count,
-                       count(r) as relationship_count
+                       rel_count as relationship_count,
+                       per_chunk_rel_count
             """)
-            
+
             record = result.single()
             return {
                 "document_count": record["document_count"],
                 "chunk_count": record["chunk_count"],
                 "total_size": record["total_size"] or 0,
                 "entity_count": record["entity_count"],
-                "relationship_count": record["relationship_count"]
+                "relationship_count": record["relationship_count"],
+                "per_chunk_relationship_count": record["per_chunk_rel_count"],
             }
     
     def get_graph_visualization_data(self, limit: int = 100, include_neighbors: bool = True) -> dict:
@@ -3733,30 +3738,31 @@ class Neo4jService:
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count
 
                 OPTIONAL MATCH (:Entity)-[r]->(:Entity)
-                WHERE type(r) <> 'MENTIONS'
-                WITH doc_count, chunk_count, total_size, entity_count, count(r) as relationship_count
+                WITH doc_count, chunk_count, total_size, entity_count,
+                     count(r) as relationship_count,
+                     count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END) as per_chunk_rel_count
 
                 OPTIONAL MATCH (com:Community)
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, count(com) as community_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, count(com) as community_count
 
                 OPTIONAL MATCH (col:Collection)
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, count(col) as collection_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, community_count, count(col) as collection_count
 
                 OPTIONAL MATCH (pending:Document)
                 WHERE coalesce(pending.processing_status, 'pending') = 'pending'
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, count(pending) as pending_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, community_count, collection_count, count(pending) as pending_count
 
                 OPTIONAL MATCH (completed:Document)
                 WHERE completed.processing_status = 'completed'
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, count(completed) as completed_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, community_count, collection_count, pending_count, count(completed) as completed_count
 
                 OPTIONAL MATCH (failed:Document)
                 WHERE failed.processing_status = 'failed'
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, completed_count, count(failed) as failed_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, community_count, collection_count, pending_count, completed_count, count(failed) as failed_count
 
                 OPTIONAL MATCH (proc:Document)
                 WHERE proc.processing_status IN ['processing', 'extracting']
-                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, community_count, collection_count, pending_count, completed_count, failed_count, count(proc) as processing_count
+                WITH doc_count, chunk_count, total_size, entity_count, relationship_count, per_chunk_rel_count, community_count, collection_count, pending_count, completed_count, failed_count, count(proc) as processing_count
 
                 RETURN doc_count as document_count,
                        chunk_count,
@@ -3768,7 +3774,8 @@ class Neo4jService:
                        pending_count,
                        completed_count,
                        failed_count,
-                       processing_count
+                       processing_count,
+                       per_chunk_rel_count
             """)
 
             record = result.single()
@@ -3805,6 +3812,7 @@ class Neo4jService:
                 "total_size": record["total_size"] or 0,
                 "entity_count": entity_count,
                 "relationship_count": record["relationship_count"],
+                "per_chunk_relationship_count": record["per_chunk_rel_count"],
                 "community_count": record["community_count"],
                 "collection_count": record["collection_count"],
                 "pending_count": record["pending_count"],
