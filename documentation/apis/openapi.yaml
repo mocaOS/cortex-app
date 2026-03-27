@@ -46,7 +46,7 @@ tags:
   - name: Tasks
     description: Background task management
   - name: Admin
-    description: API key management
+    description: API key management, system configuration, library import/export
   - name: Turbo Mode
     description: GPU-accelerated inference
 
@@ -1360,6 +1360,116 @@ paths:
               schema:
                 $ref: '#/components/schemas/SystemResetResponse'
 
+  /api/admin/export:
+    post:
+      tags: [Admin]
+      summary: Start library export
+      description: |
+        Start a background task that exports the entire library (documents, knowledge graph,
+        embeddings, communities, collections, and all metadata) as a ZIP64 archive.
+        Only one export or import can run at a time.
+      responses:
+        '200':
+          description: Export task started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    description: Task ID for polling progress
+                  status:
+                    type: string
+                    example: pending
+                  message:
+                    type: string
+                    example: Export started
+        '409':
+          description: An export or import is already in progress
+
+  /api/admin/export/{task_id}/download:
+    get:
+      tags: [Admin]
+      summary: Download library export
+      description: |
+        Download a completed library export as a ZIP file. The export must have
+        completed successfully (poll the task status first). Streams the file
+        in 1MB chunks.
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The export task ID
+      responses:
+        '200':
+          description: ZIP file stream
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Export not ready (still running or failed)
+        '404':
+          description: Task not found or export file cleaned up
+
+  /api/admin/import:
+    post:
+      tags: [Admin]
+      summary: Import library from export archive
+      description: |
+        Upload a library export ZIP and start a background import task.
+        Two modes are available:
+        - **clean** (default): Requires the target instance to be empty
+        - **replace**: Automatically wipes all existing data before importing
+
+        The import validates the archive structure, checks embedding model
+        compatibility, and restores all nodes, relationships, and files.
+      parameters:
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [clean, replace]
+            default: clean
+          description: Import mode
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The export ZIP file
+              required:
+                - file
+      responses:
+        '200':
+          description: Import task started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    description: Task ID for polling progress
+                  status:
+                    type: string
+                    example: pending
+                  message:
+                    type: string
+                    example: "Import started (mode: clean)"
+        '409':
+          description: An export or import is already in progress
+
   /api/turbo/status:
     get:
       tags: [Turbo Mode]
@@ -2284,3 +2394,65 @@ components:
         processing_cancelled:
           type: integer
           description: Number of active processing tasks cancelled
+
+    LibraryExportManifest:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Export format version
+          example: "1.0"
+        export_date:
+          type: string
+          format: date-time
+          description: When the export was created
+        embedding_model:
+          type: string
+          description: Embedding model used by the source instance
+        embedding_dimension:
+          type: integer
+          description: Embedding vector dimension
+        stats:
+          type: object
+          description: Counts of exported items
+          properties:
+            document_count:
+              type: integer
+            chunk_count:
+              type: integer
+            entity_count:
+              type: integer
+            relationship_count:
+              type: integer
+            community_count:
+              type: integer
+            collection_count:
+              type: integer
+
+    LibraryImportResult:
+      type: object
+      properties:
+        documents_imported:
+          type: integer
+        chunks_imported:
+          type: integer
+        entities_imported:
+          type: integer
+        relationships_imported:
+          type: integer
+        communities_imported:
+          type: integer
+        collections_imported:
+          type: integer
+        files_imported:
+          type: integer
+        merge_history_imported:
+          type: integer
+        embedding_compatible:
+          type: boolean
+          description: Whether the source and target embedding configs match
+        warnings:
+          type: array
+          items:
+            type: string
+          description: Any warnings encountered during import (e.g., embedding mismatch)

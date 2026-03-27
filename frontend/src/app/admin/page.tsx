@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageTransition } from "@/components/layout";
-import { SystemResetModal, ApiKeyManager } from "@/components/admin";
+import { SystemResetModal, ApiKeyManager, LibraryTransferSection } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LogOut,
@@ -175,6 +175,18 @@ export default function AdminPage() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refreshStats = useCallback(async () => {
+    try {
+      const data = await api.getStats();
+      setStats(data);
+    } catch (err) {
+      console.error("Failed to fetch stats:", err);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     async function fetchConfig() {
       try {
@@ -187,19 +199,9 @@ export default function AdminPage() {
         setConfigLoading(false);
       }
     }
-    async function fetchStats() {
-      try {
-        const data = await api.getStats();
-        setStats(data);
-      } catch (err) {
-        console.error("Failed to fetch stats:", err);
-      } finally {
-        setStatsLoading(false);
-      }
-    }
     fetchConfig();
-    fetchStats();
-  }, []);
+    refreshStats();
+  }, [refreshStats]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -548,6 +550,9 @@ export default function AdminPage() {
             </div>
           </div>
         </motion.div>
+
+        {/* Data Management (Import/Export) */}
+        <LibraryTransferSection stats={stats} onImportComplete={refreshStats} />
 
         {/* Danger Zone */}
         <motion.div

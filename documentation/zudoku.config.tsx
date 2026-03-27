@@ -106,6 +106,7 @@ const config: ZudokuConfig = {
             "/guides/deployment",
             "/guides/authentication",
             "/guides/security",
+            "/guides/data-transfer",
           ],
         },
         {

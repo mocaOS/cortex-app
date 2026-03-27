@@ -64,6 +64,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page (2 decimal places) with color-coded health indicator
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
+- **📤 Library Import/Export**: Export your entire library (documents, knowledge graph, embeddings, communities) as a portable ZIP archive and import it into another instance — no need to re-run the expensive knowledge graph pipeline
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection

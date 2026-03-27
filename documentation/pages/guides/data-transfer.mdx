@@ -1,0 +1,164 @@
+---
+title: Data Import/Export
+description: Export and import your entire MOCA Library including documents, knowledge graph, and embeddings
+---
+
+MOCA Library supports full instance migration through its library import/export feature. Export your entire knowledge base — documents, entities, relationships, communities, embeddings, and all graph data — as a portable ZIP archive, then import it into another instance without re-running the expensive knowledge graph generation pipeline.
+
+## Overview
+
+The import/export feature is accessible from **Settings > Data Management** and via the Admin API. It handles:
+
+- All document files (PDFs, markdown, DOCX, etc.)
+- Chunk data with vector embeddings
+- Entity nodes with embeddings and metadata
+- All entity-to-entity relationships (both per-chunk and cross-document)
+- Communities and their memberships
+- Collections and document assignments
+- Merge history (deduplication audit trail)
+- System metadata (staleness timestamps)
+
+## Exporting
+
+### Via the Web Interface
+
+1. Navigate to **Settings > Data Management**
+2. Review the stats summary showing your document, entity, and relationship counts
+3. Click **Export Library**
+4. Wait for the progress bar to complete
+5. Click **Download Export** to save the ZIP file
+
+### Via the API
+
+```bash
+# 1. Start the export task
+curl -X POST http://localhost:8000/api/admin/export \
+  -H "X-API-Key: your-admin-key"
+```
+
+Response:
+```json
+{
+  "task_id": "task_abc123def456",
+  "status": "pending",
+  "message": "Export started"
+}
+```
+
+```bash
+# 2. Poll task progress
+curl http://localhost:8000/api/tasks/task_abc123def456 \
+  -H "X-API-Key: your-admin-key"
+```
+
+```bash
+# 3. Download the completed export
+curl -OJ http://localhost:8000/api/admin/export/task_abc123def456/download \
+  -H "X-API-Key: your-admin-key"
+```
+
+## Importing
+
+### Import Modes
+
+| Mode | Behavior | When to Use |
+|------|----------|-------------|
+| **Clean** (default) | Requires the target instance to be completely empty. Returns an error if any data exists. | Fresh instance setup, migration to a new server |
+| **Replace** | Automatically deletes all existing data before importing. Requires typing "DELETE" to confirm. | Restoring a backup, overwriting test data |
+
+### Via the Web Interface
+
+1. Navigate to **Settings > Data Management**
+2. Select your import mode (**Clean import** or **Replace all**)
+3. Drag and drop or browse for your export ZIP file
+4. For Replace mode: type `DELETE` in the confirmation field
+5. Click **Import Library** (or **Replace & Import**)
+6. Monitor the progress bar as data is restored
+7. Review the result summary showing imported counts and any warnings
+
+### Via the API
+
+```bash
+# Clean import (target must be empty)
+curl -X POST "http://localhost:8000/api/admin/import?mode=clean" \
+  -H "X-API-Key: your-admin-key" \
+  -F "file=@moca-library-export-2026-03-27.zip"
+
+# Replace import (auto-wipes existing data)
+curl -X POST "http://localhost:8000/api/admin/import?mode=replace" \
+  -H "X-API-Key: your-admin-key" \
+  -F "file=@moca-library-export-2026-03-27.zip"
+```
+
+Response:
+```json
+{
+  "task_id": "task_789xyz",
+  "status": "pending",
+  "message": "Import started (mode: clean)"
+}
+```
+
+Poll the task status to monitor progress:
+```bash
+curl http://localhost:8000/api/tasks/task_789xyz \
+  -H "X-API-Key: your-admin-key"
+```
+
+## Export Archive Format
+
+The export is a ZIP64 archive using NDJSON (newline-delimited JSON) for efficient streaming:
+
+```
+moca-library-export-YYYY-MM-DD.zip
+├── manifest.json              # Version, date, embedding model/dimension, counts
+├── documents.ndjson           # Document metadata and properties
+├── chunks.ndjson              # Text chunks with vector embeddings
+├── entities.ndjson            # Entity nodes with embeddings
+├── relationships.ndjson       # Entity-to-entity relationships
+├── communities.ndjson         # Detected communities
+├── community_members.ndjson   # Community-entity memberships
+├── collections.ndjson         # Document collections
+├── collection_members.ndjson  # Collection-document assignments
+├── chunk_mentions.ndjson      # Chunk-entity links
+├── merge_history.ndjson       # Deduplication audit trail
+├── system_meta.ndjson         # System timestamps
+└── files/                     # Original document files
+    ├── {doc-id}.pdf
+    ├── {doc-id}.md
+    └── ...
+```
+
+The `manifest.json` contains metadata for validation:
+
+```json
+{
+  "version": "1.0",
+  "export_date": "2026-03-27T14:18:32Z",
+  "embedding_model": "openai/text-embedding-3-small",
+  "embedding_dimension": 1536,
+  "stats": {
+    "document_count": 30,
+    "chunk_count": 1250,
+    "entity_count": 631,
+    "relationship_count": 496,
+    "community_count": 8,
+    "collection_count": 1
+  }
+}
+```
+
+## Embedding Compatibility
+
+The export includes all vector embeddings to avoid costly recomputation. On import, the system checks the manifest against the target instance's embedding configuration:
+
+- **Compatible** (same model and dimension): Embeddings are imported as-is. Vector search works immediately.
+- **Incompatible** (different model or dimension): The import still proceeds, but returns a warning. Vector search results may be degraded until documents are reprocessed to regenerate embeddings.
+
+## Important Notes
+
+- **Concurrency**: Only one export or import can run at a time. Concurrent requests return HTTP 409.
+- **API keys excluded**: API keys are instance-specific and are not included in the export.
+- **File path remapping**: Document file paths are automatically remapped to the target instance's upload directory.
+- **No merge mode**: Importing into an instance with existing data requires either resetting first (clean mode) or using replace mode. Merging two knowledge graphs is not supported.
+- **Background tasks**: Both export and import run as background tasks with progress tracking via the standard `/api/tasks/{task_id}` endpoint.

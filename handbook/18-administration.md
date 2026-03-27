@@ -125,6 +125,8 @@ curl -X POST "http://localhost:8000/api/tasks/cleanup?max_age_hours=24" \
 - `relationship_analysis` — Cross-document relationship discovery
 - `community_detection` — Entity community detection
 - `document_reprocessing` — Bulk document reprocessing
+- `library_export` — Full library export to ZIP
+- `library_import` — Library import from ZIP
 
 Tasks are stored in-memory and do not survive backend restarts. The frontend persists active task IDs in sessionStorage for resume-on-reload.
 
@@ -229,6 +231,110 @@ When documents are deleted, the system also cleans up:
 - `MergeHistory` nodes (deduplication audit trail)
 - `SystemMeta` nodes (staleness timestamps)
 - Frontend clears `dedup_dismissed` and `moca_community_detection_task` from localStorage, and `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage
+
+## Data Import/Export
+
+The library import/export feature allows you to migrate your entire knowledge base — documents, entities, relationships, communities, embeddings, and all graph data — between instances without re-running the expensive knowledge graph generation pipeline.
+
+### Export
+
+#### Via the Web Interface
+
+Settings > Data Management > Export Library
+
+1. Review the stats summary (documents, entities, relationships)
+2. Click "Export Library"
+3. Wait for the progress bar to complete (steps through documents, chunks, entities, relationships, communities, files)
+4. Click "Download Export" to save the ZIP archive
+
+#### Via the API
+
+```bash
+# Start export (returns a task ID)
+curl -X POST http://localhost:8000/api/admin/export \
+  -H "X-API-Key: your-admin-key"
+# Returns: {"task_id": "task_abc123", "status": "pending", "message": "Export started"}
+
+# Poll progress
+curl http://localhost:8000/api/tasks/task_abc123 \
+  -H "X-API-Key: your-admin-key"
+
+# Download when complete
+curl -OJ http://localhost:8000/api/admin/export/task_abc123/download \
+  -H "X-API-Key: your-admin-key"
+```
+
+### Import
+
+Two modes are available:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **Clean** (default) | Requires the target instance to be empty. Fails with an error if data exists. | Importing into a fresh instance |
+| **Replace** | Automatically wipes all existing data before importing. | Overwriting an existing instance |
+
+#### Via the Web Interface
+
+Settings > Data Management > Import Library
+
+1. Select the import mode (Clean import or Replace all)
+2. Drag and drop or browse for the export ZIP file
+3. If using Replace mode, type "DELETE" to confirm
+4. Click "Import Library" (or "Replace & Import")
+5. Wait for the progress bar to complete
+6. Review the result summary (imported counts and any warnings)
+
+#### Via the API
+
+```bash
+# Clean import (target must be empty)
+curl -X POST "http://localhost:8000/api/admin/import?mode=clean" \
+  -H "X-API-Key: your-admin-key" \
+  -F "file=@moca-library-export-2026-03-27.zip"
+
+# Replace import (wipes existing data first)
+curl -X POST "http://localhost:8000/api/admin/import?mode=replace" \
+  -H "X-API-Key: your-admin-key" \
+  -F "file=@moca-library-export-2026-03-27.zip"
+
+# Poll progress
+curl http://localhost:8000/api/tasks/{task_id} \
+  -H "X-API-Key: your-admin-key"
+```
+
+### Export Archive Structure
+
+The export is a ZIP64 archive containing:
+
+```
+moca-library-export-YYYY-MM-DD.zip
+├── manifest.json              # Version, date, embedding config, item counts
+├── documents.ndjson           # Document nodes
+├── chunks.ndjson              # Chunk nodes with embeddings
+├── entities.ndjson            # Entity nodes with embeddings
+├── relationships.ndjson       # Entity→Entity edges (type, weight, confidence)
+├── communities.ndjson         # Community nodes
+├── community_members.ndjson   # Community→Entity memberships
+├── collections.ndjson         # Collection nodes
+├── collection_members.ndjson  # Collection→Document memberships
+├── chunk_mentions.ndjson      # Chunk→Entity links
+├── merge_history.ndjson       # Deduplication audit trail
+├── system_meta.ndjson         # Staleness timestamps
+└── files/                     # Original document files
+```
+
+### Embedding Compatibility
+
+The export manifest records the embedding model and dimension. On import, the system checks compatibility:
+- **Same model + dimension**: Embeddings imported as-is, vector search works immediately
+- **Different model or dimension**: Import proceeds with a warning. Vector search may not work correctly until documents are reprocessed
+
+### Notes
+
+- Only one export or import can run at a time (concurrent requests return HTTP 409)
+- API keys are **not** included in the export (they are instance-specific)
+- Export files are stored in a temp directory and cleaned up automatically
+- The import remaps file paths to match the target instance's upload directory
 
 ## Orphaned Data Cleanup
 

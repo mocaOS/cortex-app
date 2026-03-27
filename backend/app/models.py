@@ -660,6 +660,33 @@ class SystemResetResponse(BaseModel):
 
 
 # =============================================================================
+# Library Import/Export
+# =============================================================================
+
+class LibraryExportManifest(BaseModel):
+    """Manifest for a library export archive."""
+    version: str = Field(default="1.0", description="Export format version")
+    export_date: str = Field(..., description="ISO 8601 export timestamp")
+    embedding_model: str = Field(..., description="Embedding model used")
+    embedding_dimension: int = Field(..., description="Embedding vector dimension")
+    stats: dict = Field(default_factory=dict, description="Counts of exported items")
+
+
+class LibraryImportResult(BaseModel):
+    """Result of a library import operation."""
+    documents_imported: int = Field(default=0)
+    chunks_imported: int = Field(default=0)
+    entities_imported: int = Field(default=0)
+    relationships_imported: int = Field(default=0)
+    communities_imported: int = Field(default=0)
+    collections_imported: int = Field(default=0)
+    files_imported: int = Field(default=0)
+    merge_history_imported: int = Field(default=0)
+    embedding_compatible: bool = Field(default=True)
+    warnings: List[str] = Field(default_factory=list)
+
+
+# =============================================================================
 # System Configuration (Safe to expose - no secrets)
 # =============================================================================
 

@@ -1192,6 +1192,59 @@ class ApiClient {
       body: JSON.stringify(options),
     });
   }
+
+  // ===========================================================================
+  // Library Import/Export
+  // ===========================================================================
+
+  async startLibraryExport(): Promise<{ task_id: string; status: string; message: string }> {
+    return this.request("/api/admin/export", { method: "POST" });
+  }
+
+  async downloadLibraryExport(taskId: string): Promise<void> {
+    const apiKey = getAdminApiKey();
+    const res = await fetch(`${API_BASE}/api/admin/export/${taskId}/download`, {
+      headers: {
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Download failed" }));
+      throw new Error(error.detail || `HTTP ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] || "moca-library-export.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async startLibraryImport(file: File, mode: "clean" | "replace"): Promise<{ task_id: string; status: string; message: string }> {
+    const apiKey = getAdminApiKey();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/api/admin/import?mode=${mode}`, {
+      method: "POST",
+      headers: {
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Import failed" }));
+      throw new Error(error.detail || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }
 }
 
 export const api = new ApiClient();

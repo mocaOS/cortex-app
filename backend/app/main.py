@@ -3810,6 +3810,129 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =============================================================================
+# Library Import/Export
+# =============================================================================
+
+@app.post("/api/admin/export")
+async def start_library_export(
+    background_tasks: BackgroundTasks,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Start a library export as a background task. Returns task_id for polling."""
+    import tempfile as _tempfile
+
+    # Concurrency guard
+    for t in _task_store.values():
+        if t.task_type in ("library_export", "library_import") and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+            raise HTTPException(
+                status_code=409,
+                detail="An export or import is already in progress. Please wait for it to complete.",
+            )
+
+    from app.services.library_transfer_service import get_library_transfer_service
+    transfer = get_library_transfer_service()
+
+    task = create_task("library_export")
+    export_dir = _tempfile.mkdtemp(prefix="moca_export_")
+    export_path = os.path.join(export_dir, f"moca-library-export-{datetime.utcnow().strftime('%Y-%m-%d')}.zip")
+
+    background_tasks.add_task(
+        transfer.export_library,
+        task.task_id,
+        export_path,
+        update_task_progress,
+        complete_task,
+        fail_task,
+    )
+    return {"task_id": task.task_id, "status": "pending", "message": "Export started"}
+
+
+@app.get("/api/admin/export/{task_id}/download")
+async def download_library_export(task_id: str, auth: AuthResult = Depends(require_admin)):
+    """Download a completed library export ZIP file."""
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Export not ready. Status: {task.status.value}")
+    if not task.result or not task.result.get("file_path"):
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    file_path = task.result["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Export file has been cleaned up. Please re-export.")
+
+    filename = os.path.basename(file_path)
+
+    def stream_file():
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        stream_file(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/admin/import")
+async def start_library_import(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    mode: str = Query("clean", pattern="^(clean|replace)$"),
+    auth: AuthResult = Depends(require_admin),
+):
+    """
+    Upload a library export ZIP and start import as a background task.
+
+    Modes:
+    - clean: Requires the target instance to be empty (default)
+    - replace: Wipes all existing data before importing
+    """
+    import tempfile as _tempfile
+
+    # Concurrency guard
+    for t in _task_store.values():
+        if t.task_type in ("library_export", "library_import") and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+            raise HTTPException(
+                status_code=409,
+                detail="An export or import is already in progress. Please wait for it to complete.",
+            )
+
+    # Save uploaded file to temp location
+    tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="moca_import_")
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp_file:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                tmp_file.write(chunk)
+    except Exception as e:
+        os.unlink(tmp_path)
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}")
+
+    from app.services.library_transfer_service import get_library_transfer_service
+    transfer = get_library_transfer_service()
+
+    task = create_task("library_import")
+    background_tasks.add_task(
+        transfer.import_library,
+        task.task_id,
+        tmp_path,
+        mode,
+        update_task_progress,
+        complete_task,
+        fail_task,
+    )
+    return {"task_id": task.task_id, "status": "pending", "message": f"Import started (mode: {mode})"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

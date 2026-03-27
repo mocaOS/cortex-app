@@ -4598,6 +4598,268 @@ class Neo4jService:
             logger.info(f"Deleted {deleted_count} API keys")
             return deleted_count
 
+    # =========================================================================
+    # Library Export Methods
+    # =========================================================================
+
+    def export_all_documents(self) -> list:
+        """Get all Document nodes with all properties for export."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (d:Document) RETURN d{.*} as doc")
+            return [record["doc"] for record in result]
+
+    def export_all_chunks_batched(self, batch_size: int = 500, skip: int = 0) -> list:
+        """Get chunks in batches with their parent document ID."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk)
+                RETURN c{.*} as chunk, d.id as document_id
+                ORDER BY c.id
+                SKIP $skip LIMIT $batch_size
+            """, skip=skip, batch_size=batch_size)
+            return [{"chunk": record["chunk"], "document_id": record["document_id"]} for record in result]
+
+    def export_chunk_count(self) -> int:
+        """Get total chunk count for batched export progress tracking."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (:Document)-[:HAS_CHUNK]->(c:Chunk) RETURN count(c) as cnt")
+            return result.single()["cnt"]
+
+    def export_all_entities(self) -> list:
+        """Get all Entity nodes with all properties for export."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (e:Entity) RETURN e{.*} as entity")
+            return [record["entity"] for record in result]
+
+    def export_all_entity_relationships(self) -> list:
+        """Get all Entity-Entity relationships with type and properties."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                RETURN s.name as source, t.name as target, type(r) as rel_type,
+                       r.description as description, r.weight as weight,
+                       r.confidence as confidence,
+                       r.extraction_method as extraction_method,
+                       r.source_document_id as source_document_id,
+                       r.extracted_at as extracted_at
+            """)
+            return [dict(record) for record in result]
+
+    def export_all_communities(self) -> list:
+        """Get all Community nodes with all properties."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (com:Community) RETURN com{.*} as community")
+            return [record["community"] for record in result]
+
+    def export_community_members(self) -> list:
+        """Get all Community→Entity HAS_MEMBER edges."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (com:Community)-[:HAS_MEMBER]->(e:Entity)
+                RETURN com.id as community_id, e.name as entity_name
+            """)
+            return [dict(record) for record in result]
+
+    def export_all_collections(self) -> list:
+        """Get all Collection nodes with all properties."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (col:Collection) RETURN col{.*} as collection")
+            return [record["collection"] for record in result]
+
+    def export_collection_members(self) -> list:
+        """Get all Collection→Document CONTAINS edges."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (col:Collection)-[:CONTAINS]->(d:Document)
+                RETURN col.id as collection_id, d.id as document_id
+            """)
+            return [dict(record) for record in result]
+
+    def export_all_chunk_mentions(self) -> list:
+        """Get all Chunk→Entity MENTIONS edges."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+                RETURN c.id as chunk_id, e.name as entity_name
+            """)
+            return [dict(record) for record in result]
+
+    def export_all_merge_history(self) -> list:
+        """Get all MergeHistory nodes."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (h:MergeHistory) RETURN h{.*} as history")
+            return [record["history"] for record in result]
+
+    def export_all_system_meta(self) -> list:
+        """Get all SystemMeta nodes."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (m:SystemMeta) RETURN m.key as key, m.value as value")
+            return [dict(record) for record in result]
+
+    # =========================================================================
+    # Library Import Methods
+    # =========================================================================
+
+    def import_documents_batch(self, documents: list) -> int:
+        """Bulk create Document nodes. Returns count created."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $docs as doc
+                CREATE (d:Document)
+                SET d = doc
+                RETURN count(d) as cnt
+            """, docs=documents)
+            return result.single()["cnt"]
+
+    def import_chunks_batch(self, chunks: list) -> int:
+        """Bulk create Chunk nodes and HAS_CHUNK edges. Each item must have 'chunk' and 'document_id'."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $items as item
+                MATCH (d:Document {id: item.document_id})
+                CREATE (c:Chunk)
+                SET c = item.chunk
+                CREATE (d)-[:HAS_CHUNK]->(c)
+                RETURN count(c) as cnt
+            """, items=chunks)
+            return result.single()["cnt"]
+
+    def import_entities_batch(self, entities: list) -> int:
+        """Bulk create Entity nodes. Returns count created."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $entities as entity
+                CREATE (e:Entity)
+                SET e = entity
+                RETURN count(e) as cnt
+            """, entities=entities)
+            return result.single()["cnt"]
+
+    def import_chunk_mentions_batch(self, mentions: list) -> int:
+        """Bulk create Chunk→Entity MENTIONS edges."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $mentions as m
+                MATCH (c:Chunk {id: m.chunk_id})
+                MATCH (e:Entity {name: m.entity_name})
+                CREATE (c)-[:MENTIONS]->(e)
+                RETURN count(*) as cnt
+            """, mentions=mentions)
+            return result.single()["cnt"]
+
+    def import_relationship(self, source: str, target: str, rel_type: str, props: dict) -> bool:
+        """Create a single Entity-Entity relationship with dynamic type via APOC."""
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    MATCH (s:Entity {name: $source})
+                    MATCH (t:Entity {name: $target})
+                    CALL apoc.merge.relationship(s, $rel_type, {},
+                        {description: $description, weight: $weight, confidence: $confidence,
+                         extraction_method: $extraction_method, source_document_id: $source_doc_id,
+                         extracted_at: $extracted_at}, t) YIELD rel
+                    RETURN type(rel) as rel_type
+                """,
+                    source=source, target=target, rel_type=rel_type,
+                    description=props.get("description", ""),
+                    weight=props.get("weight", 5.0),
+                    confidence=props.get("confidence"),
+                    extraction_method=props.get("extraction_method", ""),
+                    source_doc_id=props.get("source_document_id"),
+                    extracted_at=props.get("extracted_at"),
+                )
+                return result.single() is not None
+            except Exception:
+                result = session.run("""
+                    MATCH (s:Entity {name: $source})
+                    MATCH (t:Entity {name: $target})
+                    CREATE (s)-[r:RELATED_TO]->(t)
+                    SET r.type = $rel_type, r.description = $description,
+                        r.weight = $weight, r.confidence = $confidence,
+                        r.extraction_method = $extraction_method,
+                        r.source_document_id = $source_doc_id,
+                        r.extracted_at = $extracted_at
+                    RETURN type(r) as rel_type
+                """,
+                    source=source, target=target, rel_type=rel_type,
+                    description=props.get("description", ""),
+                    weight=props.get("weight", 5.0),
+                    confidence=props.get("confidence"),
+                    extraction_method=props.get("extraction_method", ""),
+                    source_doc_id=props.get("source_document_id"),
+                    extracted_at=props.get("extracted_at"),
+                )
+                return result.single() is not None
+
+    def import_communities_batch(self, communities: list) -> int:
+        """Bulk create Community nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $communities as com
+                CREATE (c:Community)
+                SET c = com
+                RETURN count(c) as cnt
+            """, communities=communities)
+            return result.single()["cnt"]
+
+    def import_community_members_batch(self, members: list) -> int:
+        """Bulk create Community→Entity HAS_MEMBER edges and set entity.community_id."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $members as m
+                MATCH (com:Community {id: m.community_id})
+                MATCH (e:Entity {name: m.entity_name})
+                CREATE (com)-[:HAS_MEMBER]->(e)
+                SET e.community_id = m.community_id
+                RETURN count(*) as cnt
+            """, members=members)
+            return result.single()["cnt"]
+
+    def import_collections_batch(self, collections: list) -> int:
+        """Bulk create Collection nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $collections as col
+                MERGE (c:Collection {id: col.id})
+                SET c = col
+                RETURN count(c) as cnt
+            """, collections=collections)
+            return result.single()["cnt"]
+
+    def import_collection_members_batch(self, members: list) -> int:
+        """Bulk create Collection→Document CONTAINS edges."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $members as m
+                MATCH (col:Collection {id: m.collection_id})
+                MATCH (d:Document {id: m.document_id})
+                CREATE (col)-[:CONTAINS]->(d)
+                RETURN count(*) as cnt
+            """, members=members)
+            return result.single()["cnt"]
+
+    def import_merge_history_batch(self, histories: list) -> int:
+        """Bulk create MergeHistory nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $histories as h
+                CREATE (m:MergeHistory)
+                SET m = h
+                RETURN count(m) as cnt
+            """, histories=histories)
+            return result.single()["cnt"]
+
+    def import_system_meta_batch(self, metas: list) -> int:
+        """Bulk create SystemMeta nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $metas as m
+                MERGE (s:SystemMeta {key: m.key})
+                SET s.value = m.value
+                RETURN count(s) as cnt
+            """, metas=metas)
+            return result.single()["cnt"]
+
 
 # Singleton instance
 _neo4j_service: Optional[Neo4jService] = None
