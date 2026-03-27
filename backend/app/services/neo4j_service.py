@@ -206,7 +206,18 @@ class Neo4jService:
             except Exception as e:
                 logger.warning(f"APIKey constraint may already exist: {e}")
             
-            logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes, APIKeys)")
+            # =================================================================
+            # Skill constraints (agentskills.io)
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE CONSTRAINT skill_id IF NOT EXISTS
+                    FOR (s:Skill) REQUIRE s.skill_id IS UNIQUE
+                """)
+            except Exception as e:
+                logger.warning(f"Skill constraint may already exist: {e}")
+
+            logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes, APIKeys, Skills)")
     
     def store_document(self, doc_id: str, metadata: DocumentMetadata) -> str:
         """Store a document node in Neo4j."""
@@ -4859,6 +4870,94 @@ class Neo4jService:
                 RETURN count(s) as cnt
             """, metas=metas)
             return result.single()["cnt"]
+
+    # =================================================================
+    # Agent Skills CRUD (agentskills.io)
+    # =================================================================
+
+    def upsert_skill(self, props: dict) -> dict:
+        """Create or update a Skill node, preserving enabled state on update."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MERGE (s:Skill {skill_id: $skill_id})
+                ON CREATE SET
+                    s.name = $name,
+                    s.description = $description,
+                    s.version = $version,
+                    s.author = $author,
+                    s.license = $license,
+                    s.source = $source,
+                    s.source_url = $source_url,
+                    s.skill_type = $skill_type,
+                    s.enabled = $enabled,
+                    s.installed_at = $installed_at,
+                    s.directory_path = $directory_path,
+                    s.tool_names = $tool_names
+                ON MATCH SET
+                    s.name = $name,
+                    s.description = $description,
+                    s.version = $version,
+                    s.author = $author,
+                    s.license = $license,
+                    s.skill_type = $skill_type,
+                    s.directory_path = $directory_path,
+                    s.tool_names = $tool_names
+                RETURN s
+            """, **props)
+            record = result.single()
+            return dict(record["s"]) if record else {}
+
+    def get_all_skills(self) -> list:
+        """Get all Skill nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Skill)
+                RETURN s
+                ORDER BY s.installed_at DESC
+            """)
+            return [dict(record["s"]) for record in result]
+
+    def get_skill(self, skill_id: str) -> Optional[dict]:
+        """Get a single Skill node by ID."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Skill {skill_id: $skill_id})
+                RETURN s
+            """, skill_id=skill_id)
+            record = result.single()
+            return dict(record["s"]) if record else None
+
+    def get_enabled_skills(self) -> list:
+        """Get all enabled Skill nodes."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Skill {enabled: true})
+                RETURN s
+                ORDER BY s.installed_at ASC
+            """)
+            return [dict(record["s"]) for record in result]
+
+    def update_skill(self, skill_id: str, props: dict) -> Optional[dict]:
+        """Update a Skill node's properties."""
+        set_clauses = ", ".join(f"s.{k} = ${k}" for k in props.keys())
+        with self.driver.session() as session:
+            result = session.run(f"""
+                MATCH (s:Skill {{skill_id: $skill_id}})
+                SET {set_clauses}
+                RETURN s
+            """, skill_id=skill_id, **props)
+            record = result.single()
+            return dict(record["s"]) if record else None
+
+    def delete_skill(self, skill_id: str) -> bool:
+        """Delete a Skill node."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Skill {skill_id: $skill_id})
+                DELETE s
+                RETURN count(s) as cnt
+            """, skill_id=skill_id)
+            return result.single()["cnt"] > 0
 
 
 # Singleton instance

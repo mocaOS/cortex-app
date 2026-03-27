@@ -214,6 +214,15 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
               return updated;
             });
           }
+          if (event.skill_tool) {
+            thinkingSteps = [...thinkingSteps, `[Skill] ${event.skill_tool as string}`];
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
+              return updated;
+            });
+          }
           if (event.sources) {
             sources = event.sources as Source[];
           }

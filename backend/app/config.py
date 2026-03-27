@@ -235,6 +235,31 @@ class Settings(BaseSettings):
         default=4000
     )  # Max output tokens for writer in quality/research mode
 
+    # ==========================================================================
+    # Agent Skills (agentskills.io standard)
+    # ==========================================================================
+    skills_dir: str = Field(
+        default=".agents/skills"
+    )  # Directory for skill discovery (relative to project root or absolute)
+    enable_skills: bool = Field(
+        default=True
+    )  # Master switch for AgentSkills integration
+    enable_skill_scripts: bool = Field(
+        default=False
+    )  # Allow skills to execute local scripts (security-sensitive, opt-in)
+    skill_script_timeout: int = Field(
+        default=30
+    )  # Timeout in seconds for skill script execution
+    skill_http_timeout: int = Field(
+        default=15
+    )  # Timeout in seconds for skill HTTP tool calls
+    max_skill_tools: int = Field(
+        default=10
+    )  # Max total skill-provided tools injected into researcher agent
+    max_skill_instructions_tokens: int = Field(
+        default=4000
+    )  # Approx token budget for skill instruction injection into prompt
+
     # Chunking Configuration (enhanced)
     chunk_by: str = Field(default="sentence")  # "word" or "sentence" based splitting
     sentences_per_chunk: int = Field(

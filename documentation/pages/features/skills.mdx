@@ -1,0 +1,150 @@
+---
+title: Agent Skills
+description: Extend Deep Research and Chat with external capabilities from the AgentSkills ecosystem
+---
+
+Agent Skills let you add new capabilities to the Cortex Library's researcher agent. Skills are reusable instruction sets and tools from the open [AgentSkills](https://agentskills.io/) ecosystem — install them from the [skills.sh](https://skills.sh) registry or any URL.
+
+## Overview
+
+The researcher agent uses **on-demand activation**: it sees a compact catalog of available skills and decides which to activate based on the user's question. This keeps the prompt lean while giving the agent access to hundreds of potential capabilities.
+
+### Skill Types
+
+| Type | What it does | Example |
+|------|-------------|---------|
+| **Instruction** | Injects instructions into the agent's context to modify its behavior | `find-skills` — teaches the agent to help users discover new skills |
+| **Tool** | Adds callable HTTP endpoints or scripts the agent can invoke | `web-search` — adds a search tool that calls an external API |
+
+## Installing Skills
+
+### From the Registry
+
+1. Go to **Settings > Agent Skills**
+2. Use the search bar under **Browse Registry** to find skills from [skills.sh](https://skills.sh)
+3. Click **Install** on any result
+
+### From a URL
+
+1. Go to **Settings > Agent Skills**
+2. Paste a direct SKILL.md URL into the **Install Skill** field
+3. Click **Install**
+
+### Local Skills
+
+Place skill directories in your skills folder (default: `.agents/skills/`):
+
+```
+.agents/skills/
+  my-skill/
+    SKILL.md          # Required
+    tools.json        # Optional: tool definitions
+    scripts/          # Optional: executable scripts
+```
+
+Click **Discover** to scan for new skills, or restart the application.
+
+## Enabling Skills
+
+Installed skills are **disabled by default**. Toggle them on from Settings > Agent Skills. Only enabled skills appear in the researcher agent's catalog.
+
+## How Activation Works
+
+When the researcher agent runs (Deep Research or Chat), it receives:
+
+1. A compact **catalog** in the system prompt listing each enabled skill's name and description
+2. Two special tools: `activate_skill` and `list_skills`
+
+The agent decides whether any skill is relevant to the user's question. If so, it calls `activate_skill("skill-name")`, which:
+
+- Loads the full SKILL.md instructions into context
+- Makes the skill's tools (if any) callable for the rest of the conversation
+- Shows "Activating skill-name..." in the chat UI
+
+## Creating Skills
+
+A skill is a directory containing a `SKILL.md` file:
+
+```markdown
+---
+name: my-skill
+description: What this skill does and when to use it.
+license: Apache-2.0
+metadata:
+  author: your-name
+  version: "1.0"
+---
+
+# My Skill
+
+Instructions for the agent go here. Be specific about when
+and how to use this skill.
+```
+
+### Adding Tools
+
+Create a `tools.json` alongside the SKILL.md:
+
+```json
+[
+  {
+    "name": "my_tool",
+    "description": "What this tool does.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Input for the tool"
+        }
+      },
+      "required": ["query"]
+    },
+    "execution": {
+      "type": "http",
+      "method": "POST",
+      "url": "https://api.example.com/endpoint",
+      "headers": {
+        "Authorization": "Bearer ${SKILL_MY_API_KEY}"
+      }
+    }
+  }
+]
+```
+
+Tool execution supports two types:
+- **`http`** — Makes an HTTP request (always available)
+- **`script`** — Runs a local script (requires `ENABLE_SKILL_SCRIPTS=true`)
+
+Environment variables in URLs and headers are substituted using `${SKILL_*}` syntax. Only variables prefixed with `SKILL_` are accessible for security.
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_SKILLS` | `true` | Master switch for the skills system |
+| `SKILLS_DIR` | `.agents/skills` | Skills directory path |
+| `ENABLE_SKILL_SCRIPTS` | `false` | Allow script execution (security-sensitive) |
+| `SKILL_SCRIPT_TIMEOUT` | `30` | Script timeout in seconds |
+| `SKILL_HTTP_TIMEOUT` | `15` | HTTP tool timeout in seconds |
+| `MAX_SKILL_TOOLS` | `10` | Max skill tools in the agent |
+
+## API Endpoints
+
+All endpoints require Admin authentication.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/admin/skills` | List installed skills |
+| `POST` | `/api/admin/skills/install` | Install from URL or registry |
+| `PATCH` | `/api/admin/skills/{id}` | Enable/disable |
+| `DELETE` | `/api/admin/skills/{id}` | Uninstall |
+| `GET` | `/api/admin/skills/registry/search?q=` | Search skills.sh |
+
+## Security
+
+- Script execution is **disabled by default** (`ENABLE_SKILL_SCRIPTS=false`)
+- Only `SKILL_*` environment variables are accessible in tool configs
+- All management endpoints require admin authentication
+- Tool results are capped at 4000 characters
+- Anti-injection instructions are appended after skill content

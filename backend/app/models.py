@@ -624,6 +624,53 @@ class AdminStatsOverview(BaseModel):
 # System Reset
 # =============================================================================
 
+# =============================================================================
+# Agent Skills (agentskills.io standard)
+# =============================================================================
+
+class SkillInfo(BaseModel):
+    """Skill metadata for API responses."""
+    skill_id: str = Field(..., description="Unique skill identifier (directory name or namespace/name)")
+    name: str = Field(..., description="Skill name from SKILL.md frontmatter")
+    description: str = Field(..., description="What this skill does and when to use it")
+    version: Optional[str] = Field(default=None, description="Skill version from metadata")
+    author: Optional[str] = Field(default=None, description="Skill author from metadata")
+    license: Optional[str] = Field(default=None, description="Skill license")
+    source: str = Field(..., description="Installation source: local, registry, or url")
+    source_url: Optional[str] = Field(default=None, description="URL the skill was installed from")
+    skill_type: str = Field(..., description="Skill type: instruction or tool")
+    enabled: bool = Field(default=False, description="Whether the skill is active")
+    installed_at: str = Field(..., description="ISO 8601 installation timestamp")
+    tool_count: int = Field(default=0, description="Number of tools this skill provides")
+    tool_names: List[str] = Field(default_factory=list, description="Names of tools this skill provides")
+
+
+class SkillDetail(SkillInfo):
+    """Skill with full SKILL.md body and tools configuration."""
+    body: str = Field(default="", description="Full SKILL.md markdown body (instructions)")
+    tools_config: Optional[List[dict]] = Field(default=None, description="Parsed tools.json definitions")
+
+
+class SkillInstallRequest(BaseModel):
+    """Request to install a skill from URL or registry."""
+    url: Optional[str] = Field(default=None, description="Direct URL to SKILL.md or ZIP archive")
+    registry_id: Optional[str] = Field(default=None, description="Registry identifier: namespace/name from skills.sh")
+
+
+class SkillUpdateRequest(BaseModel):
+    """Request to update skill settings."""
+    enabled: Optional[bool] = Field(default=None, description="Enable or disable the skill")
+
+
+class SkillRegistryItem(BaseModel):
+    """A skill from the skills.sh registry."""
+    namespace: str = Field(..., description="Skill namespace/owner")
+    name: str = Field(..., description="Skill name")
+    description: str = Field(default="", description="Skill description")
+    install_count: Optional[int] = Field(default=None, description="Installation count")
+    download_url: str = Field(..., description="URL to fetch skill content")
+
+
 class SystemResetRequest(BaseModel):
     """Request model for system reset with selective deletion options."""
     delete_documents: bool = Field(default=True, description="Delete all documents, chunks, entities, and communities")
@@ -780,6 +827,11 @@ class SystemConfigResponse(BaseModel):
     compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
     compute3_model: str = Field(..., description="Model for turbo mode")
     compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
+
+    # Agent Skills
+    enable_skills: bool = Field(default=False, description="Whether agent skills are enabled")
+    enable_skill_scripts: bool = Field(default=False, description="Whether skill script execution is allowed")
+    max_skill_tools: int = Field(default=10, description="Max skill tools in researcher agent")
 
     class Config:
         json_schema_extra = {

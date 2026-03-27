@@ -1,4 +1,4 @@
-# Chapter 19: Troubleshooting
+# Chapter 20: Troubleshooting
 
 This chapter covers common issues and their solutions.
 

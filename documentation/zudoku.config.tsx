@@ -95,6 +95,7 @@ const config: ZudokuConfig = {
             "/features/knowledge-graph",
             "/features/collections",
             "/features/communities",
+            "/features/skills",
             "/features/turbo-mode",
           ],
         },

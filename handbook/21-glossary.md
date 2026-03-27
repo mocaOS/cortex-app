@@ -1,4 +1,4 @@
-# Chapter 20: Glossary
+# Chapter 21: Glossary
 
 | Term | Definition |
 |------|-----------|

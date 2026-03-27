@@ -65,6 +65,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 - **📤 Library Import/Export**: Export your entire library (documents, knowledge graph, embeddings, communities) as a portable ZIP archive and import it into another instance — no need to re-run the expensive knowledge graph pipeline
+- **🧩 Agent Skills**: Extend Deep Research and Chat with capabilities from the open [AgentSkills](https://agentskills.io/) ecosystem. Install skills from [skills.sh](https://skills.sh) or direct URLs. The researcher agent activates skills on demand — it sees a compact catalog and decides which skills are relevant to each query. Supports instruction skills (modify agent behavior) and tool-providing skills (add callable HTTP/script tools via `tools.json`).
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection

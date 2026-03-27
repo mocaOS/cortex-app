@@ -27,6 +27,9 @@ from app.services.research_prompts import (
     get_writer_system_prompt,
     get_writer_user_prompt,
     get_tools_for_mode,
+    get_tools_with_skill_activation,
+    build_skill_catalog_block,
+    build_activated_skills_block,
 )
 from app.services.prompt_security import get_anti_injection_instruction
 
@@ -259,11 +262,41 @@ async def _run_researcher_loop(
         if mode == "speed"
         else settings.researcher_max_iterations_quality
     )
-    tools = get_tools_for_mode(mode)
+
+    # Skill activation state (on-demand pattern)
+    _skill_service = None
+    skill_catalog = []                # compact name+desc for system prompt
+    activated_skills = {}             # skill_id → {instructions, tool_defs, tool_map}
+    activated_instructions = ""       # concatenated active skill instruction bodies
+    activated_tool_defs = []          # merged tool defs from all activated skills
+    activated_tool_map = {}           # merged {namespaced_name: (skill_id, original_name)}
+
+    if getattr(settings, "enable_skills", False):
+        try:
+            from app.services.skill_service import get_skill_service
+            _skill_service = get_skill_service()
+            skill_catalog = _skill_service.get_skill_catalog()
+            if skill_catalog:
+                logger.info(
+                    f"Skill catalog loaded: {len(skill_catalog)} skills available"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load skill catalog: {e}")
+
+    # Build tools list (rebuilt each iteration to include newly activated skill tools)
+    tools = get_tools_with_skill_activation(
+        mode,
+        has_skills=bool(skill_catalog),
+        activated_skill_tools=activated_tool_defs or None,
+    )
 
     # Build initial messages
-    system_prompt = get_researcher_prompt(mode, 0, max_iterations)
-    system_prompt += get_anti_injection_instruction(enabled=settings.prompt_security)
+    system_prompt = (
+        get_researcher_prompt(mode, 0, max_iterations)
+        + build_skill_catalog_block(skill_catalog)
+        + build_activated_skills_block(activated_instructions)
+        + get_anti_injection_instruction(enabled=settings.prompt_security)
+    )
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in conversation_history[-settings.max_conversation_history :]:
@@ -274,10 +307,18 @@ async def _run_researcher_loop(
     communities_used_ids = []
 
     for iteration in range(max_iterations):
-        # Update iteration count in system prompt
-        messages[0]["content"] = get_researcher_prompt(
-            mode, iteration, max_iterations
-        ) + get_anti_injection_instruction(enabled=settings.prompt_security)
+        # Rebuild system prompt + tools each iteration (may have new activations)
+        messages[0]["content"] = (
+            get_researcher_prompt(mode, iteration, max_iterations)
+            + build_skill_catalog_block(skill_catalog)
+            + build_activated_skills_block(activated_instructions)
+            + get_anti_injection_instruction(enabled=settings.prompt_security)
+        )
+        tools = get_tools_with_skill_activation(
+            mode,
+            has_skills=bool(skill_catalog),
+            activated_skill_tools=activated_tool_defs or None,
+        )
 
         try:
             response = await client.chat.completions.create(
@@ -473,6 +514,105 @@ async def _run_researcher_loop(
                         }
                     )
 
+            elif name == "activate_skill" and _skill_service:
+                skill_name = args.get("name", "")
+                if skill_name in activated_skills:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": f"Skill '{skill_name}' is already active.",
+                    })
+                else:
+                    try:
+                        instr, t_defs, t_map = (
+                            _skill_service.load_skill_for_activation(skill_name)
+                        )
+                        activated_skills[skill_name] = {
+                            "instructions": instr,
+                            "tool_defs": t_defs,
+                            "tool_map": t_map,
+                        }
+                        # Rebuild merged activation state
+                        activated_instructions = "\n\n".join(
+                            s["instructions"]
+                            for s in activated_skills.values()
+                            if s["instructions"]
+                        )
+                        activated_tool_defs = [
+                            td
+                            for s in activated_skills.values()
+                            for td in s["tool_defs"]
+                        ]
+                        activated_tool_map = {}
+                        for s in activated_skills.values():
+                            activated_tool_map.update(s["tool_map"])
+
+                        yield {
+                            "type": "skill_tool",
+                            "content": f"Activating skill: {skill_name}",
+                            "skill_name": skill_name,
+                        }
+
+                        tool_names_str = (
+                            ", ".join(
+                                t["function"]["name"] for t in t_defs
+                            )
+                            or "none (instruction-only)"
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": (
+                                f"Activated skill '{skill_name}'. "
+                                f"Tools now available: {tool_names_str}. "
+                                f"Instructions loaded into context."
+                            ),
+                        })
+                    except Exception as e:
+                        logger.warning(f"Skill activation failed: {e}")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Failed to activate skill '{skill_name}': {str(e)}",
+                        })
+
+            elif name == "list_skills":
+                catalog_text = "\n".join(
+                    f"- {s['name']}: {s['description']}"
+                    f" [type: {s['skill_type']}]"
+                    + (" (ACTIVE)" if s["skill_id"] in activated_skills else "")
+                    for s in skill_catalog
+                ) if skill_catalog else "No skills available."
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"Available skills:\n{catalog_text}",
+                })
+
+            elif name in activated_tool_map and _skill_service:
+                # Activated skill tool call
+                skill_id, original_name = activated_tool_map[name]
+                yield {
+                    "type": "skill_tool",
+                    "content": f"Running skill tool: {original_name}",
+                    "skill_name": skill_id,
+                }
+                try:
+                    tool_result = await _skill_service.execute_skill_tool(
+                        skill_id, original_name, args
+                    )
+                except Exception as e:
+                    logger.warning(f"Skill tool {name} failed: {e}")
+                    tool_result = f"Error: {str(e)}"
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result[:4000],
+                    }
+                )
+
             else:
                 # Unknown tool
                 logger.warning(f"Researcher called unknown tool: {name}")
@@ -560,6 +700,11 @@ async def run_research_pipeline(
             yield {"thinking": event["content"]}
         elif event["type"] == "retrieval":
             yield {"retrieval": event["content"]}
+        elif event["type"] == "skill_tool":
+            yield {
+                "skill_tool": event["content"],
+                "skill_name": event.get("skill_name", ""),
+            }
 
     # =========================================================================
     # Phase 2: Prepare Context for Writer

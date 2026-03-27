@@ -14,6 +14,7 @@ import {
   X,
   ChevronDown,
   Brain,
+  Puzzle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
@@ -346,22 +347,32 @@ export default function ChatMessage({
               )}
             </div>
             <div ref={thinkingStepsRef} className="space-y-1 max-h-32 overflow-y-auto">
-              {message.thinkingSteps.map((step, idx) => (
-                <div
-                  key={idx}
-                  className={cn(
-                    "flex items-start gap-2 text-xs",
-                    idx === message.thinkingSteps!.length - 1 && message.isStreaming
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
-                    {idx + 1}
-                  </span>
-                  <span>{step}</span>
-                </div>
-              ))}
+              {message.thinkingSteps.map((step, idx) => {
+                const isSkillStep = step.startsWith("[Skill] ");
+                const displayStep = isSkillStep ? step.slice(8) : step;
+                return (
+                  <div
+                    key={idx}
+                    className={cn(
+                      "flex items-start gap-2 text-xs",
+                      idx === message.thinkingSteps!.length - 1 && message.isStreaming
+                        ? "text-foreground"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {isSkillStep ? (
+                      <span className="w-4 h-4 rounded-full bg-[var(--accent)]/20 flex items-center justify-center shrink-0 mt-0.5">
+                        <Puzzle className="w-2.5 h-2.5 text-[var(--accent)]" />
+                      </span>
+                    ) : (
+                      <span className="w-4 h-4 rounded-full bg-border flex items-center justify-center text-[10px] text-foreground shrink-0 mt-0.5">
+                        {idx + 1}
+                      </span>
+                    )}
+                    <span>{displayStep}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

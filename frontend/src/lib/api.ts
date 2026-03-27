@@ -40,6 +40,9 @@ import type {
   MergeEntitiesRequest,
   MergeEntitiesResponse,
   MergeHistoryResponse,
+  SkillInfo,
+  SkillDetail,
+  SkillRegistryItem,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -1244,6 +1247,48 @@ class ApiClient {
     }
 
     return res.json();
+  }
+
+  // ===========================================================================
+  // Agent Skills Management (agentskills.io)
+  // ===========================================================================
+
+  async listSkills(): Promise<SkillInfo[]> {
+    return this.request<SkillInfo[]>("/api/admin/skills");
+  }
+
+  async getSkill(skillId: string): Promise<SkillDetail> {
+    return this.request<SkillDetail>(`/api/admin/skills/${encodeURIComponent(skillId)}`);
+  }
+
+  async installSkill(request: { url?: string; registry_id?: string }): Promise<SkillInfo> {
+    return this.request<SkillInfo>("/api/admin/skills/install", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async updateSkill(skillId: string, update: { enabled?: boolean }): Promise<SkillInfo> {
+    return this.request<SkillInfo>(`/api/admin/skills/${encodeURIComponent(skillId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    });
+  }
+
+  async deleteSkill(skillId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/skills/${encodeURIComponent(skillId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async searchSkillRegistry(query: string): Promise<SkillRegistryItem[]> {
+    return this.request<SkillRegistryItem[]>(`/api/admin/skills/registry/search?q=${encodeURIComponent(query)}`);
+  }
+
+  async discoverSkills(): Promise<{ message: string; count: number }> {
+    return this.request<{ message: string; count: number }>("/api/admin/skills/discover", {
+      method: "POST",
+    });
   }
 }
 

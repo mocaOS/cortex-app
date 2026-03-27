@@ -116,6 +116,20 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | Requires | Function calling support | Any LLM |
 | Behavior | Dynamic (LLM decides what to search) | Deterministic (fixed path) |
 
+## Agent Skills Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_SKILLS` | `true` | Master switch for the Agent Skills system. When disabled, no skill catalog or activation tools appear in the researcher agent. |
+| `SKILLS_DIR` | `.agents/skills` | Directory for skill discovery. Relative paths resolve from the project root. Use an absolute path or Docker volume mount for persistence. |
+| `ENABLE_SKILL_SCRIPTS` | `false` | Allow skills to execute local scripts. **Security-sensitive** — only enable if you trust all installed skills. |
+| `SKILL_SCRIPT_TIMEOUT` | `30` | Timeout in seconds for skill script execution. |
+| `SKILL_HTTP_TIMEOUT` | `15` | Timeout in seconds for skill HTTP tool calls. |
+| `MAX_SKILL_TOOLS` | `10` | Maximum total skill-provided tools injected into the researcher agent's tool list. |
+| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for activated skill instruction bodies in the system prompt. |
+
+See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installing, configuring, and creating skills.
+
 ## Community Detection Configuration
 
 | Variable | Default | Description |

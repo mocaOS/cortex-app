@@ -499,6 +499,39 @@ export interface AdminStatsOverview {
 }
 
 // =============================================================================
+// Agent Skills Types (agentskills.io)
+// =============================================================================
+
+export interface SkillInfo {
+  skill_id: string;
+  name: string;
+  description: string;
+  version?: string | null;
+  author?: string | null;
+  license?: string | null;
+  source: "local" | "registry" | "url";
+  source_url?: string | null;
+  skill_type: "instruction" | "tool";
+  enabled: boolean;
+  installed_at: string;
+  tool_count: number;
+  tool_names: string[];
+}
+
+export interface SkillDetail extends SkillInfo {
+  body: string;
+  tools_config?: Record<string, unknown>[] | null;
+}
+
+export interface SkillRegistryItem {
+  namespace: string;
+  name: string;
+  description: string;
+  install_count?: number | null;
+  download_url: string;
+}
+
+// =============================================================================
 // Entity Deduplication Types
 // =============================================================================
 
@@ -676,4 +709,9 @@ export interface SystemConfig {
   compute3_gpu_count: number;
   compute3_model: string;
   compute3_default_runtime: number;
+
+  // Agent Skills
+  enable_skills: boolean;
+  enable_skill_scripts: boolean;
+  max_skill_tools: number;
 }

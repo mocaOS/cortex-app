@@ -35,8 +35,9 @@ This handbook is the definitive guide to the Cortex Library — the knowledge gr
 | 16 | [API Reference](16-api-reference.md) | `16-api-reference.md` | Developers |
 | 17 | [Integration Patterns](17-integrations.md) | `17-integrations.md` | Developers |
 | 18 | [Administration and Maintenance](18-administration.md) | `18-administration.md` | Administrators |
-| 19 | [Troubleshooting](19-troubleshooting.md) | `19-troubleshooting.md` | Everyone |
-| 20 | [Glossary](20-glossary.md) | `20-glossary.md` | Everyone |
+| 19 | [Agent Skills](19-skills.md) | `19-skills.md` | Developers |
+| 20 | [Troubleshooting](20-troubleshooting.md) | `20-troubleshooting.md` | Everyone |
+| 21 | [Glossary](21-glossary.md) | `21-glossary.md` | Everyone |
 
 ## Quick Links
 
@@ -44,7 +45,8 @@ This handbook is the definitive guide to the Cortex Library — the knowledge gr
 - **I want to upload documents and build a knowledge graph** — Start with [Chapter 7: Documents](07-documents.md), then [Chapter 8: Knowledge Graph](08-knowledge-graph.md)
 - **I want to ask questions about my documents** — See [Chapter 10: Ask AI](10-ask-ai.md)
 - **I want to integrate Cortex into my application** — See [Chapter 16: API Reference](16-api-reference.md) and [Chapter 17: Integrations](17-integrations.md)
-- **Something isn't working** — See [Chapter 19: Troubleshooting](19-troubleshooting.md)
+- **I want to extend the agent with custom skills** — See [Chapter 19: Agent Skills](19-skills.md)
+- **Something isn't working** — See [Chapter 20: Troubleshooting](20-troubleshooting.md)
 
 ## Additional Resources
 

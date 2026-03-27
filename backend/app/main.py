@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 import aiofiles
+import httpx
 import json
 
 from app.config import get_settings
@@ -67,6 +68,9 @@ from app.models import (
     SystemResetResponse,
     # System Config model
     SystemConfigResponse,
+    # Agent Skills models
+    SkillInstallRequest,
+    SkillUpdateRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -185,6 +189,16 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Admin API key usage tracking is disabled")
     
+    # Discover agent skills
+    if settings.enable_skills:
+        try:
+            from app.services.skill_service import get_skill_service
+            skill_service = get_skill_service()
+            count = skill_service.discover_local_skills()
+            logger.info(f"Agent skills discovered: {count}")
+        except Exception as e:
+            logger.warning(f"Could not discover agent skills: {e}")
+
     # Warm up processors
     try:
         get_document_processor()
@@ -3383,7 +3397,104 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         compute3_gpu_count=settings.compute3_gpu_count,
         compute3_model=settings.compute3_model,
         compute3_default_runtime=settings.compute3_default_runtime,
+
+        # Agent Skills
+        enable_skills=settings.enable_skills,
+        enable_skill_scripts=settings.enable_skill_scripts,
+        max_skill_tools=settings.max_skill_tools,
     )
+
+
+# =============================================================================
+# Admin Agent Skills Endpoints (agentskills.io)
+# =============================================================================
+
+@app.get("/api/admin/skills")
+async def list_skills(auth: AuthResult = Depends(require_admin)):
+    """List all installed agent skills."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    return skill_service.get_all_skills()
+
+
+@app.get("/api/admin/skills/registry/search")
+async def search_skill_registry(
+    q: str = Query(..., description="Search query"),
+    auth: AuthResult = Depends(require_admin),
+):
+    """Search the skills.sh registry for skills."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    return await skill_service.search_registry(q)
+
+
+@app.get("/api/admin/skills/{skill_id}")
+async def get_skill_detail(skill_id: str, auth: AuthResult = Depends(require_admin)):
+    """Get full skill details including SKILL.md body and tools config."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    detail = skill_service.get_skill(skill_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    return detail
+
+
+@app.post("/api/admin/skills/install")
+async def install_skill(
+    request: SkillInstallRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Install a skill from URL or skills.sh registry."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    try:
+        if request.registry_id:
+            return await skill_service.install_from_registry(request.registry_id)
+        elif request.url:
+            return await skill_service.install_from_url(request.url)
+        else:
+            raise HTTPException(status_code=400, detail="Provide either 'url' or 'registry_id'")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch skill: {e.response.status_code}")
+    except Exception as e:
+        logger.error(f"Skill installation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/admin/skills/{skill_id}")
+async def update_skill(
+    skill_id: str,
+    request: SkillUpdateRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Update a skill's settings (enable/disable)."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    result = skill_service.update_skill(skill_id, enabled=request.enabled)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    return result
+
+
+@app.delete("/api/admin/skills/{skill_id}")
+async def delete_skill(skill_id: str, auth: AuthResult = Depends(require_admin)):
+    """Uninstall a skill and delete its files."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    if not skill_service.delete_skill(skill_id):
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    return {"message": f"Skill '{skill_id}' deleted"}
+
+
+@app.post("/api/admin/skills/discover")
+async def discover_skills(auth: AuthResult = Depends(require_admin)):
+    """Re-scan the local skills directory for new skills."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    count = skill_service.discover_local_skills()
+    return {"message": f"Discovered {count} skills", "count": count}
 
 
 # =============================================================================

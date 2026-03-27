@@ -160,6 +160,127 @@ def get_tools_for_mode(mode: Literal["speed", "quality"]) -> List[dict]:
 
 
 # =============================================================================
+# Skill Activation Tools (agentskills.io on-demand pattern)
+# =============================================================================
+
+ACTIVATE_SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "activate_skill",
+        "description": (
+            "Activate an external skill to gain access to its instructions and tools. "
+            "Check <available_skills> in your system prompt for the list. Only activate "
+            "skills relevant to the user's query. Once activated, the skill's tools "
+            "become callable and its instructions are loaded into context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "The skill name to activate (from <available_skills>)."
+                    ),
+                }
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+LIST_SKILLS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_skills",
+        "description": (
+            "List all available external skills with descriptions and activation "
+            "status. Use this to check what skills you can activate."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
+
+def get_tools_with_skill_activation(
+    mode: Literal["speed", "quality"],
+    has_skills: bool = False,
+    activated_skill_tools: List[dict] = None,
+) -> List[dict]:
+    """Get tools for the given mode, with skill activation tools if skills exist.
+
+    - If has_skills: inserts activate_skill + list_skills at high priority
+    - If activated_skill_tools: appends those before done
+    - done always stays last
+    """
+    base = get_tools_for_mode(mode)
+
+    if not has_skills:
+        return base
+
+    # Insert activation tools right after reasoning (quality) or at start (speed)
+    # so the LLM sees them early in the tool list
+    done = base[-1]  # always last
+    core = base[:-1]
+
+    if mode == "quality" and core and core[0]["function"]["name"] == "reasoning":
+        # reasoning first, then activation tools, then search tools
+        result = [core[0], ACTIVATE_SKILL_TOOL, LIST_SKILLS_TOOL] + core[1:]
+    else:
+        result = [ACTIVATE_SKILL_TOOL, LIST_SKILLS_TOOL] + core
+
+    # Append activated skill tools (if any)
+    if activated_skill_tools:
+        result.extend(activated_skill_tools)
+
+    result.append(done)
+    return result
+
+
+def build_skill_catalog_block(catalog: List[dict]) -> str:
+    """Build the compact skill catalog for the system prompt.
+
+    Only includes name + truncated description (tier 1) — tells the agent
+    what skills exist so it can decide whether to activate them.
+    """
+    if not catalog:
+        return ""
+
+    lines = []
+    for s in catalog:
+        desc = s.get("description", "")
+        # Truncate long descriptions to keep the catalog compact
+        if len(desc) > 120:
+            desc = desc[:117] + "..."
+        skill_type = s.get("skill_type", "instruction")
+        lines.append(f'- {s["name"]}: {desc} [type: {skill_type}]')
+
+    catalog_text = "\n".join(lines)
+    return f"""
+
+<available_skills>
+You have access to external skills that can be activated on demand. Review the list below and activate any that are relevant to the user's query using the activate_skill tool.
+
+{catalog_text}
+</available_skills>"""
+
+
+def build_activated_skills_block(activated_instructions: str) -> str:
+    """Wrap activated skill instruction bodies for the system prompt."""
+    if not activated_instructions:
+        return ""
+    return f"""
+
+<active_skills>
+The following skills have been activated for this session. Follow their instructions when relevant.
+
+{activated_instructions}
+</active_skills>"""
+
+
+# =============================================================================
 # Researcher Prompts
 # =============================================================================
 

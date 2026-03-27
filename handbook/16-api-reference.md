@@ -172,6 +172,18 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | `GET` | `/api/admin/api-keys/{id}/usage-history` | Admin | Daily usage history. Query: `days` (1-365) |
 | `GET` | `/api/admin/stats/overview` | Admin | Aggregated stats across all keys |
 
+## Admin — Agent Skills
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/admin/skills` | Admin | List all installed skills with metadata and enabled state |
+| `GET` | `/api/admin/skills/{skill_id}` | Admin | Skill details including SKILL.md body and tools.json config |
+| `POST` | `/api/admin/skills/install` | Admin | Install skill. Body: `{url?}` (direct SKILL.md URL) or `{registry_id?}` (`owner/repo/skill-name`) |
+| `PATCH` | `/api/admin/skills/{skill_id}` | Admin | Update skill. Body: `{enabled: true|false}` |
+| `DELETE` | `/api/admin/skills/{skill_id}` | Admin | Uninstall skill and delete files |
+| `GET` | `/api/admin/skills/registry/search` | Admin | Search skills.sh registry. Query: `q` (search term) |
+| `POST` | `/api/admin/skills/discover` | Admin | Re-scan local skills directory for new skills |
+
 ## Admin — System
 
 | Method | Endpoint | Auth | Description |
