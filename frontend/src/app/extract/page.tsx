@@ -938,7 +938,7 @@ export default function ExtractAnalyzePage() {
                 </div>
               )}
 
-              {relationshipCount > 0 && newDocsSinceAnalysis === 0 && !analyzingRelationships && (
+              {relationshipCount > 0 && newDocsSinceAnalysis === 0 && !analyzingRelationships && !step2Blocked && (
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center gap-4">
                     <p className="text-sm text-green-400">
