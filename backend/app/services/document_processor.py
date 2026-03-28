@@ -1855,6 +1855,9 @@ class DocumentProcessor:
         # Thread-safe progress tracking for concurrent image tasks
         progress = {"stored": 0, "processed": 0}
         progress_lock = asyncio.Lock()
+        # Collect entity names from image extractions for cross-linking to text chunks
+        image_entity_names: list[str] = []
+        entity_names_lock = asyncio.Lock()
 
         logger.info(f"Document {doc_id}: starting background analysis of {total} images")
 
@@ -1910,17 +1913,23 @@ class DocumentProcessor:
                 else:
                     image_content = f"[Image {idx + 1}]\n{analysis.description}"
 
+                image_metadata = {
+                    "type": "image_analysis",
+                    "image_id": analysis.image_id,
+                    "analysis_method": analysis.analysis_method,
+                }
+                if extracted.page_number is not None:
+                    image_metadata["page_number"] = extracted.page_number
+                if extracted.caption:
+                    image_metadata["caption"] = extracted.caption
+
                 image_chunk = DocumentChunk(
                     id=image_chunk_id,
                     document_id=doc_id,
                     content=image_content,
                     embedding=None,
                     chunk_index=1000 + idx,
-                    metadata={
-                        "type": "image_analysis",
-                        "image_id": analysis.image_id,
-                        "analysis_method": analysis.analysis_method,
-                    },
+                    metadata=image_metadata,
                 )
 
                 embed_result = await loop.run_in_executor(
@@ -1966,8 +1975,16 @@ class DocumentProcessor:
                                     self.neo4j.store_graph_extraction,
                                     image_chunk_id,
                                     extraction,
+                                    source_document_id=doc_id,
+                                    extraction_method="per_chunk",
                                 ),
                             )
+                            # Collect entity names for cross-linking to text chunks
+                            if extraction.entities:
+                                async with entity_names_lock:
+                                    image_entity_names.extend(
+                                        e.name for e in extraction.entities
+                                    )
                             logger.info(
                                 f"Document {doc_id}: image {idx + 1}/{total} "
                                 f"extracted {len(extraction.entities)} entities, "
@@ -2020,6 +2037,50 @@ class DocumentProcessor:
             for idx, img_data in enumerate(serialized_images)
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Cross-link image-extracted entities to text chunks so they're
+        # discoverable via text-chunk traversal in RAG queries.
+        if image_entity_names:
+            try:
+                text_chunks = await loop.run_in_executor(
+                    img_executor,
+                    functools.partial(
+                        self.neo4j.get_text_chunks_for_document, doc_id
+                    ),
+                )
+                if text_chunks:
+                    from rapidfuzz import fuzz
+
+                    unique_names = list(dict.fromkeys(image_entity_names))
+                    cross_links = 0
+                    for chunk_row in text_chunks:
+                        chunk_content_lower = (chunk_row["content"] or "").lower()
+                        if not chunk_content_lower:
+                            continue
+                        for entity_name in unique_names:
+                            name_lower = entity_name.lower()
+                            if (
+                                name_lower in chunk_content_lower
+                                or fuzz.partial_ratio(name_lower, chunk_content_lower) >= 85
+                            ):
+                                await loop.run_in_executor(
+                                    img_executor,
+                                    functools.partial(
+                                        self.neo4j.link_entity_to_chunk,
+                                        entity_name,
+                                        chunk_row["id"],
+                                    ),
+                                )
+                                cross_links += 1
+                    if cross_links:
+                        logger.info(
+                            f"Document {doc_id}: cross-linked {cross_links} "
+                            f"image entity→text chunk MENTIONS"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"Document {doc_id}: image entity cross-linking failed: {e}"
+                )
 
         # Final image progress update + refresh chunk count to include image chunks
         stored = progress["stored"]

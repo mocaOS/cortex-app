@@ -56,6 +56,17 @@ export default function ExtractAnalyzePage() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenerateStep, setRegenerateStep] = useState(0);
 
+  // Poll error resilience: retry on transient errors instead of aborting immediately
+  const pollErrorCount = useRef(0);
+  const MAX_POLL_ERRORS = 5;
+  const activePollRef = useRef<{ taskId: string; step: 1 | 2 | 3 } | null>(null);
+  // Stable ref to current poll functions (avoids hook ordering issues with visibilitychange)
+  const pollFnsRef = useRef<{
+    entity: (id: string) => void;
+    relationship: (id: string) => void;
+    community: (id: string) => void;
+  } | null>(null);
+
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -236,14 +247,17 @@ export default function ExtractAnalyzePage() {
   }, [fetchData]);
 
   const pollEntityTask = useCallback(async (taskId: string) => {
+    activePollRef.current = { taskId, step: 1 };
     try {
       const status = await api.getTaskStatus(taskId);
       await fetchData(true);
+      pollErrorCount.current = 0; // Reset on success
 
       const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
       setEntityTaskMessage(progressMsg);
 
       if (status.status === "completed") {
+        activePollRef.current = null;
         const result = status.result as Record<string, unknown> | undefined;
         const processed = result?.processed ?? 0;
         setEntityTaskMessage(`Entity extraction complete! ${processed} document${processed !== 1 ? "s" : ""} processed.`);
@@ -255,6 +269,7 @@ export default function ExtractAnalyzePage() {
           if (isRegen) advanceRegenerateStep(2);
         }, isRegen ? 1000 : 3000);
       } else if (status.status === "failed") {
+        activePollRef.current = null;
         setEntityTaskMessage(`Failed: ${status.message}`);
         setIsExtractingEntities(false);
         if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
@@ -262,17 +277,26 @@ export default function ExtractAnalyzePage() {
         setTimeout(() => pollEntityTask(taskId), 2000);
       }
     } catch {
-      setEntityTaskMessage(null);
-      setIsExtractingEntities(false);
-      if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      pollErrorCount.current += 1;
+      if (pollErrorCount.current >= MAX_POLL_ERRORS) {
+        activePollRef.current = null;
+        setEntityTaskMessage(null);
+        setIsExtractingEntities(false);
+        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      } else {
+        // Retry with backoff
+        setTimeout(() => pollEntityTask(taskId), 3000 * pollErrorCount.current);
+      }
     }
   }, [fetchData, advanceRegenerateStep, abortRegeneration]);
 
   const pollRelationshipTask = useCallback(async (taskId: string) => {
+    activePollRef.current = { taskId, step: 2 };
     try {
       const status = await api.getTaskStatus(taskId);
       const statsData = await api.getStats();
       setStats(statsData);
+      pollErrorCount.current = 0; // Reset on success
 
       const currentRels = statsData.relationship_count ?? 0;
       const newlyDiscovered = currentRels - initialRelCount.current;
@@ -285,6 +309,7 @@ export default function ExtractAnalyzePage() {
       setRelationshipTaskMessage(countMsg);
 
       if (status.status === "completed") {
+        activePollRef.current = null;
         setRelationshipTaskMessage(`Analysis complete! ${currentRels - initialRelCount.current} cross-document relationships discovered.`);
         setNewDocsSinceAnalysis(0);
         await fetchData(true);
@@ -296,6 +321,7 @@ export default function ExtractAnalyzePage() {
           if (isRegen) advanceRegenerateStep(3);
         }, isRegen ? 1000 : 3000);
       } else if (status.status === "failed") {
+        activePollRef.current = null;
         setRelationshipTaskMessage(`Failed: ${status.message}`);
         setAnalyzingRelationships(false);
         if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
@@ -303,9 +329,16 @@ export default function ExtractAnalyzePage() {
         setTimeout(() => pollRelationshipTask(taskId), 2000);
       }
     } catch {
-      setRelationshipTaskMessage(null);
-      setAnalyzingRelationships(false);
-      if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      pollErrorCount.current += 1;
+      if (pollErrorCount.current >= MAX_POLL_ERRORS) {
+        activePollRef.current = null;
+        setRelationshipTaskMessage(null);
+        setAnalyzingRelationships(false);
+        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      } else {
+        // Retry with backoff
+        setTimeout(() => pollRelationshipTask(taskId), 3000 * pollErrorCount.current);
+      }
     }
   }, [fetchData, advanceRegenerateStep, abortRegeneration]);
 
@@ -327,13 +360,16 @@ export default function ExtractAnalyzePage() {
   };
 
   const pollCommunityTask = useCallback(async (taskId: string) => {
+    activePollRef.current = { taskId, step: 3 };
     try {
       const status = await api.getTaskStatus(taskId);
+      pollErrorCount.current = 0; // Reset on success
 
       const progressMsg = status.message || `Progress: ${status.progress_percent}%`;
       setCommunityTaskMessage(progressMsg);
 
       if (status.status === "completed") {
+        activePollRef.current = null;
         const communityCount = (status.result as Record<string, unknown>)?.total ?? 0;
         setCommunityTaskMessage(`Communities detected successfully! ${communityCount} communities found.`);
         setCommunitiesStale(false);
@@ -345,6 +381,7 @@ export default function ExtractAnalyzePage() {
           if (isRegen) advanceRegenerateStep(4); // 4 = done
         }, isRegen ? 1000 : 3000);
       } else if (status.status === "failed") {
+        activePollRef.current = null;
         setCommunityTaskMessage(`Failed: ${status.message}`);
         setDetectingCommunities(false);
         if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
@@ -352,11 +389,38 @@ export default function ExtractAnalyzePage() {
         setTimeout(() => pollCommunityTask(taskId), 2000);
       }
     } catch {
-      setCommunityTaskMessage(null);
-      setDetectingCommunities(false);
-      if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      pollErrorCount.current += 1;
+      if (pollErrorCount.current >= MAX_POLL_ERRORS) {
+        activePollRef.current = null;
+        setCommunityTaskMessage(null);
+        setDetectingCommunities(false);
+        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+      } else {
+        // Retry with backoff
+        setTimeout(() => pollCommunityTask(taskId), 3000 * pollErrorCount.current);
+      }
     }
   }, [fetchData, advanceRegenerateStep, abortRegeneration]);
+
+  // Keep poll function refs current and resume polling on tab visibility change.
+  // Browsers throttle setTimeout in background tabs, so polls may stall during
+  // long-running tasks (Step 2 can take 30+ minutes). This ensures we catch up
+  // immediately when the user returns to the tab.
+  pollFnsRef.current = { entity: pollEntityTask, relationship: pollRelationshipTask, community: pollCommunityTask };
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const active = activePollRef.current;
+      const fns = pollFnsRef.current;
+      if (!active || !fns) return;
+      pollErrorCount.current = 0;
+      if (active.step === 1) fns.entity(active.taskId);
+      else if (active.step === 2) fns.relationship(active.taskId);
+      else if (active.step === 3) fns.community(active.taskId);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   const handleDetectCommunities = async () => {
     try {
@@ -958,7 +1022,7 @@ export default function ExtractAnalyzePage() {
                         )}>
                           {(stats.entity_relationship_ratio ?? 0).toFixed(2)} / {(stats.relationship_target_ratio ?? 3).toFixed(1).replace(/\.0$/, '')}
                         </span>
-                        {(stats.entity_relationship_ratio ?? 0) < (stats.relationship_target_ratio ?? 3) && (
+                        {(stats.entity_relationship_ratio ?? 0) < 0.69 && (
                           <span className="text-xs text-muted-foreground">
                             — consider re-analyzing to reveal more relationships
                           </span>

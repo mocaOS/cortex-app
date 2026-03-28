@@ -960,6 +960,17 @@ class Neo4jService:
             record = result.single()
             return record["name"] if record else entity.name
 
+    def get_text_chunks_for_document(self, document_id: str) -> List[dict]:
+        """Get all text chunks (non-image) for a document with their IDs and content."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.chunk_index < 1000
+                RETURN c.id as id, c.content as content
+                ORDER BY c.chunk_index
+            """, doc_id=document_id)
+            return [dict(record) for record in result]
+
     def link_entity_to_chunk(self, entity_name: str, chunk_id: str) -> bool:
         """Create (Chunk)-[:MENTIONS]->(Entity) relationship."""
         with self.driver.session() as session:
@@ -1031,28 +1042,43 @@ class Neo4jService:
                 )
                 return result.single() is not None
     
-    def store_graph_extraction(self, chunk_id: str, extraction: ExtractionResult) -> dict:
+    def store_graph_extraction(
+        self,
+        chunk_id: str,
+        extraction: ExtractionResult,
+        source_document_id: str = None,
+        extraction_method: str = "per_document",
+    ) -> dict:
         """
         Store all entities and relationships from an extraction result.
-        
+
         Returns:
             Dict with counts of stored entities and relationships
         """
         entity_count = 0
         relationship_count = 0
-        
-        # Store entities first
+
+        # Store entities with fuzzy resolution (same dedup as text entities)
         for entity in extraction.entities:
             try:
-                self.store_entity(entity, chunk_id)
+                self.store_entity_with_resolution(
+                    entity,
+                    chunk_id=chunk_id,
+                    document_id=source_document_id,
+                    similarity_threshold=0.85,
+                )
                 entity_count += 1
             except Exception as e:
                 logger.warning(f"Failed to store entity {entity.name}: {e}")
-        
+
         # Then store relationships
         for relationship in extraction.relationships:
             try:
-                if self.store_relationship(relationship):
+                if self.store_relationship(
+                    relationship,
+                    source_document_id=source_document_id,
+                    extraction_method=extraction_method,
+                ):
                     relationship_count += 1
             except Exception as e:
                 logger.warning(f"Failed to store relationship {relationship.source} -> {relationship.target}: {e}")
