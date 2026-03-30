@@ -298,8 +298,8 @@ export default function ExtractAnalyzePage() {
       setStats(statsData);
       pollErrorCount.current = 0; // Reset on success
 
-      const currentRels = statsData.relationship_count ?? 0;
-      const newlyDiscovered = currentRels - initialRelCount.current;
+      const crossDocRels = (statsData.relationship_count ?? 0) - (statsData.per_chunk_relationship_count ?? 0);
+      const newlyDiscovered = crossDocRels - initialRelCount.current;
       if (newlyDiscovered > 0) setDiscoveredRelCount(newlyDiscovered);
 
       const backendMsg = status.message || `Progress: ${status.progress_percent}%`;
@@ -310,7 +310,7 @@ export default function ExtractAnalyzePage() {
 
       if (status.status === "completed") {
         activePollRef.current = null;
-        setRelationshipTaskMessage(`Analysis complete! ${currentRels - initialRelCount.current} cross-document relationships discovered.`);
+        setRelationshipTaskMessage(`Analysis complete! ${crossDocRels - initialRelCount.current} cross-document relationships discovered.`);
         setNewDocsSinceAnalysis(0);
         await fetchData(true);
         const isRegen = sessionStorage.getItem("regenerateStep") !== null;
@@ -346,9 +346,9 @@ export default function ExtractAnalyzePage() {
     try {
       setAnalyzingRelationships(true);
       setDiscoveredRelCount(0);
-      // Always start from current count so we only show newly discovered batch relationships
-      // (per-chunk relationships from Step 1 are preserved during rebuild)
-      initialRelCount.current = stats?.relationship_count ?? 0;
+      // Capture current cross-document relationship count so we only show newly discovered ones
+      // (per-chunk relationships from Step 1 are excluded from the count)
+      initialRelCount.current = (stats?.relationship_count ?? 0) - (stats?.per_chunk_relationship_count ?? 0);
       setRelationshipTaskMessage(rebuild ? "Starting full rebuild..." : "Starting relationship analysis...");
       const result = await api.analyzeRelationships(undefined, "full", rebuild);
       setTimeout(() => pollRelationshipTask(result.task_id), 1500);

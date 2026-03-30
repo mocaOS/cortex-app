@@ -55,7 +55,7 @@ class LibraryTransferService:
             fail_task_fn: Callable(task_id, error_str)
         """
         try:
-            total_steps = 14
+            total_steps = 15
             step = 0
 
             update_progress(task_id, step, total_steps, "Gathering statistics...")
@@ -69,6 +69,7 @@ class LibraryTransferService:
                 "relationship_count": stats["relationship_count"],
                 "community_count": stats["community_count"],
                 "collection_count": stats["collection_count"],
+                "skill_count": len(self.neo4j.export_all_skills()),
             }
 
             manifest = {
@@ -177,7 +178,22 @@ class LibraryTransferService:
                 lines = [json.dumps(_serialize_record(m)) for m in system_meta]
                 zf.writestr("system_meta.ndjson", "\n".join(lines) + "\n" if lines else "")
 
-                # 13. Document files
+                # 13. Skills (nodes + files)
+                step += 1
+                skills = self.neo4j.export_all_skills()
+                update_progress(task_id, step, total_steps, f"Exporting {len(skills)} skills...")
+                lines = [json.dumps(_serialize_record(s)) for s in skills]
+                zf.writestr("skills.ndjson", "\n".join(lines) + "\n" if lines else "")
+                # Bundle skill directories (SKILL.md, tools.json, etc.)
+                for skill in skills:
+                    skill_dir = Path(skill.get("directory_path", ""))
+                    skill_id = skill.get("skill_id", "")
+                    if skill_dir.is_dir() and skill_id:
+                        for f in skill_dir.iterdir():
+                            if f.is_file():
+                                zf.write(str(f), f"skills/{skill_id}/{f.name}")
+
+                # 14. Document files
                 step += 1
                 missing_files = []
                 file_count = 0
@@ -196,7 +212,7 @@ class LibraryTransferService:
                     zf.write(str(fp), arcname)
                     file_count += 1
 
-                # 14. Done
+                # 15. Done
                 step += 1
                 update_progress(task_id, step, total_steps, "Finalizing export...")
 
@@ -220,7 +236,7 @@ class LibraryTransferService:
         Import a library from an export ZIP. Runs synchronously (called from background task).
         """
         try:
-            total_steps = 16
+            total_steps = 17
             step = 0
             warnings = []
 
@@ -438,12 +454,39 @@ class LibraryTransferService:
                 if merge_history:
                     merge_history_imported = self.neo4j.import_merge_history_batch(merge_history)
 
-                # Import system meta
+                # 16. Import system meta
+                step += 1
                 system_meta = read_ndjson("system_meta.ndjson")
+                update_progress(task_id, step, total_steps, "Importing system metadata...")
                 if system_meta:
                     self.neo4j.import_system_meta_batch(system_meta)
 
-                # 16. Done
+                # 17. Import skills (nodes + files)
+                step += 1
+                skills = read_ndjson("skills.ndjson")
+                update_progress(task_id, step, total_steps, f"Importing {len(skills)} skills...")
+                skills_imported = 0
+                if skills:
+                    skills_dir = Path(self.settings.skills_dir)
+                    skills_dir.mkdir(parents=True, exist_ok=True)
+                    # Restore skill files from ZIP
+                    for skill in skills:
+                        skill_id = skill.get("skill_id", "")
+                        if not skill_id:
+                            continue
+                        target_dir = skills_dir / skill_id
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        prefix = f"skills/{skill_id}/"
+                        for entry_name in zf.namelist():
+                            if entry_name.startswith(prefix) and not entry_name.endswith("/"):
+                                fname = Path(entry_name).name
+                                with zf.open(entry_name) as src, open(str(target_dir / fname), "wb") as dst:
+                                    shutil.copyfileobj(src, dst)
+                        # Remap directory_path to this instance
+                        skill["directory_path"] = str(target_dir)
+                    skills_imported = self.neo4j.import_skills_batch(skills)
+
+                # 18. Done
                 step += 1
                 update_progress(task_id, step, total_steps, "Finalizing import...")
 
@@ -462,6 +505,7 @@ class LibraryTransferService:
                 "collections_imported": collections_imported,
                 "files_imported": files_imported,
                 "merge_history_imported": merge_history_imported,
+                "skills_imported": skills_imported,
                 "embedding_compatible": embedding_compatible,
                 "warnings": warnings,
             }
@@ -480,6 +524,7 @@ class LibraryTransferService:
         self.neo4j.delete_all_merge_history()
         self.neo4j.delete_all_system_meta()
         self.neo4j.delete_all_collections()
+        self.neo4j.delete_all_skills()
 
         # Delete files from disk
         for dir_path in [settings.upload_dir, settings.custom_inputs_dir]:
@@ -491,6 +536,16 @@ class LibraryTransferService:
                             f.unlink()
                         except Exception as e:
                             logger.warning(f"Failed to delete {f}: {e}")
+
+        # Delete skill directories
+        skills_dir = Path(settings.skills_dir)
+        if skills_dir.exists():
+            for entry in skills_dir.iterdir():
+                if entry.is_dir():
+                    try:
+                        shutil.rmtree(entry)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete skill dir {entry}: {e}")
 
 
 # Singleton

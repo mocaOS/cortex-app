@@ -131,8 +131,28 @@ class Neo4jService:
                 logger.warning(f"Community constraint may already exist: {e}")
             
             # =================================================================
-            # Vector indexes
+            # Vector indexes (with dimension mismatch detection)
             # =================================================================
+            # Check existing vector indexes for dimension mismatches
+            target_dim = self.settings.embedding_dimension
+            try:
+                idx_result = session.run(
+                    "SHOW INDEXES YIELD name, type, options "
+                    "WHERE type = 'VECTOR' AND name IN ['chunk_embedding', 'entity_embedding'] "
+                    "RETURN name, options"
+                )
+                for idx_record in idx_result:
+                    idx_name = idx_record["name"]
+                    existing_dim = idx_record["options"].get("indexConfig", {}).get("vector.dimensions")
+                    if existing_dim is not None and existing_dim != target_dim:
+                        logger.warning(
+                            f"Vector index '{idx_name}' has {existing_dim} dimensions but config expects {target_dim}. "
+                            f"Dropping and recreating index."
+                        )
+                        session.run(f"DROP INDEX {idx_name}")
+            except Exception as e:
+                logger.warning(f"Could not check vector index dimensions: {e}")
+
             # Vector index for chunk embeddings
             try:
                 session.run("""
@@ -145,10 +165,10 @@ class Neo4jService:
                             `vector.similarity_function`: 'cosine'
                         }
                     }
-                """, dimensions=self.settings.embedding_dimension)
+                """, dimensions=target_dim)
             except Exception as e:
                 logger.warning(f"Chunk vector index may already exist: {e}")
-            
+
             # Vector index for entity embeddings (semantic entity resolution)
             try:
                 session.run("""
@@ -161,7 +181,7 @@ class Neo4jService:
                             `vector.similarity_function`: 'cosine'
                         }
                     }
-                """, dimensions=self.settings.embedding_dimension)
+                """, dimensions=target_dim)
             except Exception as e:
                 logger.warning(f"Entity vector index may already exist: {e}")
             
@@ -4895,6 +4915,40 @@ class Neo4jService:
                 SET s.value = m.value
                 RETURN count(s) as cnt
             """, metas=metas)
+            return result.single()["cnt"]
+
+    def delete_all_skills(self) -> int:
+        """Delete ALL Skill nodes.
+
+        Returns:
+            Number of Skill nodes deleted.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Skill)
+                DETACH DELETE s
+                RETURN count(s) as deleted
+            """)
+            record = result.single()
+            deleted = record["deleted"] if record else 0
+            logger.info(f"Deleted {deleted} skill records")
+            return deleted
+
+    def export_all_skills(self) -> list:
+        """Get all Skill nodes for export."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (s:Skill) RETURN s{.*} as skill")
+            return [record["skill"] for record in result]
+
+    def import_skills_batch(self, skills: list) -> int:
+        """Bulk create Skill nodes. Returns count created."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $skills as sk
+                MERGE (s:Skill {skill_id: sk.skill_id})
+                SET s = sk
+                RETURN count(s) as cnt
+            """, skills=skills)
             return result.single()["cnt"]
 
     # =================================================================
