@@ -7,6 +7,137 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## March 30, 2026
+
+### Agent Skills in Library Transfer
+
+- Agent Skills are now included in library export/import: `Skill` nodes, `SKILL.md` files, and `tools.json` are bundled in the ZIP archive with `directory_path` remapping on import
+- Full system reset now cleans up skill nodes and skill directories on disk
+- Fixed vector index dimension mismatch: Neo4j vector indexes are now auto-detected and recreated when embedding dimension config changes (fixes broken search after importing a library with different dimensions)
+- Step 2 progress now shows only newly discovered cross-document relationships instead of total relationship count
+
+---
+
+## March 28, 2026
+
+### Image Extraction Integration Improvements
+
+- Image-extracted relationships are now tagged as `extraction_method="per_chunk"` so they count toward within-document relationships in the Step 1 display
+- Image entities now use `store_entity_with_resolution()` for the same fuzzy dedup as text entities, instead of basic `store_entity()`
+- Page number and caption are now stored in image chunk metadata for document position tracking
+- Image-extracted entities are cross-linked to text chunks via fuzzy MENTIONS matching
+- Entity provenance (`source_document_id`) is now passed through `store_graph_extraction()` for image entities
+
+### Graph Generation Pipeline Resilience
+
+- Added retry with exponential backoff (up to 5 attempts) on all poll functions, preventing the entire 3-step pipeline from aborting on the first transient network error
+- Added `visibilitychange` listener to immediately resume polling when a browser tab becomes active (browsers throttle `setTimeout` in background tabs)
+- Active poll state is tracked via ref for reliable resume across tab switches
+
+---
+
+## March 27, 2026
+
+### Agent Skills System
+
+- Integrated the open [AgentSkills](https://agentskills.io/) standard into Deep Research and Chat flows
+- Skills are `SKILL.md` files with YAML frontmatter (name, description, license, metadata) supporting two types: **instruction skills** (modify researcher behavior) and **tool-providing skills** (include `tools.json` with HTTP/script execution)
+- **On-demand activation**: researcher agent receives a compact skill catalog and `activate_skill`/`list_skills` tools — full instructions and tools are loaded only when the agent decides they're relevant to the query
+- Skills discoverable from `.agents/skills/` directory on startup, installable from direct URLs or the [skills.sh](https://skills.sh) registry
+- Added `SkillsManager` component on Settings page for installing, enabling, disabling, and deleting skills with registry search
+- Skill tool calls and activations rendered in chat with Puzzle icon
+- New environment variables: `ENABLE_SKILLS` (default: true), `SKILLS_DIR`, `ENABLE_SKILL_SCRIPTS` (default: false), `SKILL_SCRIPT_TIMEOUT`, `SKILL_HTTP_TIMEOUT`, `MAX_SKILL_TOOLS`, `MAX_SKILL_INSTRUCTIONS_TOKENS`
+- Admin-only CRUD endpoints: `GET/POST/PATCH/DELETE /api/admin/skills/*`
+
+### Library Import/Export
+
+- Added full instance migration via Settings page → Data Management section
+- **Export** (`POST /api/admin/export`) runs as a background task building a ZIP64 archive containing 12 NDJSON data files (documents, chunks with embeddings, entities, relationships, communities, collections, merge history, system meta, and more) plus original document files
+- **Import** (`POST /api/admin/import`) accepts multipart ZIP upload with `clean` mode (requires empty instance) or `replace` mode (auto-wipes first)
+- Validates manifest, checks embedding model/dimension compatibility, remaps file paths, restores all nodes and edges including dynamic APOC relationship types
+- Concurrency guard prevents simultaneous export/import operations (409 conflict)
+- Frontend shows Export card (stats summary + progress bar + download) and Import card (mode selector + drag-and-drop upload + progress bar + result summary with warnings)
+
+### Three-Tier LLM Architecture
+
+- Added dedicated relationship model (`RELATIONSHIP_EXTRACTION_MODEL`, `RELATIONSHIP_EXTRACTION_API_BASE`, `RELATIONSHIP_EXTRACTION_API_KEY`) with its own API endpoint and rate limit for all relationship work (Step 1 per-chunk + Step 2 batch analysis)
+- Three-tier model separation: **Primary** (reasoning, for Q&A/research), **Extraction** (instruction-following, for entity extraction and community summarization), **Relationship** (instruction-following, for all relationship discovery)
+- Added `get_relationship_llm_config()` with fallback chain: relationship model → extraction model → primary model
+- Added `CONCURRENT_RELATIONS` (default: 3) for per-chunk relationship extraction concurrency, separate from entity extraction
+- Changed `PARALLEL_RELATIONSHIP_BATCHES` default from 0 to 5
+- Community summarization moved from primary model to extraction model for more reliable structured output
+- Added Relationship Model section to Settings page LLM Configuration between Extraction and Vision
+
+### Per-Chunk Relationship Extraction Fixes
+
+- Added tenacity retry with exponential backoff (4 attempts, 2–30s wait) for 429 rate-limit errors during per-chunk extraction
+- Original-to-canonical entity name mapping is now tracked during dedup, and relationship source/target are remapped before storing — fixes silent storage failures when entity names were merged during fuzzy resolution
+- Self-referential relationships (source == target) are now filtered at both extraction and storage
+- Fixed stats query to count all Entity→Entity edges, not just `RELATED_TO` type
+- Fixed `per_chunk_relationship_count` missing from stats API response
+- Step 2 rebuild now only deletes batch-analysis relationships via `delete_batch_relationships()`, preserving per-chunk relationships from Step 1
+
+### Knowledge Graph Page UX Improvements
+
+- Step 1 renamed to "Entity Extraction & Relationship Discovery" — now shows entity count and within-document relationship count
+- Step 2 renamed to "Deep Relationship Analysis" — now shows only cross-document relationship count
+- "Re-analyze" button renamed to "Find more"; rebuild warning clarifies that per-chunk relationships are preserved
+- ERR (Entity-Relationship Ratio) indicator now shows 2 decimal places for better incremental visibility
+- Fresh instance warning on Step 1 (0 entities) recommends "Generate Graph" instead of "Extract Entities"
+
+---
+
+## March 26, 2026
+
+### Relationship Analysis Pipeline Overhaul
+
+- **Two-phase per-batch analysis**: Phase 1 scans entity batches for candidate pairs, Phase 2 confirms and classifies with structured XML output including confidence scores (0.0–1.0) — relationships with confidence < 0.5 are filtered before storage
+- **Co-occurrence batching via Union-Find clustering**: entities sharing chunks are grouped into the same batch for richer context; replaces O(n²) greedy BFS sort that was freezing on 32k entities; new algorithm is O(n·chunks), handles 100k+ entities
+- **Dynamic chunk context filling**: token budget split 60/40 between entities and source text; chunk context fetcher accepts a token budget and fills up to it, replacing the old fixed 10 chunks × 500 chars (~1,250 tokens out of ~44k available)
+- **Multi-round discovery**: initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default: 3) rounds, stopping early if target ERR reached or `RELATIONSHIP_MAX_HOURS` exhausted; "Find more" always does 1 round
+- Removed 5,000 entity fetch cap from `get_all_entities_for_collection()` — was silently ignoring 27k of 32k entities
+- Removed 500 existing-relationship fetch cap between rounds
+- Added Entity-Relationship Ratio (ERR) metric shown on Knowledge Graph page with color-coded indicator (green ≥ 0.69, yellow ≥ 0.29, red < 0.29) and tooltip
+- New config variables: `RELATIONSHIP_TARGET_RATIO` (default: 1.0), `RELATIONSHIP_MAX_ROUNDS` (default: 3), `RELATIONSHIP_MAX_HOURS` (default: 0), `RELATIONSHIP_MAX_OUTPUT_TOKENS` bumped from 8k to 16k
+
+### Relationship Quality and Anti-Hub Protections
+
+- Removed `MENTIONS` from allowed relationship types (now 14 types) — was being used as a lazy catch-all for co-occurrence
+- Added per-chunk relationship extraction during entity processing: chunks with 2+ entities get an LLM call using chunk text as direct evidence, stored with `extraction_method='per_chunk'`
+- Added few-shot good/bad examples to Phase 1 candidate scan and Phase 2 extraction prompts
+- Added anti-hub negative instructions: "If no clear relationship exists, do not create one. Co-occurrence is not a relationship."
+- Added `RELATIONSHIP_MAX_PER_ENTITY` config (default: 50) — soft cap that skips storage when both endpoints are saturated
+- Capped existing relationships shown to LLM at 20 per entity between rounds to prevent hub reinforcement
+- Reduced batch overlap from 15% to 5% with degree-aware selection (excludes entities already in 2+ batches, prefers low-connection entities)
+- Relationship type fuzzy-matching via rapidfuzz (80% threshold, fallback to `RELATED_TO`) with plaintext arrow format fallback parser
+
+### Entity Deduplication Improvements
+
+- Wired embedding-based entity dedup into the main storage path, catching semantic matches (e.g., "Museum of Crypto Art" / "MOCA") that Levenshtein misses; controlled by `ENABLE_SEMANTIC_ENTITY_RESOLUTION` (default: true), falls back to Levenshtein
+
+### Graph Visualization Diversity
+
+- Replaced `ORDER BY mention_count` visualization query with a diversity score: `mention_count / (1 + log(1 + degree))` — prevents hub entities from dominating the default 100-node view
+- Stronger d3 force charge and link distance for better graph spacing
+
+### Bug Fixes
+
+- Fixed multi-round progress: cumulative batch counts across all rounds with global ETA instead of per-round reset
+- Fixed rebuild flag not passed through to `analyze_collection_relationships`, causing rebuild mode to run only 1 round instead of `RELATIONSHIP_MAX_ROUNDS`
+- Fixed login white screen by moving `redirect()` out of server action into client-side `useEffect`
+
+---
+
+## March 25, 2026
+
+### Bulk Document Download
+
+- Added `POST /api/documents/download-zip` endpoint that accepts a list of document IDs, builds a ZIP64-enabled archive of original files with duplicate filename disambiguation, and streams the response in 1MB chunks
+- Added Download button to the bulk actions toolbar on the Documents page — select documents and download them as a single ZIP file
+- Handles 1000+ files with ZIP64 support
+
+---
+
 ## March 20, 2026
 
 ### Parallel Image Analysis Within Documents
