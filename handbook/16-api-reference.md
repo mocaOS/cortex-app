@@ -88,6 +88,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | `GET` | `/api/graph/entities` | Read | Paginated entity listing. Query: `skip`, `limit`, `search`, `entity_type` |
 | `GET` | `/api/graph/entity-types` | Read | Distinct entity types |
 | `GET` | `/api/graph/entity/{name}` | Read | Entity details + relationships (entity-only paths) |
+| `PATCH` | `/api/graph/entity/{name}` | Manage | Update entity name/description. Body: `{name?, description?}`. Old name preserved in aliases |
 | `GET` | `/api/graph/entity/{name}/relationships` | Read | Entity relationships. Query: `max_depth` (1-3), `limit` (1-200) |
 | `GET` | `/api/graph/search` | Read | Search entities by name (wildcard prefix). Query: `query` |
 | `POST` | `/api/graph/subgraph` | Read | Subgraph for entities. Body: `{entity_names: []}`. Query: `include_connections` |

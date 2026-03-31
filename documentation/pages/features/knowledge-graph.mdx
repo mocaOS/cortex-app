@@ -198,6 +198,35 @@ curl "http://localhost:8000/api/graph/entities?search=neural&type=Concept&limit=
   -H "X-API-Key: your-api-key"
 ```
 
+## Entity Editing
+
+You can edit an entity's name or description directly from the **Explore > Entities** tab. Click any entity to open the detail modal, then click the pencil icon next to the name or description to edit inline.
+
+- **Name changes** preserve the old name in the entity's `aliases` array, so searches for the old name still work
+- **Duplicate names** are rejected — the new name must be unique
+- **Graph integrity** is maintained — all relationships and chunk mentions remain intact because Neo4j edges connect to nodes, not name strings
+
+### Update Entity via API
+
+```bash
+curl -X PATCH "http://localhost:8000/api/graph/entity/OpenAI" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "OpenAI, Inc.",
+    "description": "AI research and deployment company"
+  }'
+```
+
+```json
+{
+  "name": "OpenAI, Inc.",
+  "type": "Organization",
+  "description": "AI research and deployment company",
+  "aliases": ["OpenAI"]
+}
+```
+
 ## Semantic Entity Resolution
 
 MOCA automatically merges entities that refer to the same thing:

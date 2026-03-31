@@ -177,6 +177,7 @@ Paginated server-side browser for all entities:
 - **Type filter** — Dropdown with all distinct entity types
 - **Pagination** — 50 entities per page with skip/limit
 - **Detail modal** — Click any entity to see full description, type, source documents, and connection count
+- **Inline editing** — Edit entity name (pencil icon in header, submit with Enter/checkmark) or description (pencil icon, textarea with Save/Cancel). Name changes add the old name to aliases; duplicate names are rejected. All graph edges stay intact.
 - **Subtle opacity transition** during fetches for smooth UX
 
 ### Relationship Browser (`/explore?tab=relationships`)

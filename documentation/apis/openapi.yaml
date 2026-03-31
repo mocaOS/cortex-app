@@ -595,6 +595,50 @@ paths:
               schema:
                 $ref: '#/components/schemas/EntityDetails'
 
+    patch:
+      tags: [Knowledge Graph]
+      summary: Update entity
+      description: Update an entity's name and/or description. Name changes add the old name to aliases. Rejects duplicate names.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: New entity name
+                description:
+                  type: string
+                  description: New entity description
+      responses:
+        '200':
+          description: Entity updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  type:
+                    type: string
+                  description:
+                    type: string
+                  aliases:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Validation error (empty name, duplicate name, no updates)
+
   /api/graph/entity/{name}/relationships:
     get:
       tags: [Knowledge Graph]

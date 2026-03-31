@@ -291,6 +291,7 @@ npm run dev
 | GET | `/api/graph/visualization` | Get graph data for visualization (supports `limit`, `include_neighbors`) |
 | GET | `/api/graph/entities` | List entities in the knowledge graph |
 | GET | `/api/graph/entity/{name}` | Get entity details and relationships |
+| PATCH | `/api/graph/entity/{name}` | Update entity name and/or description |
 | GET | `/api/graph/entity/{name}/relationships` | Get entity relationships up to N hops |
 | POST | `/api/graph/subgraph` | Get subgraph for specific entities |
 | GET | `/api/graph/search` | Search entities by name (supports prefix matching with wildcard) |

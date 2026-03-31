@@ -210,6 +210,13 @@ curl -X POST http://localhost:8000/api/graph/subgraph \
 curl "http://localhost:8000/api/graph/entities?skip=0&limit=50&entity_type=Organization&search=ai" \
   -H "X-API-Key: your-api-key"
 
+# Update entity name and/or description
+curl -X PATCH "http://localhost:8000/api/graph/entity/OpenAI" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "OpenAI, Inc.", "description": "AI research and deployment company"}'
+# Old name ("OpenAI") is added to aliases; graph edges remain intact
+
 # Distinct entity types (for filter dropdowns)
 curl http://localhost:8000/api/graph/entity-types \
   -H "X-API-Key: your-api-key"
