@@ -980,6 +980,61 @@ class Neo4jService:
             record = result.single()
             return record["name"] if record else entity.name
 
+    def update_entity(self, entity_name: str, new_name: str = None, new_description: str = None) -> dict:
+        """
+        Update an entity's name and/or description.
+        If name changes, the old name is added to aliases and the fulltext index auto-updates.
+        All graph edges remain intact since Neo4j edges connect to nodes, not name strings.
+        Returns the updated entity data.
+        """
+        if new_name is not None and new_name.strip() == "":
+            raise ValueError("Entity name cannot be empty")
+
+        with self.driver.session() as session:
+            # If renaming, check that the new name doesn't already exist
+            if new_name and new_name != entity_name:
+                existing = session.run(
+                    "MATCH (e:Entity {name: $name}) RETURN e.name as name",
+                    name=new_name,
+                ).single()
+                if existing:
+                    raise ValueError(f"An entity named '{new_name}' already exists")
+
+            # Build dynamic SET clause
+            set_parts = []
+            params = {"entity_name": entity_name}
+
+            if new_name and new_name != entity_name:
+                set_parts.append("e.name = $new_name")
+                set_parts.append("e.aliases = apoc.coll.toSet(coalesce(e.aliases, []) + $old_name)")
+                params["new_name"] = new_name
+                params["old_name"] = entity_name
+
+            if new_description is not None:
+                set_parts.append("e.description = $new_description")
+                params["new_description"] = new_description
+
+            if not set_parts:
+                raise ValueError("No updates provided")
+
+            query = f"""
+                MATCH (e:Entity {{name: $entity_name}})
+                SET {', '.join(set_parts)}
+                RETURN e.name as name, e.type as type, e.description as description,
+                       e.aliases as aliases
+            """
+            result = session.run(query, **params)
+            record = result.single()
+            if not record:
+                raise ValueError(f"Entity '{entity_name}' not found")
+
+            return {
+                "name": record["name"],
+                "type": record["type"],
+                "description": record["description"],
+                "aliases": record["aliases"] or [],
+            }
+
     def get_text_chunks_for_document(self, document_id: str) -> List[dict]:
         """Get all text chunks (non-image) for a document with their IDs and content."""
         with self.driver.session() as session:

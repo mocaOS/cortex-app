@@ -105,6 +105,16 @@ class CollectionUpdate(BaseModel):
 
 
 # =============================================================================
+# Entity Management
+# =============================================================================
+
+class UpdateEntityRequest(BaseModel):
+    """Request model for updating an entity's name and/or description."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=500, description="New entity name")
+    description: Optional[str] = Field(default=None, max_length=5000, description="New entity description")
+
+
+# =============================================================================
 # Community Detection & Summarization
 # =============================================================================
 

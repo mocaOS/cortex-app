@@ -71,6 +71,7 @@ from app.models import (
     # Agent Skills models
     SkillInstallRequest,
     SkillUpdateRequest,
+    UpdateEntityRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -2194,6 +2195,30 @@ async def search_entities(query: str = Query(..., min_length=1)):
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================================================================
+# Entity Editing
+# =========================================================================
+
+
+@app.patch("/api/graph/entity/{entity_name}")
+async def update_entity(entity_name: str, request: UpdateEntityRequest):
+    """Update an entity's name and/or description."""
+    try:
+        neo4j = get_neo4j_service()
+        result = await asyncio.to_thread(
+            neo4j.update_entity,
+            entity_name,
+            new_name=request.name,
+            new_description=request.description,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating entity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EntityDetails } from "@/types";
 
@@ -169,6 +169,12 @@ export default function EntitiesBrowser() {
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [entityDetails, setEntityDetails] = useState<EntityDetails | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useBodyScrollLock(!!selectedEntity);
 
@@ -176,6 +182,9 @@ export default function EntitiesBrowser() {
     setSelectedEntity(entity);
     setEntityDetails(null);
     setDetailLoading(true);
+    setEditingName(false);
+    setEditingDescription(false);
+    setSaveError(null);
     try {
       const details = await api.getEntityDetails(entity.name, 1);
       setEntityDetails(details);
@@ -183,6 +192,36 @@ export default function EntitiesBrowser() {
       setEntityDetails(null);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const handleCloseDetail = () => {
+    setSelectedEntity(null);
+    setEditingName(false);
+    setEditingDescription(false);
+    setSaveError(null);
+  };
+
+  const handleSaveEntity = async (updates: { name?: string; description?: string }) => {
+    if (!selectedEntity) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const result = await api.updateEntity(selectedEntity.name, updates);
+      // Update the selected entity with new values
+      const updated = { ...selectedEntity, name: result.name, description: result.description };
+      setSelectedEntity(updated);
+      // Update the entity in the list
+      setEntities(prev => prev.map(e =>
+        e.name === selectedEntity.name ? { ...e, name: result.name, description: result.description } : e
+      ));
+      setEditingName(false);
+      setEditingDescription(false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to save";
+      setSaveError(message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -338,26 +377,118 @@ export default function EntitiesBrowser() {
 
       {/* Detail Modal */}
       {selectedEntity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setSelectedEntity(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={handleCloseDetail}>
           <div className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold">{selectedEntity.name}</h3>
-                <span className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground">
-                  {selectedEntity.type}
-                </span>
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                {editingName ? (
+                  <form
+                    className="flex items-center gap-2 flex-1"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const trimmed = editName.trim();
+                      if (trimmed && trimmed !== selectedEntity.name) {
+                        handleSaveEntity({ name: trimmed });
+                      } else {
+                        setEditingName(false);
+                      }
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="flex-1 px-2 py-1 bg-muted border border-border rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-accent"
+                      disabled={saving}
+                    />
+                    <button type="submit" disabled={saving} className="p-1 hover:bg-muted rounded-lg transition-colors text-accent">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button type="button" onClick={() => setEditingName(false)} className="p-1 hover:bg-muted rounded-lg transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <h3 className="font-semibold truncate">{selectedEntity.name}</h3>
+                    <button
+                      onClick={() => { setEditName(selectedEntity.name); setEditingName(true); setEditingDescription(false); }}
+                      className="p-1 hover:bg-muted rounded-lg transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+                      title="Edit name"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+                {!editingName && (
+                  <span className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground flex-shrink-0">
+                    {selectedEntity.type}
+                  </span>
+                )}
               </div>
-              <button onClick={() => setSelectedEntity(null)} className="p-1 hover:bg-muted rounded-lg transition-colors">
+              <button onClick={handleCloseDetail} className="p-1 hover:bg-muted rounded-lg transition-colors ml-2">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="p-4 space-y-4">
-              {selectedEntity.description && (
-                <div>
-                  <h4 className="text-sm font-medium mb-1">Description</h4>
-                  <p className="text-sm text-muted-foreground">{selectedEntity.description}</p>
+              {saveError && (
+                <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  {saveError}
                 </div>
               )}
+
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <h4 className="text-sm font-medium">Description</h4>
+                  {!editingDescription && (
+                    <button
+                      onClick={() => { setEditDescription(selectedEntity.description || ""); setEditingDescription(true); setEditingName(false); }}
+                      className="p-0.5 hover:bg-muted rounded transition-colors text-muted-foreground hover:text-foreground"
+                      title="Edit description"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+                {editingDescription ? (
+                  <div className="space-y-2">
+                    <textarea
+                      autoFocus
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      rows={3}
+                      className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-y"
+                      disabled={saving}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          if (editDescription !== (selectedEntity.description || "")) {
+                            handleSaveEntity({ description: editDescription });
+                          } else {
+                            setEditingDescription(false);
+                          }
+                        }}
+                        disabled={saving}
+                        className="px-3 py-1 text-sm rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 transition-colors disabled:opacity-50"
+                      >
+                        {saving ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        onClick={() => setEditingDescription(false)}
+                        className="px-3 py-1 text-sm rounded-lg bg-muted hover:bg-muted/80 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {selectedEntity.description || <span className="italic">No description</span>}
+                  </p>
+                )}
+              </div>
 
               <div className="text-sm text-muted-foreground">
                 {selectedEntity.mention_count} mentions across documents
@@ -420,7 +551,7 @@ export default function EntitiesBrowser() {
 
               <div className="flex gap-2 pt-2 border-t border-border">
                 <button
-                  onClick={() => { setSelectedEntity(null); handleExploreEntity(selectedEntity.name); }}
+                  onClick={() => { handleCloseDetail(); handleExploreEntity(selectedEntity.name); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-muted hover:bg-accent hover:text-accent-foreground"
                 >
                   <Network className="w-4 h-4" />

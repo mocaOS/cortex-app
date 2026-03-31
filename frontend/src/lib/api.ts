@@ -758,6 +758,13 @@ class ApiClient {
     );
   }
 
+  async updateEntity(entityName: string, updates: { name?: string; description?: string }): Promise<{ name: string; type: string; description: string; aliases: string[] }> {
+    return this.request(`/api/graph/entity/${encodeURIComponent(entityName)}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    });
+  }
+
   /**
    * Get an entity and all its relationships up to maxDepth hops.
    * Enables focused graph exploration from a specific entity.
