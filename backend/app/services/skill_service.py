@@ -154,8 +154,8 @@ class SkillService:
         p = Path(raw)
         if p.is_absolute():
             return p
-        # Relative: resolve from project root (two levels up from config.py)
-        project_root = Path(__file__).parent.parent.parent.parent
+        # Relative: resolve from project root (3 levels up from app/services/skill_service.py)
+        project_root = Path(__file__).parent.parent.parent
         return (project_root / raw).resolve()
 
     def _get_neo4j(self):
@@ -453,17 +453,18 @@ class SkillService:
 
     def load_skill_for_activation(
         self, skill_id: str
-    ) -> Tuple[str, List[dict], Dict[str, Tuple[str, str]]]:
+    ) -> Tuple[str, List[dict], Dict[str, Tuple[str, str]], Dict[str, str]]:
         """Load a skill's full context for on-demand activation.
 
         Called when the agent invokes activate_skill. Reads from filesystem
         (tier 2 loading) only when needed.
 
         Returns:
-            (instructions, tool_definitions, tool_map)
+            (instructions, tool_definitions, tool_map, config)
             - instructions: SKILL.md body wrapped in <skill> tags
             - tool_definitions: OpenAI function-calling defs from tools.json
             - tool_map: {namespaced_name: (skill_id, original_name)}
+            - config: skill configuration values from config.json
         """
         neo4j = self._get_neo4j()
         node = neo4j.get_skill(skill_id)
@@ -500,7 +501,10 @@ class SkillService:
                 })
                 tool_map[namespaced] = (skill_id, tool["name"])
 
-        return instructions, tool_definitions, tool_map
+        # Load configuration values
+        config = self.get_skill_config(skill_id)
+
+        return instructions, tool_definitions, tool_map, config
 
     # -----------------------------------------------------------------
     # Tool Execution
@@ -655,17 +659,165 @@ class SkillService:
             return []
 
     # -----------------------------------------------------------------
+    # Skill Configuration
+    # -----------------------------------------------------------------
+
+    def get_skill_config(self, skill_id: str) -> Dict[str, str]:
+        """Read config.json from a skill's directory. Returns empty dict if missing."""
+        neo4j = self._get_neo4j()
+        node = neo4j.get_skill(skill_id)
+        if not node:
+            return {}
+        dir_path = Path(node.get("directory_path", ""))
+        config_path = dir_path / "config.json"
+        if not config_path.exists():
+            return {}
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Could not read config.json for {skill_id}: {e}")
+            return {}
+
+    def save_skill_config(self, skill_id: str, config: Dict[str, str]) -> None:
+        """Write config.json to a skill's directory."""
+        neo4j = self._get_neo4j()
+        node = neo4j.get_skill(skill_id)
+        if not node:
+            raise ValueError(f"Skill '{skill_id}' not found")
+        dir_path = Path(node.get("directory_path", ""))
+        if not dir_path.exists() or not str(dir_path).startswith(str(self._skills_dir)):
+            raise ValueError(f"Invalid skill directory for '{skill_id}'")
+        config_path = dir_path / "config.json"
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        logger.info(f"Saved config for skill '{skill_id}'")
+
+    def get_skill_config_schema(self, skill_id: str) -> Optional[List[dict]]:
+        """Read the config_schema from the Neo4j Skill node."""
+        neo4j = self._get_neo4j()
+        node = neo4j.get_skill(skill_id)
+        if not node:
+            return None
+        raw = node.get("config_schema")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def save_skill_config_schema(self, skill_id: str, schema: List[dict]) -> None:
+        """Store the config_schema as a JSON string on the Neo4j Skill node."""
+        neo4j = self._get_neo4j()
+        neo4j.update_skill(skill_id, {"config_schema": json.dumps(schema)})
+
+    async def analyze_skill_config(self, skill_id: str) -> List[dict]:
+        """Use the primary LLM to extract required config variables from SKILL.md.
+
+        Sends the skill body to the LLM, which returns a JSON array of variable
+        definitions. The schema is cached in the Neo4j node for future use.
+        """
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+
+        detail = self.get_skill(skill_id)
+        if not detail:
+            raise ValueError(f"Skill '{skill_id}' not found")
+
+        body = detail.get("body", "")
+        if not body:
+            self.save_skill_config_schema(skill_id, [])
+            return []
+
+        settings = get_settings()
+        client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_api_base or None,
+        )
+
+        system_prompt = (
+            "Analyze the following skill documentation and extract any configuration "
+            "variables that a user would need to provide for this skill to work. "
+            "Look for API tokens, authentication credentials, base URLs, API keys, "
+            "or any placeholders the user must fill in.\n\n"
+            "Return a JSON array of objects with these fields:\n"
+            '- "name": variable name in SCREAMING_SNAKE_CASE (e.g. API_TOKEN)\n'
+            '- "description": one-sentence explanation of what this variable is and where to find it\n'
+            '- "required": boolean, true if the skill cannot function without it\n'
+            '- "type": "secret" for tokens/passwords/API keys, "text" for URLs/identifiers\n'
+            '- "auth_header": (only for auth tokens/keys) the exact HTTP header to set, '
+            'using the variable name as placeholder. Examples: '
+            '"Authorization: Bearer API_TOKEN", "X-API-Key: API_KEY". '
+            "Omit this field for non-auth variables.\n\n"
+            "Return an empty array [] if no configuration is needed.\n"
+            "Return ONLY the JSON array, no markdown fences or explanation."
+        )
+
+        try:
+            response = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": body},
+                ],
+                temperature=0,
+                max_tokens=1000,
+            )
+            raw = response.choices[0].message.content or "[]"
+            # Strip markdown code fences if present
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```\w*\n?", "", raw)
+                raw = re.sub(r"\n?```$", "", raw)
+                raw = raw.strip()
+            schema = json.loads(raw)
+            if not isinstance(schema, list):
+                schema = []
+        except Exception as e:
+            logger.warning(f"LLM analysis failed for skill '{skill_id}': {e}")
+            schema = []
+
+        self.save_skill_config_schema(skill_id, schema)
+        return schema
+
+    # -----------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------
 
-    @staticmethod
-    def _skill_node_to_info(node: Optional[dict]) -> Optional[dict]:
+    def _skill_node_to_info(self, node: Optional[dict]) -> Optional[dict]:
         """Convert a Neo4j Skill node dict to a SkillInfo-compatible dict."""
         if not node:
             return None
         tool_names = node.get("tool_names", [])
         if isinstance(tool_names, str):
             tool_names = [tool_names] if tool_names else []
+
+        # Compute config_status from cached schema + config.json existence
+        config_status = None
+        raw_schema = node.get("config_schema")
+        if raw_schema:
+            try:
+                schema = json.loads(raw_schema)
+                required_vars = [v["name"] for v in schema if v.get("required", True)]
+                if required_vars:
+                    dir_path = Path(node.get("directory_path", ""))
+                    config_path = dir_path / "config.json"
+                    if config_path.exists():
+                        try:
+                            with open(config_path, "r", encoding="utf-8") as f:
+                                config = json.load(f)
+                            if all(config.get(v) for v in required_vars):
+                                config_status = "configured"
+                            else:
+                                config_status = "needs_setup"
+                        except Exception:
+                            config_status = "needs_setup"
+                    else:
+                        config_status = "needs_setup"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return {
             "skill_id": node.get("skill_id", ""),
             "name": node.get("name", ""),
@@ -680,6 +832,7 @@ class SkillService:
             "installed_at": node.get("installed_at", ""),
             "tool_count": len(tool_names),
             "tool_names": tool_names,
+            "config_status": config_status,
         }
 
 

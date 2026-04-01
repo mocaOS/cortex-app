@@ -223,7 +223,7 @@ class Settings(BaseSettings):
         default=False
     )  # Use agent pipeline for standard chat mode
     researcher_max_iterations_speed: int = Field(
-        default=2
+        default=5
     )  # Max agent loop iterations in speed/chat mode
     researcher_max_iterations_quality: int = Field(
         default=10

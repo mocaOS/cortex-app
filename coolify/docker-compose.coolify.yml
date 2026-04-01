@@ -79,6 +79,7 @@ services:
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs
+      - skills_data:/app/.agents/skills
     depends_on:
       neo4j:
         condition: service_healthy
@@ -124,3 +125,4 @@ volumes:
   neo4j_logs:
   uploads_data:
   custom_inputs_data:
+  skills_data:

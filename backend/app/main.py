@@ -71,6 +71,7 @@ from app.models import (
     # Agent Skills models
     SkillInstallRequest,
     SkillUpdateRequest,
+    SkillConfigSaveRequest,
     UpdateEntityRequest,
 )
 from app.services.neo4j_service import get_neo4j_service
@@ -3533,6 +3534,66 @@ async def discover_skills(auth: AuthResult = Depends(require_admin)):
     skill_service = get_skill_service()
     count = skill_service.discover_local_skills()
     return {"message": f"Discovered {count} skills", "count": count}
+
+
+@app.post("/api/admin/skills/{skill_id}/analyze")
+async def analyze_skill_config(skill_id: str, auth: AuthResult = Depends(require_admin)):
+    """Analyze a skill's SKILL.md with the primary LLM to extract required config variables."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    try:
+        variables = await skill_service.analyze_skill_config(skill_id)
+        return {"skill_id": skill_id, "variables": variables}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Skill analysis failed for '{skill_id}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/skills/{skill_id}/config")
+async def get_skill_config(skill_id: str, auth: AuthResult = Depends(require_admin)):
+    """Get a skill's configuration schema and current values (secrets masked)."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    schema = skill_service.get_skill_config_schema(skill_id)
+    values = skill_service.get_skill_config(skill_id)
+
+    # Mask secret values
+    masked_values = {}
+    secret_names = set()
+    if schema:
+        secret_names = {v["name"] for v in schema if v.get("type") == "secret"}
+    for k, v in values.items():
+        if k in secret_names and v:
+            masked_values[k] = "********"
+        else:
+            masked_values[k] = v
+
+    return {"skill_id": skill_id, "schema": schema, "values": masked_values}
+
+
+@app.put("/api/admin/skills/{skill_id}/config")
+async def save_skill_config(
+    skill_id: str,
+    request: SkillConfigSaveRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Save a skill's configuration values. Masked values ('********') preserve existing secrets."""
+    from app.services.skill_service import get_skill_service
+    skill_service = get_skill_service()
+    try:
+        existing = skill_service.get_skill_config(skill_id)
+        # Merge: preserve existing value if the new value is the mask placeholder
+        merged = dict(existing)
+        for k, v in request.values.items():
+            if v == "********" and k in existing:
+                continue  # keep existing secret
+            merged[k] = v
+        skill_service.save_skill_config(skill_id, merged)
+        return {"message": "Configuration saved", "skill_id": skill_id}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # =============================================================================

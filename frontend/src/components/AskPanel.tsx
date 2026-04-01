@@ -332,9 +332,9 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   const hasInput = question.trim().length > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col h-[calc(100vh-340px)] min-h-[300px]">
       {/* Chat History */}
-      <div className="glass rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto">
+      <div className="glass rounded-lg flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyChat mode={initialMode} />
         ) : (
@@ -389,7 +389,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
       </div>
 
       {/* Input */}
-      <form onSubmit={handleAsk}>
+      <form onSubmit={handleAsk} className="mt-3 shrink-0">
         <div className="relative glass rounded-lg p-2 flex items-center gap-2">
           <input
             type="text"

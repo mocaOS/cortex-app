@@ -16,9 +16,12 @@ Entry point: run_research_pipeline() — an async generator yielding SSE-compati
 import json
 import asyncio
 import logging
+import os
+import re
 from typing import AsyncGenerator, Literal, Optional, List
 from dataclasses import dataclass, field
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.models import ConversationMessage, GraphContext
@@ -89,11 +92,16 @@ def _merge_graph_context(accumulated: dict, new_ctx: dict) -> None:
 
 
 def _deduplicate_sources(sources: list) -> list:
-    """Deduplicate sources by chunk_id, keeping highest-scored version."""
+    """Deduplicate sources by chunk_id, keeping highest-scored version.
+
+    Sources without chunk_id (e.g. skill API responses) are always kept.
+    """
     seen = {}
+    no_id = []
     for s in sources:
         cid = s.get("chunk_id")
         if not cid:
+            no_id.append(s)
             continue
         score = s.get("rerank_score", s.get("score", 0))
         existing_score = seen.get(cid, {}).get(
@@ -101,11 +109,13 @@ def _deduplicate_sources(sources: list) -> list:
         )
         if cid not in seen or score > existing_score:
             seen[cid] = s
-    return sorted(
+    deduped = sorted(
         seen.values(),
         key=lambda x: x.get("rerank_score", x.get("score", 0)),
         reverse=True,
     )
+    # Skill API sources go first (highest priority)
+    return no_id + deduped
 
 
 # =============================================================================
@@ -266,7 +276,7 @@ async def _run_researcher_loop(
     # Skill activation state (on-demand pattern)
     _skill_service = None
     skill_catalog = []                # compact name+desc for system prompt
-    activated_skills = {}             # skill_id → {instructions, tool_defs, tool_map}
+    activated_skills = {}             # skill_id → {instructions, tool_defs, tool_map, config}
     activated_instructions = ""       # concatenated active skill instruction bodies
     activated_tool_defs = []          # merged tool defs from all activated skills
     activated_tool_map = {}           # merged {namespaced_name: (skill_id, original_name)}
@@ -280,6 +290,43 @@ async def _run_researcher_loop(
                 logger.info(
                     f"Skill catalog loaded: {len(skill_catalog)} skills available"
                 )
+                # Auto-activate all enabled skills so the model sees their
+                # instructions and can call http_request directly
+                for skill_entry in skill_catalog:
+                    sid = skill_entry["skill_id"]
+                    try:
+                        instr, t_defs, t_map, skill_config = (
+                            _skill_service.load_skill_for_activation(sid)
+                        )
+                        config_schema = _skill_service.get_skill_config_schema(sid) or []
+                        activated_skills[sid] = {
+                            "instructions": instr,
+                            "tool_defs": t_defs,
+                            "tool_map": t_map,
+                            "config": skill_config,
+                            "config_schema": config_schema,
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-activate skill '{sid}': {e}")
+                # Build merged activation state
+                activated_instructions = "\n\n".join(
+                    s["instructions"]
+                    for s in activated_skills.values()
+                    if s["instructions"]
+                )
+                activated_tool_defs = [
+                    td
+                    for s in activated_skills.values()
+                    for td in s["tool_defs"]
+                ]
+                activated_tool_map = {}
+                for s in activated_skills.values():
+                    activated_tool_map.update(s["tool_map"])
+                if activated_skills:
+                    logger.info(
+                        f"Auto-activated {len(activated_skills)} skills: "
+                        f"{list(activated_skills.keys())}"
+                    )
         except Exception as e:
             logger.warning(f"Failed to load skill catalog: {e}")
 
@@ -305,6 +352,7 @@ async def _run_researcher_loop(
 
     result = ResearchResult()
     communities_used_ids = []
+    _http_request_called = False
 
     for iteration in range(max_iterations):
         # Rebuild system prompt + tools each iteration (may have new activations)
@@ -341,12 +389,47 @@ async def _run_researcher_loop(
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
-            # Model output text instead of calling tools — treat as implicit done
-            messages.append(assistant_message)
-            if assistant_message.content:
-                # Use the text as the summary
-                result.summary = assistant_message.content
-            break
+            if iteration == 0 and bool(skill_catalog):
+                # First iteration with skills active but model didn't call tools —
+                # retry with tool_choice="required" to force tool usage
+                logger.warning(f"Model skipped tools on iteration 1 with skills active, retrying with required...")
+                try:
+                    response = await client.chat.completions.create(
+                        model=llm_config.model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="required",
+                        temperature=0.2,
+                    )
+                    assistant_message = response.choices[0].message
+                except Exception:
+                    pass
+            elif not assistant_message.content:
+                # Empty response — retry once (model flakiness)
+                logger.warning(f"Empty LLM response on iteration {iteration + 1}, retrying...")
+                yield {
+                    "type": "thinking",
+                    "content": "Retrying...",
+                }
+                try:
+                    response = await client.chat.completions.create(
+                        model=llm_config.model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                        temperature=0.2,
+                    )
+                    assistant_message = response.choices[0].message
+                except Exception:
+                    pass
+
+            if not assistant_message.tool_calls:
+                # Model output text instead of calling tools — treat as implicit done
+                logger.info(f"No tool calls on iteration {iteration + 1}, ending loop (content={bool(assistant_message.content)})")
+                messages.append(assistant_message)
+                if assistant_message.content:
+                    result.summary = assistant_message.content
+                break
 
         # Add assistant message to conversation
         messages.append(assistant_message)
@@ -514,6 +597,81 @@ async def _run_researcher_loop(
                         }
                     )
 
+            elif name == "http_request":
+                # Build merged config from all activated skills
+                _merged_configs = {}
+                for _s in activated_skills.values():
+                    _merged_configs.update(_s.get("config", {}))
+
+                method = args.get("method", "GET").upper()
+                url = _substitute_variables(args.get("url", ""), _merged_configs)
+                body = args.get("body")
+
+                # Build headers server-side from config schemas.
+                # The LLM never provides headers — auth is fully automatic.
+                headers = {}
+                for skill_data in activated_skills.values():
+                    for var_def in (skill_data.get("config_schema") or []):
+                        auth_tmpl = var_def.get("auth_header", "")
+                        var_name = var_def.get("name", "")
+                        config = skill_data.get("config", {})
+                        if auth_tmpl and var_name and var_name in config and ": " in auth_tmpl:
+                            hdr_name, hdr_val = auth_tmpl.split(": ", 1)
+                            headers[hdr_name] = hdr_val.replace(var_name, config[var_name])
+
+                logger.info(f"http_request: {method} {url} | auth={'yes' if headers else 'none'}")
+
+                yield {
+                    "type": "thinking",
+                    "content": f"Calling {method} {url}",
+                }
+
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=15, follow_redirects=True
+                    ) as http_client:
+                        resp = await http_client.request(
+                            method,
+                            url,
+                            headers=headers,
+                            content=body.encode() if body else None,
+                        )
+                        resp.raise_for_status()
+                        response_text = _truncate_response(resp.text)
+                except httpx.TimeoutException:
+                    response_text = "Error: HTTP request timed out (15s)"
+                    logger.warning(f"http_request timed out: {method} {url}")
+                except httpx.HTTPStatusError as e:
+                    response_text = (
+                        f"Error: HTTP {e.response.status_code} — "
+                        f"{e.response.text[:500]}"
+                    )
+                    logger.warning(f"http_request failed: {method} {url} → {e.response.status_code}")
+                except Exception as e:
+                    response_text = f"Error: {str(e)[:500]}"
+                    logger.warning(f"http_request exception: {method} {url} → {e}")
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": response_text,
+                })
+
+                _http_request_called = True
+
+                # Store API response as a source so the writer has context.
+                # Use top-level keys matching the format the writer expects.
+                if not response_text.startswith("Error:"):
+                    result.sources.append({
+                        "content": response_text,
+                        "score": 1.0,
+                        "filename": f"Skill API: {url}",
+                        "metadata": {
+                            "filename": f"Skill API: {url}",
+                            "source_type": "skill_api",
+                        },
+                    })
+
             elif name == "activate_skill" and _skill_service:
                 skill_name = args.get("name", "")
                 if skill_name in activated_skills:
@@ -524,13 +682,14 @@ async def _run_researcher_loop(
                     })
                 else:
                     try:
-                        instr, t_defs, t_map = (
+                        instr, t_defs, t_map, skill_config = (
                             _skill_service.load_skill_for_activation(skill_name)
                         )
                         activated_skills[skill_name] = {
                             "instructions": instr,
                             "tool_defs": t_defs,
                             "tool_map": t_map,
+                            "config": skill_config,
                         }
                         # Rebuild merged activation state
                         activated_instructions = "\n\n".join(
@@ -559,6 +718,16 @@ async def _run_researcher_loop(
                             )
                             or "none (instruction-only)"
                         )
+                        auth_note = ""
+                        if skill_config:
+                            auth_note = (
+                                " Authentication is pre-configured — "
+                                "API tokens and credentials are automatically "
+                                "injected into http_request calls. Just call "
+                                "the API endpoints described in the skill "
+                                "instructions directly, no need to provide "
+                                "tokens or API keys yourself."
+                            )
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -566,6 +735,7 @@ async def _run_researcher_loop(
                                 f"Activated skill '{skill_name}'. "
                                 f"Tools now available: {tool_names_str}. "
                                 f"Instructions loaded into context."
+                                f"{auth_note}"
                             ),
                         })
                     except Exception as e:
@@ -851,3 +1021,144 @@ async def run_research_pipeline(
         }
 
     yield {"done": True, "communities_used": list(set(communities_used))}
+
+
+# =============================================================================
+# HTTP Request Helper
+# =============================================================================
+
+
+def _truncate_response(text: str, max_chars: int = 32000) -> str:
+    """Truncate an HTTP response intelligently.
+
+    For JSON responses with arrays, slim down each item by truncating long
+    string values (descriptions etc.) to keep ALL items within budget.
+    Falls back to keeping complete items, then plain truncation.
+    """
+    if len(text) <= max_chars:
+        return text
+
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text[:max_chars]
+
+    # Find the array to slim down
+    items = None
+    array_key = None
+    if isinstance(data, dict):
+        for key in ("data", "results", "items", "entries"):
+            if key in data and isinstance(data[key], list):
+                items = data[key]
+                array_key = key
+                break
+    elif isinstance(data, list):
+        items = data
+
+    if items is None:
+        return text[:max_chars]
+
+    # Strategy 1: Progressively slim items to fit ALL within budget
+    # Start aggressive: short strings, flatten nested objects, drop large arrays
+    for max_str_len in (80, 40):
+        slimmed = []
+        for item in items:
+            if isinstance(item, dict):
+                slim = {}
+                for k, v in item.items():
+                    if isinstance(v, str) and len(v) > max_str_len:
+                        slim[k] = v[:max_str_len] + "..."
+                    elif isinstance(v, dict):
+                        # Flatten nested objects to just key fields
+                        if "name" in v:
+                            slim[k] = v.get("name")
+                        elif "type" in v:
+                            slim[k] = v
+                        else:
+                            slim[k] = str(v)[:max_str_len]
+                    elif isinstance(v, list):
+                        if len(v) == 0:
+                            continue  # drop empty arrays
+                        # Keep only names/ids from list items
+                        compact = []
+                        for li in v[:5]:
+                            if isinstance(li, dict) and "name" in li:
+                                compact.append(li["name"])
+                            elif isinstance(li, dict) and "id" in li:
+                                compact.append(li["id"])
+                            else:
+                                compact.append(li)
+                        slim[k] = compact
+                    else:
+                        slim[k] = v
+                slimmed.append(slim)
+            else:
+                slimmed.append(item)
+
+        if array_key:
+            data[array_key] = slimmed
+            test_result = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        else:
+            test_result = json.dumps(slimmed, ensure_ascii=False, separators=(",", ":"))
+
+        if len(test_result) <= max_chars:
+            return test_result
+
+    if array_key:
+        data[array_key] = slimmed
+        result = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    else:
+        result = json.dumps(slimmed, ensure_ascii=False, separators=(",", ":"))
+
+    if len(result) <= max_chars:
+        return result
+
+    # Strategy 2: Keep complete original items that fit
+    kept = []
+    budget = max_chars - 200
+    for item in items:
+        item_str = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if budget - len(item_str) < 0 and kept:
+            break
+        budget -= len(item_str)
+        kept.append(item)
+
+    if array_key:
+        data[array_key] = kept
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(kept, ensure_ascii=False, separators=(",", ":"))[:max_chars]
+
+
+def _substitute_variables(value: str, skill_configs: dict = None) -> str:
+    """Substitute variable placeholders in a string.
+
+    Handles two patterns:
+    1. ${VARIABLE_NAME} — explicit placeholder syntax
+    2. Bare VARIABLE_NAME — when the LLM writes the variable name literally
+       (e.g. "Bearer API_TOKEN" instead of "Bearer ${API_TOKEN}")
+
+    Resolution order for each variable:
+    1. Skill config values (from config.json, set via the setup wizard)
+    2. SKILL_* environment variables (backward compatibility)
+    """
+    configs = skill_configs or {}
+
+    # Pass 1: Replace ${VAR} patterns
+    def _placeholder_replacer(match):
+        var_name = match.group(1)
+        if var_name in configs:
+            return configs[var_name]
+        if var_name.startswith("SKILL_"):
+            return os.environ.get(var_name, "")
+        return match.group(0)
+
+    result = re.sub(r"\$\{([A-Z_][A-Z0-9_]*)\}", _placeholder_replacer, value)
+
+    # Pass 2: Replace bare config key names that appear as standalone words.
+    # Only replace if the key name is all-uppercase (to avoid false positives)
+    # and the value hasn't already been substituted in pass 1.
+    for key, val in configs.items():
+        if key == key.upper() and len(key) >= 3 and key in result and val not in result:
+            result = re.sub(r'\b' + re.escape(key) + r'\b', val, result)
+
+    return result

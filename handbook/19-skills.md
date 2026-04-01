@@ -1,40 +1,42 @@
 # Chapter 19: Agent Skills
 
-Agent Skills extend the Cortex Library's Deep Research and Chat capabilities with external tools and instructions from the open [AgentSkills](https://agentskills.io/) ecosystem. Skills are reusable capability packages — each is a `SKILL.md` file with optional tool definitions — that the researcher agent can activate on demand during a conversation.
+Agent Skills extend the Cortex Library's Deep Research and Chat capabilities with external instructions and live API access from the open [AgentSkills](https://agentskills.io/) ecosystem. Skills are reusable capability packages — each is a `SKILL.md` file that teaches the researcher agent how to interact with external services. The agent uses a built-in `http_request` tool to call APIs described in skill instructions, with authentication handled entirely server-side.
 
 ## How Skills Work
 
-The Library uses an **on-demand activation** pattern. Rather than loading all skills into every query, the researcher agent sees a compact catalog of available skills and decides which ones to activate based on the user's question.
+The Library uses an **auto-activation** pattern. All enabled skills are automatically loaded at the start of every research or chat session. The full SKILL.md body is injected into the system prompt so the agent sees skill instructions from the very first iteration.
 
 ```
+User installs "web-search" skill from the registry
+  → Setup wizard prompts for API key
+  → User provides key, saved to config.json
+  → Skill enabled via toggle
+
 User asks: "Search the web for recent news about Ethereum"
 
-Agent sees catalog:
-  - web-search: Search the web for current information. [type: tool]
-  - find-skills: Discover and install agent skills. [type: instruction]
+Agent sees skill instructions in system prompt (auto-activated):
+  <active_skills>
+    <skill name="web-search">
+      Use GET https://api.example.com/search?q={query} to search...
+    </skill>
+  </active_skills>
 
-Agent decides: activate_skill("web-search")
-  → Full instructions loaded into context
-  → skill__web-search__search tool becomes callable
-
-Agent calls: skill__web-search__search(query="Ethereum recent news")
-  → HTTP call to the skill's configured endpoint
-  → Results returned to agent for synthesis
+Agent calls: http_request(method="GET", url="https://api.example.com/search?q=Ethereum+news")
+  → Server injects auth headers from config schema
+  → HTTP call made with authentication
+  → Response truncated intelligently, returned to agent
 ```
 
 ### Activation Flow
 
-1. **Catalog injection** — On every query, the system prompt includes an `<available_skills>` block listing each enabled skill's name and one-line description (~50 tokens per skill)
-2. **Agent decides** — The LLM sees `activate_skill` and `list_skills` in its tool list and chooses whether any skill is relevant
-3. **On-demand loading** — When `activate_skill(name)` is called, the full SKILL.md body is loaded into context and the skill's tools (if any) become callable
-4. **Persistence** — Activated skills remain active for the rest of the conversation
+1. **Auto-activation** — At session start, all enabled skills are loaded from the filesystem. Their SKILL.md bodies are injected into the system prompt inside `<active_skills>` tags, with auth-related lines stripped out.
+2. **`http_request` tool** — A built-in tool (not per-skill) is added to the agent's tool list when any skill is active. The agent provides only `method` and `url` — no headers parameter exists. Authentication is injected server-side.
+3. **Server-side auth** — When `http_request` is called, the server builds auth headers from each skill's config schema (`auth_header` field) and config values (`config.json`). The LLM never sees or handles tokens.
+4. **Smart truncation** — API responses are intelligently truncated to fit within context. For JSON arrays, individual items are slimmed (long string values shortened) while preserving all entries.
 
-### Skill Types
+### Speed Mode (Chat) with Skills
 
-| Type | Description | Example |
-|------|-------------|---------|
-| **Instruction** | SKILL.md body modifies how the agent behaves using existing built-in tools | `find-skills`: teaches the agent how to help users discover skills |
-| **Tool** | Includes a `tools.json` that defines callable HTTP endpoints or scripts | `web-search`: adds a `search` tool that calls an external search API |
+When skills are active, speed mode (chat) gains the `reasoning` tool (normally quality-only) so the agent can process large API responses before deciding its next step. Max iterations are bumped to 5 (configurable via `RESEARCHER_MAX_ITERATIONS_SPEED`). Enable agent-based chat with `ENABLE_AGENT_CHAT=true`.
 
 ## Installing Skills
 
@@ -45,6 +47,8 @@ Navigate to **Settings > Agent Skills**. Three installation methods are availabl
 1. **URL** — Paste a direct link to a SKILL.md file (e.g., a GitHub raw URL)
 2. **Registry** — Search the [skills.sh](https://skills.sh) registry and install with one click
 3. **Local discovery** — Place skill directories in the configured `SKILLS_DIR` and click "Discover"
+
+After installation, skills that require configuration (API keys, tokens, etc.) will show a **"Needs setup"** badge. Click **"Configure"** in the expanded skill details to open the setup wizard.
 
 ### From the skills.sh Registry
 
@@ -58,8 +62,7 @@ Place a skill directory in the skills directory (default: `.agents/skills/`):
 .agents/skills/
   web-search/
     SKILL.md          # Required: skill definition
-    tools.json        # Optional: tool definitions for tool-providing skills
-    scripts/          # Optional: executable scripts
+    config.json       # Auto-created: configuration values (via setup wizard)
     references/       # Optional: documentation files
 ```
 
@@ -88,18 +91,22 @@ Use this skill when the user needs current information that isn't in the knowled
 - Requests for up-to-date data
 - Anything where the knowledge base might be outdated
 
-## Instructions
-1. Formulate a concise search query
-2. Call the search tool with the query
-3. Synthesize results with knowledge base context
+## API Endpoints
+
+Search the web:
+GET https://api.example.com/search?q={query}&count=10
+
+Returns JSON with a `results` array of `{title, url, snippet}` objects.
 ```
+
+The SKILL.md body is what gets injected into the agent's system prompt. It should describe when to use the skill and which API endpoints to call. The agent will use `http_request` to call those endpoints directly — authentication is handled automatically.
 
 ### Required Fields
 
 | Field | Description |
 |-------|-------------|
 | `name` | Lowercase, hyphens allowed. 1-64 characters. |
-| `description` | What the skill does and when to use it. 1-1024 characters. Critical — the agent uses this to decide whether to activate. |
+| `description` | What the skill does and when to use it. 1-1024 characters. |
 
 ### Optional Fields
 
@@ -109,66 +116,81 @@ Use this skill when the user needs current information that isn't in the knowled
 | `metadata` | Arbitrary key-value pairs. Common: `author`, `version` |
 | `compatibility` | Environment requirements |
 
-## Tool-Providing Skills
+## The `http_request` Tool
 
-Skills that add callable tools include a `tools.json` file alongside the SKILL.md:
+When any skill is active, the researcher agent gets a built-in `http_request` tool. This is a single, shared tool — not per-skill.
 
-```json
-[
-  {
-    "name": "search",
-    "description": "Search the web for current information.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": {
-          "type": "string",
-          "description": "The search query"
-        }
-      },
-      "required": ["query"]
-    },
-    "execution": {
-      "type": "http",
-      "method": "POST",
-      "url": "https://api.example.com/search",
-      "headers": {
-        "Authorization": "Bearer ${SKILL_SEARCH_API_KEY}"
-      }
-    }
-  }
-]
-```
+### Parameters
 
-### Execution Types
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `method` | string | Yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, or `DELETE` |
+| `url` | string | Yes | The full API URL to call |
+| `body` | string | No | Optional request body (for POST/PUT/PATCH) |
 
-| Type | Description | Gated by |
-|------|-------------|----------|
-| `http` | Makes an HTTP request to the specified URL | Always available |
-| `script` | Runs a local script in the skill directory | `ENABLE_SKILL_SCRIPTS=true` (disabled by default) |
+There is no `headers` parameter. Authentication headers are built and injected server-side from the skill's config schema.
 
-### Environment Variable Substitution
+### How Auth Injection Works
 
-Tool execution configs support `${SKILL_*}` variable references in URLs and headers. Only environment variables prefixed with `SKILL_` are resolved — this prevents skills from accessing secrets like `OPENAI_API_KEY` or `NEO4J_PASSWORD`.
+1. When the agent calls `http_request`, the server iterates over all activated skills' config schemas
+2. For each schema variable that has an `auth_header` field (e.g., `"Authorization: Bearer API_TOKEN"`), it looks up the corresponding value from `config.json`
+3. The placeholder in the `auth_header` template is replaced with the actual value
+4. The resulting headers are added to the outgoing HTTP request
 
-```bash
-# Set in your .env file
-SKILL_SEARCH_API_KEY=your-search-api-key
-SKILL_WEATHER_TOKEN=your-weather-token
-```
+The LLM never sees API keys, tokens, or auth headers. Lines in the SKILL.md that mention token replacement or ask the user to provide credentials are stripped before injection into the system prompt.
 
-### Tool Namespacing
+### Response Handling
 
-Skill tools are namespaced to avoid collisions with built-in tools. A tool named `search` in skill `web-search` becomes `skill__web-search__search` in the agent's tool list. This is transparent to the user — the agent handles the mapping internally.
+- Responses are truncated to 32,000 characters maximum
+- JSON responses with arrays are truncated intelligently: individual items are slimmed (long string values shortened) while preserving all array entries, so the agent sees complete data sets rather than cut-off JSON
+- Non-JSON responses are truncated with a hard character limit
+- Successful API responses are also stored as sources for the writer phase, so they appear in the final answer's references
+
+## Setup Wizard and Config System
+
+Skills that interact with external APIs typically need configuration — API keys, tokens, base URLs. The setup wizard handles this automatically.
+
+### How It Works
+
+1. **LLM analysis** — After installation, the primary LLM analyzes the SKILL.md body to extract required configuration variables (API tokens, URLs, etc.). The LLM returns a JSON schema with variable names, descriptions, types, and `auth_header` templates.
+2. **Schema caching** — The extracted schema is stored on the Neo4j `Skill` node as `config_schema` (JSON string). This avoids re-analyzing on every page load.
+3. **Setup wizard modal** — When the user opens configuration (or when schema has not yet been analyzed), a modal presents each variable with a labeled input field. Secret-type variables get masked input with show/hide toggle.
+4. **Config persistence** — Values are saved to `config.json` in the skill's directory. Secret values are masked (`********`) in API responses; submitting the mask preserves the existing value.
+
+### Config Schema Format
+
+Each variable in the schema has these fields:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Variable name in `SCREAMING_SNAKE_CASE` (e.g., `API_TOKEN`) |
+| `description` | One-sentence explanation of what this variable is and where to find it |
+| `required` | Boolean — whether the skill cannot function without it |
+| `type` | `"secret"` for tokens/passwords/API keys, `"text"` for URLs/identifiers |
+| `auth_header` | (Optional) The HTTP header template for auth variables. Example: `"Authorization: Bearer API_TOKEN"`. The variable name acts as the placeholder. |
+
+### Config Status
+
+Skills display their configuration status in the UI:
+
+| Status | Badge | Meaning |
+|--------|-------|---------|
+| `needs_setup` | "Needs setup" | Required config variables exist but are not yet provided |
+| `configured` | None | All required variables have values |
+| (no schema) | None | Skill requires no configuration |
 
 ## Enabling and Disabling Skills
 
-Installed skills are **disabled by default**. Toggle them on/off from the Settings page. Only enabled skills appear in the researcher agent's catalog.
+Installed skills are **disabled by default**. Toggle them on/off from the Settings page. Only enabled skills are auto-activated in research/chat sessions.
 
 When a skill is disabled:
-- It no longer appears in the `<available_skills>` catalog
-- The agent cannot activate it
+- It is not loaded at session start
+- Its instructions are not injected into the system prompt
 - No prompt tokens are consumed
+
+When a skill is enabled but needs setup:
+- It will be loaded, but API calls will fail due to missing authentication
+- The "Needs setup" badge prompts the user to configure it first
 
 ## Configuration
 
@@ -176,49 +198,85 @@ When a skill is disabled:
 |----------|---------|-------------|
 | `ENABLE_SKILLS` | `true` | Master switch for the skills system |
 | `SKILLS_DIR` | `.agents/skills` | Directory for skill discovery (relative to project root or absolute) |
-| `ENABLE_SKILL_SCRIPTS` | `false` | Allow skills to execute local scripts. **Security-sensitive** — only enable if you trust all installed skills. |
-| `SKILL_SCRIPT_TIMEOUT` | `30` | Timeout in seconds for script execution |
+| `ENABLE_SKILL_SCRIPTS` | `false` | Allow legacy `tools.json` skills to execute local scripts. **Security-sensitive** — only enable if you trust all installed skills. |
+| `SKILL_SCRIPT_TIMEOUT` | `30` | Timeout in seconds for legacy script execution |
 | `SKILL_HTTP_TIMEOUT` | `15` | Timeout in seconds for HTTP tool calls |
-| `MAX_SKILL_TOOLS` | `10` | Maximum total skill-provided tools in the researcher agent |
-| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for activated skill instructions |
+| `MAX_SKILL_TOOLS` | `10` | Maximum total legacy skill-provided tools in the researcher agent |
+| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions in the system prompt |
+| `ENABLE_AGENT_CHAT` | `false` | Enable agent-based chat mode (skills active in chat) |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | `5` | Max agent loop iterations in speed/chat mode |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | `10` | Max agent loop iterations in quality/deep research mode |
+
+### Docker Persistence
+
+The skills directory must be persisted across container restarts:
+
+- **Production / Coolify**: Named volume `skills_data:/app/.agents/skills`
+- **Development**: Bind mount via `docker-compose.yml`
+
+Both `docker-compose.prod.yml` and `coolify/docker-compose.coolify.yml` include the `skills_data` named volume by default.
 
 ## API Endpoints
 
 All skill endpoints require **Admin** authentication.
 
+### Skill Management
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/admin/skills` | List all installed skills |
-| `GET` | `/api/admin/skills/{skill_id}` | Skill details (includes SKILL.md body and tools config) |
+| `GET` | `/api/admin/skills` | List all installed skills (includes `config_status`) |
+| `GET` | `/api/admin/skills/{skill_id}` | Skill details (includes SKILL.md body) |
 | `POST` | `/api/admin/skills/install` | Install from URL or registry. Body: `{url?}` or `{registry_id?}` |
 | `PATCH` | `/api/admin/skills/{skill_id}` | Enable/disable. Body: `{enabled: true}` |
 | `DELETE` | `/api/admin/skills/{skill_id}` | Uninstall skill and delete files |
 | `GET` | `/api/admin/skills/registry/search` | Search skills.sh. Query: `q` |
 | `POST` | `/api/admin/skills/discover` | Re-scan local skills directory |
 
+### Skill Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/admin/skills/{skill_id}/analyze` | Run LLM analysis of SKILL.md to extract config variables. Returns `{skill_id, variables}`. Caches schema in Neo4j. |
+| `GET` | `/api/admin/skills/{skill_id}/config` | Get config schema + current values (secrets masked as `********`). Returns `{skill_id, schema, values}`. |
+| `PUT` | `/api/admin/skills/{skill_id}/config` | Save config values. Body: `{values: {KEY: "value"}}`. Submitting `********` preserves existing secret. |
+
 ## Security Considerations
 
-- **Script execution is disabled by default.** The `ENABLE_SKILL_SCRIPTS` flag must be explicitly set to `true`. Only enable this if you trust all installed skills.
-- **Environment variable sandboxing.** Only `SKILL_*` prefixed variables are accessible in tool execution configs.
+- **Server-side auth injection.** The LLM never sees API keys or tokens. Auth headers are built from config schema templates and config values on the server. Auth-related lines are stripped from SKILL.md before injection into the system prompt.
+- **Config value masking.** The `GET /config` endpoint masks secret-type values as `********`. The `PUT /config` endpoint preserves existing secrets when the mask placeholder is submitted.
 - **Admin-only management.** All skill installation and configuration endpoints require admin authentication.
-- **Tool count cap.** `MAX_SKILL_TOOLS` prevents excessive tool injection from degrading agent performance.
-- **Result size cap.** Skill tool results are capped at 4000 characters before injection into agent context.
+- **Script execution is disabled by default.** The `ENABLE_SKILL_SCRIPTS` flag must be explicitly set to `true` for legacy `tools.json` skills that use script execution. Only enable this if you trust all installed skills.
 - **Prompt injection defense.** Anti-injection instructions are appended after skill content in the system prompt.
+- **Response truncation.** API responses are capped at 32,000 characters with intelligent JSON slimming to prevent context overflow.
+- **HTTP timeout.** External API calls have a 15-second timeout to prevent hanging.
 
 ## Troubleshooting
 
-**Skills not appearing in the agent?**
+**Skills not appearing in research/chat?**
 - Ensure the skill is **enabled** (toggled on in Settings)
 - Ensure `ENABLE_SKILLS=true` in your environment
 - Check that the SKILL.md has a valid `description` field — skills without descriptions are skipped
+- For chat mode, ensure `ENABLE_AGENT_CHAT=true`
 
-**Skill tool calls failing?**
-- Check the backend logs for HTTP errors or timeouts
-- Verify that `SKILL_*` environment variables are set correctly
-- For script-based tools, ensure `ENABLE_SKILL_SCRIPTS=true`
+**Skill shows "Needs setup" badge?**
+- Click **Configure** in the expanded skill details to open the setup wizard
+- The LLM will analyze the SKILL.md and prompt you for required values (API keys, tokens, etc.)
+- After saving, the badge should disappear
+
+**API calls returning auth errors?**
+- Open the skill's configuration and verify that the API key/token is correct
+- Check that the config schema has the right `auth_header` template (e.g., `"Authorization: Bearer API_TOKEN"`)
+- Look at backend logs for `http_request: METHOD URL | auth=yes/none` to verify auth injection
+
+**API responses seem incomplete?**
+- Large responses are intelligently truncated to 32,000 characters. For JSON arrays, all items are preserved but individual string fields may be shortened
+- If this is insufficient, consider using more targeted API endpoints that return smaller payloads
 
 **Registry search returns no results?**
 - The search uses the skills.sh API (`https://skills.sh/api/search`). If the API is unreachable, check network connectivity from the backend container.
 
 **Installed skill disappeared after restart?**
-- Skills are stored on the filesystem in `SKILLS_DIR`. In Docker, this directory must be mounted as a volume to persist across container restarts.
+- Skills are stored on the filesystem in `SKILLS_DIR`. In Docker, this directory must be mounted as a volume to persist across container restarts. Check that `skills_data` volume is configured in your docker-compose file.
+
+**Setup wizard shows no variables but API calls fail?**
+- The LLM analysis may have missed required variables. Delete the skill and reinstall, or manually create a `config.json` in the skill's directory with the needed values.

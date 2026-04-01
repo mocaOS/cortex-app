@@ -17,7 +17,7 @@ export default function EmptyChat({ mode = "chat" }: EmptyChatProps) {
   const isResearch = mode === "research";
 
   return (
-    <div className="h-[400px] flex flex-col items-center justify-center p-8">
+    <div className="h-full min-h-[300px] flex flex-col items-center justify-center p-8">
       <div className="w-20 h-20 rounded-lg bg-accent/20 flex items-center justify-center mb-6">
         {isResearch ? (
           <Zap className="w-10 h-10 text-accent" />

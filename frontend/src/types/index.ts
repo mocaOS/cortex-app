@@ -522,6 +522,7 @@ export interface SkillInfo {
   installed_at: string;
   tool_count: number;
   tool_names: string[];
+  config_status?: "configured" | "needs_setup" | null;
 }
 
 export interface SkillDetail extends SkillInfo {
@@ -535,6 +536,24 @@ export interface SkillRegistryItem {
   description: string;
   install_count?: number | null;
   download_url: string;
+}
+
+export interface SkillConfigVariable {
+  name: string;
+  description: string;
+  required: boolean;
+  type: "secret" | "text";
+}
+
+export interface SkillConfigSchema {
+  skill_id: string;
+  variables: SkillConfigVariable[];
+}
+
+export interface SkillConfigResponse {
+  skill_id: string;
+  schema: SkillConfigVariable[] | null;
+  values: Record<string, string>;
 }
 
 // =============================================================================

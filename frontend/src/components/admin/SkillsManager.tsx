@@ -20,8 +20,12 @@ import {
   RefreshCw,
   ToggleLeft,
   ToggleRight,
+  Settings,
+  FileText,
+  ChevronUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { SkillConfigModal } from "./SkillConfigModal";
 import type { SkillInfo, SkillRegistryItem } from "@/types";
 
 export function SkillsManager() {
@@ -44,6 +48,15 @@ export function SkillsManager() {
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // Config modal
+  const [configModalSkillId, setConfigModalSkillId] = useState<string | null>(null);
+  const [configModalSkillName, setConfigModalSkillName] = useState<string>("");
+
+  // Skill body viewer
+  const [viewingBodySkillId, setViewingBodySkillId] = useState<string | null>(null);
+  const [skillBody, setSkillBody] = useState<string>("");
+  const [loadingBody, setLoadingBody] = useState(false);
 
   const fetchSkills = useCallback(async () => {
     try {
@@ -87,14 +100,27 @@ export function SkillsManager() {
     }
   };
 
+  const openConfigWizardIfNeeded = async (skill: SkillInfo) => {
+    try {
+      const analysis = await api.analyzeSkillConfig(skill.skill_id);
+      if (analysis.variables.length > 0) {
+        setConfigModalSkillId(skill.skill_id);
+        setConfigModalSkillName(skill.name);
+      }
+    } catch {
+      // Analysis failure should not block the install
+    }
+  };
+
   const handleInstallFromUrl = async () => {
     if (!installUrl.trim()) return;
     setInstalling(true);
     setInstallError(null);
     try {
-      await api.installSkill({ url: installUrl.trim() });
+      const installed = await api.installSkill({ url: installUrl.trim() });
       setInstallUrl("");
       await fetchSkills();
+      await openConfigWizardIfNeeded(installed);
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : "Installation failed");
     } finally {
@@ -105,8 +131,9 @@ export function SkillsManager() {
   const handleInstallFromRegistry = async (item: SkillRegistryItem) => {
     setActionLoading(`registry-${item.namespace}/${item.name}`);
     try {
-      await api.installSkill({ registry_id: `${item.namespace}/${item.name}` });
+      const installed = await api.installSkill({ registry_id: `${item.namespace}/${item.name}` });
       await fetchSkills();
+      await openConfigWizardIfNeeded(installed);
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : "Installation failed");
     } finally {
@@ -261,6 +288,12 @@ export function SkillsManager() {
                           {sourceIcon(skill.source)}
                           {skill.source}
                         </span>
+                        {/* Config status badge */}
+                        {skill.config_status === "needs_setup" && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Needs setup
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate mt-0.5">
                         {skill.description}
@@ -324,7 +357,58 @@ export function SkillsManager() {
                             )}
                           </div>
 
-                          {/* Delete button */}
+                          {/* Actions */}
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={async () => {
+                                if (viewingBodySkillId === skill.skill_id) {
+                                  setViewingBodySkillId(null);
+                                  return;
+                                }
+                                setLoadingBody(true);
+                                try {
+                                  const detail = await api.getSkill(skill.skill_id);
+                                  setSkillBody(detail.body || "No content.");
+                                  setViewingBodySkillId(skill.skill_id);
+                                } catch {
+                                  setSkillBody("Failed to load skill content.");
+                                  setViewingBodySkillId(skill.skill_id);
+                                } finally {
+                                  setLoadingBody(false);
+                                }
+                              }}
+                              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              {loadingBody && viewingBodySkillId !== skill.skill_id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : viewingBodySkillId === skill.skill_id ? (
+                                <ChevronUp className="w-3 h-3" />
+                              ) : (
+                                <FileText className="w-3 h-3" />
+                              )}
+                              {viewingBodySkillId === skill.skill_id ? "Hide" : "View"} SKILL.md
+                            </button>
+                            <button
+                              onClick={() => {
+                                setConfigModalSkillId(skill.skill_id);
+                                setConfigModalSkillName(skill.name);
+                              }}
+                              className="flex items-center gap-1 text-xs text-[var(--accent)]/70 hover:text-[var(--accent)] transition-colors"
+                            >
+                              <Settings className="w-3 h-3" />
+                              Configure
+                            </button>
+                          </div>
+
+                          {/* SKILL.md body viewer */}
+                          {viewingBodySkillId === skill.skill_id && (
+                            <div className="mt-2 p-3 rounded-lg bg-background border border-border/50 max-h-64 overflow-y-auto">
+                              <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed">
+                                {skillBody}
+                              </pre>
+                            </div>
+                          )}
+
                           {deleteConfirm === skill.skill_id ? (
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-red-400">Delete this skill?</span>
@@ -499,6 +583,21 @@ export function SkillsManager() {
           )}
         </div>
       </div>
+
+      {/* Config wizard modal */}
+      <AnimatePresence>
+        {configModalSkillId && (
+          <SkillConfigModal
+            skillId={configModalSkillId}
+            skillName={configModalSkillName}
+            onClose={() => setConfigModalSkillId(null)}
+            onSaved={() => {
+              setConfigModalSkillId(null);
+              fetchSkills();
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

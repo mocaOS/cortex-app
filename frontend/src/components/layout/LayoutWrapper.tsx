@@ -39,7 +39,7 @@ export default function LayoutWrapper({
       <Header />
       {!hideStatsBar && <StatsBar />}
       <SubMenuWithSuspense />
-      <main className="max-w-7xl mx-auto px-6 pt-6 pb-12 w-full flex-1">
+      <main className="max-w-7xl mx-auto px-6 pt-4 pb-4 w-full flex-1">
         {children}
       </main>
       <Footer />

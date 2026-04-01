@@ -119,6 +119,37 @@ REASONING_TOOL = {
     },
 }
 
+HTTP_REQUEST_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "http_request",
+        "description": (
+            "Make an HTTP request to an external API. Use this when an active "
+            "skill describes an API endpoint to call. Authentication is handled "
+            "automatically — just provide the method and URL."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                    "description": "HTTP method.",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "The full API URL to call.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Optional request body (for POST/PUT/PATCH).",
+                },
+            },
+            "required": ["method", "url"],
+        },
+    },
+}
+
 DONE_TOOL = {
     "type": "function",
     "function": {
@@ -209,29 +240,29 @@ def get_tools_with_skill_activation(
     has_skills: bool = False,
     activated_skill_tools: List[dict] = None,
 ) -> List[dict]:
-    """Get tools for the given mode, with skill activation tools if skills exist.
+    """Get tools for the given mode, with http_request if skills are active.
 
-    - If has_skills: inserts activate_skill + list_skills at high priority
-    - If activated_skill_tools: appends those before done
-    - done always stays last
+    Skills are auto-activated at loop start, so the model just needs
+    http_request to call APIs described in the skill instructions.
+    activate_skill and list_skills are kept for on-demand activation of
+    additional skills mid-conversation.
     """
     base = get_tools_for_mode(mode)
 
     if not has_skills:
         return base
 
-    # Insert activation tools right after reasoning (quality) or at start (speed)
-    # so the LLM sees them early in the tool list
     done = base[-1]  # always last
     core = base[:-1]
 
     if mode == "quality" and core and core[0]["function"]["name"] == "reasoning":
-        # reasoning first, then activation tools, then search tools
-        result = [core[0], ACTIVATE_SKILL_TOOL, LIST_SKILLS_TOOL] + core[1:]
+        result = [core[0], HTTP_REQUEST_TOOL] + core[1:]
     else:
-        result = [ACTIVATE_SKILL_TOOL, LIST_SKILLS_TOOL] + core
+        # Speed mode with skills: add reasoning so the model can process
+        # large API responses before deciding the next step
+        result = [REASONING_TOOL, HTTP_REQUEST_TOOL] + core
 
-    # Append activated skill tools (if any)
+    # Append activated skill tools (if any — from tools.json, not used currently)
     if activated_skill_tools:
         result.extend(activated_skill_tools)
 
@@ -257,26 +288,38 @@ def build_skill_catalog_block(catalog: List[dict]) -> str:
         skill_type = s.get("skill_type", "instruction")
         lines.append(f'- {s["name"]}: {desc} [type: {skill_type}]')
 
-    catalog_text = "\n".join(lines)
-    return f"""
-
-<available_skills>
-You have access to external skills that can be activated on demand. Review the list below and activate any that are relevant to the user's query using the activate_skill tool.
-
-{catalog_text}
-</available_skills>"""
+    # Skills are auto-activated — the catalog block is no longer needed.
+    # The activated instructions block (build_activated_skills_block) injects
+    # the full SKILL.md body with API docs.
+    return ""
 
 
 def build_activated_skills_block(activated_instructions: str) -> str:
-    """Wrap activated skill instruction bodies for the system prompt."""
+    """Wrap activated skill instruction bodies for the system prompt.
+
+    Strips auth-related lines from the SKILL.md body to prevent the model
+    from thinking it needs to handle authentication itself.
+    """
     if not activated_instructions:
         return ""
+    # Strip lines that mention token replacement — they confuse the model
+    # into thinking it needs to provide the token manually
+    auth_keywords = [
+        "replace api_token", "replace `api_token`", "api_token with",
+        "if you don't have the token", "ask the user to provide",
+        "replace token", "your api token", "your_api_token",
+        "actual token",
+    ]
+    cleaned = "\n".join(
+        line for line in activated_instructions.split("\n")
+        if not any(kw in line.lower() for kw in auth_keywords)
+    )
     return f"""
 
 <active_skills>
-The following skills have been activated for this session. Follow their instructions when relevant.
+The following skills are active and connected to live external systems. When the user's question relates to a skill, call http_request with the API endpoint described below. Authentication is pre-configured and injected automatically — do NOT worry about tokens, API keys, or authorization headers. Just call the URL.
 
-{activated_instructions}
+{cleaned}
 </active_skills>"""
 
 
@@ -300,120 +343,42 @@ def get_researcher_prompt(
 def _get_speed_researcher_prompt(iteration: int, max_iterations: int) -> str:
     today = date.today().isoformat()
 
-    return f"""You are a research assistant that gathers information from a knowledge base to answer user questions. Your job is to select and execute the available tools to find relevant information — no free-form replies.
-
-You will receive the conversation history between the user and an AI assistant, along with the user's latest question. Use the available tools to gather the information needed to answer it.
+    return f"""You are a research assistant with access to a knowledge base and external skills (live API connections).
 
 Today's date: {today}
-
-You are on iteration {iteration + 1} of {max_iterations}. Act efficiently.
-When finished gathering information, call the `done` tool. Never output text directly.
-
-<goal>
-Find the most relevant information to answer the user's question using the available tools.
-Formulate targeted search queries — use keywords and entity names, not full sentences.
-Call done once you have what you need.
-</goal>
+Iteration {iteration + 1} of {max_iterations}.
 
 <instructions>
-- Your knowledge may be outdated. Always search the knowledge base to ground your answer, even for seemingly basic facts.
-- You get one knowledge_search call with up to 3 queries. Make them count — cover different angles of the question.
-- If the first search returns enough, call done immediately. If critical information is missing, use your remaining iteration to refine.
-- For simple questions (greetings, clarifications, opinions), call done immediately with a note that no search is needed.
-- Default to knowledge_search when information is missing or uncertain.
-- Do not invent tools. Do not output JSON. Only call tools.
-</instructions>
-
-<query_strategy>
-Split your 3 queries to maximize coverage:
-- Query 1: Core subject or entity name
-- Query 2: Specific aspect the user is asking about
-- Query 3: Related context or alternative phrasing
-
-Example — User: "What are the features of GPT-5?"
-→ knowledge_search(["GPT-5 features capabilities", "GPT-5 architecture improvements", "GPT-5 benchmarks performance"])
-
-Example — User: "How does Polygon compare to Ethereum for DeFi?"
-→ knowledge_search(["Polygon DeFi ecosystem", "Ethereum DeFi comparison", "Polygon Ethereum scalability fees"])
-</query_strategy>
-
-<mistakes_to_avoid>
-1. Over-assuming — don't assume information exists or doesn't; just search
-2. Verification loops — don't waste iterations verifying; search directly for what you need
-3. Ignoring context — if conversation history already has the answer, call done
-4. Overthinking — keep queries focused and specific
-</mistakes_to_avoid>"""
+- You have active skills with live API access (see <active_skills>). On your FIRST call, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic.
+- Then use knowledge_search for additional context. You get up to 3 queries per call.
+- Call done when you have enough information. Only call tools, never output text directly.
+</instructions>"""
 
 
 def _get_quality_researcher_prompt(iteration: int, max_iterations: int) -> str:
     today = date.today().isoformat()
 
-    return f"""You are a deep-research assistant that conducts thorough, multi-angle investigations using a knowledge base. Your job is to gather comprehensive information by iteratively searching, exploring, and cross-referencing — no free-form replies.
-
-You will receive the conversation history between the user and an AI assistant, along with the user's latest question. Use the available tools to conduct exhaustive research.
+    return f"""You are a deep-research assistant with access to a knowledge base and external skills (live API connections).
 
 Today's date: {today}
-
-You are on iteration {iteration + 1} of {max_iterations}. Use every iteration wisely to build comprehensive coverage.
-When finished, call the `done` tool. Never output text directly.
-
-<goal>
-Conduct deep, multi-angle research to gather exhaustive information for the user's question.
-Follow an iterative reason-act loop: call `reasoning` before every other tool call to plan your next step, execute the tool, then `reasoning` again to reflect and decide the next step.
-Finish with `done` only when you have comprehensive, multi-angle information.
-</goal>
-
-<research_strategy>
-For any topic, investigate from multiple angles:
-1. Core facts — What is it? Key definitions and overview.
-2. Details and features — What are the specifics? Capabilities, components, mechanisms.
-3. Relationships and connections — How does it relate to other entities?
-4. Context and comparisons — How does it compare to alternatives?
-5. Nuance and limitations — What are the caveats, critiques, or open questions?
-6. Community themes — What broader topic clusters is it part of?
-
-Start broad with knowledge_search, then narrow down. Use community_search for thematic context. Use entity_lookup when results mention specific entities worth exploring deeper.
-</research_strategy>
+Iteration {iteration + 1} of {max_iterations}.
 
 <instructions>
-- Your knowledge may be outdated. Always use the tools to ground answers.
-- This is DEEP RESEARCH mode — be exhaustive. Don't stop after one or two searches.
-- Aim for 3-5+ knowledge_search calls covering different angles. Each call gets up to 3 queries.
-- Use community_search at least once to understand broader thematic context.
-- Use entity_lookup when previous results mention key entities whose connections could add depth.
-- Cross-reference information across searches. If results hint at more depth, follow up.
-- Each reasoning call should reflect on what you've found and what gaps remain.
+- You have active skills with live API access (see <active_skills>). On iteration 1, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic.
+- This is DEEP RESEARCH mode — be exhaustive. Aim for 3-5+ knowledge_search calls from different angles.
+- Use community_search at least once for thematic context.
+- Use entity_lookup when results mention key entities worth exploring.
+- Call reasoning before every other tool call to plan your next step.
 - Call done only after you've exhausted reasonable research avenues.
-- Do not invent tools. Do not output JSON. Only call tools.
-- You MUST call reasoning before every other tool call to plan your next step.
+- Only call tools, never output text directly.
 </instructions>
 
 <iteration_guidance>
-- Iterations 1-2: Broad knowledge_search + community_search for overview
-- Iterations 3-5: Targeted knowledge_search following leads from initial results
-- Iterations 6-8: entity_lookup for key entities, fill remaining gaps
-- Iterations 8-10: Final cross-referencing, call done when comprehensive
-
-If you have comprehensive coverage earlier, call done — don't pad with redundant searches.
-</iteration_guidance>
-
-<reasoning_format>
-Open each reasoning call with a brief intent phrase:
-- "The user wants to know about X. I'll start by searching for the core concepts."
-- "From those results, Y seems important. I should explore that connection."
-- "I have good coverage of A, B, and C. Let me check for limitations."
-- "Comprehensive coverage achieved. Ready to wrap up."
-</reasoning_format>
-
-<mistakes_to_avoid>
-1. Shallow research — don't stop after one or two searches; dig deeper from multiple angles
-2. Over-assuming — don't assume things exist or don't; search for them
-3. Missing perspectives — look for both supporting and critical viewpoints
-4. Ignoring leads — if results mention interesting entities or connections, explore them
-5. Premature done — don't call done until you've covered the topic thoroughly
-6. Skipping reasoning — always call reasoning first
-7. Redundant queries — don't repeat the same search terms; vary your angles
-</mistakes_to_avoid>"""
+- Iteration 1: If <active_skills> has a relevant skill, call its API via http_request
+- Iterations 2-4: Broad knowledge_search + community_search for overview
+- Iterations 5-7: Targeted knowledge_search following leads
+- Iterations 8-10: entity_lookup, fill gaps, call done
+</iteration_guidance>"""
 
 
 # =============================================================================

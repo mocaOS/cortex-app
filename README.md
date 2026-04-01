@@ -65,7 +65,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 - **📤 Library Import/Export**: Export your entire library (documents, knowledge graph, embeddings, communities) as a portable ZIP archive and import it into another instance — no need to re-run the expensive knowledge graph pipeline
-- **🧩 Agent Skills**: Extend Deep Research and Chat with capabilities from the open [AgentSkills](https://agentskills.io/) ecosystem. Install skills from [skills.sh](https://skills.sh) or direct URLs. The researcher agent activates skills on demand — it sees a compact catalog and decides which skills are relevant to each query. Supports instruction skills (modify agent behavior) and tool-providing skills (add callable HTTP/script tools via `tools.json`).
+- **🧩 Agent Skills**: Extend Deep Research and Chat with live API connections from the open [AgentSkills](https://agentskills.io/) ecosystem. Install skills from [skills.sh](https://skills.sh) or direct URLs — a setup wizard auto-detects required configuration (API tokens, etc.) and prompts you to provide them. Enabled skills are automatically activated at the start of every session. The researcher agent uses the built-in `http_request` tool to call external APIs described in skill instructions, with authentication injected server-side from stored configuration.
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
@@ -663,11 +663,22 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `ENABLE_AGENT_RESEARCH` | Use agent pipeline for deep research mode (set `false` for legacy) | No | `true` |
-| `ENABLE_AGENT_CHAT` | Use agent pipeline for standard chat mode | No | `false` |
-| `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `2` |
+| `ENABLE_AGENT_CHAT` | Use agent pipeline for standard chat mode (required for skill usage in chat) | No | `false` |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `5` |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `10` |
 | `WRITER_MAX_TOKENS_SPEED` | Max output tokens for chat answers | No | `1200` |
 | `WRITER_MAX_TOKENS_QUALITY` | Max output tokens for deep research answers | No | `4000` |
+
+#### Agent Skills
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_SKILLS` | Master switch for AgentSkills integration | No | `true` |
+| `SKILLS_DIR` | Directory for skill discovery (relative or absolute) | No | `.agents/skills` |
+| `ENABLE_SKILL_SCRIPTS` | Allow skills to execute local scripts (security-sensitive) | No | `false` |
+| `SKILL_SCRIPT_TIMEOUT` | Timeout in seconds for script execution | No | `30` |
+| `SKILL_HTTP_TIMEOUT` | Timeout in seconds for HTTP tool calls | No | `15` |
+| `MAX_SKILL_TOOLS` | Max total skill-provided tools in researcher agent | No | `10` |
 
 #### Batch Processing
 

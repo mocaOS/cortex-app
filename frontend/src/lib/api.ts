@@ -1301,6 +1301,23 @@ class ApiClient {
       method: "POST",
     });
   }
+
+  async analyzeSkillConfig(skillId: string): Promise<{ skill_id: string; variables: import("@/types").SkillConfigVariable[] }> {
+    return this.request(`/api/admin/skills/${encodeURIComponent(skillId)}/analyze`, {
+      method: "POST",
+    });
+  }
+
+  async getSkillConfig(skillId: string): Promise<import("@/types").SkillConfigResponse> {
+    return this.request(`/api/admin/skills/${encodeURIComponent(skillId)}/config`);
+  }
+
+  async saveSkillConfig(skillId: string, values: Record<string, string>): Promise<{ message: string }> {
+    return this.request(`/api/admin/skills/${encodeURIComponent(skillId)}/config`, {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    });
+  }
 }
 
 export const api = new ApiClient();

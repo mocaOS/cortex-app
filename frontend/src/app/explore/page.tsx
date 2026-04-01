@@ -263,11 +263,7 @@ function ExplorePageContent() {
 
   // Render non-graph tabs
   if (activeTab === "research" || activeTab === "chat") {
-    return (
-      <div className="py-6">
-        <AskPanel initialMode={activeTab} />
-      </div>
-    );
+    return <AskPanel initialMode={activeTab} />;
   }
 
   if (activeTab === "entities") {

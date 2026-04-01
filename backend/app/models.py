@@ -657,6 +657,7 @@ class SkillInfo(BaseModel):
     installed_at: str = Field(..., description="ISO 8601 installation timestamp")
     tool_count: int = Field(default=0, description="Number of tools this skill provides")
     tool_names: List[str] = Field(default_factory=list, description="Names of tools this skill provides")
+    config_status: Optional[str] = Field(default=None, description="Config state: configured, needs_setup, or null")
 
 
 class SkillDetail(SkillInfo):
@@ -683,6 +684,25 @@ class SkillRegistryItem(BaseModel):
     description: str = Field(default="", description="Skill description")
     install_count: Optional[int] = Field(default=None, description="Installation count")
     download_url: str = Field(..., description="URL to fetch skill content")
+
+
+class SkillConfigVariable(BaseModel):
+    """A configuration variable extracted from a skill's SKILL.md by LLM analysis."""
+    name: str = Field(..., description="Variable name in SCREAMING_SNAKE_CASE")
+    description: str = Field(..., description="Human-readable description of what this variable is")
+    required: bool = Field(default=True, description="Whether this variable is required")
+    type: str = Field(default="text", description="Input type: 'secret' for tokens/keys, 'text' for URLs/identifiers")
+
+
+class SkillConfigSchema(BaseModel):
+    """Result of LLM analysis of a skill's configuration requirements."""
+    skill_id: str
+    variables: List[SkillConfigVariable] = Field(default_factory=list)
+
+
+class SkillConfigSaveRequest(BaseModel):
+    """Request to save skill configuration values."""
+    values: dict = Field(..., description="Map of variable name to value")
 
 
 class SystemResetRequest(BaseModel):
