@@ -519,6 +519,7 @@ async def upload_file(
     file: UploadFile = File(...),
     collection_id: Optional[str] = Query(default=None, description="Collection to add document to"),
     start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)"),
+    source: Optional[str] = Query(default=None, description="Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'."),
     auth: AuthResult = Depends(require_manage_permission)
 ):
     """
@@ -577,26 +578,30 @@ async def upload_file(
     async with aiofiles.open(file_path, 'wb') as f:
         await f.write(content)
     
+    doc_source = source or "upload"
+
     try:
         processor = get_document_processor()
-        
+
         if start_processing:
             # Legacy behavior: start processing immediately
-            doc_id = await processor.process_file(file_path, file.filename, file_size, collection_id)
+            doc_id = await processor.process_file(file_path, file.filename, file_size, collection_id, source=doc_source)
             return UploadResponse(
                 document_id=doc_id,
                 filename=file.filename,
                 status=ProcessingStatus.PROCESSING,
-                message="File uploaded and processing started"
+                message="File uploaded and processing started",
+                source=doc_source
             )
         else:
             # New behavior: just store the file, don't process yet
-            doc_id = await processor.store_file_only(file_path, file.filename, file_size, collection_id)
+            doc_id = await processor.store_file_only(file_path, file.filename, file_size, collection_id, source=doc_source)
             return UploadResponse(
                 document_id=doc_id,
                 filename=file.filename,
                 status=ProcessingStatus.PENDING,
-                message="File uploaded. Call /api/documents/process-pending to start processing."
+                message="File uploaded. Call /api/documents/process-pending to start processing.",
+                source=doc_source
             )
     except Exception as e:
         logger.error(f"Error storing file: {e}")
@@ -925,17 +930,19 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
         if collection_id is None and settings.enable_collections:
             collection_id = settings.default_collection
         
+        custom_source = request.source or "custom_input"
+
         if request.start_processing:
             # Start processing immediately
-            doc_id = await processor.process_file(file_path, filename, file_size, collection_id)
+            doc_id = await processor.process_file(file_path, filename, file_size, collection_id, source=custom_source)
             status = ProcessingStatus.PROCESSING
             message = "Custom input saved and processing started"
         else:
             # Just store, process later
-            doc_id = await processor.store_file_only(file_path, filename, file_size, collection_id)
+            doc_id = await processor.store_file_only(file_path, filename, file_size, collection_id, source=custom_source)
             status = ProcessingStatus.PENDING
             message = "Custom input saved. Call /api/documents/process-pending to start processing."
-        
+
         # Store custom input metadata for later editing
         await asyncio.to_thread(
             neo4j.set_custom_input_metadata,
@@ -945,13 +952,14 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
             request.answer,
             request.title,
         )
-        
+
         return CustomInputResponse(
             document_id=doc_id,
             filename=filename,
             status=status,
             message=message,
-            input_type=request.input_type
+            input_type=request.input_type,
+            source=custom_source
         )
         
     except Exception as e:

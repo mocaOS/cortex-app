@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useAuth } from "@/components/layout/AuthProvider";
 import { AnimatePresence } from "framer-motion";
 import {
   FileText,
@@ -43,6 +44,7 @@ interface Document {
   is_custom_input?: boolean;
   custom_input_type?: string | null;
   custom_topic_hint?: string | null;
+  source?: string;
 }
 
 type UploadFileStatus = "uploading" | "uploaded" | "error";
@@ -82,6 +84,7 @@ const isProcessing = (status: string) => {
 const DOCUMENTS_PER_PAGE = 100;
 
 export default function DocumentList({ onDelete }: DocumentListProps) {
+  const { isAuthReady } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -96,6 +99,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [filterCollectionId, setFilterCollectionId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
+  const [filterSource, setFilterSource] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isMoving, setIsMoving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -204,11 +208,12 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   };
 
   useEffect(() => {
+    if (!isAuthReady) return;
     fetchDocuments();
     fetchCollections();
     const interval = setInterval(fetchDocuments, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthReady]);
 
   // Sync selected IDs with existing documents
   useEffect(() => {
@@ -224,22 +229,23 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
   // Track if it's the initial mount to avoid resetting page on first render
   const isInitialMount = useRef(true);
-  const prevFilters = useRef({ filterCollectionId, filterStatus, searchQuery });
+  const prevFilters = useRef({ filterCollectionId, filterStatus, filterSource, searchQuery });
   
   // Reset to page 1 and clear selections when filters change (but not on initial mount)
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
-      prevFilters.current = { filterCollectionId, filterStatus, searchQuery };
+      prevFilters.current = { filterCollectionId, filterStatus, filterSource, searchQuery };
       return;
     }
-    
+
     // Only reset if filters actually changed
-    const filtersChanged = 
+    const filtersChanged =
       prevFilters.current.filterCollectionId !== filterCollectionId ||
       prevFilters.current.filterStatus !== filterStatus ||
+      prevFilters.current.filterSource !== filterSource ||
       prevFilters.current.searchQuery !== searchQuery;
-    
+
     if (filtersChanged) {
       // Clear selections when filters change
       setSelectedIds(new Set());
@@ -247,10 +253,20 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         setCurrentPage(1);
       }
     }
-    
-    prevFilters.current = { filterCollectionId, filterStatus, searchQuery };
+
+    prevFilters.current = { filterCollectionId, filterStatus, filterSource, searchQuery };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCollectionId, filterStatus, searchQuery]);
+  }, [filterCollectionId, filterStatus, filterSource, searchQuery]);
+
+  // Compute unique sources for filter dropdown
+  const sourceCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const doc of documents) {
+      const src = doc.source || "upload";
+      counts[src] = (counts[src] || 0) + 1;
+    }
+    return counts;
+  }, [documents]);
 
   // Filter documents
   const filteredDocuments = documents.filter((doc) => {
@@ -263,13 +279,16 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       return effectiveStatus(doc) === filterStatus;
     })();
 
+    const matchesSource =
+      filterSource === null || (doc.source || "upload") === filterSource;
+
     const searchLower = searchQuery.toLowerCase().trim();
     const matchesSearch =
       searchQuery.trim() === "" ||
       doc.filename.toLowerCase().includes(searchLower) ||
       (doc.custom_topic_hint && doc.custom_topic_hint.toLowerCase().includes(searchLower));
 
-    return matchesCollection && matchesStatus && matchesSearch;
+    return matchesCollection && matchesStatus && matchesSource && matchesSearch;
   });
   
   // Pagination calculations
@@ -615,7 +634,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     );
   }
 
-  const hasFilters = filterCollectionId !== null || filterStatus !== null || searchQuery.trim() !== "";
+  const hasFilters = filterCollectionId !== null || filterStatus !== null || filterSource !== null || searchQuery.trim() !== "";
 
   return (
     <div className="space-y-3">
@@ -658,6 +677,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           onCollectionFilterChange={setFilterCollectionId}
           filterStatus={filterStatus}
           onStatusFilterChange={setFilterStatus}
+          filterSource={filterSource}
+          onSourceFilterChange={setFilterSource}
+          sourceCounts={sourceCounts}
           collections={collections}
           documents={documents}
           statusCounts={statusCounts}

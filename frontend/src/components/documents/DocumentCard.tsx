@@ -44,6 +44,7 @@ interface Document {
   is_custom_input?: boolean;
   custom_input_type?: string | null;
   custom_topic_hint?: string | null;
+  source?: string;
 }
 
 interface DocumentCardProps {
@@ -283,6 +284,12 @@ export function DocumentCard({
                   <>
                     <span>•</span>
                     <span className="text-accent">{doc.collection_name}</span>
+                  </>
+                )}
+                {doc.source && doc.source !== "upload" && (
+                  <>
+                    <span>•</span>
+                    <span className="text-muted-foreground/70">{doc.source}</span>
                   </>
                 )}
               </div>

@@ -23,11 +23,21 @@ MOCA Library supports various document formats and provides flexible upload opti
 Upload one file at a time with immediate processing:
 
 ```bash
-# collection_id and start_processing are query parameters
+# collection_id, start_processing, and source are query parameters
 curl -X POST "http://localhost:8000/api/upload?collection_id=default&start_processing=true" \
   -H "X-API-Key: your-api-key" \
   -F "file=@document.pdf"
 ```
+
+**With a custom source** (for API integrations):
+
+```bash
+curl -X POST "http://localhost:8000/api/upload?source=youtube-transcriber" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@transcript.md"
+```
+
+The `source` parameter lets you tag documents by origin. Defaults to `"upload"` for UI uploads. Set it to your app's identifier (e.g. `"slack-bot"`, `"notion-sync"`) when building integrations. Documents can be filtered by source in the UI.
 
 **Response:**
 
@@ -37,7 +47,7 @@ curl -X POST "http://localhost:8000/api/upload?collection_id=default&start_proce
   "doc_id": "doc_abc123",
   "status": "processing",
   "message": "Document uploaded and processing started",
-  "collection_id": "default"
+  "source": "upload"
 }
 ```
 

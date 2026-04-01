@@ -26,7 +26,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/upload` | Manage | Upload a file. Query params: `collection_id`, `start_processing` (bool, default false) |
+| `POST` | `/api/upload` | Manage | Upload a file. Query params: `collection_id`, `start_processing` (bool, default false), `source` (string, default "upload") |
 | `GET` | `/api/documents` | Read | List all documents with metadata |
 | `GET` | `/api/documents/{id}` | Read | Get document details |
 | `GET` | `/api/documents/{id}/content` | Read | Document + all chunks (ordered) + concatenated full_content |
@@ -44,7 +44,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/custom-input` | Manage | Create custom input. Body: `{input_type, content, answer?, title?, collection_id?, start_processing?}` |
+| `POST` | `/api/custom-input` | Manage | Create custom input. Body: `{input_type, content, answer?, title?, collection_id?, start_processing?, source?}` |
 | `POST` | `/api/custom-input/generate-topic` | Read | Generate topic hint. Body: `{content, answer?, input_type}`. Returns `{topic_hint, existing_similar}` |
 | `GET` | `/api/custom-inputs` | Read | List custom inputs. Query: `search`, `limit` |
 | `GET` | `/api/custom-inputs/{id}` | Read | Get custom input details for editing |

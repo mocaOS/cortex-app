@@ -201,6 +201,7 @@ class DocumentMetadata(BaseModel):
     chunk_count: int = 0
     processing_status: ProcessingStatus = ProcessingStatus.PENDING
     error_message: Optional[str] = None
+    source: str = Field(default="upload", description="Origin of the document (e.g. 'upload', 'custom_input', or a custom source set via API)")
     # Progress tracking fields
     progress_current: int = Field(default=0, description="Current step in processing")
     progress_total: int = Field(default=0, description="Total steps in processing")
@@ -321,6 +322,7 @@ class UploadResponse(BaseModel):
     filename: str
     status: ProcessingStatus
     message: str
+    source: str = Field(default="upload", description="Origin of the document")
 
 
 class DocumentListResponse(BaseModel):
@@ -371,6 +373,7 @@ class CustomInputCreate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200, description="Optional title/topic hint for filename generation")
     collection_id: Optional[str] = Field(default=None, description="Collection to add this input to")
     start_processing: bool = Field(default=True, description="Start processing immediately after saving")
+    source: Optional[str] = Field(default=None, description="Custom source identifier (defaults to 'custom_input' if not set)")
     
     class Config:
         json_schema_extra = {
@@ -391,6 +394,7 @@ class CustomInputResponse(BaseModel):
     status: ProcessingStatus
     message: str
     input_type: CustomInputType
+    source: str = Field(default="custom_input", description="Origin of the document")
 
 
 # =============================================================================

@@ -85,12 +85,16 @@ class ApiClient {
   ): Promise<T> {
     const url = `${API_BASE}${endpoint}`;
     const apiKey = getAdminApiKey();
-    
+
+    if (!apiKey) {
+      throw new Error("Not authenticated");
+    }
+
     const res = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        "X-API-Key": apiKey,
         ...options.headers,
       },
     });

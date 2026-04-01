@@ -56,6 +56,16 @@ curl -X POST "http://localhost:8000/api/upload?collection_id=my-collection" \
   -F "file=@document.pdf"
 ```
 
+**Upload with a custom source** (for API integrations):
+
+```bash
+curl -X POST "http://localhost:8000/api/upload?source=youtube-transcriber" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@transcript.md"
+```
+
+The `source` parameter identifies where the document came from. UI uploads default to `"upload"`. When building custom apps that interface with the Library API, set this to your app's identifier (e.g. `"slack-bot"`, `"notion-sync"`, `"youtube-transcriber"`) to categorize documents by origin. The source is displayed in the document list and can be filtered on.
+
 **Upload without immediate processing** (for bulk uploads):
 
 ```bash
@@ -184,6 +194,19 @@ curl -X POST http://localhost:8000/api/custom-input \
   }'
 ```
 
+Custom inputs default to `source: "custom_input"`. You can override this with a custom source to categorize programmatically-created content:
+
+```bash
+curl -X POST http://localhost:8000/api/custom-input \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_type": "text",
+    "content": "Meeting notes from Q1 planning session...",
+    "source": "meeting-bot"
+  }'
+```
+
 ### Text
 
 Freeform text content:
@@ -240,7 +263,7 @@ curl http://localhost:8000/api/documents \
   -H "X-API-Key: your-api-key"
 ```
 
-Returns metadata for each document including filename, file type, size, upload date, processing status, chunk count, and progress fields.
+Returns metadata for each document including filename, file type, size, upload date, processing status, chunk count, source, and progress fields.
 
 ### Getting Document Details
 

@@ -237,6 +237,25 @@ class Neo4jService:
             except Exception as e:
                 logger.warning(f"Skill constraint may already exist: {e}")
 
+            # =================================================================
+            # Data migrations
+            # =================================================================
+            # Backfill source field on existing documents that don't have one
+            try:
+                result = session.run("""
+                    MATCH (d:Document) WHERE d.source IS NULL
+                    SET d.source = CASE
+                        WHEN d.is_custom_input = true THEN 'custom_input'
+                        ELSE 'upload'
+                    END
+                    RETURN count(d) as updated
+                """)
+                updated = result.single()["updated"]
+                if updated > 0:
+                    logger.info(f"Backfilled source field on {updated} existing documents")
+            except Exception as e:
+                logger.warning(f"Could not backfill document source field: {e}")
+
             logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes, APIKeys, Skills)")
     
     def store_document(self, doc_id: str, metadata: DocumentMetadata) -> str:
@@ -254,7 +273,8 @@ class Neo4jService:
                     d.error_message = $error_message,
                     d.progress_current = $progress_current,
                     d.progress_total = $progress_total,
-                    d.progress_message = $progress_message
+                    d.progress_message = $progress_message,
+                    d.source = $source
                 RETURN d.id as id
             """,
                 id=doc_id,
@@ -268,7 +288,8 @@ class Neo4jService:
                 progress_current=metadata.progress_current,
                 progress_total=metadata.progress_total,
                 progress_message=metadata.progress_message,
-                error_message=metadata.error_message
+                error_message=metadata.error_message,
+                source=metadata.source
             )
             return result.single()["id"]
     
@@ -549,7 +570,8 @@ class Neo4jService:
                        col.name as collection_name,
                        coalesce(d.is_custom_input, false) as is_custom_input,
                        coalesce(d.custom_input_type, '') as custom_input_type,
-                       coalesce(d.custom_topic_hint, '') as custom_topic_hint
+                       coalesce(d.custom_topic_hint, '') as custom_topic_hint,
+                       coalesce(d.source, 'upload') as source
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -587,6 +609,7 @@ class Neo4jService:
                        coalesce(d.image_progress_current, 0) as image_progress_current,
                        coalesce(d.image_progress_total, 0) as image_progress_total,
                        coalesce(d.image_progress_message, '') as image_progress_message,
+                       coalesce(d.source, 'upload') as source,
                        collect(c.id) as chunk_ids
             """, id=doc_id)
             

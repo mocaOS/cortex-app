@@ -3,6 +3,7 @@
 import { Suspense, useActionState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { login, LoginResult } from "@/lib/auth";
+import { setAdminApiKey } from "@/lib/api";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { Lock, LogIn, Loader2 } from "lucide-react";
@@ -17,12 +18,15 @@ function LoginForm() {
     FormData
   >(login, null);
 
-  // Redirect on successful login (client-side to avoid redirect() error in server action)
+  // Set API key and redirect on successful login
   useEffect(() => {
     if (state?.success) {
+      if (state.apiKey) {
+        setAdminApiKey(state.apiKey);
+      }
       router.push("/");
     }
-  }, [state?.success, router]);
+  }, [state?.success, state?.apiKey, router]);
 
   // Helper to extract file extension from URL
   const getLogoExtension = (url: string): string => {

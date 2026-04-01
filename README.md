@@ -35,7 +35,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 ## ✨ Features
 
 ### Core Features
-- **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files
+- **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources

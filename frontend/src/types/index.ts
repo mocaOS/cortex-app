@@ -19,6 +19,8 @@ export interface Document {
   // Collection info
   collection_id?: string | null;
   collection_name?: string | null;
+  // Source tracking
+  source?: string;
 }
 
 export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";
@@ -137,6 +139,7 @@ export interface UploadResponse {
   filename: string;
   status: ProcessingStatus;
   message: string;
+  source?: string;
 }
 
 export interface Stats {

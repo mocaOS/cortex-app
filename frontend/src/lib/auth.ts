@@ -11,6 +11,7 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 export interface LoginResult {
   success: boolean;
   error?: string;
+  apiKey?: string;
 }
 
 /**
@@ -51,10 +52,9 @@ export async function login(
   // Create session
   await createSession(email);
 
-  // Return success — client handles redirect to avoid
-  // redirect() throwing inside useActionState which causes
-  // "Application error: a client-side exception has occurred"
-  return { success: true };
+  // Return success with API key — client sets localStorage before redirect
+  // to avoid race condition where AuthProvider hasn't initialized yet
+  return { success: true, apiKey: ADMIN_API_KEY || undefined };
 }
 
 /**

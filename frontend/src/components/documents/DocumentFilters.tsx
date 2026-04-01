@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, FolderOpen, X } from "lucide-react";
+import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, FolderOpen, X, Globe } from "lucide-react";
 import type { Collection } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,9 @@ interface DocumentFiltersProps {
   onCollectionFilterChange: (id: string | null) => void;
   filterStatus: string | null;
   onStatusFilterChange: (status: string | null) => void;
+  filterSource: string | null;
+  onSourceFilterChange: (source: string | null) => void;
+  sourceCounts: Record<string, number>;
   collections: Collection[];
   documents: Document[];
   statusCounts: StatusCounts;
@@ -118,6 +121,9 @@ export function DocumentFilters({
   onCollectionFilterChange,
   filterStatus,
   onStatusFilterChange,
+  filterSource,
+  onSourceFilterChange,
+  sourceCounts,
   collections,
   documents,
   statusCounts,
@@ -139,6 +145,15 @@ export function DocumentFilters({
     { value: "failed", label: "Failed", count: statusCounts.failed, icon: XCircle },
   ];
 
+  const sourceKeys = Object.keys(sourceCounts).sort();
+  const sourceOptions: { value: string | null; label: string; count?: number }[] = [
+    { value: null, label: "All Sources" },
+    ...sourceKeys.map((src) => ({ value: src, label: src, count: sourceCounts[src] })),
+  ];
+
+  // Only show source filter if there are multiple distinct sources
+  const showSourceFilter = sourceKeys.length > 1;
+
   return (
     <>
       {/* Collection filter */}
@@ -158,6 +173,17 @@ export function DocumentFilters({
         onChange={onStatusFilterChange}
         icon={Clock}
       />
+
+      {/* Source filter - only shown when documents have multiple sources */}
+      {showSourceFilter && (
+        <Dropdown
+          label="All Sources"
+          value={filterSource}
+          options={sourceOptions}
+          onChange={onSourceFilterChange}
+          icon={Globe}
+        />
+      )}
     </>
   );
 }

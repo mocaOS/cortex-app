@@ -7,6 +7,21 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## April 1, 2026
+
+### Document Source Tracking
+
+- Added `source` field to documents — tracks the origin of each document (e.g. `upload`, `custom_input`, or a custom identifier like `youtube-transcriber`)
+- Upload endpoint (`POST /api/upload`) accepts optional `source` query parameter (defaults to `upload`)
+- Custom input endpoint (`POST /api/custom-input`) accepts optional `source` field in body (defaults to `custom_input`)
+- Document list and detail endpoints return the `source` field
+- Frontend shows source label on document cards when source is not the default `upload`
+- Source filter dropdown appears automatically in the Documents page toolbar when documents have multiple distinct sources
+- Existing documents are automatically backfilled on startup: `upload` for regular uploads, `custom_input` for custom inputs
+- Library export/import preserves the `source` field
+
+---
+
 ## March 30, 2026
 
 ### Agent Skills in Library Transfer

@@ -786,6 +786,7 @@ class DocumentProcessor:
         filename: str,
         file_size: int,
         collection_id: Optional[str] = None,
+        source: str = "upload",
     ) -> str:
         """
         Store a file without processing it.
@@ -798,6 +799,7 @@ class DocumentProcessor:
             filename: Original filename
             file_size: Size in bytes
             collection_id: Optional collection to add document to
+            source: Origin identifier for the document
 
         Returns:
             Document ID
@@ -816,6 +818,7 @@ class DocumentProcessor:
             file_size=file_size,
             file_path=file_path,
             processing_status=ProcessingStatus.PENDING,
+            source=source,
         )
 
         # Store document node (no processing yet)
@@ -834,6 +837,7 @@ class DocumentProcessor:
         filename: str,
         file_size: int,
         collection_id: Optional[str] = None,
+        source: str = "upload",
     ) -> str:
         """
         Process a file and store it in the knowledge base.
@@ -845,10 +849,11 @@ class DocumentProcessor:
             filename: Original filename
             file_size: Size in bytes
             collection_id: Optional collection to add document to
+            source: Origin identifier for the document
         """
         # First store the file
         doc_id = await self.store_file_only(
-            file_path, filename, file_size, collection_id
+            file_path, filename, file_size, collection_id, source=source
         )
 
         # Then start processing (with task tracking for cancellation support)

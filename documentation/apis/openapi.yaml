@@ -98,6 +98,12 @@ paths:
           schema:
             type: string
           description: Assign to a collection
+        - name: source
+          in: query
+          schema:
+            type: string
+            default: upload
+          description: Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'.
       requestBody:
         required: true
         content:
@@ -1698,6 +1704,9 @@ components:
           type: integer
         collection_id:
           type: string
+        source:
+          type: string
+          description: Origin of the document (e.g. 'upload', 'custom_input', or a custom source set via API)
 
     DocumentList:
       type: object
@@ -1741,6 +1750,9 @@ components:
           description: Required for Q&A type
         collection_id:
           type: string
+        source:
+          type: string
+          description: Custom source identifier (defaults to 'custom_input' if not set)
       required:
         - input_type
         - content
@@ -1754,6 +1766,9 @@ components:
           type: string
         filename:
           type: string
+        source:
+          type: string
+          description: Origin of the document
         created_at:
           type: string
           format: date-time
