@@ -3,7 +3,7 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   experimental: {
-    proxyClientMaxBodySize: "100mb",
+    proxyClientMaxBodySize: "5gb",
   },
   async rewrites() {
     return [
