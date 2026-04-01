@@ -9,6 +9,21 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ## April 1, 2026
 
+### Agent Skills: Setup Wizard, http_request Tool, and Reliable Skill Execution
+
+- **Setup Wizard**: After installing a skill, the primary LLM analyzes the SKILL.md to extract required configuration variables (API tokens, URLs, etc.). A dynamic modal prompts the user for values — stored persistently in `config.json` in the skill directory. No more `.env` editing or container restarts to configure skills.
+- **`http_request` built-in tool**: The researcher agent can now call external APIs described in skill instructions. The LLM provides only `method` and `url` — authentication headers are injected server-side from the config schema's `auth_header` template. The LLM never touches tokens or API keys.
+- **Auto-activation**: Enabled skills are now automatically loaded at the start of every research/chat session. The full SKILL.md body (with auth-related lines stripped) is injected into the system prompt. Replaces the previous on-demand `activate_skill`/`list_skills` pattern.
+- **Server-side auth injection**: Auth headers are built from the config schema's `auth_header` field (e.g. `Authorization: Bearer API_TOKEN`, `X-API-Key: API_KEY`) — works for any auth pattern, any skill.
+- **Config API endpoints**: `POST /api/admin/skills/{id}/analyze` (LLM analysis), `GET /api/admin/skills/{id}/config` (schema + masked values), `PUT /api/admin/skills/{id}/config` (save values with mask preservation)
+- **Config status**: Skills show "Needs setup" badge when required config is missing. "Configure" button in expanded skill details on Settings page.
+- **Skills directory persistence**: Added `skills_data` Docker named volume to prod and Coolify compose files. Fixed path resolution bug (4→3 parent levels) that was writing skills to ephemeral container storage.
+- **Smart API response truncation**: JSON responses are intelligently slimmed (truncate long strings, flatten nested objects) to keep all entries within context budget instead of cutting mid-object.
+- **Source dedup fix**: `_deduplicate_sources()` no longer drops skill API responses (sources without `chunk_id`). Skill API data is now passed to the writer as a priority source.
+- **Chat mode improvements**: Agentic chat (`ENABLE_AGENT_CHAT`) now defaults to `true`. Speed mode gains the `reasoning` tool when skills are active. Max iterations bumped from 2 to 5. Retry with `tool_choice=required` when the model skips tools on first iteration.
+- **Frontend**: New `SkillConfigModal` component, "View SKILL.md" button in skill details, removed "Powered by Neo4j + Haystack" footer, chat/research views use full viewport height.
+- **`tools.json` deprecated**: Not part of the [agentskills.io](https://agentskills.io/specification) standard. The standard approach is instruction skills with API documentation + the built-in `http_request` tool.
+
 ### Document Source Tracking
 
 - Added `source` field to documents — tracks the origin of each document (e.g. `upload`, `custom_input`, or a custom identifier like `youtube-transcriber`)

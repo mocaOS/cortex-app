@@ -9,7 +9,7 @@ Agent Skills let you add new capabilities to Cortex Library's researcher agent. 
 
 Enabled skills are **automatically activated** at the start of every research session. The agent sees their full instructions and can call external APIs using the built-in `http_request` tool. Authentication is handled entirely server-side — the LLM never sees tokens or API keys.
 
-Skills work in both **Deep Research** and **Chat** modes. To use skills in Chat, enable agentic chat mode by setting `ENABLE_AGENT_CHAT=true`.
+Skills work in both **Deep Research** and **Chat** modes. Agentic chat mode is enabled by default (`ENABLE_AGENT_CHAT=true`).
 
 ### How It Works
 
@@ -127,7 +127,7 @@ Values are saved in `config.json` inside the skill directory. The `auth_header` 
 |----------|---------|-------------|
 | `ENABLE_SKILLS` | `true` | Master switch for the skills system |
 | `SKILLS_DIR` | `.agents/skills` | Skills directory path |
-| `ENABLE_AGENT_CHAT` | `false` | Enable agentic chat mode (required for skills in Chat) |
+| `ENABLE_AGENT_CHAT` | `true` | Enable agentic chat mode (required for skills in Chat) |
 | `SKILL_HTTP_TIMEOUT` | `15` | HTTP tool timeout in seconds |
 | `MAX_SKILL_TOOLS` | `10` | Max skill tools in the agent |
 | `ENABLE_SKILL_SCRIPTS` | `false` | Allow legacy script execution (security-sensitive) |

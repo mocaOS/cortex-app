@@ -268,8 +268,8 @@ and Command R+. Many smaller or local models behind LiteLLM do not support this.
 # Use agent pipeline for deep research mode (set false for legacy fixed pipeline)
 ENABLE_AGENT_RESEARCH=true
 
-# Use agent pipeline for standard chat mode (opt-in, off by default)
-# ENABLE_AGENT_CHAT=false
+# Use agent pipeline for standard chat mode (required for skills in chat)
+ENABLE_AGENT_CHAT=true
 
 # Max agent loop iterations per mode
 # RESEARCHER_MAX_ITERATIONS_SPEED=2      # Chat mode (speed)
@@ -457,7 +457,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |
 | `ENABLE_AGENT_RESEARCH` | No | `true` | Use agent pipeline for deep research (vs legacy) |
-| `ENABLE_AGENT_CHAT` | No | `false` | Use agent pipeline for standard chat |
+| `ENABLE_AGENT_CHAT` | No | `true` | Use agent pipeline for standard chat (required for skills) |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | No | `2` | Agent loop iterations for chat mode |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `10` | Agent loop iterations for deep research |
 | `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |

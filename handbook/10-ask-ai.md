@@ -236,7 +236,7 @@ Answers include source citations linking back to specific document chunks. In th
 ```env
 # Agent pipeline (vs. legacy)
 ENABLE_AGENT_RESEARCH=true       # Agent for Deep Research
-ENABLE_AGENT_CHAT=false           # Agent for Chat (false = legacy for Chat)
+ENABLE_AGENT_CHAT=true            # Agent for Chat (enables skills in chat mode)
 
 # Iteration limits
 RESEARCHER_MAX_ITERATIONS_SPEED=2    # Chat: 2 iterations

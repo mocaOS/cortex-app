@@ -220,8 +220,8 @@ class Settings(BaseSettings):
         default=True
     )  # Use agent pipeline for research mode (vs legacy fixed pipeline)
     enable_agent_chat: bool = Field(
-        default=False
-    )  # Use agent pipeline for standard chat mode
+        default=True
+    )  # Use agent pipeline for standard chat mode (required for skills in chat)
     researcher_max_iterations_speed: int = Field(
         default=5
     )  # Max agent loop iterations in speed/chat mode
