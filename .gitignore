@@ -30,6 +30,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Installed skills (per-instance, may contain secrets in config.json)
+backend/.agents/skills/
+
 # Uploads
 uploads/
 *.pdf
