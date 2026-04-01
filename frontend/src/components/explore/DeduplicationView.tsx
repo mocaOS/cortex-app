@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import type { DuplicateGroup, MergeEntitiesResponse, MergeHistoryEntry, Stats } from "@/types";
-import { Loader2, Search, Star, Merge, X, AlertTriangle, Check, ChevronDown, ChevronUp, History, Info, ArrowLeft, Plus } from "lucide-react";
+import type { DuplicateGroup, MergeEntitiesResponse, MergeHistoryEntry, Stats, EntityDetails } from "@/types";
+import { Loader2, Search, Star, Merge, X, AlertTriangle, Check, ChevronDown, ChevronUp, History, Info, ArrowLeft, Plus, Eye, Network, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // =============================================================================
@@ -315,12 +316,18 @@ interface MergeResult {
 }
 
 export default function DeduplicationView() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const focusEntity = searchParams.get("entity");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [threshold, setThreshold] = useState(0.85);
   const [mergingKey, setMergingKey] = useState<string | null>(null);
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+  // Track the focused entity for filtering after scan
+  const [focusEntityName, setFocusEntityName] = useState<string | null>(focusEntity);
+  const autoScannedRef = useRef(false);
 
   // Hydrate dismissed keys from localStorage after mount
   useEffect(() => {
@@ -345,6 +352,27 @@ export default function DeduplicationView() {
   const [communitiesNeedRedetection, setCommunitiesNeedRedetection] = useState(false);
   // Track merges done in this session for the notice
   const [mergesDoneThisSession, setMergesDoneThisSession] = useState(0);
+
+  // Entity detail inspection modal
+  const [inspectEntity, setInspectEntity] = useState<string | null>(null);
+  const [inspectDetails, setInspectDetails] = useState<EntityDetails | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+
+  useBodyScrollLock(!!inspectEntity);
+
+  const handleInspect = async (entityName: string) => {
+    setInspectEntity(entityName);
+    setInspectDetails(null);
+    setInspectLoading(true);
+    try {
+      const details = await api.getEntityDetails(entityName, 1);
+      setInspectDetails(details);
+    } catch {
+      setInspectDetails(null);
+    } finally {
+      setInspectLoading(false);
+    }
+  };
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -373,11 +401,81 @@ export default function DeduplicationView() {
     }).catch(() => {});
   }, [fetchHistory]);
 
+  // Auto-scan when navigated with ?entity= param
+  useEffect(() => {
+    if (!focusEntity || autoScannedRef.current) return;
+    autoScannedRef.current = true;
+
+    const autoScan = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        // Use a lower threshold to find more potential matches
+        const response = await api.suggestDuplicates(0.75);
+        const filtered = response.groups.filter((g) => !dismissedKeys.has(getGroupKey(g)));
+
+        // Find groups containing the focused entity
+        const matchingGroups = filtered.filter((g) =>
+          g.entities.some((e) => e.name.toLowerCase() === focusEntity.toLowerCase())
+        );
+
+        if (matchingGroups.length > 0) {
+          // Show only groups containing the focused entity, expanded
+          setGroups(matchingGroups);
+          setScanned(true);
+          setExpandedGroups(new Set(matchingGroups.map(getGroupKey)));
+        } else {
+          // No duplicate groups found — create a standalone group with just
+          // this entity so the user can manually add candidates via search.
+          try {
+            const searchRes = await api.searchEntities(focusEntity);
+            const focusResult = searchRes.results.find(
+              (r) => r.name.toLowerCase() === focusEntity.toLowerCase()
+            );
+            const focusInfo = focusResult
+              ? { name: focusResult.name, type: focusResult.type, description: focusResult.description, mention_count: 0, relationship_count: 0 }
+              : { name: focusEntity, type: "Unknown", description: "", mention_count: 0, relationship_count: 0 };
+
+            const manualGroup: DuplicateGroup = {
+              suggested_canonical: focusInfo.name,
+              entities: [focusInfo],
+              similarity: 0,
+              method: "manual",
+            };
+            setGroups([manualGroup]);
+            setScanned(true);
+            const key = getGroupKey(manualGroup);
+            setExpandedGroups(new Set([key]));
+          } catch {
+            setGroups([]);
+            setScanned(true);
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to scan for duplicates");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    autoScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusEntity]);
+
+  // Clear focus when user manually rescans
+  const clearFocus = () => {
+    setFocusEntityName(null);
+    if (focusEntity) {
+      router.replace("/deduplicate", { scroll: false });
+    }
+  };
+
   const getGroupKey = (group: DuplicateGroup) => {
     return group.entities.map((e) => e.name).sort().join("|");
   };
 
   const handleScan = useCallback(async () => {
+    clearFocus();
     setLoading(true);
     setError(null);
     setLastMergeResult(null);
@@ -395,6 +493,7 @@ export default function DeduplicationView() {
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threshold, dismissedKeys]);
 
   const expandNextGroup = useCallback((removedKey: string, currentGroups: DuplicateGroup[]) => {
@@ -589,6 +688,22 @@ export default function DeduplicationView() {
         )}
       </div>
 
+      {/* Focus entity banner */}
+      {focusEntityName && scanned && (
+        <div className="flex items-center gap-2 p-3 mb-4 bg-accent/10 border border-accent/30 rounded-lg text-sm">
+          <Search className="w-4 h-4 flex-shrink-0 text-accent" />
+          <span>
+            Showing deduplication candidates for <strong>{focusEntityName}</strong>
+          </span>
+          <button
+            onClick={() => { clearFocus(); handleScan(); }}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+          >
+            Show all duplicates
+          </button>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="flex items-center gap-2 p-3 mb-4 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive">
@@ -710,6 +825,13 @@ export default function DeduplicationView() {
                                 <span className="px-1.5 py-0.5 text-xs bg-muted rounded-full text-muted-foreground">
                                   {entity.type}
                                 </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleInspect(entity.name); }}
+                                  className="p-0.5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-colors"
+                                  title="Inspect entity details"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                               {entity.description && (
                                 <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
@@ -810,6 +932,91 @@ export default function DeduplicationView() {
           onSelectEntry={setSelectedHistoryEntry}
           onClose={() => { setHistoryOpen(false); setSelectedHistoryEntry(null); }}
         />
+      )}
+
+      {/* Entity Inspect Modal */}
+      {inspectEntity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setInspectEntity(null)}>
+          <div className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="font-semibold truncate">{inspectEntity}</h3>
+              <button onClick={() => setInspectEntity(null)} className="p-1 hover:bg-muted rounded-lg transition-colors ml-2">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {inspectLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : inspectDetails ? (
+                <>
+                  {inspectDetails.type && (
+                    <span className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground">
+                      {inspectDetails.type}
+                    </span>
+                  )}
+
+                  {inspectDetails.description && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-1">Description</h4>
+                      <p className="text-sm text-muted-foreground">{inspectDetails.description}</p>
+                    </div>
+                  )}
+
+                  {inspectDetails.relationships.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Relationships ({inspectDetails.relationships.length})</h4>
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {inspectDetails.relationships.map((rel, idx) => (
+                          <div key={idx} className="text-sm text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                            <span className="text-foreground">{rel.source}</span>
+                            <span className="px-1.5 py-0.5 text-xs bg-accent/20 text-accent rounded">{rel.type}</span>
+                            <ArrowRight className="w-3 h-3 flex-shrink-0" />
+                            <span className="text-foreground">{rel.target}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {inspectDetails.entities.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Related Entities ({inspectDetails.entities.length})</h4>
+                      <div className="flex flex-wrap gap-1">
+                        {inspectDetails.entities.map((e, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => handleInspect(e.name)}
+                            className="px-2 py-0.5 text-xs bg-muted rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                          >
+                            {e.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {inspectDetails.chunks.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Mentioned In ({inspectDetails.chunks.length} chunks)</h4>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {inspectDetails.chunks.slice(0, 5).map((chunk, idx) => (
+                          <div key={idx} className="p-2 bg-muted/50 rounded-lg">
+                            <p className="text-xs text-muted-foreground mb-1">{chunk.filename}</p>
+                            <p className="text-sm line-clamp-2">{chunk.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">Failed to load entity details.</p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

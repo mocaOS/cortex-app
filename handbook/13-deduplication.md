@@ -19,6 +19,8 @@ curl "http://localhost:8000/api/entities/duplicates?threshold=0.75&limit=100" \
   -H "X-API-Key: your-api-key"
 ```
 
+You can also navigate directly from any entity: in the **Explore > Entities** browser, each entity card has a **Deduplicate** button (merge icon) that navigates to `/deduplicate?entity=EntityName`. This auto-scans and shows duplicate groups containing that entity, or creates a standalone group for manual candidate addition if no duplicates are found.
+
 ### How Scanning Works
 
 The system fetches all entities and compares them in Python using three rapidfuzz strategies:
@@ -27,18 +29,19 @@ The system fetches all entities and compares them in Python using three rapidfuz
 |----------|----------------|------|
 | **`ratio`** | Typos, minor spelling differences ("OpenAl" vs "OpenAI") | Always applied |
 | **`token_sort_ratio`** | Word reordering ("John Smith" vs "Smith, John") | Always applied |
-| **`partial_ratio`** | Abbreviations, substrings ("ML" vs "Machine Learning") | Same entity type only, with length ratio gating |
+| **`partial_ratio`** | Abbreviations, substrings ("ML" vs "Machine Learning") | Same entity type only, with length ratio + Person name gating |
 
 **Partial ratio gating** (prevents false positives):
 - Restricted to same-type entities
 - General entities: `length_ratio >= 0.5` (shorter name must be at least half the length of the longer)
-- Person entities: relaxed to `length_ratio >= 0.35` (allows "Vitalik" matching "Vitalik Buterin")
+- Person entities: relaxed to `length_ratio >= 0.35`, **plus word-prefix validation** — partial_ratio only applies when the shorter name is a word-level prefix of the longer name. This allows "Colborn" ↔ "Colborn Bell" but blocks "David Young" ↔ "David Hockney" (shared first name, different people). Same-word-count pairs are suppressed entirely via vectorized masking for efficiency.
 
 ### Clustering
 
 Results are grouped using **star clustering** (not BFS transitive closure):
 - Each group has one central "canonical" entity (suggested based on highest connectivity)
 - Prevents transitive chain explosions where A≈B and B≈C would incorrectly merge A and C
+- **Single-word Person names** (e.g., "Andrea", "David") are excluded as star centers to prevent them from pulling all same-first-name entities into one giant group. They can still appear as group members.
 - Person-type entities are sorted with priority
 
 ### Step 2: Review Groups
@@ -48,6 +51,7 @@ Each duplicate group in the UI shows:
 - **Duplicate candidates** — Entities the system thinks might be the same
 - **Similarity scores** — How similar each candidate is to the canonical
 - **Connection counts** — Mentions and relationships for each entity
+- **Inspect button** (eye icon) — Opens an entity detail modal showing description, relationships, related entities, and chunk mentions for informed merge decisions
 
 **Actions per group:**
 - **Merge** — Combine duplicates into the canonical entity
@@ -112,6 +116,13 @@ After merging entities:
 2. Re-run **Community Detection** (Step 3) to update community membership
 3. Relationship analysis does not need re-running — relationships were preserved during merge
 
+## Performance
+
+The dedup scan uses rapidfuzz's `cdist` for batch C-level similarity computation. To avoid saturating the system:
+- **CPU usage**: Limited to half of available CPU cores (respects Docker cgroup limits via `sched_getaffinity`)
+- **Timeout**: 5-minute server-side timeout with a 504 response and suggestion to raise the threshold if exceeded
+- **Person entity optimization**: Same-word-count pairs are suppressed via vectorized numpy masking before the sparse Python loop, keeping the O(n²) portion minimal
+
 ## Configuration
 
 ```env
@@ -124,8 +135,10 @@ The post-extraction dedup scan threshold is controlled per-request via the `thre
 ## Best Practices
 
 1. **Run deduplication after large ingestion batches** — New documents may introduce variant names for existing entities
-2. **Start with a moderate threshold** (0.75) — Lower values find more potential duplicates but include more false positives
-3. **Review before merging** — The scan is suggestive, not definitive. Always review groups before merging.
-4. **Use inline entity search** — If you know two entities should be merged but they weren't auto-detected, use the search feature to manually add them to a group
-5. **Re-detect communities after merging** — Graph topology changes invalidate existing community assignments
-6. **Check merge history** — If something looks wrong after merging, the audit trail shows exactly what happened
+2. **Start with the default threshold** (0.85) — Lower values find more potential duplicates but include more false positives
+3. **Use the entity-level Deduplicate button** — From the Explore > Entities browser, click the merge icon on any entity to jump directly to dedup with that entity pre-loaded
+4. **Inspect before merging** — Use the eye icon on each entity in a group to view its full details (description, relationships, mentions) before deciding to merge
+5. **Review before merging** — The scan is suggestive, not definitive. Always review groups before merging.
+6. **Use inline entity search** — If you know two entities should be merged but they weren't auto-detected, use the search feature to manually add them to a group
+7. **Re-detect communities after merging** — Graph topology changes invalidate existing community assignments
+8. **Check merge history** — If something looks wrong after merging, the audit trail shows exactly what happened

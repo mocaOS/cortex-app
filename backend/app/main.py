@@ -2340,8 +2340,13 @@ async def suggest_duplicates(
     """Suggest duplicate entity groups for user review."""
     try:
         neo4j = get_neo4j_service()
-        groups = await asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit)
+        groups = await asyncio.wait_for(
+            asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit),
+            timeout=300,  # 5 minute timeout for large graphs
+        )
         return {"groups": groups, "total_groups": len(groups)}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Duplicate scan timed out — try a higher similarity threshold to reduce comparisons")
     except Exception as e:
         logger.error(f"Error suggesting duplicates: {e}")
         raise HTTPException(status_code=500, detail=str(e))

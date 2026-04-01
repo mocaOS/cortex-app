@@ -254,6 +254,10 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 
 While MOCA automatically resolves many duplicates during extraction (via embedding-based semantic matching with Levenshtein 85% fallback), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
 
+### Quick Access from Entities
+
+You can jump directly to deduplication for any entity from the **Explore > Entities** browser. Each entity card has a **merge icon button** that navigates to `/deduplicate?entity=EntityName`, which auto-scans and filters results to that entity. The entity detail modal also has a **Deduplicate** button in the footer.
+
 ### Find Duplicate Candidates
 
 Scan the knowledge graph for groups of entities that appear to refer to the same thing:
@@ -359,8 +363,9 @@ flowchart TD
 `} />
 
 **Tips for effective deduplication:**
-- Start with a high threshold (0.90+) to find obvious duplicates first
+- Start with the default threshold (0.85) to find obvious duplicates first
 - Lower the threshold gradually to catch more subtle variants
+- Use the **inspect button** (eye icon) on each entity in a group to view its full details before deciding to merge
 - Always review candidates before merging -- false positives at low thresholds can incorrectly combine unrelated entities
 - After merging, re-run community detection to reflect the updated graph structure
 

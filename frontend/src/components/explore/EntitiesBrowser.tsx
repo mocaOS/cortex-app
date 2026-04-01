@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight, Pencil, Merge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EntityDetails } from "@/types";
 
@@ -340,13 +340,22 @@ export default function EntitiesBrowser() {
                   <p className="text-sm font-medium">{entity.mention_count}</p>
                   <p className="text-xs text-muted-foreground">mentions</p>
                 </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleExploreEntity(entity.name); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-muted hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Network className="w-4 h-4" />
-                  Graph
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); router.push(`/deduplicate?entity=${encodeURIComponent(entity.name)}`); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-muted hover:bg-accent hover:text-accent-foreground"
+                    title="Find duplicates for this entity"
+                  >
+                    <Merge className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleExploreEntity(entity.name); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-muted hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <Network className="w-4 h-4" />
+                    Graph
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -556,6 +565,13 @@ export default function EntitiesBrowser() {
                 >
                   <Network className="w-4 h-4" />
                   View in Graph
+                </button>
+                <button
+                  onClick={() => { handleCloseDetail(); router.push(`/deduplicate?entity=${encodeURIComponent(selectedEntity.name)}`); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-muted hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Merge className="w-4 h-4" />
+                  Deduplicate
                 </button>
               </div>
             </div>

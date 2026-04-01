@@ -2538,11 +2538,21 @@ class Neo4jService:
 
         score_cutoff = threshold * 100  # rapidfuzz uses 0-100 scale
 
+        # Use half of available CPU cores to avoid saturating the system.
+        # In Docker, len(os.sched_getaffinity(0)) respects cgroup CPU limits
+        # while os.cpu_count() returns the host's total cores.
+        import os
+        try:
+            available = len(os.sched_getaffinity(0))
+        except AttributeError:
+            available = os.cpu_count() or 2
+        half_cores = max(1, available // 2)
+
         # Batch compute similarity matrices in C (much faster than Python pairwise loop)
         best_matrix = cdist(names_lower, names_lower, scorer=fuzz.ratio,
-                            score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
+                            score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
         token_sort_matrix = cdist(names_lower, names_lower, scorer=fuzz.token_sort_ratio,
-                                  score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
+                                  score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
         np.maximum(best_matrix, token_sort_matrix, out=best_matrix)
         del token_sort_matrix
 
@@ -2558,7 +2568,7 @@ class Neo4jService:
 
             group_names = [names_lower[i] for i in indices]
             partial_scores = cdist(group_names, group_names, scorer=fuzz.partial_ratio,
-                                   score_cutoff=score_cutoff, dtype=np.float32, workers=-1)
+                                   score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
 
             # Length ratio gating
             min_len_ratio = 0.35 if entity_type == 'Person' else 0.5
@@ -2567,6 +2577,42 @@ class Neo4jService:
             len_max = np.maximum.outer(group_lens, group_lens)
             len_ratios = np.divide(len_min, len_max, out=np.zeros_like(len_min), where=len_max > 0)
             partial_scores[len_ratios < min_len_ratio] = 0
+
+            # For Person entities: only allow partial_ratio when the shorter
+            # name is a word-level prefix of the longer name.
+            # This keeps "Colborn" ↔ "Colborn Bell" (legitimate short→full name)
+            # while blocking "Andy" ↔ "Andreas Gysin" or "David Young" ↔ "David Hockney"
+            # (shared first name, different people).
+            if entity_type == 'Person':
+                # Build a mask: only keep partial_ratio for pairs where
+                # the shorter name is a strict word-prefix of the longer.
+                # Vectorized: suppress when both have same word count (covers
+                # most false positives), then only check the remaining sparse
+                # pairs with different word counts.
+                group_norm = [names_lower[i].replace('-', ' ').split() for i in indices]
+                word_counts = np.array([len(w) for w in group_norm], dtype=np.int32)
+
+                # Same word count → never a prefix → suppress partial_ratio
+                wc_eq = np.equal.outer(word_counts, word_counts)
+                partial_scores[wc_eq] = 0
+
+                # For remaining nonzero pairs (different word counts), check
+                # if shorter name's words match the start of longer name's words.
+                # This is sparse — most pairs are already zeroed above.
+                gi_arr, gj_arr = np.where(np.triu(partial_scores, k=1) > 0)
+                for idx in range(len(gi_arr)):
+                    gi, gj = int(gi_arr[idx]), int(gj_arr[idx])
+                    words_a, words_b = group_norm[gi], group_norm[gj]
+                    short_w, long_w = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
+                    is_prefix = True
+                    for k, sw in enumerate(short_w):
+                        if k < len(long_w) and fuzz.ratio(sw, long_w[k]) >= 80:
+                            continue
+                        is_prefix = False
+                        break
+                    if not is_prefix:
+                        partial_scores[gi, gj] = 0
+                        partial_scores[gj, gi] = 0
 
             # Merge improvements into best_matrix via numpy indexing
             idx_arr = np.array(indices)
@@ -2625,8 +2671,21 @@ class Neo4jService:
             reverse=True,
         )
 
+        # Identify single-word Person names — these must not be star centers
+        # because a bare first name like "Andrea" would pull all "Andrea X"
+        # into one group. They can still be members of other groups.
+        single_word_persons = set()
+        for name in direct_matches:
+            info = entity_info[name]
+            if info['type'] == 'Person' and len(name.split()) == 1:
+                single_word_persons.add(name)
+
         for canonical_candidate in candidates:
             if canonical_candidate in assigned:
+                continue
+
+            # Don't let single-word Person names be star centers
+            if canonical_candidate in single_word_persons:
                 continue
 
             # Gather unassigned entities directly similar to this one
