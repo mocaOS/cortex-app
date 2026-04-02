@@ -1,183 +1,64 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+MOCA Library is an agentic knowledge base that ingests documents, extracts entities/relationships via LLMs, builds a Neo4j knowledge graph, and exposes it through a FastAPI REST API for RAG applications. Next.js 15 frontend for search, Q&A, graph exploration, and document management.
 
-## Project Overview
+## Navigation Map
 
-MOCA Library is an agentic knowledge base that ingests documents, extracts entities/relationships via LLMs, builds a Neo4j knowledge graph, and exposes it through a FastAPI REST API for RAG applications. It has a Next.js frontend for search, Q&A, graph exploration, and document management.
+| File | Description |
+|------|-------------|
+| [`.claude/architecture.md`](.claude/architecture.md) | Tech stack, backend service map, frontend routes & components |
+| [`.claude/environment.md`](.claude/environment.md) | All 40+ env vars grouped by concern (DB, LLMs, features, skills, auth) |
+| [`.claude/development.md`](.claude/development.md) | Docker/local dev commands, Neo4j setup, deployment (Coolify, standalone) |
+| [`.claude/design-system.md`](.claude/design-system.md) | Design tokens, visual principles, `.impeccable.md` reference |
+| [`.claude/maintenance.md`](.claude/maintenance.md) | Doc sync rules for README, documentation/, handbook/, design-system/, .claude/ |
+| [`.claude/frontend-patterns.md`](.claude/frontend-patterns.md) | Explore browsers, graph expansion, chat rendering, source modal, pagination |
+| [`.claude/domain/document-pipeline.md`](.claude/domain/document-pipeline.md) | Upload → Docling → chunking → embedding → extraction → image analysis |
+| [`.claude/domain/relationships.md`](.claude/domain/relationships.md) | Per-chunk extraction, batch analysis (Phase 1/2), ERR, multi-round, batching |
+| [`.claude/domain/entities.md`](.claude/domain/entities.md) | Fuzzy resolution, dedup (rapidfuzz), merging, editing, search, type normalization |
+| [`.claude/domain/communities.md`](.claude/domain/communities.md) | Leiden/Louvain detection, summarization, staleness tracking |
+| [`.claude/domain/knowledge-graph-ui.md`](.claude/domain/knowledge-graph-ui.md) | 3-step pipeline page, staleness, regeneration flow, image awareness |
+| [`.claude/domain/rag-pipeline.md`](.claude/domain/rag-pipeline.md) | Researcher/writer agents, tools, speed/quality modes, hybrid search |
+| [`.claude/domain/skills.md`](.claude/domain/skills.md) | AgentSkills standard, auto-activation, http_request, config wizard |
+| [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
 
-## Architecture
+## File-Path Routing
 
-```
-Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (graph + vector)
-         :3000                              :8000                    :7474/:7687
-```
+When editing files in these paths, read the corresponding `.claude/` file(s):
 
-**Backend** (`backend/app/`):
-- `main.py` — FastAPI app with 40+ endpoints (monolithic router)
-- `config.py` — Pydantic BaseSettings, all env vars with defaults
-- `models.py` — Pydantic request/response models
-- `services/neo4j_service.py` — Graph DB operations, search, entity extraction, community detection, `delete_all_entities()` (DETACH DELETE all entities)
-- `services/document_processor.py` — Ingestion pipeline: Docling conversion → chunking → embedding → entity extraction → graph storage
-- `services/graph_extractor.py` — LLM-based entity/relationship extraction (`async_relationship_client` and `relationship_model_name` properties for dedicated relationship model)
-- `services/compute3_service.py` — GPU-accelerated inference (Turbo Mode)
-- `services/vision_analyzer.py` — Image analysis and OCR
-- `services/auth_service.py` — Admin JWT auth
-- `services/prompt_security.py` — Prompt injection detection
-- `services/researcher_agent.py` — Agent-based research pipeline (researcher loop + writer streaming)
-- `services/research_prompts.py` — Prompt templates and tool definitions for researcher/writer agents
-- `services/library_transfer_service.py` — Full library export/import (ZIP64 archive with NDJSON data + document files)
-- `services/skill_service.py` — Agent Skills integration (agentskills.io standard): discovery, installation (URL/registry), CRUD, tool execution (HTTP/script), researcher agent augmentation, LLM-based config analysis (`analyze_skill_config()` extracts required variables with `auth_header` fields), config persistence (`config.json` per skill directory), `config_status` computation ("configured" | "needs_setup" | null)
+| Source path | Read |
+|---|---|
+| `backend/app/main.py` | `architecture.md` + relevant `domain/*.md` for the endpoint area |
+| `backend/app/config.py`, `.env*` | `environment.md` |
+| `backend/app/models.py` | `architecture.md` |
+| `backend/app/services/document_processor.py`, `docling_worker.py`, `vision_analyzer.py` | `domain/document-pipeline.md` |
+| `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |
+| `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md` |
+| `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md` |
+| `backend/app/services/skill_service.py` | `domain/skills.md` |
+| `backend/app/services/llm_config.py`, `compute3_service.py` | `environment.md`, `domain/relationships.md` |
+| `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
+| `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md` |
+| `backend/app/services/prompt_security.py` | `architecture.md` |
+| `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |
+| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md` |
+| `frontend/src/app/deduplicate/**` | `domain/entities.md` |
+| `frontend/src/app/explore/**`, `components/explore/**` | `frontend-patterns.md`, `domain/entities.md` |
+| `frontend/src/app/ask/**`, `components/ask/**` | `domain/rag-pipeline.md`, `frontend-patterns.md` |
+| `frontend/src/app/admin/**`, `components/admin/**` | `domain/admin-features.md`, `domain/skills.md` |
+| `frontend/src/app/collections/**`, `components/collections/**` | `frontend-patterns.md` |
+| `frontend/src/app/add/**` | `domain/document-pipeline.md` |
+| `frontend/src/app/turbo/**` | `environment.md` |
+| `frontend/src/components/layout/**` | `architecture.md`, `frontend-patterns.md` |
+| `frontend/src/lib/**` | `architecture.md` |
+| `design-system/**` | `design-system.md` |
+| `documentation/**`, `handbook/**` | `maintenance.md` |
+| `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
 
-**Frontend** (`frontend/src/`):
-- Next.js App Router with unified navigation structure:
-  - **Manage** section: Documents (`/documents`, default — "Generate Graph" button navigates to `/extract` instead of starting processing directly), Knowledge Graph (`/extract` — 3-step pipeline: entity extraction & relationship discovery → deep relationship analysis → community detection with staleness tracking; "Generate Graph" button when no entities exist as primary CTA, "Regenerate Graph" button when entities exist runs full pipeline from scratch: first calls `deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()` to wipe all graph data, then reprocesses all documents via `api.reprocessDocuments` → relationship rebuild → community detection), Deduplicate (`/deduplicate` — entity deduplication with rapidfuzz similarity scanning, merge/dismiss flow, merge history), Collections, Add
-  - **Explore** section: Knowledge Graph, Entities (editable name/description via detail modal), Relationships (read-only), Communities (read-only), Deep Research, Chat (all tab-based on `/explore` with `?tab=graph|entities|relationships|communities|research|chat`)
-  - **Settings** (`/admin`): Statistics dashboard, system configuration (LLM Configuration section with 5 sub-areas: Primary Model, Extraction Model, Relationship Model, Vision Model, Embeddings — showing model names, API base URLs, context windows, and concurrency settings via `GET /api/admin/config`; no API keys exposed), API key management, data management (library import/export), danger zone (system reset). Stats bar hidden on this page.
-  - `/` redirects to `/documents`
-  - `/entities`, `/relationships`, `/communities` redirect to their Explore tabs
-- `lib/api.ts` — API client with auth headers
-- `lib/session.ts` — JWT session management
-- `components/layout/` — Header (top nav with Manage/Explore), SubMenu (contextual tabs), StatsBar (4 KPI cards: Documents, Entities, Relations, Communities)
-- `components/upload/UploadModal.tsx` — Upload modal (drag-and-drop + collection selector), closes immediately on file selection; upload progress shown inline in document list
-- `components/documents/DocumentFilters.tsx` — Filter dropdowns: Collection, Status, Source (source filter auto-shown when documents have 2+ distinct sources)
-- `components/documents/DocumentBulkActions.tsx` — Bulk action toolbar: Select All, Reprocess, Download (ZIP), Move to Collection, Delete. Download streams a ZIP archive of selected documents' original files via `POST /api/documents/download-zip` (ZIP64, handles 1000+ files).
-- `components/documents/DocumentCard.tsx` — Document row with view button: `.md` files open in an in-app Markdown viewer modal; all other file types open in a new browser tab via `/api/documents/{id}/file` (browser decides to display or download). Shows `source` label when not default `"upload"`
-- `components/explore/` — Paginated browsers for entities (with inline name/description editing in detail modal), relationships, communities (with search, type filters, detail modals) + KnowledgeGraph visualization (force-graph 2D, default 100 nodes) with dynamic graph expansion (clicking unloaded related entities fetches them + 1-hop neighbors + bridge subgraph, adds to canvas with edges, navigates and centers view) + DeduplicationView (entity merge/dedup with rapidfuzz similarity scanning, entity search to add to groups, merge/dismiss flow, merge history modal with search, community re-detection notice)
-- `app/extract/page.tsx` — Knowledge Graph page: 3-step pipeline with status tracking, staleness detection via `SystemMeta` Neo4j nodes (`last_relationship_analysis_at`, `last_community_detection_at`, `last_entity_merge_at`), cascading blocked states, per-step Inspect buttons linking to Explore tabs. "Generate Graph" / "Regenerate Graph" button runs full pipeline. Regeneration deletes all communities, relationships, AND entities (`deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()`) before reprocessing documents. Flow persisted to `sessionStorage` with a `regenerateTaskId` for the active step's backend task. Resume logic on mount checks the saved task's status: running → resume polling, completed → advance to next step, failed → abort, not found → start fresh. Entity extraction has proper task polling with backend progress messages; running tasks detected on mount. Fresh instance warning on "Extract Entities" (0 entities) recommends "Generate Graph" instead. **Image analysis awareness**: Step 1 tracks documents with background image analysis in progress (completed text processing but `image_progress_current < image_progress_total`); these docs are shown in a separate "Analyzing Images" tile with an aggregate progress bar, Step 1 stays "In Progress" until all images are analyzed, and auto-refresh polls every 5 seconds to keep progress updated. Step 2/3 remain blocked until image analysis completes.
-- `components/admin/SkillConfigModal.tsx` — Setup wizard modal for skill configuration: fetches/triggers LLM analysis of SKILL.md to extract config schema, displays form fields (text/secret types with visibility toggle), saves values via PUT config endpoint, mask preservation for existing secrets
-- `components/` — UI components organized by feature
+## Priority
 
-**Document Processing Pipeline**: Upload (modal closes immediately, duplicate detection by filename+filesize, progress in document list, `source` field tracks document origin — defaults to `"upload"` for UI uploads, `"custom_input"` for custom inputs, or any custom string set via API `source` parameter) → Docling conversion → sentence/word chunking → OpenAI embeddings → LLM entity extraction with fuzzy entity resolution (Levenshtein 85% dedup + optional embedding-based semantic matching via `ENABLE_SEMANTIC_ENTITY_RESOLUTION`, triggered via "Extract Entities" on Knowledge Graph page or "Generate Graph" button on Documents/Knowledge Graph page) → entity type normalization (10 allowed types, fuzzy matched) → fuzzy entity-to-chunk linking → **per-chunk relationship extraction** (chunks with 2+ entities get an LLM call via the relationship model to extract relationships using chunk text as direct evidence, with tenacity retry for rate limits, concurrency controlled by `CONCURRENT_RELATIONS`, stored with `extraction_method='per_chunk'`) → Neo4j storage → **background image analysis** (runs asynchronously after text processing completes; images extracted during Docling conversion are analyzed concurrently via vision model, gated by a configurable semaphore — `VISION_MAX_CONCURRENT`, default 3; progress tracked per-document via `image_progress_current`/`image_progress_total`/`image_progress_message` properties; image chunks created with type `image_analysis` and `chunk_index` 1000+; graph extraction runs on image content if enabled) → (separate job via Knowledge Graph Step 2) two-phase relationship analysis: Phase 1 (relationship model) scans entity batches for candidate pairs, Phase 2 (relationship model) confirms and classifies with XML output. Co-occurrence-based batching via Union-Find clustering, 120 entities/batch, parallel execution, dynamic chunk context filling. Initial analysis runs up to 3 rounds; "Find more" does 1 round. ERR (Entity-Relationship Ratio) metric shown on Knowledge Graph page. → (Step 3) community detection (Leiden with Louvain fallback, weight-aware, co-mention edges for sparse graphs) → community summarization (extraction model, assistant prefill for JSON output). Step 2 supports incremental mode (builds on existing) and rebuild mode (deletes only batch-analysis relationships, preserving per-chunk relationships, then triggers multi-round). Step 2 displays only cross-document relationships (total minus `per_chunk_relationship_count`). Timestamps persisted in `SystemMeta` Neo4j nodes for staleness tracking.
+**Always read**: `architecture.md` (gives you the lay of the land for any task)
+**Read on demand**: All other files, based on the routing table above
 
-**RAG Query Pipeline (Agent Architecture)**: Two-stage researcher/writer pipeline. Researcher agent uses OpenAI function-calling to iteratively gather information via tools: `knowledge_search` (hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking), `community_search`, `entity_lookup`, `reasoning` (quality mode, or speed mode when skills active), `http_request` (built-in, auth injected server-side from skill configs — no headers param), `done`. Writer then synthesizes all gathered context into a streamed answer. Speed mode (chat): 5 iterations default (elevated from 2 when skills are active, gets `reasoning` tool), knowledge_search + done (+ `http_request`/`reasoning` when skills active). Quality mode (deep research): up to 10 iterations, all tools with reasoning transparency. Legacy fixed pipeline available as fallback via `ENABLE_AGENT_RESEARCH=false`.
+## Meta: Maintaining These Docs
 
-## Development Commands
-
-### Docker (primary development method)
-```bash
-# Dev environment (all services with hot reload)
-docker compose up --build
-
-# Production
-docker compose -f docker-compose.prod.yml up --build
-```
-
-### Local development (without Docker)
-```bash
-# Backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-
-# Frontend
-cd frontend
-npm install
-npm run dev        # Dev server on :3000
-npm run build      # Production build
-npm run lint       # ESLint
-```
-
-### Neo4j
-Requires Neo4j 5.15+ with APOC plugin. In Docker this is preconfigured. For local dev, set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` env vars.
-
-## Environment Configuration
-
-Copy `.env.example` to `.env`. Key variables:
-- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` — database connection
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: gpt-4o-mini) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
-- `OPENAI_API_BASE` — for LiteLLM-compatible providers
-- `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `USE_OPENAI_EMBEDDINGS` — embedding config
-- `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
-- `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
-- `ENABLE_SEMANTIC_ENTITY_RESOLUTION` (default: true) — use embedding-based vector similarity for entity dedup during storage (catches semantic matches like "Museum of Crypto Art" / "MOCA" that Levenshtein misses; falls back to Levenshtein)
-- `ENABLE_AGENT_RESEARCH` (default: true), `ENABLE_AGENT_CHAT` (default: true) — agent-based research pipeline flags
-- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 10) — agent loop iteration caps
-- `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
-- `GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY` — Extraction model for entity extraction and community summarization. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to primary model equivalents.
-- `RELATIONSHIP_EXTRACTION_MODEL`, `RELATIONSHIP_EXTRACTION_API_BASE`, `RELATIONSHIP_EXTRACTION_API_KEY` — dedicated LLM model for all relationship extraction work (per-chunk in Step 1 + batch analysis in Step 2). Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model equivalents. Config properties: `rel_extraction_model`, `rel_extraction_api_base`, `rel_extraction_api_key` with fallback chain: relationship model -> extraction model -> main model. Uses `get_relationship_llm_config()` from `llm_config.py`.
-- `CONCURRENT_RELATIONS` (default: 3) — concurrent per-chunk relationship extractions per document (separate rate limit from entity extraction)
-- `EXTRACTION_MAX_CONTEXT` (default: 32768) — context window budget for entity extraction (must match `GRAPH_EXTRACTION_MODEL` context window)
-- `RELATIONSHIP_MAX_CONTEXT` (default: 65536), `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 16000) — context window and output budgets for relationship analysis (must match `RELATIONSHIP_EXTRACTION_MODEL` context window)
-- `PARALLEL_RELATIONSHIP_BATCHES` (default: 5) — number of relationship analysis batches to process in parallel
-- `RELATIONSHIP_TARGET_RATIO` (default: 1.0) — target relationships-per-entity ratio (ERR) for admin monitoring
-- `RELATIONSHIP_MAX_ROUNDS` (default: 3) — max auto-discovery rounds for initial analysis ("Find more" always does 1 round). Stops early if target ratio reached.
-- `RELATIONSHIP_MAX_HOURS` (default: 0) — max hours for relationship generation (0 = no time limit, completes all rounds)
-- `RELATIONSHIP_MAX_PER_ENTITY` (default: 50) — soft cap on relationships per entity during analysis (0 = no cap). When both endpoints are saturated, the relationship is skipped.
-- `VISION_MAX_CONCURRENT` (default: 3) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing)
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth
-- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing
-- `ENABLE_SKILLS` (default: true) — master switch for Agent Skills integration
-- `SKILLS_DIR` (default: `.agents/skills`) — directory for skill discovery (relative to project root or absolute). Persisted via Docker volume (`skills_data`) in production compose
-- `ENABLE_SKILL_SCRIPTS` (default: false) — allow skills to execute local scripts (security-sensitive, opt-in)
-- `SKILL_SCRIPT_TIMEOUT` (default: 30) — timeout in seconds for skill script execution
-- `SKILL_HTTP_TIMEOUT` (default: 15) — timeout in seconds for skill HTTP tool calls
-- `MAX_SKILL_TOOLS` (default: 10) — max total skill-provided tools injected into researcher agent
-- `MAX_SKILL_INSTRUCTIONS_TOKENS` (default: 4000) — approximate token budget for skill instruction injection
-
-## Key Patterns
-
-- Graph extraction uses `get_extraction_llm_config()` from `llm_config.py` (separate from Q&A model). Relationship extraction uses `get_relationship_llm_config()` (separate from extraction model, with fallback chain: relationship model -> extraction model -> main model). This three-tier LLM separation allows running entity extraction and relationship discovery on independent API rate limits.
-- Turbo mode overrides both extraction and main model configs
-- Entity extraction is per-document (Phase A) with fuzzy resolution (`store_entity_with_resolution()`, Levenshtein 85% with optional embedding-based semantic matching via `ENABLE_SEMANTIC_ENTITY_RESOLUTION` using `store_entity_with_embedding()` which tracks `document_id`, `source_documents`, `extraction_count`, `last_extracted_at` for provenance, for catching semantic duplicates like "Museum of Crypto Art" / "MOCA" that string similarity misses), entity type normalization (10 allowed types via `_normalize_entity_type()` with rapidfuzz fallback to Concept)
-- **Per-chunk relationship extraction**: During Phase A (document processing), after entity extraction and chunk linking, chunks with 2+ entities get an LLM call (using the relationship model via `get_relationship_llm_config()`) to extract relationships using the chunk text as direct evidence. Tracks original-to-canonical entity name mapping during entity storage and remaps relationship source/target to canonical names before storing, preventing silent storage failures when entity names were merged during fuzzy resolution. Stored with `extraction_method='per_chunk'`. Concurrency controlled by `CONCURRENT_RELATIONS` (default 3), separate from entity extraction concurrency. Uses tenacity retry with exponential backoff (4 attempts, 2-30s wait) for rate limit errors. This provides high-confidence, evidence-grounded relationships before Phase B runs.
-- Relationship analysis is per-collection (Phase B) with two-phase per-batch processing, both using the relationship model (`get_relationship_llm_config()`):
-  - **Phase 1 — Candidate Scan**: Relationship model scans all entities in the batch + chunk context to identify candidate entity pairs that may be related. Output: simple `EntityA | EntityB` pairs. Uses `EXTRACTION_MAX_CONTEXT` token budget (larger context window for scanning). Includes few-shot good/bad examples to guide the LLM and anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
-  - **Phase 2 — Relationship Extraction**: Relationship model takes only the candidate pairs + their descriptions + chunk context and outputs structured XML relationships with type, description, weight, and confidence (0.0-1.0). Relationships with confidence < 0.5 are filtered before storage. Uses `RELATIONSHIP_MAX_CONTEXT` token budget. Batches with 0 candidates skip Phase 2 entirely.
-  - Both phases use the relationship model (defaults to extraction model) because it's instruction-following and produces clean structured output. The main model tends to over-reason and output plaintext instead of XML. The dedicated relationship model config allows running relationship discovery on a separate API rate limit from entity extraction.
-- Relationship batching: 120 entities/batch hard cap, 5% overlap (degree-aware: excludes entities already in 2+ batches, prefers low-connection entities), parallel execution (`PARALLEL_RELATIONSHIP_BATCHES`, default 5). Token budget split 60/40 between entities and chunk context (dynamic filling via `get_chunk_context_for_entities()` with greedy entity-coverage-diversity selection). Co-occurrence-based entity ordering via Union-Find clustering groups entities sharing chunks into the same batch with high/low connection count interleaving to prevent hub concentration. Scales to 100k+ entities in O(n * avg_chunks).
-- Multi-round relationship discovery: Initial analysis (0 existing relationships) runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds. "Find more" (relationships already exist) always runs 1 round. Each round fetches existing relationships with per-entity cap (top 20 by weight per entity) to prevent hub reinforcement. Per-entity storage cap (`RELATIONSHIP_MAX_PER_ENTITY`, default 50): skips relationships where both endpoints are saturated. Stops early if `RELATIONSHIP_TARGET_RATIO` reached or `RELATIONSHIP_MAX_HOURS` exhausted.
-- **Stats**: `GraphStatsResponse` also exposes `per_chunk_relationship_count` (via `count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END)`) separately from `relationship_count`, enabling the frontend to distinguish within-document vs cross-document relationships.
-- Entity-Relationship Ratio (ERR): `entity_relationship_ratio` tracked in `GraphStatsResponse` and returned in analysis task results. Shown on Knowledge Graph page (Step 2) with color-coded indicator (green >= 0.69, yellow >= 0.29, red < 0.29), displayed to 2 decimal places, and tooltip explaining the metric. `RELATIONSHIP_TARGET_RATIO` (default 1.0) configurable.
-- Relationship type constraint: prompt enforces 14 standard types (MENTIONS removed as it was a lazy co-occurrence catch-all), `_extract_xml_relationships()` fuzzy-matches non-standard types to `DEFAULT_RELATION_TYPES` via rapidfuzz (80% threshold, fallback to RELATED_TO). Includes plaintext fallback parser for `EntityA --[TYPE]--> EntityB` arrow format when XML parsing finds no results.
-- **Self-referential relationship filtering**: `store_relationship()` skips relationships where source == target. Also filtered in `extract_chunk_relationships_async` and `analyze_relationships_async` before storage attempts.
-- Relationship analysis supports `rebuild=true` mode (calls `delete_batch_relationships()` to delete only batch-analysis relationships where `extraction_method != 'per_chunk'`, preserving Step 1 per-chunk relationships, then triggers multi-round) alongside default incremental mode
-- Entity deduplication: `suggest_duplicate_entities()` fetches all entities and compares in Python using rapidfuzz (`ratio` for typos, `token_sort_ratio` for word reordering, `partial_ratio` with type-aware gating — restricted to same-type entities with length ratio >= 0.5, relaxed to 0.35 for Person type). **Person-aware partial_ratio gating**: for Person entities, partial_ratio is only allowed when the shorter name is a strict word-level prefix of the longer name (e.g., "Colborn" ↔ "Colborn Bell" allowed, "David Young" ↔ "David Hockney" blocked). Same-word-count pairs suppressed via vectorized numpy masking; remaining sparse pairs checked individually. Uses star clustering (not BFS) to prevent transitive chain explosions; **single-word Person names excluded as star centers** to prevent hub groups (e.g., "Andrea" pulling all "Andrea X" into one group). Person-type entities sorted with priority. CPU limited to half of available cores (`sched_getaffinity` for Docker cgroup awareness); 5-minute server-side timeout on the endpoint. `merge_entities()` retargets all relationships and chunk MENTIONS to canonical, deduplicates relationships (same source+target+type keeps highest weight), adds aliases, merges source_documents, accepts LLM-generated `merged_description`, clears community_id (topology changed), then deletes merged nodes. `MergeHistory` nodes store merge audit trail (entity snapshots, stats). `SystemMeta` tracks `last_entity_merge_at` (also exposed in `GraphStatsResponse`). Endpoints: `GET /api/entities/duplicates` (5-min timeout, 504 on expiry), `POST /api/entities/merge`, `GET /api/entities/merge-history`. Frontend: Deduplicate page (`/deduplicate`) under Manage section with scan/merge/dismiss flow, **entity-level access** via `?entity=` query param (auto-scans and filters to groups containing that entity, or creates standalone group for manual addition), **inspect modal** (eye icon on each entity in a group shows full details: description, relationships, related entities, chunks), entity search (inline) to add entities to groups, merge history modal with search, community re-detection notice after merges. EntitiesBrowser has Deduplicate button (merge icon) on each entity card and in the detail modal footer. Dismissed groups stored in localStorage.
-- **Dynamic graph expansion**: KnowledgeGraph visualization (default 100 nodes) supports clicking unloaded related entities in the EntityPanel to grow the graph. Expansion flow: `getEntityRelationships(target, 1, 50)` fetches the entity + 1-hop neighbors + edges; `getGraphSubgraph([selected, target], true)` fetches the bridge subgraph (all shared neighbors + edges between both entities' neighborhoods) in parallel. New nodes spawn near the selected entity; a `pendingNavigateRef` + `useEffect` on `graphData.nodes` handles navigation after React re-render; `d3ReheatSimulation()` wakes the force layout; a polling interval waits for x/y before calling `centerAt`/`zoom`. Expanded nodes/edges are stored in component state (`expandedNodes`/`expandedEdges`) and merged into `graphData` via `useMemo`, reset when props change. Geometric pointer events (`pointerdown`/`pointerup`) filter by `e.target.tagName === "CANVAS"` to avoid stealing clicks from the EntityPanel overlay.
-- **Entity traversal constraint**: `traverse_from_entities()` has an `entity_paths_only` flag (default `False`). When `True`, adds `WHERE ALL(n IN nodes(path) WHERE n:Entity)` to the Cypher traversal, preventing paths through Chunk/Document nodes. The entity details endpoint (`/api/graph/entity/{name}`) uses `entity_paths_only=True` so the panel only shows entities reachable via Entity→Entity relationships (navigable on the graph). RAG callers leave it `False` for broader context retrieval. `get_entity_relationships()` also constrains to Entity-only paths.
-- Entity search (`find_entities_by_name()`) uses fulltext index with wildcard prefix matching (e.g. "pol" finds "Polygon") via Lucene `*` suffix, sorted by connection count (highest first)
-- Community detection: tries Leiden first (GDS), falls back to Louvain, then BFS. Uses relationship weights (`relationshipWeightProperty`), undirected projection (UNION both directions), and co-mention edges (entities sharing a chunk get implicit weight-2.0 edge). Old communities cleaned up before re-detection.
-- Community summarization: uses the extraction model (not the primary model) for reliable structured output. Assistant prefill `{"` forces JSON output, double-brace dedup, 5-strategy parsing fallback (direct parse, strip-to-first-brace, code fence, regex object, regex fields), fallback names from top entity names
-- Knowledge Graph page guides users through the 3-step pipeline with staleness detection: pending docs → needs relationship re-analysis → needs community re-detection. Also detects staleness when entities have been merged since last community detection (`last_entity_merge_at` > `last_community_detection_at`). Steps cascade (Step 2/3 grey out when prior step needs update). Each step has an "Inspect" button linking to the relevant Explore tab. "Generate Graph" (no entities) / "Regenerate Graph" (entities exist) button runs full 3-step pipeline. Regeneration cleanup order: `deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()` → `reprocessDocuments()` → relationship analysis (rebuild) → community detection — a true from-scratch rebuild. Flow state persisted in `sessionStorage` with a `regenerateTaskId` for the active step's backend task; resume logic checks the saved task's status (running → resume polling, completed → advance, failed → abort, not found → start fresh), eliminating heuristic-based step-skipping.
-- Knowledge Graph Step 1 displays "X entities and Y within-document relationships extracted" (using `per_chunk_relationship_count` from stats) instead of just entity count.
-- Knowledge Graph Step 1 is **image-analysis-aware**: documents with `processing_status === "completed"` but `image_progress_current < image_progress_total` are treated as still in-progress. These appear in a dedicated "Analyzing Images" summary tile and a blue progress banner with aggregate image count (X/Y images across N documents). Step 1 status remains "in_progress" until all image analysis completes, blocking Step 2/3. Auto-refresh polls every 5 seconds when image analysis is detected. The "Processed" count in the summary grid only includes `fullyCompletedDocs` (completed AND images done).
-- Progress tracking: relationship analysis shows batch X/Y with ETA computed from observed batch duration. Entity extraction polls backend task status with progress messages; running tasks detected on mount. Community detection polls task status every 2 seconds. Image analysis progress polled via document data refresh every 5 seconds. Stats bar refreshes every 5 seconds.
-- Chat/Research message rendering: research process blocks (Sub-Questions, Thinking Steps, Reasoning Steps) render above the main content bubble. Order: research process → content → graph context → sources. Research Process container auto-scrolls to bottom as new steps stream in.
-- Source modal highlighting: cited chunk is highlighted within the full document text. Uses `indexOf()` to split into three parts: before (60% opacity), cited chunk (full opacity with 3px accent left border), after (60% opacity). Auto-scrolls to highlighted chunk on load.
-- `SystemMeta` Neo4j nodes store `last_relationship_analysis_at`, `last_community_detection_at`, and `last_entity_merge_at` timestamps. Upload dates are naive (no timezone) — frontend appends `Z` for UTC comparison.
-- Backend uses singleton service instances (Neo4jService, DocumentProcessor, etc.)
-- Background tasks via FastAPI's `BackgroundTasks` for document processing
-- Streaming responses for `/api/ask/stream` and `/api/ask/stream/thinking` endpoints
-- Frontend uses `"use client"` directive for interactive components; API calls go through `lib/api.ts`
-- Explore browsers (entities, relationships, communities) use server-side pagination with search and filtering. Backend endpoints (`/api/graph/entities`, `/api/graph/relationships`, `/api/graph/communities`) accept `skip`, `limit`, and `search` query params; entities and relationships also accept type filters (`entity_type`, `rel_type`). Dedicated `/api/graph/entity-types` and `/api/graph/relationship-types` endpoints return distinct types for filter dropdowns. Frontend uses 300ms debounced search, fetches only the current page (50 items for entities/relationships, 25 for communities), and shows subtle opacity transition during fetches. Each item is clickable for a detail modal. Communities browser cleans up JSON artifacts in summaries for display.
-- **Entity editing**: Entity detail modal (Explore > Entities tab) supports inline editing of name and description via `PATCH /api/graph/entity/{name}`. Name edits add the old name to the entity's `aliases` array for continued searchability; the endpoint validates against duplicate names. Graph edges (relationships, chunk MENTIONS) remain intact because Neo4j edges connect to nodes, not name strings. The fulltext index auto-updates.
-- All API endpoints are in `main.py` (no separate router modules)
-- Bulk Download (`POST /api/documents/download-zip`): Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. No auth required (matches existing file endpoint). Accessible via Download button in bulk actions toolbar on Documents page.
-- System Reset (`POST /api/admin/reset`): Admin-only endpoint with selective deletion options (documents, uploaded files, custom inputs, collections, API keys). When documents are deleted, also cleans up `MergeHistory` nodes (dedup audit trail), `SystemMeta` nodes (staleness timestamps), and frontend clears client-side cached data (`dedup_dismissed` and `moca_community_detection_task` from localStorage, `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage). Accessible via Settings page → Danger Zone → System Reset modal with "DELETE" confirmation.
-- Library Import/Export: Full instance migration via Settings page → Data Management section. **Export** (`POST /api/admin/export`) runs as a background task (`library_export` task type) building a ZIP64 archive containing 12 NDJSON data files (documents, chunks with embeddings, entities, relationships, communities, community members, collections, collection members, chunk mentions, merge history, system meta) + original document files in `files/` directory. Manifest records export version, embedding model/dimension, and item counts. Download via `GET /api/admin/export/{task_id}/download` streams the ZIP in 1MB chunks. **Import** (`POST /api/admin/import`) accepts multipart ZIP upload with `mode` query param: `clean` (requires empty instance, default) or `replace` (auto-wipes via system reset first). Runs as background task (`library_import` task type). Validates manifest, checks embedding model/dimension compatibility (warns on mismatch), remaps file paths to target instance directories, restores all nodes and edges including dynamic APOC relationship types. Concurrency guard prevents simultaneous export/import operations (409 if one already running). Frontend component (`LibraryTransferSection`) shows two cards: Export (stats summary + progress bar + download button) and Import (mode selector + drag-and-drop ZIP upload + DELETE confirmation for replace mode + progress bar + result summary with warnings). On import completion, clears client-side caches (same as system reset).
-- **Agent Skills** (agentskills.io standard): Extensible skill system for Deep Research and Chat using **auto-activation**. Skills are SKILL.md files with YAML frontmatter (name, description, license, metadata) following the [AgentSkills open standard](https://agentskills.io/). Two skill types: **instruction skills** (SKILL.md body modifies researcher behavior) and **tool-providing skills** (legacy `tools.json` with HTTP/script execution config — not part of the agentskills.io standard; the standard pattern uses the built-in `http_request` tool with API endpoints described in SKILL.md). Skills discovered from `.agents/skills/` directory on startup, installable from direct URLs or skills.sh registry (`GET https://skills.sh/api/search?q={query}&limit=20`). Neo4j `Skill` nodes track metadata, enabled state, and `config_schema` (JSON). **Auto-activation pattern**: All enabled skills are loaded at researcher agent session start — their SKILL.md instructions are injected into `<active_skills>` block and the built-in `http_request` tool is added to the tool list. The agent can also manually activate additional skills mid-conversation via `activate_skill`/`list_skills` tools (kept for backward compatibility). Key functions: `get_skill_catalog()` (tier 1, Neo4j only), `load_skill_for_activation()` (tier 2, reads filesystem + config.json), `get_tools_with_skill_activation()` (dynamic tool list — adds `http_request` + `reasoning` to speed mode when skills active). `build_activated_skills_block()` strips auth-related lines from SKILL.md to prevent the model from handling auth itself. **Built-in `http_request` tool**: defined in `research_prompts.py`, executed in `researcher_agent.py` — no `headers` parameter (auth is server-side). Server-side auth injection: `_execute_http_request` merges all activated skill configs, builds HTTP headers from `auth_header` fields in each skill's config schema (e.g., `"Authorization: Bearer API_TOKEN"` → header with actual value from config.json), and calls the API via httpx. `_substitute_variables()` handles `${VAR}` and bare `VAR` patterns in URLs, resolving from skill config values first then `SKILL_*` env vars. `_truncate_response()` intelligently truncates large JSON API responses by progressively slimming array items (truncating string values, flattening nested objects, compacting lists) before falling back to item-level truncation. Successful API responses are stored as sources (without chunk_id) for the writer. `_deduplicate_sources()` keeps sources without chunk_id (skill API responses) alongside chunk-based deduplication. **Setup Wizard**: LLM-based config analysis (`POST /api/admin/skills/{id}/analyze`) sends SKILL.md body to the primary LLM which returns a JSON array of `SkillConfigVariable` objects (name, description, required, type, auth_header). Schema cached on the Neo4j `Skill` node as `config_schema`. Config endpoints: `GET /api/admin/skills/{id}/config` (schema + masked values), `PUT /api/admin/skills/{id}/config` (save with mask preservation for existing secrets). Frontend `SkillConfigModal` component provides the setup wizard UI. `config_status` field on `SkillInfo` response: "configured" (all required vars have values), "needs_setup" (schema exists but values missing), or null (no schema yet). Config models in `models.py`: `SkillConfigVariable`, `SkillConfigSchema`, `SkillConfigSaveRequest`. Skill tool names namespaced as `skill__{skill_id}__{tool_name}`. Legacy tool execution via `SkillService.execute_skill_tool()`: HTTP tools use httpx with env var substitution (only `SKILL_*` vars for security), script tools gated by `ENABLE_SKILL_SCRIPTS` (disabled by default). Frontend: `SkillsManager` component on Settings page (install/enable/disable/delete + registry search via skills.sh API + setup wizard trigger), `SkillConfigModal` for config setup, skill activations and tool calls rendered in chat with Puzzle icon. Config: `ENABLE_SKILLS` (default true), `SKILLS_DIR` (default `.agents/skills`, persisted via Docker volume in prod), `ENABLE_SKILL_SCRIPTS` (default false), `MAX_SKILL_TOOLS` (default 10). Skills directory persistence: `skills_data` Docker volume mounted at `/app/.agents/skills` in `docker-compose.prod.yml`. Endpoints: `GET/POST/PATCH/DELETE /api/admin/skills/*`, `POST /api/admin/skills/{id}/analyze`, `GET /api/admin/skills/{id}/config`, `PUT /api/admin/skills/{id}/config` (admin-only).
-
-## Design System
-
-The project has a portable design system at `design-system/moca-cortex/`:
-- `MASTER.md` — Complete design spec: colors (OKLCh), typography (Inter + JetBrains Mono), spacing, glass morphism, animation tokens, component patterns, accessibility checklist, z-index scale, and anti-patterns. This is the source of truth for all visual decisions.
-- `tokens.css` — Drop-in CSS file with all custom properties (light + dark themes), glass/glow/shimmer classes. Import this into any new project to reuse the design system.
-- `tailwind.preset.ts` — Tailwind preset with all color/font/radius tokens. Use via `presets: [mocaPreset]` in other projects.
-- `pages/*.md` — Page-specific overrides (dashboard, ask, explore, documents) that take precedence over MASTER.md for those pages.
-
-Design context and principles are also documented in `.impeccable.md` at the repo root.
-
-Key design characteristics: monochrome foundation with a single dynamic accent color (`oklch(0.79 0.18 70.67)`, configurable via `NEXT_PUBLIC_ACCENT_COLOR`), dark mode default, glass morphism surfaces (24px blur), Framer Motion animations, Lucide icons only.
-
-## Documentation & Maintenance Rules
-
-- **Keep `documentation/` in sync**: When adding, modifying, or removing API endpoints, features, or configuration options, update the corresponding pages in `documentation/` (Zudoku-based docs site with pages in `documentation/pages/` and API specs in `documentation/apis/`).
-- **Keep `README.md` in sync**: When making changes that affect the project overview, features, API endpoints, environment variables, architecture, or setup instructions, update `README.md` accordingly.
-- **Keep this `CLAUDE.md` in sync**: When changes affect the architecture, key patterns, development commands, or deployment instructions documented here, update this file.
-- **Keep `design-system/` in sync**: When making global design changes (color tokens, typography, spacing scale, animation defaults, new component patterns, or glass morphism treatment), update `design-system/moca-cortex/MASTER.md`, `tokens.css`, and `tailwind.preset.ts` accordingly. For page-specific design changes, update or create the corresponding `design-system/moca-cortex/pages/<page>.md` override.
-
-## Deployment
-
-- **Coolify**: Use `coolify/docker-compose.coolify.yml`. Important: services with `SERVICE_FQDN_*` must have `traefik.docker.network=coolify` label and join the external `coolify` network to avoid 504 timeouts.
-- **Standalone Docker**: `docker-compose.prod.yml` with Nginx reverse proxy
+When making significant changes, update the relevant `.claude/` subfile(s) per the routing table. If adding a new subfile, add it to the Navigation Map and File-Path Routing above. Keep subfiles 50–300 lines. See [`.claude/maintenance.md`](.claude/maintenance.md) for full sync rules across all documentation layers (README, documentation/, handbook/, design-system/).

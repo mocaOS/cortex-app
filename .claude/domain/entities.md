@@ -1,0 +1,74 @@
+# Entities
+
+Entity extraction, resolution, deduplication, merging, editing, and search.
+
+## Fuzzy Resolution
+
+Entity extraction is per-document (Phase A) with fuzzy resolution:
+
+- `store_entity_with_resolution()` uses Levenshtein 85% dedup
+- Optional embedding-based semantic matching via `ENABLE_SEMANTIC_ENTITY_RESOLUTION` using `store_entity_with_embedding()` which tracks `document_id`, `source_documents`, `extraction_count`, `last_extracted_at` for provenance
+- Catches semantic duplicates like "Museum of Crypto Art" / "MOCA" that string similarity misses; falls back to Levenshtein when disabled
+
+## Type Normalization
+
+10 allowed entity types, normalized via `_normalize_entity_type()` with rapidfuzz fallback to Concept.
+
+## Deduplication Algorithm
+
+`suggest_duplicate_entities()` fetches all entities and compares in Python using rapidfuzz:
+
+### Similarity Scorers
+- `ratio` — for typos
+- `token_sort_ratio` — for word reordering
+- `partial_ratio` with type-aware gating — restricted to same-type entities with length ratio >= 0.5, relaxed to 0.35 for Person type
+
+### Person-Aware Partial Ratio Gating
+For Person entities, `partial_ratio` is only allowed when the shorter name is a strict word-level prefix of the longer name (e.g., "Colborn" ↔ "Colborn Bell" allowed, "David Young" ↔ "David Hockney" blocked).
+
+### Performance
+- Same-word-count pairs suppressed via vectorized numpy masking; remaining sparse pairs checked individually
+- CPU limited to half of available cores (`sched_getaffinity` for Docker cgroup awareness)
+- 5-minute server-side timeout on the endpoint
+
+### Clustering
+Uses star clustering (not BFS) to prevent transitive chain explosions. **Single-word Person names excluded as star centers** to prevent hub groups (e.g., "Andrea" pulling all "Andrea X" into one group). Person-type entities sorted with priority.
+
+## Merge Operation
+
+`merge_entities()`:
+- Retargets all relationships and chunk MENTIONS to canonical
+- Deduplicates relationships (same source+target+type keeps highest weight)
+- Adds aliases, merges source_documents
+- Accepts LLM-generated `merged_description`
+- Clears community_id (topology changed)
+- Deletes merged nodes
+
+`MergeHistory` nodes store merge audit trail (entity snapshots, stats). `SystemMeta` tracks `last_entity_merge_at` (also exposed in `GraphStatsResponse`).
+
+### Endpoints
+- `GET /api/entities/duplicates` (5-min timeout, 504 on expiry)
+- `POST /api/entities/merge`
+- `GET /api/entities/merge-history`
+
+### Frontend (Deduplicate Page)
+`/deduplicate` under Manage section with scan/merge/dismiss flow:
+- **Entity-level access** via `?entity=` query param (auto-scans and filters to groups containing that entity, or creates standalone group for manual addition)
+- **Inspect modal** (eye icon on each entity in a group shows full details: description, relationships, related entities, chunks)
+- Entity search (inline) to add entities to groups
+- Merge history modal with search
+- Community re-detection notice after merges
+- EntitiesBrowser has Deduplicate button (merge icon) on each entity card and in the detail modal footer
+- Dismissed groups stored in localStorage
+
+## Entity Editing
+
+Entity detail modal (Explore > Entities tab) supports inline editing of name and description via `PATCH /api/graph/entity/{name}`. Name edits add the old name to the entity's `aliases` array for continued searchability; the endpoint validates against duplicate names. Graph edges (relationships, chunk MENTIONS) remain intact because Neo4j edges connect to nodes, not name strings. The fulltext index auto-updates.
+
+## Entity Search
+
+`find_entities_by_name()` uses fulltext index with wildcard prefix matching (e.g. "pol" finds "Polygon") via Lucene `*` suffix, sorted by connection count (highest first).
+
+## Entity Traversal Constraint
+
+`traverse_from_entities()` has an `entity_paths_only` flag (default `False`). When `True`, adds `WHERE ALL(n IN nodes(path) WHERE n:Entity)` to the Cypher traversal, preventing paths through Chunk/Document nodes. The entity details endpoint (`/api/graph/entity/{name}`) uses `entity_paths_only=True` so the panel only shows entities reachable via Entity→Entity relationships (navigable on the graph). RAG callers leave it `False` for broader context retrieval. `get_entity_relationships()` also constrains to Entity-only paths.
