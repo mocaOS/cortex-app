@@ -30,6 +30,11 @@ ENV NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
 ARG NEXT_PUBLIC_ACCENT_COLOR
 ENV NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
 
+# Server-side API URL used by next.config.mjs rewrites() at build time
+# Defaults to Docker Compose internal service name
+ARG API_URL=http://backend:8000
+ENV API_URL=${API_URL}
+
 # Download custom logo if NEXT_PUBLIC_LOGO_URL is set
 # Extracts the file extension and saves with correct format
 RUN if [ -n "$NEXT_PUBLIC_LOGO_URL" ]; then \

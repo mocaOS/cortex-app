@@ -182,6 +182,8 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
         - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
         - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+        # Server-side API URL baked into next.config.mjs rewrites at build time
+        - API_URL=http://backend:8000
     environment:
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
