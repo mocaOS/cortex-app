@@ -90,6 +90,11 @@ Enforcement applied at every non-admin endpoint. Full scope:
 
 Validation on create/update: restricted scope requires ≥1 collection; all specified collection IDs must exist.
 
+**Implementation notes / gotchas**
+
+- `neo4j_service.py` has a single `get_stats(allowed_collection_ids=None)` method. A now-removed dead stub (no-arg version) previously existed earlier in the class and would have shadowed the scoped version in any Python version where the second definition wins. Keep only one definition.
+- When checking collection access for an existing document, pass `doc.get("collection_id")` directly — do **not** fall back to a literal string like `"default"`. `can_access_collection(None)` correctly returns `True` for unrestricted queries (documents not assigned to any collection), so the fallback would wrongly block restricted keys from accessing uncollected documents.
+
 ### Frontend
 - `ApiKeyManager` — manage API keys on Settings page; `CreateKeyModal` includes collection scope radio + multi-select picker
 - `ApiKeyCard` — individual key display with collection scope badge (amber "N Collections" or muted "All Collections") and collection list in expanded details

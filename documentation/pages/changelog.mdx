@@ -39,6 +39,11 @@ Restricted keys now receive automatically filtered results across every read end
 - `/api/entities/duplicates` — entity candidates scoped to allowed collections
 - Researcher agent (`researcher_agent.py`) and query processor (`document_processor.py`) — `allowed_collection_ids` propagated through `run_research_pipeline()`, `graph_search_async()`, `_execute_knowledge_search()`, `hybrid_search_with_graph()`, and `semantic_search()` so Ask AI and Deep Research respect collection boundaries end-to-end
 
+**Bug fixes**
+
+- Removed dead `get_stats()` method (`neo4j_service.py`) that was shadowed by the new scoped version — the dead method returned a stripped-down dict missing `community_count`, `collection_count`, `pending_count` and other fields, making it a silent trap for future callers
+- Fixed `reprocess_documents` and `reprocess_document` endpoints incorrectly using `collection_id or "default"` when checking collection access for documents without a collection assignment — `can_access_collection(None)` already returns `True` for restricted keys (global queries are allowed), so the fallback was incorrectly blocking access to uncollected documents
+
 ---
 
 ## April 1, 2026

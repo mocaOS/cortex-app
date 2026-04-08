@@ -1345,7 +1345,7 @@ async def reprocess_document(
         raise HTTPException(status_code=404, detail="Document not found")
     
     # Validate collection access
-    validate_collection_access(auth, document.get("collection_id") or "default", "reprocess documents in")
+    validate_collection_access(auth, document.get("collection_id"), "reprocess documents in")
     
     # If file is provided, use it (and update stored file)
     if file and file.filename:
@@ -1446,7 +1446,7 @@ async def reprocess_documents(
                     continue
                 
                 # Check collection access
-                if not auth.can_access_collection(doc.get("collection_id") or "default"):
+                if not auth.can_access_collection(doc.get("collection_id")):
                     results.append({
                         "document_id": doc_id,
                         "status": "error",

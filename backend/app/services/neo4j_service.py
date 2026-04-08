@@ -2067,39 +2067,6 @@ class Neo4jService:
             except Exception as e:
                 logger.debug(f"Failed to add entity alias: {e}")
     
-    def get_stats(self) -> dict:
-        """Get knowledge base and knowledge graph statistics."""
-        with self.driver.session() as session:
-            result = session.run("""
-                MATCH (d:Document)
-                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size
-                
-                OPTIONAL MATCH (e:Entity)
-                WITH doc_count, chunk_count, total_size, count(e) as entity_count
-                
-                OPTIONAL MATCH (:Entity)-[r]->(:Entity)
-                WITH doc_count, chunk_count, total_size, entity_count,
-                     count(r) as rel_count,
-                     count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END) as per_chunk_rel_count
-                RETURN doc_count as document_count,
-                       chunk_count,
-                       total_size,
-                       entity_count,
-                       rel_count as relationship_count,
-                       per_chunk_rel_count
-            """)
-
-            record = result.single()
-            return {
-                "document_count": record["document_count"],
-                "chunk_count": record["chunk_count"],
-                "total_size": record["total_size"] or 0,
-                "entity_count": record["entity_count"],
-                "relationship_count": record["relationship_count"],
-                "per_chunk_relationship_count": record["per_chunk_rel_count"],
-            }
-    
     def get_graph_visualization_data(
         self,
         limit: int = 100,
