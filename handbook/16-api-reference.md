@@ -1,6 +1,6 @@
 # Chapter 16: API Reference
 
-The Library exposes 60+ REST API endpoints. All endpoints except `/health` require an `X-API-Key` header. This chapter provides a complete endpoint reference.
+The Library exposes 70+ REST API endpoints. All endpoints except `/health` require an `X-API-Key` header. This chapter provides a complete endpoint reference.
 
 For interactive API documentation, visit `/docs` (Swagger UI) or `/redoc` (ReDoc) on your running instance. The full OpenAPI 3.0.3 specification is also available in `documentation/apis/openapi.yaml`.
 
@@ -45,7 +45,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | `POST` | `/api/custom-input` | Manage | Create custom input. Body: `{input_type, content, answer?, title?, collection_id?, start_processing?, source?}` |
-| `POST` | `/api/custom-input/generate-topic` | Read | Generate topic hint. Body: `{content, answer?, input_type}`. Returns `{topic_hint, existing_similar}` |
+| `POST` | `/api/custom-input/generate-topic` | Manage | Generate topic hint. Body: `{content, answer?, input_type}`. Returns `{topic_hint, existing_similar}` |
 | `GET` | `/api/custom-inputs` | Read | List custom inputs. Query: `search`, `limit` |
 | `GET` | `/api/custom-inputs/{id}` | Read | Get custom input details for editing |
 
@@ -149,13 +149,13 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | `GET` | `/api/turbo/status` | Read | Availability, active job, ready state |
-| `GET` | `/api/turbo/balance` | Read | Compute3 account balance |
-| `POST` | `/api/turbo/start` | Manage | Start GPU job. Query: `runtime`, `gpu_type`, `gpu_count` |
-| `POST` | `/api/turbo/stop` | Manage | Stop GPU job. Query: `job_id` |
-| `POST` | `/api/turbo/extend` | Manage | Extend runtime. Query: `additional_seconds`, `job_id` |
-| `GET` | `/api/turbo/jobs` | Read | List GPU jobs. Query: `state` |
-| `GET` | `/api/turbo/jobs/{id}` | Read | Job details |
-| `GET` | `/api/turbo/jobs/{id}/logs` | Read | Job logs |
+| `GET` | `/api/turbo/balance` | Admin | Compute3 account balance |
+| `POST` | `/api/turbo/start` | Admin | Start GPU job. Query: `runtime`, `gpu_type`, `gpu_count` |
+| `POST` | `/api/turbo/stop` | Admin | Stop GPU job. Query: `job_id` |
+| `POST` | `/api/turbo/extend` | Admin | Extend runtime. Query: `additional_seconds`, `job_id` |
+| `GET` | `/api/turbo/jobs` | Admin | List GPU jobs. Query: `state` |
+| `GET` | `/api/turbo/jobs/{id}` | Admin | Job details |
+| `GET` | `/api/turbo/jobs/{id}/logs` | Admin | Job logs |
 
 ## Admin — API Keys
 

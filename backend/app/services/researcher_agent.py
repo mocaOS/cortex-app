@@ -193,6 +193,7 @@ async def _execute_knowledge_search(
     collection_id: Optional[str],
     processor,
     settings,
+    allowed_collection_ids: Optional[List[str]] = None,
 ) -> tuple:
     """
     Execute hybrid search for each query in parallel, then deduplicate and rerank.
@@ -205,7 +206,8 @@ async def _execute_knowledge_search(
     # Execute all queries in parallel
     tasks = [
         processor.graph_search_async(
-            q, top_k=5, use_hybrid_rrf=True, collection_id=collection_id
+            q, top_k=5, use_hybrid_rrf=True, collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids
         )
         for q in queries
     ]
@@ -258,6 +260,7 @@ async def _run_researcher_loop(
     client: AsyncOpenAI,
     llm_config,
     settings,
+    allowed_collection_ids: Optional[List[str]] = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Run the researcher agent loop. Yields streaming events and a final result event.
@@ -498,7 +501,8 @@ async def _run_researcher_loop(
                     }
 
                     sources, graph_ctx = await _execute_knowledge_search(
-                        queries, question, collection_id, processor, settings
+                        queries, question, collection_id, processor, settings,
+                        allowed_collection_ids=allowed_collection_ids
                     )
 
                     result.sources.extend(sources)
@@ -813,6 +817,7 @@ async def run_research_pipeline(
     mode: Literal["speed", "quality"],
     conversation_history: Optional[List[ConversationMessage]] = None,
     collection_id: Optional[str] = None,
+    allowed_collection_ids: Optional[List[str]] = None,
     processor=None,
     neo4j_service=None,
     llm_config=None,
@@ -857,6 +862,7 @@ async def run_research_pipeline(
         mode=mode,
         conversation_history=conversation_history,
         collection_id=collection_id,
+        allowed_collection_ids=allowed_collection_ids,
         processor=processor,
         neo4j_service=neo4j_service,
         client=client,

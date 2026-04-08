@@ -385,7 +385,7 @@ def cleanup_old_tasks(max_age_hours: int = 24) -> int:
 # =============================================================================
 
 @app.get("/api/tasks/{task_id}", response_model=TaskProgress)
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, auth: AuthResult = Depends(require_read_permission)):
     """
     Get the current status and progress of a background task.
     
@@ -398,7 +398,7 @@ async def get_task_status(task_id: str):
 
 
 @app.get("/api/tasks/{task_id}/result")
-async def get_task_result(task_id: str):
+async def get_task_result(task_id: str, auth: AuthResult = Depends(require_read_permission)):
     """
     Get the result of a completed background task.
     
@@ -430,7 +430,8 @@ async def get_task_result(task_id: str):
 @app.get("/api/tasks")
 async def list_tasks(
     status: Optional[str] = Query(default=None, description="Filter by status"),
-    task_type: Optional[str] = Query(default=None, description="Filter by task type")
+    task_type: Optional[str] = Query(default=None, description="Filter by task type"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
     """List all active tasks, optionally filtered by status or type."""
     tasks = list(_task_store.values())
@@ -450,7 +451,7 @@ async def list_tasks(
 
 
 @app.delete("/api/tasks/{task_id}")
-async def cancel_task(task_id: str):
+async def cancel_task(task_id: str, auth: AuthResult = Depends(require_manage_permission)):
     """
     Cancel/remove a task from the store.
     
@@ -465,7 +466,10 @@ async def cancel_task(task_id: str):
 
 
 @app.post("/api/tasks/cleanup")
-async def cleanup_tasks(max_age_hours: int = Query(default=24, ge=1, le=168)):
+async def cleanup_tasks(
+    max_age_hours: int = Query(default=24, ge=1, le=168),
+    auth: AuthResult = Depends(require_manage_permission)
+):
     """Remove old completed/failed tasks."""
     removed = cleanup_old_tasks(max_age_hours)
     return {"removed": removed, "remaining": len(_task_store)}
@@ -486,10 +490,14 @@ async def health_check():
 
 @app.get("/api/stats", response_model=GraphStatsResponse)
 async def get_stats(auth: AuthResult = Depends(require_read_permission)):
-    """Get knowledge base and knowledge graph statistics."""
+    """Get knowledge base and knowledge graph statistics.
+    
+    For restricted API keys, counts are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        stats = await asyncio.to_thread(neo4j.get_stats)
+        collection_filter = auth.get_collection_filter()
+        stats = await asyncio.to_thread(neo4j.get_stats, collection_filter)
         return GraphStatsResponse(
             document_count=stats["document_count"],
             chunk_count=stats["chunk_count"],
@@ -728,7 +736,7 @@ class TopicHintResponse(BaseModel):
 
 
 @app.post("/api/custom-input/generate-topic", response_model=TopicHintResponse)
-async def generate_topic_hint(request: TopicHintRequest):
+async def generate_topic_hint(request: TopicHintRequest, auth: AuthResult = Depends(require_manage_permission)):
     """
     Generate a topic hint for custom content using LLM.
     
@@ -981,16 +989,24 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
 @app.get("/api/custom-inputs")
 async def list_custom_inputs(
     search: Optional[str] = Query(default=None, description="Search in filename, content, or topic"),
-    limit: int = Query(default=50, ge=1, le=200)
+    limit: int = Query(default=50, ge=1, le=200),
+    auth: AuthResult = Depends(require_read_permission)
 ):
     """
     List all custom inputs with optional search.
     
     Returns custom inputs (manually added Q&A, text, markdown) that can be edited.
+    For restricted API keys, results are filtered to accessible collections.
     """
     try:
         neo4j = get_neo4j_service()
         custom_inputs = await asyncio.to_thread(neo4j.get_custom_inputs, search, limit)
+        
+        # Filter by collection access for restricted keys
+        collection_filter = auth.get_collection_filter()
+        if collection_filter is not None:
+            custom_inputs = [i for i in custom_inputs if i.get("collection_id") in collection_filter]
+        
         return {"custom_inputs": custom_inputs, "total": len(custom_inputs)}
     except Exception as e:
         logger.error(f"Error listing custom inputs: {e}")
@@ -998,7 +1014,7 @@ async def list_custom_inputs(
 
 
 @app.get("/api/custom-inputs/{document_id}")
-async def get_custom_input(document_id: str):
+async def get_custom_input(document_id: str, auth: AuthResult = Depends(require_read_permission)):
     """
     Get a custom input's full data for editing.
     
@@ -1009,6 +1025,10 @@ async def get_custom_input(document_id: str):
         custom_input = await asyncio.to_thread(neo4j.get_custom_input, document_id)
         if not custom_input:
             raise HTTPException(status_code=404, detail="Custom input not found")
+        
+        # Validate collection access
+        validate_collection_access(auth, custom_input.get("collection_id"), "view")
+        
         return custom_input
     except HTTPException:
         raise
@@ -1057,7 +1077,7 @@ async def get_document(document_id: str, auth: AuthResult = Depends(require_read
 
 
 @app.get("/api/documents/{document_id}/content")
-async def get_document_content(document_id: str):
+async def get_document_content(document_id: str, auth: AuthResult = Depends(require_read_permission)):
     """
     Get a document with its full content (all chunks concatenated).
     
@@ -1070,6 +1090,10 @@ async def get_document_content(document_id: str):
         content = await asyncio.to_thread(neo4j.get_document_content, document_id)
         if not content:
             raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Validate collection access
+        validate_collection_access(auth, content.get("collection_id"), "view content in")
+        
         return content
     except HTTPException:
         raise
@@ -1079,7 +1103,7 @@ async def get_document_content(document_id: str):
 
 
 @app.get("/api/documents/{document_id}/file")
-async def get_document_file(document_id: str):
+async def get_document_file(document_id: str, auth: AuthResult = Depends(require_read_permission)):
     """
     Serve the original uploaded file for viewing/download.
     """
@@ -1088,6 +1112,9 @@ async def get_document_file(document_id: str):
         doc = await asyncio.to_thread(neo4j.get_document, document_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
+
+        # Validate collection access
+        validate_collection_access(auth, doc.get("collection_id"), "download files from")
 
         file_path = doc.get("file_path")
         if not file_path or not os.path.exists(file_path):
@@ -1109,11 +1136,14 @@ async def get_document_file(document_id: str):
 
 
 @app.post("/api/documents/download-zip")
-async def download_documents_zip(request: Request):
+async def download_documents_zip(request: Request, auth: AuthResult = Depends(require_read_permission)):
     """
     Stream a zip archive of the original uploaded files for the given document IDs.
     Accepts JSON body: { "document_ids": ["id1", "id2", ...] }
     Uses ZIP64 and streams to handle large collections without loading everything into memory.
+    
+    For restricted API keys, only includes documents from allowed collections.
+    Returns 403 if no accessible documents found.
     """
     import zipfile
     import io
@@ -1130,10 +1160,15 @@ async def download_documents_zip(request: Request):
     if not docs:
         raise HTTPException(status_code=404, detail="No documents found")
 
-    # Filter to documents that have files on disk
+    # Filter to documents that have files on disk AND are accessible to this API key
+    collection_filter = auth.get_collection_filter()
     valid_docs = []
     seen_names = {}
     for doc in docs:
+        # Check collection access - silently skip inaccessible documents
+        if collection_filter is not None and doc.get("collection_id") not in collection_filter:
+            continue
+            
         file_path = doc.get("file_path", "")
         if file_path and os.path.exists(file_path):
             filename = doc.get("filename", os.path.basename(file_path))
@@ -1147,6 +1182,9 @@ async def download_documents_zip(request: Request):
             valid_docs.append({"file_path": file_path, "filename": filename})
 
     if not valid_docs:
+        # If collection filter was applied and no docs are accessible, return 403
+        if collection_filter is not None:
+            raise HTTPException(status_code=403, detail="No accessible documents found for download")
         raise HTTPException(status_code=404, detail="No files available for download")
 
     def generate_zip():
@@ -1288,7 +1326,8 @@ async def delete_all_documents(auth: AuthResult = Depends(require_manage_permiss
 @app.post("/api/documents/{document_id}/reprocess")
 async def reprocess_document(
     document_id: str,
-    file: Optional[UploadFile] = File(default=None)
+    file: Optional[UploadFile] = File(default=None),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """
     Reprocess a single document.
@@ -1304,6 +1343,9 @@ async def reprocess_document(
     document = await asyncio.to_thread(neo4j.get_document, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Validate collection access
+    validate_collection_access(auth, document.get("collection_id") or "default", "reprocess documents in")
     
     # If file is provided, use it (and update stored file)
     if file and file.filename:
@@ -1372,7 +1414,8 @@ async def reprocess_document(
 async def reprocess_documents(
     request: ReprocessRequest,
     background_tasks: BackgroundTasks,
-    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently")
+    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently"),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """
     Reprocess multiple documents using their stored original files.
@@ -1399,6 +1442,15 @@ async def reprocess_documents(
                         "document_id": doc_id,
                         "status": "error",
                         "message": "Document not found"
+                    })
+                    continue
+                
+                # Check collection access
+                if not auth.can_access_collection(doc.get("collection_id") or "default"):
+                    results.append({
+                        "document_id": doc_id,
+                        "status": "error",
+                        "message": "Access denied for this document's collection"
                     })
                     continue
                 
@@ -1463,15 +1515,22 @@ async def reprocess_documents(
 # =============================================================================
 
 @app.get("/api/documents/pending")
-async def get_pending_documents():
+async def get_pending_documents(auth: AuthResult = Depends(require_read_permission)):
     """
     Get all documents with 'pending' status that are waiting to be processed.
     
     Use this to check how many documents are queued before calling process-pending.
+    For restricted API keys, results are filtered to accessible collections.
     """
     try:
         processor = get_document_processor()
         pending = await asyncio.to_thread(processor.get_pending_documents)
+        
+        # Filter by collection access for restricted keys
+        collection_filter = auth.get_collection_filter()
+        if collection_filter is not None:
+            pending = [d for d in pending if d.get("collection_id") in collection_filter]
+        
         return {
             "pending_count": len(pending),
             "documents": pending
@@ -1520,7 +1579,8 @@ async def _run_batch_processing_task(
 @app.post("/api/documents/process-pending")
 async def process_pending_documents(
     background_tasks: BackgroundTasks,
-    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently (defaults to BATCH_PROCESSING_CONCURRENCY env var)")
+    concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently (defaults to BATCH_PROCESSING_CONCURRENCY env var)"),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """
     Start processing all pending documents as a background task.
@@ -1571,7 +1631,7 @@ async def process_pending_documents(
 
 
 @app.post("/api/cleanup/orphaned-entities")
-async def cleanup_orphaned_entities():
+async def cleanup_orphaned_entities(auth: AuthResult = Depends(require_manage_permission)):
     """
     Clean up orphaned entities and communities from the knowledge graph.
 
@@ -1612,22 +1672,28 @@ async def search(request: SearchRequest, auth: AuthResult = Depends(require_read
         filter_collection_id = request.filters.get("collection_id") if request.filters else None
         if filter_collection_id:
             validate_collection_access(auth, filter_collection_id, "search in")
-        
+
+        # Resolve collection scope for restricted API keys
+        effective_collection_id = filter_collection_id
+        allowed_collection_ids: Optional[List[str]] = None
+
+        if not effective_collection_id:
+            collection_filter = auth.get_collection_filter()
+            if collection_filter is not None:
+                if len(collection_filter) == 1:
+                    effective_collection_id = collection_filter[0]
+                else:
+                    allowed_collection_ids = collection_filter
+
         processor = get_query_processor()
         
         # Use hybrid search to combine vector + keyword + metadata
         results = processor.hybrid_search(
             query=request.query,
-            top_k=request.top_k
+            top_k=request.top_k,
+            collection_id=effective_collection_id,
+            allowed_collection_ids=allowed_collection_ids,
         )
-        
-        # Filter results based on collection access for restricted keys
-        # Note: This requires document collection info to be in the result metadata
-        collection_filter = auth.get_collection_filter()
-        if collection_filter is not None:
-            # Results need to include collection_id - for now filter by document lookup
-            # This is a basic implementation; production should include collection_id in search results
-            pass  # TODO: Implement collection filtering in search results
         
         search_results = [
             SearchResult(
@@ -1665,15 +1731,23 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
         # Validate collection access if a specific collection is requested
         if request.collection_id:
             validate_collection_access(auth, request.collection_id, "query")
-        
-        # For restricted keys querying all collections, override to their allowed collections
+
+        # Resolve effective collection scope for restricted API keys.
+        # When the caller passes no collection_id, restricted keys must still
+        # be confined to their allowed collections.
         effective_collection_id = request.collection_id
-        if not effective_collection_id and auth.collection_scope == "restricted" and auth.allowed_collections:
-            # If only one collection is allowed, use it directly
-            if len(auth.allowed_collections) == 1:
-                effective_collection_id = auth.allowed_collections[0]
-            # Otherwise, results will be filtered downstream
-        
+        allowed_collection_ids: Optional[List[str]] = None
+
+        if not effective_collection_id:
+            collection_filter = auth.get_collection_filter()
+            if collection_filter is not None:
+                if len(collection_filter) == 1:
+                    # Single allowed collection — use the standard collection_id path
+                    effective_collection_id = collection_filter[0]
+                else:
+                    # Multiple allowed collections — pass as an IN-list to the search layer
+                    allowed_collection_ids = collection_filter
+
         settings = get_settings()
         processor = get_query_processor()
 
@@ -1688,7 +1762,8 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
                 question=request.question,
                 mode="quality",
                 conversation_history=conversation_history,
-                collection_id=request.collection_id,
+                collection_id=effective_collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
 
             # Build sources from agent result (already formatted)
@@ -1727,7 +1802,8 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
             conversation_history=conversation_history,
             use_reranking=request.use_reranking,
             use_agentic=request.use_agentic,
-            collection_id=request.collection_id
+            collection_id=effective_collection_id,
+            allowed_collection_ids=allowed_collection_ids,
         )
 
         sources = [
@@ -1787,7 +1863,21 @@ async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(re
     # Validate collection access if a specific collection is requested
     if request.collection_id:
         validate_collection_access(auth, request.collection_id, "query")
-    
+
+    # Resolve effective collection scope for restricted API keys.
+    # Closures inside generator functions capture variables by reference, so we
+    # compute the effective values here in the outer scope where auth is available.
+    _stream_effective_collection_id = request.collection_id
+    _stream_allowed_collection_ids: Optional[List[str]] = None
+
+    if not _stream_effective_collection_id:
+        _stream_collection_filter = auth.get_collection_filter()
+        if _stream_collection_filter is not None:
+            if len(_stream_collection_filter) == 1:
+                _stream_effective_collection_id = _stream_collection_filter[0]
+            else:
+                _stream_allowed_collection_ids = _stream_collection_filter
+
     settings = get_settings()
     
     if not settings.openai_api_key:
@@ -1808,7 +1898,8 @@ async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(re
                         question=request.question,
                         mode="quality",
                         conversation_history=request.conversation_history,
-                        collection_id=request.collection_id
+                        collection_id=_stream_effective_collection_id,
+                        allowed_collection_ids=_stream_allowed_collection_ids,
                     ):
                         yield f"data: {json.dumps(event)}\n\n"
                 else:
@@ -1817,7 +1908,7 @@ async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(re
                         top_k=request.top_k,
                         max_hops=request.max_hops,
                         conversation_history=request.conversation_history,
-                        collection_id=request.collection_id
+                        collection_id=_stream_effective_collection_id
                     ):
                         yield f"data: {json.dumps(event)}\n\n"
 
@@ -1876,7 +1967,9 @@ Important: Do NOT include any thinking, reasoning, or internal monologue in your
                     messages.append({"role": "user", "content": request.question})
                 else:
                     # First message - do vector search and include context
-                    results = processor.search(request.question, top_k=request.top_k, collection_id=request.collection_id)
+                    results = processor.search(request.question, top_k=request.top_k,
+                                               collection_id=_stream_effective_collection_id,
+                                               allowed_collection_ids=_stream_allowed_collection_ids)
                     context = "\n\n".join([r['content'][:600] for r in results[:3]])
                     
                     if context:
@@ -1958,7 +2051,8 @@ Question: {request.question}"""
                     question=request.question,
                     mode="speed",
                     conversation_history=request.conversation_history,
-                    collection_id=request.collection_id
+                    collection_id=_stream_effective_collection_id,
+                    allowed_collection_ids=_stream_allowed_collection_ids,
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
                 return
@@ -1976,7 +2070,8 @@ Question: {request.question}"""
                     top_k=request.top_k * 2,
                     max_hops=request.max_hops,
                     use_hybrid_rrf=settings.enable_hybrid_search,
-                    collection_id=request.collection_id
+                    collection_id=_stream_effective_collection_id,
+                    allowed_collection_ids=_stream_allowed_collection_ids,
                 )
                 results = search_result["results"]
                 graph_data = search_result["graph_context"]
@@ -1988,7 +2083,9 @@ Question: {request.question}"""
                         chunks=graph_data["chunks"]
                     )
             else:
-                results = processor.search(request.question, top_k=request.top_k * 2, collection_id=request.collection_id)
+                results = processor.search(request.question, top_k=request.top_k * 2,
+                                           collection_id=_stream_effective_collection_id,
+                                           allowed_collection_ids=_stream_allowed_collection_ids)
 
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
@@ -2106,7 +2203,8 @@ Question: {request.question}"""
 @app.get("/api/graph/visualization")
 async def get_graph_visualization(
     limit: int = Query(default=100, ge=0, le=10000, description="Max entities (0 = all)"),
-    include_neighbors: bool = Query(default=True, description="Include 1-hop neighbor entities for more relationships")
+    include_neighbors: bool = Query(default=True, description="Include 1-hop neighbor entities for more relationships"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
     """
     Get knowledge graph data for visualization.
@@ -2120,10 +2218,15 @@ async def get_graph_visualization(
     - stats: Metadata about what's displayed vs total graph size
     
     Set limit=0 to fetch ALL entities (use with caution for large graphs).
+    
+    For restricted API keys, results are scoped to entities from accessible collections.
     """
     try:
         neo4j = get_neo4j_service()
-        data = await asyncio.to_thread(neo4j.get_graph_visualization_data, limit, include_neighbors)
+        collection_filter = auth.get_collection_filter()
+        data = await asyncio.to_thread(
+            neo4j.get_graph_visualization_data, limit, include_neighbors, collection_filter
+        )
         return data
     except Exception as e:
         logger.error(f"Error getting graph visualization: {e}")
@@ -2134,17 +2237,23 @@ async def get_graph_visualization(
 async def get_entity_relationships(
     entity_name: str,
     max_depth: int = Query(default=2, ge=1, le=3, description="Maximum relationship hops to traverse"),
-    limit: int = Query(default=50, ge=1, le=200, description="Maximum relationships to return")
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum relationships to return"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
     """
     Get an entity and all its relationships up to max_depth hops.
     
     This enables focused graph exploration from a specific entity,
     showing all connected entities and the relationships between them.
+    
+    For restricted API keys, results are scoped to accessible collections.
     """
     try:
         neo4j = get_neo4j_service()
-        data = await asyncio.to_thread(neo4j.get_entity_relationships, entity_name, max_depth, limit)
+        collection_filter = auth.get_collection_filter()
+        data = await asyncio.to_thread(
+            neo4j.get_entity_relationships, entity_name, max_depth, limit, collection_filter
+        )
         if not data.get("entity"):
             raise HTTPException(status_code=404, detail=f"Entity '{entity_name}' not found")
         return data
@@ -2158,7 +2267,8 @@ async def get_entity_relationships(
 @app.post("/api/graph/subgraph")
 async def get_graph_subgraph(
     entity_names: List[str],
-    include_connections: bool = Query(default=True, description="Include entities that connect the specified entities")
+    include_connections: bool = Query(default=True, description="Include entities that connect the specified entities"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
     """
     Get a subgraph containing specified entities and their interconnections.
@@ -2166,10 +2276,15 @@ async def get_graph_subgraph(
     Endpoint for focused graph visualization of specific entities.
     If include_connections is True, also includes bridging entities that
     connect the specified entities (up to 2 hops apart).
+    
+    For restricted API keys, results are scoped to accessible collections.
     """
     try:
         neo4j = get_neo4j_service()
-        data = await asyncio.to_thread(neo4j.get_graph_subgraph, entity_names, include_connections)
+        collection_filter = auth.get_collection_filter()
+        data = await asyncio.to_thread(
+            neo4j.get_graph_subgraph, entity_names, include_connections, collection_filter
+        )
         return data
     except Exception as e:
         logger.error(f"Error getting graph subgraph: {e}")
@@ -2182,12 +2297,17 @@ async def list_entities(
     limit: int = Query(default=50, ge=1, le=1000),
     skip: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None, description="Search in entity name and description"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """List entities in the knowledge graph with server-side pagination and search."""
+    """List entities in the knowledge graph with server-side pagination and search.
+    
+    For restricted API keys, results are scoped to entities from accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
+        collection_filter = auth.get_collection_filter()
         result = await asyncio.to_thread(
-            neo4j.list_entities_paginated, skip, limit, search, entity_type
+            neo4j.list_entities_paginated, skip, limit, search, entity_type, collection_filter
         )
         return result
     except Exception as e:
@@ -2196,11 +2316,15 @@ async def list_entities(
 
 
 @app.get("/api/graph/entity-types")
-async def list_entity_types():
-    """Get all distinct entity types."""
+async def list_entity_types(auth: AuthResult = Depends(require_read_permission)):
+    """Get all distinct entity types.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        types = await asyncio.to_thread(neo4j.get_entity_types)
+        collection_filter = auth.get_collection_filter()
+        types = await asyncio.to_thread(neo4j.get_entity_types, collection_filter)
         return {"types": types}
     except Exception as e:
         logger.error(f"Error listing entity types: {e}")
@@ -2213,12 +2337,17 @@ async def list_relationships(
     limit: int = Query(default=50, ge=1, le=1000),
     skip: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None, description="Search in source, target, description"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """List relationships with server-side pagination and search."""
+    """List relationships with server-side pagination and search.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
+        collection_filter = auth.get_collection_filter()
         result = await asyncio.to_thread(
-            neo4j.list_relationships_paginated, skip, limit, search, rel_type
+            neo4j.list_relationships_paginated, skip, limit, search, rel_type, collection_filter
         )
         return result
     except Exception as e:
@@ -2227,11 +2356,15 @@ async def list_relationships(
 
 
 @app.get("/api/graph/relationship-types")
-async def list_relationship_types():
-    """Get all distinct relationship types."""
+async def list_relationship_types(auth: AuthResult = Depends(require_read_permission)):
+    """Get all distinct relationship types.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        types = await asyncio.to_thread(neo4j.get_relationship_types)
+        collection_filter = auth.get_collection_filter()
+        types = await asyncio.to_thread(neo4j.get_relationship_types, collection_filter)
         return {"types": types}
     except Exception as e:
         logger.error(f"Error listing relationship types: {e}")
@@ -2239,11 +2372,25 @@ async def list_relationship_types():
 
 
 @app.get("/api/graph/entity/{entity_name}")
-async def get_entity_details(entity_name: str, max_hops: int = Query(default=2, ge=1, le=3)):
-    """Get details about a specific entity and its relationships."""
+async def get_entity_details(
+    entity_name: str,
+    max_hops: int = Query(default=2, ge=1, le=3),
+    auth: AuthResult = Depends(require_read_permission)
+):
+    """Get details about a specific entity and its relationships.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        context = await asyncio.to_thread(neo4j.traverse_from_entities, [entity_name], max_hops, entity_paths_only=True)
+        collection_filter = auth.get_collection_filter()
+        context = await asyncio.to_thread(
+            neo4j.traverse_from_entities,
+            [entity_name],
+            max_hops,
+            entity_paths_only=True,
+            allowed_collection_ids=collection_filter
+        )
         
         if not context["entities"]:
             raise HTTPException(status_code=404, detail="Entity not found")
@@ -2257,11 +2404,18 @@ async def get_entity_details(entity_name: str, max_hops: int = Query(default=2, 
 
 
 @app.get("/api/graph/search")
-async def search_entities(query: str = Query(..., min_length=1)):
-    """Search for entities by name."""
+async def search_entities(
+    query: str = Query(..., min_length=1),
+    auth: AuthResult = Depends(require_read_permission)
+):
+    """Search for entities by name.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        results = await asyncio.to_thread(neo4j.find_entities_by_name, [query])
+        collection_filter = auth.get_collection_filter()
+        results = await asyncio.to_thread(neo4j.find_entities_by_name, [query], collection_filter)
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching entities: {e}")
@@ -2274,7 +2428,7 @@ async def search_entities(query: str = Query(..., min_length=1)):
 
 
 @app.patch("/api/graph/entity/{entity_name}")
-async def update_entity(entity_name: str, request: UpdateEntityRequest):
+async def update_entity(entity_name: str, request: UpdateEntityRequest, auth: AuthResult = Depends(require_manage_permission)):
     """Update an entity's name and/or description."""
     try:
         neo4j = get_neo4j_service()
@@ -2355,7 +2509,7 @@ async def _generate_merged_description(canonical: str, all_names: List[str], ent
 
 
 @app.post("/api/entities/merge")
-async def merge_entities(request: MergeEntitiesRequest):
+async def merge_entities(request: MergeEntitiesRequest, auth: AuthResult = Depends(require_manage_permission)):
     """Merge duplicate entities into a canonical entity."""
     try:
         neo4j = get_neo4j_service()
@@ -2383,12 +2537,26 @@ async def merge_entities(request: MergeEntitiesRequest):
 @app.get("/api/entities/merge-history")
 async def get_merge_history(
     limit: int = Query(default=50, ge=1, le=500),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """Get entity merge history."""
+    """Get entity merge history.
+    
+    Note: This is an admin-adjacent feature showing merge operations.
+    For restricted API keys, this requires collection_scope: "all".
+    """
     try:
+        # Merge history is a global admin feature - restrict to unrestricted keys
+        if auth.get_collection_filter() is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Merge history is only available to API keys with full collection access"
+            )
+        
         neo4j = get_neo4j_service()
         history = await asyncio.to_thread(neo4j.get_merge_history, limit)
         return {"history": history, "total": len(history)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting merge history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2398,12 +2566,17 @@ async def get_merge_history(
 async def suggest_duplicates(
     threshold: float = Query(default=0.75, ge=0.5, le=1.0),
     limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """Suggest duplicate entity groups for user review."""
+    """Suggest duplicate entity groups for user review.
+    
+    For restricted API keys, results are scoped to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
+        collection_filter = auth.get_collection_filter()
         groups = await asyncio.wait_for(
-            asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit),
+            asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit, collection_filter),
             timeout=300,  # 5 minute timeout for large graphs
         )
         return {"groups": groups, "total_groups": len(groups)}
@@ -2415,13 +2588,17 @@ async def suggest_duplicates(
 
 
 @app.get("/api/graph/status")
-async def get_graph_status():
-    """Get GraphRAG system status."""
+async def get_graph_status(auth: AuthResult = Depends(require_read_permission)):
+    """Get GraphRAG system status.
+    
+    For restricted API keys, counts are scoped to accessible collections.
+    """
     try:
         settings = get_settings()
         extractor = get_graph_extractor()
         neo4j = get_neo4j_service()
-        stats = await asyncio.to_thread(neo4j.get_stats)
+        collection_filter = auth.get_collection_filter()
+        stats = await asyncio.to_thread(neo4j.get_stats, collection_filter)
         
         return {
             "graph_extraction_enabled": settings.enable_graph_extraction,
@@ -2707,6 +2884,7 @@ async def analyze_relationships(
     rebuild: bool = Query(
         default=False, description="Delete all existing relationships before analysis"
     ),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """Analyze relationships between entities across documents.
 
@@ -2720,6 +2898,10 @@ async def analyze_relationships(
         settings = get_settings()
         if not settings.enable_graph_extraction:
             raise HTTPException(status_code=400, detail="Graph extraction is disabled")
+
+        # Validate collection access if scoped
+        if collection_id:
+            validate_collection_access(auth, collection_id, "analyze relationships in")
 
         task = create_task("relationship_analysis")
         task.message = "Starting relationship analysis..." if not rebuild else "Starting full rebuild..."
@@ -2745,7 +2927,7 @@ async def analyze_relationships(
 
 
 @app.delete("/api/graph/relationships")
-async def delete_all_relationships():
+async def delete_all_relationships(auth: AuthResult = Depends(require_manage_permission)):
     """Delete ALL relationships between entities."""
     try:
         neo4j = get_neo4j_service()
@@ -2757,7 +2939,7 @@ async def delete_all_relationships():
 
 
 @app.delete("/api/graph/entities")
-async def delete_all_entities():
+async def delete_all_entities(auth: AuthResult = Depends(require_manage_permission)):
     """Delete ALL entities and their connections."""
     try:
         neo4j = get_neo4j_service()
@@ -2777,12 +2959,18 @@ async def list_communities(
     limit: int = Query(default=50, ge=1, le=1000),
     skip: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None, description="Search in community name, summary, and entities"),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """List all detected communities with server-side pagination and search."""
+    """List all detected communities with server-side pagination and search.
+    
+    For restricted API keys, results are filtered to communities with at least one
+    member entity from accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
+        collection_filter = auth.get_collection_filter()
         result = await asyncio.to_thread(
-            neo4j.list_communities_paginated, skip, limit, search
+            neo4j.list_communities_paginated, skip, limit, search, collection_filter
         )
         return result
     except Exception as e:
@@ -2909,7 +3097,8 @@ async def _run_community_detection_task(
 async def detect_communities(
     background_tasks: BackgroundTasks,
     min_size: int = Query(default=3, ge=2, le=20, description="Minimum community size"),
-    collection_id: Optional[str] = Query(default=None, description="Scope to collection")
+    collection_id: Optional[str] = Query(default=None, description="Scope to collection"),
+    auth: AuthResult = Depends(require_manage_permission)
 ):
     """
     Start community detection on the knowledge graph as a background task.
@@ -2922,6 +3111,10 @@ async def detect_communities(
         settings = get_settings()
         if not settings.enable_community_detection:
             raise HTTPException(status_code=400, detail="Community detection is disabled")
+        
+        # Validate collection access if scoped
+        if collection_id:
+            validate_collection_access(auth, collection_id, "detect communities in")
         
         # Create a task and start it in the background
         task = create_task("community_detection")
@@ -2948,11 +3141,16 @@ async def detect_communities(
 
 
 @app.get("/api/graph/communities/{community_id}")
-async def get_community(community_id: int):
-    """Get a specific community with its entities and relationships."""
+async def get_community(community_id: int, auth: AuthResult = Depends(require_read_permission)):
+    """Get a specific community with its entities and relationships.
+    
+    For restricted API keys, validates the community has at least one member
+    from accessible collections. Entity list is also filtered.
+    """
     try:
         neo4j = get_neo4j_service()
-        community = await asyncio.to_thread(neo4j.get_community, community_id)
+        collection_filter = auth.get_collection_filter()
+        community = await asyncio.to_thread(neo4j.get_community, community_id, collection_filter)
         if not community:
             raise HTTPException(status_code=404, detail="Community not found")
         return community
@@ -2964,7 +3162,7 @@ async def get_community(community_id: int):
 
 
 @app.delete("/api/graph/communities/{community_id}")
-async def delete_community(community_id: int):
+async def delete_community(community_id: int, auth: AuthResult = Depends(require_manage_permission)):
     """Delete a specific community. Entities are unlinked but not deleted."""
     try:
         neo4j = get_neo4j_service()
@@ -2980,7 +3178,7 @@ async def delete_community(community_id: int):
 
 
 @app.delete("/api/graph/communities")
-async def delete_all_communities():
+async def delete_all_communities(auth: AuthResult = Depends(require_manage_permission)):
     """Delete ALL communities. Entities are unlinked but not deleted."""
     try:
         neo4j = get_neo4j_service()
@@ -2992,7 +3190,7 @@ async def delete_all_communities():
 
 
 @app.post("/api/graph/communities/summarize")
-async def summarize_communities(request: CommunitySummaryRequest):
+async def summarize_communities(request: CommunitySummaryRequest, auth: AuthResult = Depends(require_manage_permission)):
     """
     Generate or regenerate summaries for communities.
     
@@ -3062,12 +3260,17 @@ async def summarize_communities(request: CommunitySummaryRequest):
 @app.get("/api/graph/communities/search")
 async def search_communities(
     query: str = Query(..., min_length=1, description="Search query"),
-    limit: int = Query(default=5, ge=1, le=20)
+    limit: int = Query(default=5, ge=1, le=20),
+    auth: AuthResult = Depends(require_read_permission)
 ):
-    """Search communities by their summary content."""
+    """Search communities by their summary content.
+    
+    For restricted API keys, results are filtered to accessible collections.
+    """
     try:
         neo4j = get_neo4j_service()
-        results = await asyncio.to_thread(neo4j.search_communities_by_content, query, limit)
+        collection_filter = auth.get_collection_filter()
+        results = await asyncio.to_thread(neo4j.search_communities_by_content, query, limit, collection_filter)
         return {"query": query, "results": results}
     except Exception as e:
         logger.error(f"Error searching communities: {e}")
@@ -3079,7 +3282,7 @@ async def search_communities(
 # =============================================================================
 
 @app.post("/api/ask/stream/thinking")
-async def ask_with_thinking_stream(request: RAGRequest):
+async def ask_with_thinking_stream(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
     """
     Stream the RAG response with extended thinking visibility.
     
@@ -3096,6 +3299,22 @@ async def ask_with_thinking_stream(request: RAGRequest):
     This provides extended thinking where users can see
     the agent's reasoning process in real-time.
     """
+    # Validate collection access if a specific collection is requested
+    if request.collection_id:
+        validate_collection_access(auth, request.collection_id, "query")
+
+    # Resolve effective collection scope for restricted API keys
+    _stream_effective_collection_id = request.collection_id
+    _stream_allowed_collection_ids: Optional[List[str]] = None
+
+    if not _stream_effective_collection_id:
+        _stream_collection_filter = auth.get_collection_filter()
+        if _stream_collection_filter is not None:
+            if len(_stream_collection_filter) == 1:
+                _stream_effective_collection_id = _stream_collection_filter[0]
+            else:
+                _stream_allowed_collection_ids = _stream_collection_filter
+
     settings = get_settings()
     
     if not settings.openai_api_key:
@@ -3111,7 +3330,8 @@ async def ask_with_thinking_stream(request: RAGRequest):
                     question=request.question,
                     mode="quality",
                     conversation_history=request.conversation_history,
-                    collection_id=request.collection_id
+                    collection_id=_stream_effective_collection_id,
+                    allowed_collection_ids=_stream_allowed_collection_ids,
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
             else:
@@ -3120,7 +3340,7 @@ async def ask_with_thinking_stream(request: RAGRequest):
                     top_k=request.top_k,
                     max_hops=request.max_hops,
                     conversation_history=request.conversation_history,
-                    collection_id=request.collection_id
+                    collection_id=_stream_effective_collection_id
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
 
@@ -3143,7 +3363,7 @@ async def ask_with_thinking_stream(request: RAGRequest):
 # =============================================================================
 
 @app.get("/api/turbo/status")
-async def get_turbo_status():
+async def get_turbo_status(auth: AuthResult = Depends(require_read_permission)):
     """
     Get Turbo Mode status.
     
@@ -3188,7 +3408,7 @@ async def get_turbo_status():
 
 
 @app.get("/api/turbo/balance")
-async def get_turbo_balance():
+async def get_turbo_balance(auth: AuthResult = Depends(require_admin)):
     """Get Compute3 account balance."""
     try:
         c3 = get_compute3_service()
@@ -3230,6 +3450,7 @@ async def start_turbo_mode(
     runtime: Optional[int] = Query(default=None, ge=60, le=86400, description="Runtime in seconds (1 min to 24 hours)"),
     gpu_type: Optional[str] = Query(default=None, description="GPU type (h100, a100, l40s, etc.)"),
     gpu_count: Optional[int] = Query(default=None, ge=1, le=8, description="Number of GPUs (1-8)"),
+    auth: AuthResult = Depends(require_admin)
 ):
     """
     Start Turbo Mode by launching a GPU job on Compute3.
@@ -3279,7 +3500,8 @@ async def start_turbo_mode(
 
 @app.post("/api/turbo/stop")
 async def stop_turbo_mode(
-    job_id: Optional[str] = Query(default=None, description="Specific job ID to stop (optional)")
+    job_id: Optional[str] = Query(default=None, description="Specific job ID to stop (optional)"),
+    auth: AuthResult = Depends(require_admin)
 ):
     """
     Stop Turbo Mode by cancelling the active GPU job.
@@ -3320,7 +3542,8 @@ async def stop_turbo_mode(
 @app.post("/api/turbo/extend")
 async def extend_turbo_mode(
     additional_seconds: int = Query(..., ge=60, le=86400, description="Additional runtime in seconds"),
-    job_id: Optional[str] = Query(default=None, description="Specific job ID to extend (optional)")
+    job_id: Optional[str] = Query(default=None, description="Specific job ID to extend (optional)"),
+    auth: AuthResult = Depends(require_admin)
 ):
     """
     Extend the runtime of an active Turbo Mode job.
@@ -3358,7 +3581,8 @@ async def extend_turbo_mode(
 
 @app.get("/api/turbo/jobs")
 async def list_turbo_jobs(
-    state: Optional[str] = Query(default=None, description="Filter by state (running, pending, succeeded, failed, canceled)")
+    state: Optional[str] = Query(default=None, description="Filter by state (running, pending, succeeded, failed, canceled)"),
+    auth: AuthResult = Depends(require_admin)
 ):
     """
     List all Turbo Mode jobs (current and historical).
@@ -3386,7 +3610,7 @@ async def list_turbo_jobs(
 
 
 @app.get("/api/turbo/jobs/{job_id}")
-async def get_turbo_job(job_id: str):
+async def get_turbo_job(job_id: str, auth: AuthResult = Depends(require_admin)):
     """Get details of a specific Turbo Mode job."""
     try:
         c3 = get_compute3_service()
@@ -3408,7 +3632,7 @@ async def get_turbo_job(job_id: str):
 
 
 @app.get("/api/turbo/jobs/{job_id}/logs")
-async def get_turbo_job_logs(job_id: str):
+async def get_turbo_job_logs(job_id: str, auth: AuthResult = Depends(require_admin)):
     """Get logs from a Turbo Mode job."""
     try:
         c3 = get_compute3_service()

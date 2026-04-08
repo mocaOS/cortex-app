@@ -69,7 +69,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
-- **🔐 Collection-Scoped API Keys**: Restrict API keys to specific collections — one instance, multiple isolated tenants. Both `read` and `read+write` keys support collection scoping. Restricted keys see filtered document/collection lists and get 403 on any out-of-scope resource. New collections require explicit access grants.
+- **🔐 Collection-Scoped API Keys**: Restrict API keys to specific collections — one instance, multiple isolated tenants. Both `read` and `read+write` keys support collection scoping. Restricted keys automatically receive filtered results across all endpoints — documents, collections, graph entities, relationships, communities, stats, and search — using the 4-hop `Collection→Document→Chunk→Entity` pattern. Out-of-scope single-resource requests return 403. New collections require explicit access grants.
 - **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
@@ -259,7 +259,7 @@ npm run dev
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/custom-input` | Create a custom input (Q&A, text, or markdown) |
-| POST | `/api/custom-input/generate-topic` | Generate a topic/title hint from content using LLM |
+| POST | `/api/custom-input/generate-topic` | Generate a topic/title hint from content using LLM (requires manage permission) |
 | GET | `/api/custom-inputs` | List all custom inputs |
 | GET | `/api/custom-inputs/{id}` | Get custom input details |
 
@@ -344,16 +344,16 @@ npm run dev
 
 ### Turbo Mode Endpoints (Compute3)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/turbo/status` | Get Turbo Mode availability and GPU job status |
-| GET | `/api/turbo/balance` | Get Compute3 account balance |
-| POST | `/api/turbo/start` | Start a GPU job for accelerated inference |
-| POST | `/api/turbo/stop` | Stop an active GPU job |
-| POST | `/api/turbo/extend` | Extend runtime of an active GPU job |
-| GET | `/api/turbo/jobs` | List all GPU jobs |
-| GET | `/api/turbo/jobs/{id}` | Get details of a specific job |
-| GET | `/api/turbo/jobs/{id}/logs` | Get logs from a GPU job |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/turbo/status` | Read | Get Turbo Mode availability and GPU job status |
+| GET | `/api/turbo/balance` | Admin | Get Compute3 account balance |
+| POST | `/api/turbo/start` | Admin | Start a GPU job for accelerated inference |
+| POST | `/api/turbo/stop` | Admin | Stop an active GPU job |
+| POST | `/api/turbo/extend` | Admin | Extend runtime of an active GPU job |
+| GET | `/api/turbo/jobs` | Admin | List all GPU jobs |
+| GET | `/api/turbo/jobs/{id}` | Admin | Get details of a specific job |
+| GET | `/api/turbo/jobs/{id}/logs` | Admin | Get logs from a GPU job |
 
 ### Admin Endpoints
 
@@ -369,7 +369,7 @@ npm run dev
 | POST | `/api/admin/api-keys/{id}/revoke` | Revoke API key | Admin |
 | POST | `/api/admin/api-keys/{id}/activate` | Reactivate API key | Admin |
 
-> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search) or `manage` (upload, delete) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance.
+> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search, view graph/stats) or `manage` (upload, delete, reprocess, run analysis) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance. Turbo Mode management (balance, start/stop/extend, job listing) requires the admin key. Collection-scoped keys automatically receive filtered results across all graph, entity, community, and stats endpoints using the 4-hop `Collection→Document→Chunk→Entity` pattern.
 
 ### Example: Search
 
@@ -593,16 +593,15 @@ curl -X POST http://localhost:8000/api/custom-input \
 ### Example: Turbo Mode (GPU-Accelerated Inference)
 
 ```bash
-# Check Turbo Mode status
-curl http://localhost:8000/api/turbo/status
+# Check Turbo Mode status (requires read key or admin key)
+curl -H "X-API-Key: your-api-key" http://localhost:8000/api/turbo/status
 
-# Start a GPU job
-curl -X POST http://localhost:8000/api/turbo/start \
-  -H "Content-Type: application/json" \
-  -d '{"runtime_seconds": 3600}'
+# Start a GPU job (requires admin key)
+curl -X POST "http://localhost:8000/api/turbo/start?runtime=3600" \
+  -H "X-API-Key: your-admin-key"
 
-# Check balance
-curl http://localhost:8000/api/turbo/balance
+# Check balance (requires admin key)
+curl -H "X-API-Key: your-admin-key" http://localhost:8000/api/turbo/balance
 ```
 
 ### Example: Get Graph Visualization

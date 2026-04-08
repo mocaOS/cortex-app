@@ -2218,8 +2218,9 @@ class QueryProcessor:
         top_k: int = 5,
         filters: Optional[dict] = None,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> list[dict]:
-        """Perform semantic search, optionally scoped to a collection."""
+        """Perform semantic search, optionally scoped to a collection or list of collections."""
         # Generate query embedding
         query_embedding = self.embed_query(query)
 
@@ -2229,6 +2230,7 @@ class QueryProcessor:
             top_k=top_k,
             filters=filters,
             collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
         )
 
         return results
@@ -2240,6 +2242,8 @@ class QueryProcessor:
         vector_weight: float = 0.5,
         keyword_weight: float = 0.3,
         metadata_weight: float = 0.2,
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> list[dict]:
         """
         Perform hybrid search combining:
@@ -2248,6 +2252,7 @@ class QueryProcessor:
         - Metadata search (filename, topic hint for custom inputs)
 
         Uses Reciprocal Rank Fusion (RRF) to merge results.
+        Optionally scoped to a specific collection or list of collections.
         """
         # Generate query embedding
         query_embedding = self.embed_query(query)
@@ -2260,6 +2265,8 @@ class QueryProcessor:
             vector_weight=vector_weight,
             keyword_weight=keyword_weight,
             metadata_weight=metadata_weight,
+            collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
         )
 
         return results
@@ -2271,11 +2278,12 @@ class QueryProcessor:
         max_hops: int = 2,
         use_hybrid_rrf: bool = True,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> dict:
         """
         Perform hybrid search combining vector similarity, keyword search, and graph traversal.
         Uses Reciprocal Rank Fusion (RRF) for better results.
-        Optionally scoped to a specific collection.
+        Optionally scoped to a specific collection or list of collections.
 
         Returns:
             Dict with 'results', 'graph_context', and search metadata
@@ -2302,6 +2310,7 @@ class QueryProcessor:
                 keyword_weight=self.settings.keyword_weight,
                 graph_weight=self.settings.graph_weight,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
             return {
                 "results": hybrid_result["results"],
@@ -2312,7 +2321,7 @@ class QueryProcessor:
                 "graph_chunk_count": hybrid_result.get("graph_chunk_count", 0),
             }
         else:
-            # Legacy hybrid search
+            # Legacy hybrid search — no collection filter available here, falls back to full scan
             result = self.neo4j.hybrid_search(
                 query_embedding=query_embedding,
                 entity_names=query_entities,
@@ -2335,10 +2344,11 @@ class QueryProcessor:
         use_reranking: bool = True,
         use_agentic: bool = False,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> dict:
         """
         Answer a question using enhanced GraphRAG features.
-        Optionally scoped to a specific collection.
+        Optionally scoped to a specific collection or list of collections.
 
         Features:
         - Hybrid search with RRF (vector + keyword + graph)
@@ -2369,6 +2379,7 @@ class QueryProcessor:
                 max_hops=max_hops,
                 use_hybrid_rrf=self.settings.enable_hybrid_search,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
             results = search_result["results"]
             graph_data = search_result["graph_context"]
@@ -2389,7 +2400,8 @@ class QueryProcessor:
         else:
             # Fall back to vector-only search
             results = self.search(
-                question, top_k=top_k * 2, collection_id=collection_id
+                question, top_k=top_k * 2, collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids
             )
             search_metadata = {"search_method": "vector_only"}
 
@@ -3238,6 +3250,7 @@ Comprehensive Answer:""",
         mode: str = "quality",
         conversation_history: Optional[List[ConversationMessage]] = None,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream research pipeline results using the agent-based architecture.
@@ -3249,7 +3262,8 @@ Comprehensive Answer:""",
             question: The user's question
             mode: "speed" for chat, "quality" for deep research
             conversation_history: Previous conversation messages
-            collection_id: Optional collection scope
+            collection_id: Optional single collection scope
+            allowed_collection_ids: Optional list of allowed collections (for restricted API keys)
         """
         from app.services.researcher_agent import run_research_pipeline
         from app.services.llm_config import get_llm_config
@@ -3261,6 +3275,7 @@ Comprehensive Answer:""",
             mode=mode,
             conversation_history=conversation_history,
             collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
             processor=self,
             neo4j_service=self.neo4j,
             llm_config=llm_config,
@@ -3274,6 +3289,7 @@ Comprehensive Answer:""",
         mode: str = "quality",
         conversation_history: Optional[List[ConversationMessage]] = None,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> dict:
         """
         Non-streaming agent RAG query. Wraps the streaming pipeline,
@@ -3291,6 +3307,7 @@ Comprehensive Answer:""",
             mode=mode,
             conversation_history=conversation_history,
             collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
         ):
             if "content" in event:
                 answer += event["content"]

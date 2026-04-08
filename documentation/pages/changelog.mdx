@@ -7,6 +7,40 @@ All notable changes to MOCA Library are documented here, organized by date.
 
 ---
 
+## April 8, 2026
+
+### Collection-Based Auth System
+
+A comprehensive security audit remediation that closes every gap in the collection-scoped API key system. Previously, restricted keys could silently bypass collection boundaries on graph, stats, community, and task endpoints. All endpoints now enforce collection scope consistently.
+
+**Foundation fixes (`neo4j_service.py`)**
+
+- Fixed `get_document()`, `get_document_content()`, and `get_documents_file_paths()` to include the `Collection` join — they were returning `collection_id: null`, causing every downstream collection access check to silently pass
+- Added `allowed_collection_ids` parameter to all graph query methods, implementing the **4-hop scoping pattern** (`Collection→Document→Chunk→Entity`) throughout: `get_graph_visualization_data()`, `list_entities_paginated()`, `get_entity_relationships()`, `get_graph_subgraph()`, `get_entity_types()`, `get_relationship_types()`, `find_entities_by_name()`, `list_relationships_paginated()`, `suggest_duplicate_entities()`
+- Added `allowed_collection_ids` to community methods using a **5-hop pattern** (`Community→Entity→Chunk→Document→Collection`): `list_communities_paginated()`, `get_community()`, `search_communities_by_content()`
+- Updated `get_stats()` to accept `allowed_collection_ids` — restricted keys now see document/entity/community counts scoped to their allowed collections only
+
+**Full endpoint authentication coverage (`main.py`)**
+
+All endpoints now require an `X-API-Key` header. Previously unprotected endpoints now enforce appropriate permission levels:
+
+- *Read* — `GET /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/result`, `GET /api/turbo/status`
+- *Manage* — `POST /api/documents/{id}/reprocess` (+ per-document collection validation), `POST /api/documents/reprocess` (+ per-document collection check in loop), `POST /api/documents/process-pending`, `POST /api/cleanup/orphaned-entities`, `PATCH /api/graph/entity/{name}`, `POST /api/entities/merge`, `POST /api/graph/relationships/analyze` (+ `collection_id` validated if supplied), `DELETE /api/graph/relationships`, `DELETE /api/graph/entities`, `POST /api/graph/communities/detect` (+ `collection_id` validated if supplied), `DELETE /api/graph/communities/{id}`, `DELETE /api/graph/communities`, `POST /api/graph/communities/summarize`, `DELETE /api/tasks/{id}`, `POST /api/tasks/cleanup`, `POST /api/custom-input/generate-topic`
+- *Admin* — `GET /api/turbo/balance`, `POST /api/turbo/start`, `POST /api/turbo/stop`, `POST /api/turbo/extend`, `GET /api/turbo/jobs`, `GET /api/turbo/jobs/{id}`, `GET /api/turbo/jobs/{id}/logs` (Turbo Mode manages billing-sensitive GPU resources — elevated from unprotected to admin-only)
+
+**Collection scoping propagated to all read endpoints**
+
+Restricted keys now receive automatically filtered results across every read endpoint — no endpoint leaks cross-collection data:
+
+- `/api/stats` and `/api/graph/status` — counts scoped to allowed collections
+- `/api/graph/entities`, `/api/graph/entity-types`, `/api/graph/visualization`, `/api/graph/entity/{name}`, `/api/graph/entity/{name}/relationships`, `/api/graph/search`, `/api/graph/subgraph` — all scoped via 4-hop pattern
+- `/api/graph/relationships`, `/api/graph/relationship-types` — scoped via source/target entity 4-hop filter
+- `/api/graph/communities`, `/api/graph/communities/{id}`, `/api/graph/communities/search` — scoped via 5-hop pattern
+- `/api/entities/duplicates` — entity candidates scoped to allowed collections
+- Researcher agent (`researcher_agent.py`) and query processor (`document_processor.py`) — `allowed_collection_ids` propagated through `run_research_pipeline()`, `graph_search_async()`, `_execute_knowledge_search()`, `hybrid_search_with_graph()`, and `semantic_search()` so Ask AI and Deep Research respect collection boundaries end-to-end
+
+---
+
 ## April 1, 2026
 
 ### Agent Skills: Setup Wizard, http_request Tool, and Reliable Skill Execution

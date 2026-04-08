@@ -66,11 +66,11 @@ curl -H "X-API-Key: your-api-key" http://localhost:8000/api/stats
 ### Permission Levels
 
 | Permission | Grants Access To |
-|-----------|-----------------| 
-| **read** | Search, Ask AI, view documents, view entities/relationships/communities, view graph visualization, view stats |
-| **manage** | Everything in `read`, plus: upload documents, delete documents, reprocess documents, manage collections, run entity extraction, run relationship analysis, run community detection, entity deduplication |
+|-----------|-----------------|
+| **read** | Search, Ask AI, view documents, view entities/relationships/communities, view graph visualization, view stats, view task status |
+| **manage** | Everything in `read`, plus: upload documents, delete documents, reprocess documents, manage collections, run entity extraction, run relationship analysis, run community detection, entity deduplication, cancel tasks, turbo mode start/stop/extend |
 
-Admin-only operations (system reset, API key management, system configuration) always require the admin API key.
+Admin-only operations (system reset, API key management, system configuration, turbo balance/jobs) always require the admin API key.
 
 ### Collection-Scoped Keys
 
@@ -81,10 +81,18 @@ In addition to permission levels, generated API keys can be restricted to specif
 | **All Collections** (default) | Key can access every collection |
 | **Restricted** | Key can only access the collections explicitly listed at creation time |
 
-When a restricted key calls any endpoint, the system enforces the allowed collection list:
-- **List endpoints** (`/api/documents`, `/api/collections`) — results are silently filtered to allowed collections only
-- **Single-resource endpoints** (`GET /api/collections/{id}`, `GET /api/documents/{id}`) — returns 403 if the resource belongs to a disallowed collection
-- **Write endpoints** (`/api/upload`, `/api/custom-input`, `DELETE /api/documents/{id}`) — returns 403 if the target collection is not in the allowed list
+When a restricted key calls any endpoint, the system enforces the allowed collection list across **all** non-admin endpoints:
+
+**Read / list endpoints** — results silently filtered or 403 on out-of-scope resource:
+- `/api/documents` and `/api/collections` lists — filtered to allowed collections only
+- `/api/documents/{id}`, `/api/collections/{id}`, and file/content endpoints — 403 if the resource is in a disallowed collection
+- `/api/stats`, `/api/graph/status` — counts scoped to allowed collections only
+- `/api/graph/entities`, `/api/graph/relationships`, `/api/graph/visualization`, `/api/graph/entity-types`, `/api/graph/relationship-types`, `/api/graph/subgraph`, `/api/graph/entity/{name}`, `/api/graph/entity/{name}/relationships`, `/api/graph/search` — all scoped via 4-hop Collection→Document→Chunk→Entity pattern
+- `/api/graph/communities`, `/api/graph/communities/{id}`, `/api/graph/communities/search` — scoped via 5-hop pattern (Entity→Community)
+- `/api/entities/duplicates` — scoped to allowed collections; `/api/entities/merge-history` requires all-scope key
+
+**Write / mutation endpoints** — 403 if the target collection is not in the allowed list:
+- Upload, custom-input, document reprocess, document delete, collection management, entity edit/merge, relationship analysis, community detection and deletion
 
 New collections created after the key is issued are **not** automatically accessible — access must be explicitly granted by updating the key.
 

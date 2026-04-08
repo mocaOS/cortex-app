@@ -508,19 +508,22 @@ class Neo4jService:
         query_embedding: list[float], 
         top_k: int = 5,
         filters: Optional[dict] = None,
-        collection_id: Optional[str] = None
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> list[dict]:
-        """Perform vector similarity search, optionally scoped to a collection."""
+        """Perform vector similarity search, optionally scoped to a collection or list of collections."""
         with self.driver.session() as session:
             # Build the query with optional filters
             filter_clause = ""
             if filters and "file_type" in filters:
                 filter_clause = "AND d.file_type = $file_type"
             
-            # Collection scoping: post-filter vector results to collection membership
+            # Collection scoping: filter vector results to collection membership
             collection_clause = ""
             if collection_id:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+            elif allowed_collection_ids:
+                collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
             
             result = session.run(f"""
                 CALL db.index.vector.queryNodes('chunk_embedding', $top_k, $embedding)
@@ -540,7 +543,8 @@ class Neo4jService:
                 embedding=query_embedding,
                 top_k=top_k,
                 file_type=filters.get("file_type") if filters else None,
-                collection_id=collection_id
+                collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids
             )
             
             return [dict(record) for record in result]
@@ -589,11 +593,12 @@ class Neo4jService:
             return dict(record) if record else None
 
     def get_document(self, doc_id: str) -> Optional[dict]:
-        """Get a single document by ID."""
+        """Get a single document by ID with collection info."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $id})
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
                        coalesce(d.filename, '') as filename,
                        coalesce(d.file_type, '') as file_type,
@@ -610,6 +615,8 @@ class Neo4jService:
                        coalesce(d.image_progress_total, 0) as image_progress_total,
                        coalesce(d.image_progress_message, '') as image_progress_message,
                        coalesce(d.source, 'upload') as source,
+                       col.id as collection_id,
+                       col.name as collection_name,
                        collect(c.id) as chunk_ids
             """, id=doc_id)
             
@@ -617,14 +624,16 @@ class Neo4jService:
             return dict(record) if record else None
     
     def get_documents_file_paths(self, doc_ids: list) -> list:
-        """Get file paths and filenames for multiple documents by ID."""
+        """Get file paths, filenames, and collection info for multiple documents by ID."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document)
                 WHERE d.id IN $ids
+                OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
                        coalesce(d.filename, '') as filename,
-                       coalesce(d.file_path, '') as file_path
+                       coalesce(d.file_path, '') as file_path,
+                       col.id as collection_id
             """, ids=doc_ids)
             return [dict(record) for record in result]
 
@@ -632,15 +641,16 @@ class Neo4jService:
         """
         Get a document with all its chunk content, ordered by chunk index.
         
-        Returns dict with document metadata and full_content (concatenated chunks).
+        Returns dict with document metadata, collection_id, and full_content (concatenated chunks).
         """
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $id})
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                WITH d, c
+                OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
+                WITH d, col, c
                 ORDER BY c.chunk_index
-                WITH d, collect({
+                WITH d, col, collect({
                     id: c.id,
                     content: c.content,
                     chunk_index: c.chunk_index
@@ -651,6 +661,7 @@ class Neo4jService:
                        coalesce(d.file_size, 0) as file_size,
                        coalesce(d.upload_date, '') as upload_date,
                        coalesce(d.chunk_count, 0) as chunk_count,
+                       col.id as collection_id,
                        chunks
             """, id=doc_id)
             
@@ -676,6 +687,7 @@ class Neo4jService:
                 "file_size": doc["file_size"],
                 "upload_date": doc["upload_date"],
                 "chunk_count": doc["chunk_count"],
+                "collection_id": doc.get("collection_id"),
                 "chunks": valid_chunks,
                 "full_content": full_content
             }
@@ -1356,10 +1368,15 @@ class Neo4jService:
     # GraphRAG: Graph Traversal and Retrieval
     # =========================================================================
     
-    def find_entities_by_name(self, names: List[str]) -> List[dict]:
+    def find_entities_by_name(
+        self,
+        names: List[str],
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> List[dict]:
         """
         Find entities by their names (case-insensitive fuzzy match).
         Appends wildcard for prefix matching (e.g. "pol" finds "Polygon").
+        Optionally scoped to entities from the given collections.
         """
         if not names:
             return []
@@ -1374,7 +1391,26 @@ class Neo4jService:
                     terms.append(f"{sanitized}*")
             search_query = " OR ".join(terms) if terms else " OR ".join(names)
             try:
-                result = session.run("""
+                if allowed_collection_ids:
+                    result = session.run("""
+                        CALL db.index.fulltext.queryNodes('entity_name_fulltext', $search_query)
+                        YIELD node, score
+                        WHERE EXISTS {
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(node)
+                            WHERE col.id IN $allowed_collection_ids
+                        }
+                        OPTIONAL MATCH (node)-[r]-()
+                        WITH node, score, count(r) as connection_count
+                        RETURN node.name as name,
+                               node.type as type,
+                               node.description as description,
+                               score,
+                               connection_count
+                        ORDER BY connection_count DESC, score DESC
+                        LIMIT 20
+                    """, search_query=search_query, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    result = session.run("""
                     CALL db.index.fulltext.queryNodes('entity_name_fulltext', $search_query)
                     YIELD node, score
                     OPTIONAL MATCH (node)-[r]-()
@@ -1411,11 +1447,12 @@ class Neo4jService:
         max_hops: int = 2,
         limit: int = 50,
         collection_id: Optional[str] = None,
-        entity_paths_only: bool = False
+        entity_paths_only: bool = False,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> dict:
         """
         Traverse the graph from given entities to find related context.
-        Optionally scoped to a specific collection.
+        Optionally scoped to a specific collection or list of collections.
 
         Args:
             entity_paths_only: If True, only follow paths where ALL intermediate
@@ -1436,6 +1473,8 @@ class Neo4jService:
             collection_clause = ""
             if collection_id:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+            elif allowed_collection_ids:
+                collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
             # Optionally constrain traversal to Entity-only paths
             path_filter = "WHERE ALL(n IN nodes(path) WHERE n:Entity)" if entity_paths_only else ""
@@ -1472,7 +1511,8 @@ class Neo4jService:
             """, 
                 entity_names=entity_names, 
                 limit=limit,
-                collection_id=collection_id
+                collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids
             )
             
             entities = []
@@ -1530,10 +1570,11 @@ class Neo4jService:
         self,
         query_text: str,
         top_k: int = 10,
-        collection_id: Optional[str] = None
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> List[dict]:
         """
-        Perform full-text keyword search on chunk content, optionally scoped to a collection.
+        Perform full-text keyword search on chunk content, optionally scoped to a collection or list of collections.
         """
         with self.driver.session() as session:
             try:
@@ -1544,6 +1585,8 @@ class Neo4jService:
                 collection_clause = ""
                 if collection_id:
                     collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+                elif allowed_collection_ids:
+                    collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
                 
                 result = session.run(f"""
                     CALL db.index.fulltext.queryNodes('chunk_content', $search_text)
@@ -1559,7 +1602,8 @@ class Neo4jService:
                            score
                     ORDER BY score DESC
                     LIMIT $top_k
-                """, search_text=escaped_query, top_k=top_k, collection_id=collection_id)
+                """, search_text=escaped_query, top_k=top_k, collection_id=collection_id,
+                    allowed_collection_ids=allowed_collection_ids)
                 
                 return [dict(record) for record in result]
             except Exception as e:
@@ -1569,18 +1613,28 @@ class Neo4jService:
     def metadata_search(
         self,
         query_text: str,
-        top_k: int = 10
+        top_k: int = 10,
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> List[dict]:
         """
         Search documents by filename, topic hint, or raw content (for custom inputs).
         Returns chunks from matching documents with high relevance score.
+        Optionally scoped to a specific collection or list of collections.
         """
         with self.driver.session() as session:
             try:
                 search_lower = query_text.lower().strip()
+
+                # Collection scoping
+                collection_clause = ""
+                if collection_id:
+                    collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+                elif allowed_collection_ids:
+                    collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
                 
                 # Search in document metadata
-                result = session.run("""
+                result = session.run(f"""
                     MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk)
                     WHERE d.processing_status = 'completed'
                     AND (
@@ -1588,6 +1642,7 @@ class Neo4jService:
                         OR toLower(d.custom_topic_hint) CONTAINS $search_term
                         OR (d.is_custom_input = true AND toLower(d.custom_raw_content) CONTAINS $search_term)
                     )
+                    {collection_clause}
                     WITH d, c, 
                          CASE 
                              WHEN toLower(d.filename) CONTAINS $search_term THEN 3.0
@@ -1602,7 +1657,9 @@ class Neo4jService:
                            relevance_score as score
                     ORDER BY relevance_score DESC, c.chunk_index ASC
                     LIMIT $top_k
-                """, search_term=search_lower, top_k=top_k)
+                """, search_term=search_lower, top_k=top_k,
+                    collection_id=collection_id,
+                    allowed_collection_ids=allowed_collection_ids)
                 
                 return [dict(record) for record in result]
             except Exception as e:
@@ -1616,20 +1673,29 @@ class Neo4jService:
         top_k: int = 10,
         vector_weight: float = 0.5,
         keyword_weight: float = 0.3,
-        metadata_weight: float = 0.2
+        metadata_weight: float = 0.2,
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> List[dict]:
         """
         Simple hybrid search combining vector + keyword + metadata search.
         Uses RRF to merge results from all three sources.
+        Optionally scoped to a specific collection or list of collections.
         """
         # 1. Vector search (semantic similarity)
-        vector_results = self.vector_search(query_embedding, top_k * 2)
+        vector_results = self.vector_search(query_embedding, top_k * 2,
+                                            collection_id=collection_id,
+                                            allowed_collection_ids=allowed_collection_ids)
         
         # 2. Keyword/full-text search (content matching)
-        keyword_results = self.fulltext_search(query_text, top_k * 2)
+        keyword_results = self.fulltext_search(query_text, top_k * 2,
+                                               collection_id=collection_id,
+                                               allowed_collection_ids=allowed_collection_ids)
         
         # 3. Metadata search (filename, topic hint)
-        metadata_results = self.metadata_search(query_text, top_k * 2)
+        metadata_results = self.metadata_search(query_text, top_k * 2,
+                                                collection_id=collection_id,
+                                                allowed_collection_ids=allowed_collection_ids)
         
         # 4. Combine using RRF
         combined = self._reciprocal_rank_fusion(
@@ -1691,24 +1757,28 @@ class Neo4jService:
         vector_weight: float = 0.5,
         keyword_weight: float = 0.3,
         graph_weight: float = 0.2,
-        collection_id: Optional[str] = None
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> dict:
         """
         Perform hybrid search with Reciprocal Rank Fusion.
         Combines: vector similarity + full-text keyword + graph traversal
-        Optionally scoped to a specific collection.
+        Optionally scoped to a specific collection or list of collections.
         
         Returns:
             Dict with 'results' (RRF-fused) and 'graph_context'
         """
         # 1. Vector search
-        vector_results = self.vector_search(query_embedding, top_k * 3, collection_id=collection_id)
+        vector_results = self.vector_search(query_embedding, top_k * 3, collection_id=collection_id,
+                                            allowed_collection_ids=allowed_collection_ids)
         
         # 2. Keyword/full-text search
-        keyword_results = self.fulltext_search(query_text, top_k * 3, collection_id=collection_id)
+        keyword_results = self.fulltext_search(query_text, top_k * 3, collection_id=collection_id,
+                                               allowed_collection_ids=allowed_collection_ids)
         
         # 3. Graph traversal for context
-        graph_context = self.traverse_from_entities(entity_names, max_hops, collection_id=collection_id)
+        graph_context = self.traverse_from_entities(entity_names, max_hops, collection_id=collection_id,
+                                                    allowed_collection_ids=allowed_collection_ids)
         
         # 4. Get chunks from graph context
         graph_chunks = graph_context.get("chunks", [])
@@ -2030,7 +2100,12 @@ class Neo4jService:
                 "per_chunk_relationship_count": record["per_chunk_rel_count"],
             }
     
-    def get_graph_visualization_data(self, limit: int = 100, include_neighbors: bool = True) -> dict:
+    def get_graph_visualization_data(
+        self,
+        limit: int = 100,
+        include_neighbors: bool = True,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
         """
         Get data for visualizing the knowledge graph.
         
@@ -2041,6 +2116,8 @@ class Neo4jService:
             limit: Maximum number of core entities to fetch (based on mention count).
                    Use 0 or negative to fetch ALL entities.
             include_neighbors: If True, expands entity set to include 1-hop neighbors
+            allowed_collection_ids: If provided, scope entities to those mentioned in 
+                   documents from these collections (4-hop pattern)
             
         Returns:
             Dict with 'nodes', 'edges', and metadata for visualization
@@ -2050,44 +2127,91 @@ class Neo4jService:
             # If limit <= 0, fetch all entities (no limit)
             fetch_all = limit <= 0
             
+            # Collection scoping: 4-hop pattern for entity filtering
+            collection_match = ""
+            collection_where = ""
+            if allowed_collection_ids:
+                collection_match = """
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e)
+                    WHERE col.id IN $allowed_collection_ids
+                    WITH DISTINCT e
+                """
+            
             if fetch_all:
                 # No LIMIT clause - fetch all entities
-                result = session.run("""
-                    MATCH (e:Entity)
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                    WITH e, count(c) as mention_count
-                    OPTIONAL MATCH (e)-[r]-(:Entity)
-                    WITH e, mention_count, count(r) as degree
-                    RETURN e.name as id,
-                           e.name as label,
-                           e.type as type,
-                           e.description as description,
-                           e.community_id as community_id,
-                           mention_count
-                    ORDER BY mention_count DESC
-                """)
+                if allowed_collection_ids:
+                    result = session.run(f"""
+                        {collection_match}
+                        OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c2) as mention_count
+                        OPTIONAL MATCH (e)-[r]-(:Entity)
+                        WITH e, mention_count, count(r) as degree
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                        ORDER BY mention_count DESC
+                    """, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    result = session.run("""
+                        MATCH (e:Entity)
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c) as mention_count
+                        OPTIONAL MATCH (e)-[r]-(:Entity)
+                        WITH e, mention_count, count(r) as degree
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                        ORDER BY mention_count DESC
+                    """)
             else:
                 # Diversity score: penalize high-degree hubs so the default
                 # view shows a diverse set of entities, not just the most connected ones.
-                result = session.run("""
-                    MATCH (e:Entity)
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                    WITH e, count(c) as mention_count
-                    OPTIONAL MATCH (e)-[r]-(:Entity)
-                    WITH e, mention_count, count(r) as degree
-                    WITH e, mention_count, degree,
-                         CASE WHEN degree = 0 THEN mention_count * 1.0
-                              ELSE mention_count * 1.0 / (1.0 + log(1.0 + toFloat(degree)))
-                         END as diversity_score
-                    RETURN e.name as id,
-                           e.name as label,
-                           e.type as type,
-                           e.description as description,
-                           e.community_id as community_id,
-                           mention_count
-                    ORDER BY diversity_score DESC
-                    LIMIT $limit
-                """, limit=limit)
+                if allowed_collection_ids:
+                    result = session.run(f"""
+                        {collection_match}
+                        OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c2) as mention_count
+                        OPTIONAL MATCH (e)-[r]-(:Entity)
+                        WITH e, mention_count, count(r) as degree
+                        WITH e, mention_count, degree,
+                             CASE WHEN degree = 0 THEN mention_count * 1.0
+                                  ELSE mention_count * 1.0 / (1.0 + log(1.0 + toFloat(degree)))
+                             END as diversity_score
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                        ORDER BY diversity_score DESC
+                        LIMIT $limit
+                    """, limit=limit, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    result = session.run("""
+                        MATCH (e:Entity)
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c) as mention_count
+                        OPTIONAL MATCH (e)-[r]-(:Entity)
+                        WITH e, mention_count, count(r) as degree
+                        WITH e, mention_count, degree,
+                             CASE WHEN degree = 0 THEN mention_count * 1.0
+                                  ELSE mention_count * 1.0 / (1.0 + log(1.0 + toFloat(degree)))
+                             END as diversity_score
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                        ORDER BY diversity_score DESC
+                        LIMIT $limit
+                    """, limit=limit)
             
             core_nodes = [dict(record) for record in result]
             core_node_ids = {n["id"] for n in core_nodes}
@@ -2477,7 +2601,12 @@ class Neo4jService:
                 records.append(entry)
             return records
 
-    def suggest_duplicate_entities(self, threshold: float = 0.75, limit: int = 100) -> List[dict]:
+    def suggest_duplicate_entities(
+        self,
+        threshold: float = 0.75,
+        limit: int = 100,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> List[dict]:
         """
         Find candidate duplicate entities using multiple similarity strategies.
 
@@ -2503,18 +2632,32 @@ class Neo4jService:
         from rapidfuzz.process import cdist
         import numpy as np
 
-        # Fetch all entities with their connectivity stats
+        # Fetch all entities with their connectivity stats (optionally scoped to collections)
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (e:Entity)
-                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                WITH e, count(DISTINCT c) as mention_count
-                OPTIONAL MATCH (e)-[r]-(:Entity)
-                RETURN e.name as name, e.type as type,
-                       e.description as description,
-                       mention_count,
-                       count(DISTINCT r) as relationship_count
-            """)
+            if allowed_collection_ids:
+                result = session.run("""
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                    WHERE col.id IN $allowed_collection_ids
+                    WITH DISTINCT e
+                    OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(DISTINCT c2) as mention_count
+                    OPTIONAL MATCH (e)-[r]-(:Entity)
+                    RETURN e.name as name, e.type as type,
+                           e.description as description,
+                           mention_count,
+                           count(DISTINCT r) as relationship_count
+                """, allowed_collection_ids=allowed_collection_ids)
+            else:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(DISTINCT c) as mention_count
+                    OPTIONAL MATCH (e)-[r]-(:Entity)
+                    RETURN e.name as name, e.type as type,
+                           e.description as description,
+                           mention_count,
+                           count(DISTINCT r) as relationship_count
+                """)
             all_entities = [dict(record) for record in result]
 
         if len(all_entities) < 2:
@@ -2730,7 +2873,13 @@ class Neo4jService:
         groups.sort(key=_group_sort_key)
         return groups[:limit]
 
-    def get_entity_relationships(self, entity_name: str, max_depth: int = 2, limit: int = 50) -> dict:
+    def get_entity_relationships(
+        self,
+        entity_name: str,
+        max_depth: int = 2,
+        limit: int = 50,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
         """
         Get an entity and all its relationships up to max_depth hops.
         
@@ -2740,6 +2889,7 @@ class Neo4jService:
             entity_name: The entity to start from
             max_depth: Maximum relationship hops to traverse (1-3)
             limit: Maximum number of relationships to return
+            allowed_collection_ids: If provided, scope to entities from these collections
             
         Returns:
             Dict with 'entity', 'related_entities', 'relationships'
@@ -2747,17 +2897,33 @@ class Neo4jService:
         max_depth = min(max(1, max_depth), 3)  # Clamp between 1-3
         
         with self.driver.session() as session:
-            # Get the central entity
-            entity_result = session.run("""
-                MATCH (e:Entity {name: $name})
-                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                WITH e, count(c) as mention_count
-                RETURN e.name as name,
-                       e.type as type,
-                       e.description as description,
-                       e.community_id as community_id,
-                       mention_count
-            """, name=entity_name)
+            # Get the central entity — verify it is accessible in the allowed collections
+            if allowed_collection_ids:
+                entity_result = session.run("""
+                    MATCH (e:Entity {name: $name})
+                    WHERE EXISTS {
+                        MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e)
+                        WHERE col.id IN $allowed_collection_ids
+                    }
+                    OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c2) as mention_count
+                    RETURN e.name as name,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                """, name=entity_name, allowed_collection_ids=allowed_collection_ids)
+            else:
+                entity_result = session.run("""
+                    MATCH (e:Entity {name: $name})
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    RETURN e.name as name,
+                           e.type as type,
+                           e.description as description,
+                           e.community_id as community_id,
+                           mention_count
+                """, name=entity_name)
             
             entity_record = entity_result.single()
             if not entity_record:
@@ -2767,28 +2933,57 @@ class Neo4jService:
             
             # Traverse relationships up to max_depth
             # Using a parameterized depth requires string interpolation (safe since we clamp the value)
-            traverse_result = session.run(f"""
-                MATCH (start:Entity {{name: $name}})
-                CALL {{
-                    WITH start
-                    MATCH path = (start)-[r*1..{max_depth}]-(related:Entity)
-                    WHERE ALL(n IN nodes(path) WHERE n:Entity)
-                    RETURN DISTINCT related,
-                           [rel IN relationships(path) | {{
-                               source: startNode(rel).name,
-                               target: endNode(rel).name,
-                               type: coalesce(rel.type, type(rel)),
-                               description: rel.description,
-                               weight: coalesce(rel.weight, 5.0)
-                           }}] as path_rels
-                    LIMIT $limit
-                }}
-                RETURN related.name as name,
-                       related.type as type,
-                       related.description as description,
-                       related.community_id as community_id,
-                       path_rels
-            """, name=entity_name, limit=limit)
+            # For collection-scoped keys, filter related entities to the allowed collections
+            if allowed_collection_ids:
+                traverse_result = session.run(f"""
+                    MATCH (start:Entity {{name: $name}})
+                    CALL {{
+                        WITH start
+                        MATCH path = (start)-[r*1..{max_depth}]-(related:Entity)
+                        WHERE ALL(n IN nodes(path) WHERE n:Entity)
+                        AND EXISTS {{
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(related)
+                            WHERE col.id IN $allowed_collection_ids
+                        }}
+                        RETURN DISTINCT related,
+                               [rel IN relationships(path) | {{
+                                   source: startNode(rel).name,
+                                   target: endNode(rel).name,
+                                   type: coalesce(rel.type, type(rel)),
+                                   description: rel.description,
+                                   weight: coalesce(rel.weight, 5.0)
+                               }}] as path_rels
+                        LIMIT $limit
+                    }}
+                    RETURN related.name as name,
+                           related.type as type,
+                           related.description as description,
+                           related.community_id as community_id,
+                           path_rels
+                """, name=entity_name, limit=limit, allowed_collection_ids=allowed_collection_ids)
+            else:
+                traverse_result = session.run(f"""
+                    MATCH (start:Entity {{name: $name}})
+                    CALL {{
+                        WITH start
+                        MATCH path = (start)-[r*1..{max_depth}]-(related:Entity)
+                        WHERE ALL(n IN nodes(path) WHERE n:Entity)
+                        RETURN DISTINCT related,
+                               [rel IN relationships(path) | {{
+                                   source: startNode(rel).name,
+                                   target: endNode(rel).name,
+                                   type: coalesce(rel.type, type(rel)),
+                                   description: rel.description,
+                                   weight: coalesce(rel.weight, 5.0)
+                               }}] as path_rels
+                        LIMIT $limit
+                    }}
+                    RETURN related.name as name,
+                           related.type as type,
+                           related.description as description,
+                           related.community_id as community_id,
+                           path_rels
+                """, name=entity_name, limit=limit)
             
             related_entities = []
             all_relationships = []
@@ -2815,7 +3010,12 @@ class Neo4jService:
                 "relationships": all_relationships
             }
     
-    def get_graph_subgraph(self, entity_names: List[str], include_connections: bool = True) -> dict:
+    def get_graph_subgraph(
+        self,
+        entity_names: List[str],
+        include_connections: bool = True,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
         """
         Get a subgraph containing specified entities and their interconnections.
         
@@ -2824,6 +3024,7 @@ class Neo4jService:
         Args:
             entity_names: List of entity names to include
             include_connections: If True, also include entities that connect the given entities
+            allowed_collection_ids: If provided, scope entities to those from these collections
             
         Returns:
             Dict with 'nodes' and 'edges' for the subgraph
@@ -2833,46 +3034,96 @@ class Neo4jService:
         
         with self.driver.session() as session:
             if include_connections:
-                # Get selected entities and all their direct neighbors (1 hop)
-                # This gives a focused subgraph centered on the selected entities
-                result = session.run("""
-                    // Get selected entities
-                    MATCH (e:Entity)
-                    WHERE e.name IN $names
-                    
-                    // Get their direct neighbors
-                    OPTIONAL MATCH (e)-[]-(neighbor:Entity)
-                    
-                    // Combine into a single set of nodes
-                    WITH collect(DISTINCT e) + collect(DISTINCT neighbor) as all_nodes
-                    UNWIND all_nodes as n
-                    WITH DISTINCT n
-                    WHERE n IS NOT NULL
-                    
-                    // Get mention counts
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(n)
-                    WITH n, count(c) as mention_count
-                    RETURN n.name as id,
-                           n.name as label,
-                           n.type as type,
-                           n.description as description,
-                           n.community_id as community_id,
-                           mention_count
-                """, names=entity_names)
+                if allowed_collection_ids:
+                    result = session.run("""
+                        // Get selected entities (scoped to allowed collections)
+                        MATCH (e:Entity)
+                        WHERE e.name IN $names
+                        AND EXISTS {
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e)
+                            WHERE col.id IN $allowed_collection_ids
+                        }
+                        
+                        // Get their direct neighbors (also scoped)
+                        OPTIONAL MATCH (e)-[]-(neighbor:Entity)
+                        WHERE EXISTS {
+                            MATCH (col2:Collection)-[:CONTAINS]->(d2:Document)-[:HAS_CHUNK]->(c2:Chunk)-[:MENTIONS]->(neighbor)
+                            WHERE col2.id IN $allowed_collection_ids
+                        }
+                        
+                        WITH collect(DISTINCT e) + collect(DISTINCT neighbor) as all_nodes
+                        UNWIND all_nodes as n
+                        WITH DISTINCT n
+                        WHERE n IS NOT NULL
+                        
+                        OPTIONAL MATCH (c3:Chunk)-[:MENTIONS]->(n)
+                        WITH n, count(c3) as mention_count
+                        RETURN n.name as id,
+                               n.name as label,
+                               n.type as type,
+                               n.description as description,
+                               n.community_id as community_id,
+                               mention_count
+                    """, names=entity_names, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    # Get selected entities and all their direct neighbors (1 hop)
+                    # This gives a focused subgraph centered on the selected entities
+                    result = session.run("""
+                        // Get selected entities
+                        MATCH (e:Entity)
+                        WHERE e.name IN $names
+                        
+                        // Get their direct neighbors
+                        OPTIONAL MATCH (e)-[]-(neighbor:Entity)
+                        
+                        // Combine into a single set of nodes
+                        WITH collect(DISTINCT e) + collect(DISTINCT neighbor) as all_nodes
+                        UNWIND all_nodes as n
+                        WITH DISTINCT n
+                        WHERE n IS NOT NULL
+                        
+                        // Get mention counts
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(n)
+                        WITH n, count(c) as mention_count
+                        RETURN n.name as id,
+                               n.name as label,
+                               n.type as type,
+                               n.description as description,
+                               n.community_id as community_id,
+                               mention_count
+                    """, names=entity_names)
             else:
-                # Just get the specified entities
-                result = session.run("""
-                    MATCH (e:Entity)
-                    WHERE e.name IN $names
-                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                    WITH e, count(c) as mention_count
-                    RETURN e.name as id,
-                           e.name as label,
-                           e.type as type,
-                           e.description as description,
-                           e.community_id as community_id,
-                           mention_count
-                """, names=entity_names)
+                if allowed_collection_ids:
+                    result = session.run("""
+                        MATCH (e:Entity)
+                        WHERE e.name IN $names
+                        AND EXISTS {
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e)
+                            WHERE col.id IN $allowed_collection_ids
+                        }
+                        OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c2) as mention_count
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                    """, names=entity_names, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    # Just get the specified entities
+                    result = session.run("""
+                        MATCH (e:Entity)
+                        WHERE e.name IN $names
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c) as mention_count
+                        RETURN e.name as id,
+                               e.name as label,
+                               e.type as type,
+                               e.description as description,
+                               e.community_id as community_id,
+                               mention_count
+                    """, names=entity_names)
             
             nodes = [dict(record) for record in result]
             node_ids = {n["id"] for n in nodes}
@@ -3334,19 +3585,53 @@ class Neo4jService:
             
             return True
     
-    def get_community(self, community_id: int) -> Optional[dict]:
-        """Get a community with its entities and relationships."""
+    def get_community(
+        self,
+        community_id: int,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> Optional[dict]:
+        """Get a community with its entities and relationships.
+        
+        Args:
+            allowed_collection_ids: If provided, the community is only returned if it has
+                at least one member entity from these collections. Entity list is also
+                filtered to those accessible in the allowed collections.
+        """
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (com:Community {id: $id})
-                OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
-                WITH com, collect({name: e.name, type: e.type, description: e.description}) as entities
-                RETURN com.id as id,
-                       com.name as name,
-                       com.summary as summary,
-                       com.entity_count as entity_count,
-                       entities
-            """, id=community_id)
+            if allowed_collection_ids:
+                # Verify the community has at least one accessible member entity
+                result = session.run("""
+                    MATCH (com:Community {id: $id})
+                    WHERE EXISTS {
+                        MATCH (com)-[:HAS_MEMBER]->(member:Entity)
+                        WHERE EXISTS {
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(member)
+                            WHERE col.id IN $allowed_collection_ids
+                        }
+                    }
+                    OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                    WHERE EXISTS {
+                        MATCH (col2:Collection)-[:CONTAINS]->(d2:Document)-[:HAS_CHUNK]->(c2:Chunk)-[:MENTIONS]->(e)
+                        WHERE col2.id IN $allowed_collection_ids
+                    }
+                    WITH com, collect({name: e.name, type: e.type, description: e.description}) as entities
+                    RETURN com.id as id,
+                           com.name as name,
+                           com.summary as summary,
+                           com.entity_count as entity_count,
+                           entities
+                """, id=community_id, allowed_collection_ids=allowed_collection_ids)
+            else:
+                result = session.run("""
+                    MATCH (com:Community {id: $id})
+                    OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
+                    WITH com, collect({name: e.name, type: e.type, description: e.description}) as entities
+                    RETURN com.id as id,
+                           com.name as name,
+                           com.summary as summary,
+                           com.entity_count as entity_count,
+                           entities
+                """, id=community_id)
             
             record = result.single()
             if not record:
@@ -3384,8 +3669,19 @@ class Neo4jService:
             """, limit=limit)
             return [dict(record) for record in result]
 
-    def list_entities_paginated(self, skip: int = 0, limit: int = 50, search: str = None, entity_type: str = None) -> dict:
-        """List entities with server-side pagination, search, and filtering."""
+    def list_entities_paginated(
+        self,
+        skip: int = 0,
+        limit: int = 50,
+        search: str = None,
+        entity_type: str = None,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
+        """List entities with server-side pagination, search, and filtering.
+        
+        Args:
+            allowed_collection_ids: If provided, scope to entities from these collections (4-hop pattern)
+        """
         with self.driver.session() as session:
             # Build WHERE clauses
             where_parts = []
@@ -3400,13 +3696,42 @@ class Neo4jService:
                 params["search"] = search
 
             where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+            
+            # Collection scoping: 4-hop pattern
+            collection_match = ""
+            if allowed_collection_ids:
+                collection_match = """
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(chunk:Chunk)-[:MENTIONS]->(e)
+                    WHERE col.id IN $allowed_collection_ids
+                    WITH DISTINCT e
+                """
+                params["allowed_collection_ids"] = allowed_collection_ids
 
             # Get total count
-            count_query = f"""
-                MATCH (e:Entity)
-                {where_clause}
-                RETURN count(e) as total
-            """
+            if allowed_collection_ids:
+                count_query = f"""
+                    {collection_match}
+                    {where_clause.replace('WHERE', 'WHERE' if not collection_match else 'AND' if where_parts else '')}
+                    RETURN count(DISTINCT e) as total
+                """
+                # Fix WHERE/AND clause
+                if where_parts:
+                    count_query = f"""
+                        {collection_match}
+                        WHERE {' AND '.join(where_parts)}
+                        RETURN count(DISTINCT e) as total
+                    """
+                else:
+                    count_query = f"""
+                        {collection_match}
+                        RETURN count(DISTINCT e) as total
+                    """
+            else:
+                count_query = f"""
+                    MATCH (e:Entity)
+                    {where_clause}
+                    RETURN count(e) as total
+                """
             total = session.run(count_query, **params).single()["total"]
 
             # Get paginated results with sorting: name matches first when searching
@@ -3419,23 +3744,60 @@ class Neo4jService:
             else:
                 order_clause = "ORDER BY mention_count DESC"
 
-            data_query = f"""
-                MATCH (e:Entity)
-                {where_clause}
-                OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
-                WITH e, count(c) as mention_count
-                {order_clause}
-                SKIP $skip
-                LIMIT $limit
-                RETURN e.name as name, e.type as type, e.description as description,
-                       mention_count
-            """
+            if allowed_collection_ids:
+                if where_parts:
+                    data_query = f"""
+                        {collection_match}
+                        WHERE {' AND '.join(where_parts)}
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c) as mention_count
+                        {order_clause}
+                        SKIP $skip
+                        LIMIT $limit
+                        RETURN e.name as name, e.type as type, e.description as description,
+                               mention_count
+                    """
+                else:
+                    data_query = f"""
+                        {collection_match}
+                        OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                        WITH e, count(c) as mention_count
+                        {order_clause}
+                        SKIP $skip
+                        LIMIT $limit
+                        RETURN e.name as name, e.type as type, e.description as description,
+                               mention_count
+                    """
+            else:
+                data_query = f"""
+                    MATCH (e:Entity)
+                    {where_clause}
+                    OPTIONAL MATCH (c:Chunk)-[:MENTIONS]->(e)
+                    WITH e, count(c) as mention_count
+                    {order_clause}
+                    SKIP $skip
+                    LIMIT $limit
+                    RETURN e.name as name, e.type as type, e.description as description,
+                           mention_count
+                """
             entities = [dict(record) for record in session.run(data_query, **params)]
 
             return {"entities": entities, "total": total}
 
-    def list_relationships_paginated(self, skip: int = 0, limit: int = 50, search: str = None, rel_type: str = None) -> dict:
-        """List relationships with server-side pagination, search, and filtering."""
+    def list_relationships_paginated(
+        self,
+        skip: int = 0,
+        limit: int = 50,
+        search: str = None,
+        rel_type: str = None,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
+        """List relationships with server-side pagination, search, and filtering.
+        
+        Args:
+            allowed_collection_ids: If provided, scope to relationships where at least one
+                endpoint entity is from these collections (4-hop pattern).
+        """
         with self.driver.session() as session:
             params = {"skip": skip, "limit": limit}
 
@@ -3452,10 +3814,26 @@ class Neo4jService:
 
             where_clause = "WHERE " + " AND ".join(where_parts)
 
+            # Collection scoping: pre-collect allowed entity names using 4-hop pattern
+            if allowed_collection_ids:
+                params["allowed_collection_ids"] = allowed_collection_ids
+                collection_filter_clause = """
+                    AND (EXISTS {
+                        MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(s)
+                        WHERE col.id IN $allowed_collection_ids
+                    } OR EXISTS {
+                        MATCH (col2:Collection)-[:CONTAINS]->(d2:Document)-[:HAS_CHUNK]->(c2:Chunk)-[:MENTIONS]->(t)
+                        WHERE col2.id IN $allowed_collection_ids
+                    })
+                """
+            else:
+                collection_filter_clause = ""
+
             # Get total count
             count_query = f"""
                 MATCH (s:Entity)-[r]->(t:Entity)
                 {where_clause}
+                {collection_filter_clause}
                 RETURN count(r) as total
             """
             total = session.run(count_query, **params).single()["total"]
@@ -3473,6 +3851,7 @@ class Neo4jService:
             data_query = f"""
                 MATCH (s:Entity)-[r]->(t:Entity)
                 {where_clause}
+                {collection_filter_clause}
                 WITH s.name as source, t.name as target, type(r) as rel_type,
                      r.description as description, r.weight as weight
                 {order_clause}
@@ -3484,35 +3863,64 @@ class Neo4jService:
 
             return {"relationships": relationships, "total": total}
 
-    def list_communities_paginated(self, skip: int = 0, limit: int = 50, search: str = None) -> dict:
-        """List communities with server-side pagination and search."""
+    def list_communities_paginated(
+        self,
+        skip: int = 0,
+        limit: int = 50,
+        search: str = None,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> dict:
+        """List communities with server-side pagination and search.
+        
+        Args:
+            allowed_collection_ids: If provided, only return communities that have at least
+                one member entity from these collections (5-hop pattern).
+        """
         with self.driver.session() as session:
             params = {"skip": skip, "limit": limit}
+
+            # Collection scoping: include only communities whose member entities
+            # are reachable from the allowed collections (5-hop pattern)
+            if allowed_collection_ids:
+                params["allowed_collection_ids"] = allowed_collection_ids
+                collection_filter = """
+                    AND EXISTS {
+                        MATCH (com)-[:HAS_MEMBER]->(member:Entity)
+                        WHERE EXISTS {
+                            MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(member)
+                            WHERE col.id IN $allowed_collection_ids
+                        }
+                    }
+                """
+            else:
+                collection_filter = ""
 
             if search:
                 # For communities, we need to search in name, summary, and member names
                 # Use a WITH clause to collect member info first, then filter
-                count_query = """
+                count_query = f"""
                     MATCH (com:Community)
                     OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
                     WITH com, count(e) as member_count, collect(e.name) as all_entity_names
-                    WHERE toLower(coalesce(com.name, '')) CONTAINS toLower($search)
+                    WHERE (toLower(coalesce(com.name, '')) CONTAINS toLower($search)
                        OR toLower(coalesce(com.summary, '')) CONTAINS toLower($search)
-                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search))
+                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search)))
+                    {collection_filter}
                     RETURN count(com) as total
                 """
                 params["search"] = search
                 total = session.run(count_query, **params).single()["total"]
 
-                data_query = """
+                data_query = f"""
                     MATCH (com:Community)
                     OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
                     WITH com, count(e) as member_count,
                          collect(e.name)[0..5] as sample_entities,
                          collect(e.name) as all_entity_names
-                    WHERE toLower(coalesce(com.name, '')) CONTAINS toLower($search)
+                    WHERE (toLower(coalesce(com.name, '')) CONTAINS toLower($search)
                        OR toLower(coalesce(com.summary, '')) CONTAINS toLower($search)
-                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search))
+                       OR any(n IN all_entity_names WHERE toLower(n) CONTAINS toLower($search)))
+                    {collection_filter}
                     ORDER BY
                         CASE WHEN toLower(coalesce(com.name, '')) CONTAINS toLower($search) THEN 0 ELSE 1 END,
                         member_count DESC
@@ -3522,14 +3930,18 @@ class Neo4jService:
                            member_count as entity_count, sample_entities
                 """
             else:
-                count_query = """
+                count_query = f"""
                     MATCH (com:Community)
+                    WHERE 1=1
+                    {collection_filter}
                     RETURN count(com) as total
                 """
                 total = session.run(count_query, **params).single()["total"]
 
-                data_query = """
+                data_query = f"""
                     MATCH (com:Community)
+                    WHERE 1=1
+                    {collection_filter}
                     OPTIONAL MATCH (com)-[:HAS_MEMBER]->(e:Entity)
                     WITH com, count(e) as member_count,
                          collect(e.name)[0..5] as sample_entities
@@ -3544,26 +3956,46 @@ class Neo4jService:
 
             return {"communities": communities, "total": total}
 
-    def get_entity_types(self) -> List[str]:
-        """Get all distinct entity types."""
+    def get_entity_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
+        """Get all distinct entity types, optionally scoped to collections."""
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (e:Entity)
-                RETURN DISTINCT e.type as type
-                ORDER BY type
-            """)
+            if allowed_collection_ids:
+                result = session.run("""
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+                    WHERE col.id IN $allowed_collection_ids
+                    RETURN DISTINCT e.type as type
+                    ORDER BY type
+                """, allowed_collection_ids=allowed_collection_ids)
+            else:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    RETURN DISTINCT e.type as type
+                    ORDER BY type
+                """)
             return [record["type"] for record in result if record["type"]]
 
-    def get_relationship_types(self) -> List[str]:
-        """Get all distinct relationship types (excluding internal types)."""
+    def get_relationship_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
+        """Get all distinct relationship types (excluding internal types), optionally scoped to collections."""
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (s:Entity)-[r]->(t:Entity)
-                WHERE type(r) <> 'MENTIONS' AND type(r) <> 'HAS_MEMBER'
-                  AND type(r) <> 'FROM_DOCUMENT' AND type(r) <> 'CO_MENTION'
-                RETURN DISTINCT type(r) as type
-                ORDER BY type
-            """)
+            if allowed_collection_ids:
+                result = session.run("""
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(s:Entity)
+                    WHERE col.id IN $allowed_collection_ids
+                    WITH DISTINCT s
+                    MATCH (s)-[r]->(t:Entity)
+                    WHERE type(r) <> 'MENTIONS' AND type(r) <> 'HAS_MEMBER'
+                      AND type(r) <> 'FROM_DOCUMENT' AND type(r) <> 'CO_MENTION'
+                    RETURN DISTINCT type(r) as type
+                    ORDER BY type
+                """, allowed_collection_ids=allowed_collection_ids)
+            else:
+                result = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE type(r) <> 'MENTIONS' AND type(r) <> 'HAS_MEMBER'
+                      AND type(r) <> 'FROM_DOCUMENT' AND type(r) <> 'CO_MENTION'
+                    RETURN DISTINCT type(r) as type
+                    ORDER BY type
+                """)
             return [record["type"] for record in result if record["type"]]
 
     def get_community_relationships(self, community_id: int, limit: int = 30) -> List[dict]:
@@ -3719,21 +4151,51 @@ class Neo4jService:
             logger.info(f"Deleted {deleted} system meta records")
             return deleted
 
-    def search_communities_by_content(self, query: str, limit: int = 5) -> List[dict]:
-        """Search communities by their summary content."""
+    def search_communities_by_content(
+        self,
+        query: str,
+        limit: int = 5,
+        allowed_collection_ids: Optional[List[str]] = None
+    ) -> List[dict]:
+        """Search communities by their summary content.
+        
+        Args:
+            allowed_collection_ids: If provided, only return communities with at least one
+                member entity from these collections.
+        """
         with self.driver.session() as session:
             try:
-                result = session.run("""
-                    CALL db.index.fulltext.queryNodes('community_summary_fulltext', $search_query)
-                    YIELD node, score
-                    RETURN node.id as id,
-                           node.name as name,
-                           node.summary as summary,
-                           node.entity_count as entity_count,
-                           score
-                    ORDER BY score DESC
-                    LIMIT $limit
-                """, search_query=query, limit=limit)
+                if allowed_collection_ids:
+                    result = session.run("""
+                        CALL db.index.fulltext.queryNodes('community_summary_fulltext', $search_query)
+                        YIELD node, score
+                        WHERE EXISTS {
+                            MATCH (node)-[:HAS_MEMBER]->(member:Entity)
+                            WHERE EXISTS {
+                                MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(member)
+                                WHERE col.id IN $allowed_collection_ids
+                            }
+                        }
+                        RETURN node.id as id,
+                               node.name as name,
+                               node.summary as summary,
+                               node.entity_count as entity_count,
+                               score
+                        ORDER BY score DESC
+                        LIMIT $limit
+                    """, search_query=query, limit=limit, allowed_collection_ids=allowed_collection_ids)
+                else:
+                    result = session.run("""
+                        CALL db.index.fulltext.queryNodes('community_summary_fulltext', $search_query)
+                        YIELD node, score
+                        RETURN node.id as id,
+                               node.name as name,
+                               node.summary as summary,
+                               node.entity_count as entity_count,
+                               score
+                        ORDER BY score DESC
+                        LIMIT $limit
+                    """, search_query=query, limit=limit)
                 return [dict(record) for record in result]
             except Exception as e:
                 logger.warning(f"Community search failed: {e}")
@@ -3920,10 +4382,56 @@ class Neo4jService:
             record = result.single()
             return (record["name"] if record else entity.name, True)
     
-    def get_stats(self) -> dict:
-        """Get knowledge base and knowledge graph statistics."""
+    def get_stats(self, allowed_collection_ids: Optional[List[str]] = None) -> dict:
+        """Get knowledge base and knowledge graph statistics.
+        
+        Args:
+            allowed_collection_ids: If provided, scope document/entity/community counts
+                to only those accessible from these collections.
+        """
         with self.driver.session() as session:
-            result = session.run("""
+            if allowed_collection_ids:
+                # Scoped stats: counts only for the allowed collections
+                result = session.run("""
+                    MATCH (col:Collection)-[:CONTAINS]->(d:Document)
+                    WHERE col.id IN $allowed_collection_ids
+                    WITH count(DISTINCT d) as doc_count,
+                         sum(coalesce(d.file_size, 0)) as total_size
+
+                    OPTIONAL MATCH (col2:Collection)-[:CONTAINS]->(d2:Document)-[:HAS_CHUNK]->(c:Chunk)
+                    WHERE col2.id IN $allowed_collection_ids
+                    WITH doc_count, total_size, count(c) as chunk_count
+
+                    OPTIONAL MATCH (col3:Collection)-[:CONTAINS]->(d3:Document)-[:HAS_CHUNK]->(c3:Chunk)-[:MENTIONS]->(e:Entity)
+                    WHERE col3.id IN $allowed_collection_ids
+                    WITH doc_count, total_size, chunk_count, count(DISTINCT e) as entity_count
+
+                    OPTIONAL MATCH (:Entity)-[r]->(:Entity)
+                    WITH doc_count, total_size, chunk_count, entity_count,
+                         count(r) as relationship_count,
+                         count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END) as per_chunk_rel_count
+
+                    OPTIONAL MATCH (com:Community)
+                    WITH doc_count, total_size, chunk_count, entity_count, relationship_count, per_chunk_rel_count, count(com) as community_count
+
+                    OPTIONAL MATCH (col4:Collection)
+                    WITH doc_count, total_size, chunk_count, entity_count, relationship_count, per_chunk_rel_count, community_count, count(col4) as collection_count
+
+                    RETURN doc_count as document_count,
+                           chunk_count,
+                           total_size,
+                           entity_count,
+                           relationship_count,
+                           community_count,
+                           collection_count,
+                           0 as pending_count,
+                           doc_count as completed_count,
+                           0 as failed_count,
+                           0 as processing_count,
+                           per_chunk_rel_count
+                """, allowed_collection_ids=allowed_collection_ids)
+            else:
+                result = session.run("""
                 MATCH (d:Document)
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
                 WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size

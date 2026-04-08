@@ -44,7 +44,7 @@ On import completion, clears client-side caches (same as system reset).
 
 ## Bulk Download
 
-`POST /api/documents/download-zip` — Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. No auth required (matches existing file endpoint). Accessible via Download button in bulk actions toolbar on Documents page.
+`POST /api/documents/download-zip` — Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. Requires `read` permission; restricted keys can only download documents from their allowed collections. Accessible via Download button in bulk actions toolbar on Documents page.
 
 ## API Key Management
 
@@ -66,7 +66,27 @@ Storage: `APIKey` node has `collection_scope` property; `HAS_ACCESS_TO` relation
 - `get_collection_filter()` — returns None (no filter) or list of allowed IDs for query-time filtering
 - `validate_collection_access(auth, collection_id, action)` — raises 403 if access denied
 
-Enforcement applied at: `/api/ask`, `/api/ask/stream`, `/api/upload`, `/api/custom-input`, `/api/collections` (list filtered), `/api/collections/{id}`, `/api/collections/{id}/entities`, `/api/documents` (list filtered), `/api/documents/{id}`, `/api/documents/{id}` DELETE, `/api/documents/move`, `/api/collections/{id}/documents/{doc_id}`.
+Enforcement applied at every non-admin endpoint. Full scope:
+
+**Read endpoints** — results filtered or 403 on out-of-scope access:
+- `/api/stats`, `/api/graph/status` — counts scoped to allowed collections
+- `/api/documents` (list), `/api/documents/{id}`, `/api/documents/{id}/content`, `/api/documents/{id}/file`, `/api/documents/download-zip`, `/api/documents/pending`
+- `/api/custom-inputs` (list), `/api/custom-inputs/{id}`
+- `/api/collections` (list filtered), `/api/collections/{id}`, `/api/collections/{id}/entities`
+- `/api/graph/visualization`, `/api/graph/entities`, `/api/graph/entity/{name}`, `/api/graph/entity/{name}/relationships`, `/api/graph/search`, `/api/graph/subgraph`, `/api/graph/entity-types`, `/api/graph/relationship-types`, `/api/graph/relationships`
+- `/api/entities/duplicates` (entities scoped), `/api/entities/merge-history` (requires all-scope)
+- `/api/graph/status`, `/api/graph/communities` (list), `/api/graph/communities/{id}`, `/api/graph/communities/search`
+- `/api/tasks`, `/api/tasks/{id}`, `/api/tasks/{id}/result`
+- `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking`, `/api/search`
+
+**Manage endpoints** — 403 if target collection is not in the allowed list:
+- `/api/upload`, `/api/custom-input`, `/api/custom-input/generate-topic`
+- `/api/documents/{id}` DELETE, `/api/documents/delete`, `DELETE /api/documents`, `/api/documents/{id}/reprocess`, `/api/documents/reprocess` (per-document collection check), `/api/documents/process-pending`, `/api/documents/move`
+- `/api/collections` (create), `/api/collections/{id}` (update/delete), `/api/collections/{id}/documents/{doc_id}`
+- `/api/graph/entity/{name}` PATCH, `/api/entities/merge`
+- `/api/graph/relationships/analyze` (collection_id validated if provided), `DELETE /api/graph/relationships`, `DELETE /api/graph/entities`
+- `/api/graph/communities/detect` (collection_id validated if provided), `/api/graph/communities/summarize`, `DELETE /api/graph/communities/{id}`, `DELETE /api/graph/communities`
+- `/api/cleanup/orphaned-entities`, `DELETE /api/tasks/{id}`, `/api/tasks/cleanup`
 
 Validation on create/update: restricted scope requires ≥1 collection; all specified collection IDs must exist.
 
