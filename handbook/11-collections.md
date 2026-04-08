@@ -146,6 +146,63 @@ DEFAULT_COLLECTION=default     # Default collection name
 MAX_COLLECTIONS=0              # Max collections (0 = unlimited)
 ```
 
+## Collection-Scoped API Keys
+
+You can lock an API key to specific collections so it can only read or write within those collections. This enables true multi-tenancy on a single MOCA instance — each tenant, agent, or application gets its own key scoped to its own data.
+
+### Create a Collection-Scoped Key
+
+```bash
+# Read-only key restricted to one collection
+curl -X POST http://localhost:8000/api/admin/api-keys \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tenant A - Read Only",
+    "permissions": ["read"],
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123"]
+  }'
+```
+
+```bash
+# Read/write key restricted to two collections
+curl -X POST http://localhost:8000/api/admin/api-keys \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tenant B - Read/Write",
+    "permissions": ["read", "manage"],
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_def456", "coll_ghi789"]
+  }'
+```
+
+### Update Collection Access
+
+```bash
+curl -X PATCH http://localhost:8000/api/admin/api-keys/{id} \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123", "coll_new"]
+  }'
+```
+
+### How Enforcement Works
+
+When a restricted key calls an endpoint, the system:
+- **Filters lists** — `/api/collections` and `/api/documents` only return items from allowed collections
+- **Blocks access** — 403 if a single-resource endpoint targets a disallowed collection
+- **Blocks writes** — 403 if an upload, delete, or move targets a disallowed collection
+
+New collections created after the key is issued are **not** automatically accessible — you must explicitly add them to the key's `allowed_collections`.
+
+### UI
+
+In **Settings > API Key Management**, click **New Key** and choose *Specific Collections* to open a multi-select picker. The key card shows an amber "N Collections" badge for restricted keys and lists the collection names in the expanded details panel.
+
 ## Best Practices
 
 1. **Use meaningful names and descriptions** — "Q1 2026 Financial Reports" is better than "collection1"
@@ -154,3 +211,4 @@ MAX_COLLECTIONS=0              # Max collections (0 = unlimited)
 4. **Scope queries when appropriate** — Use collection scoping for precision, omit it for breadth
 5. **Review periodically** — Remove empty or outdated collections
 6. **Use for agent memory** — Create a collection per agent for isolated long-term memory
+7. **Pair with collection-scoped keys** — Give each tenant or agent a key restricted to its own collection for clean data isolation

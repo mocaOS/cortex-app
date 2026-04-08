@@ -19,6 +19,8 @@ import type {
   APIKeyWithStats,
   CreateAPIKeyResponse,
   APIKeyPermission,
+  CollectionScope,
+  Collection,
 } from "@/types";
 import { ApiKeyCard } from "./ApiKeyCard";
 import { ApiKeyAnalytics } from "./ApiKeyAnalytics";
@@ -63,9 +65,19 @@ export function ApiKeyManager() {
   }, []);
 
   // Create new API key
-  const handleCreate = async (name: string, permissions: APIKeyPermission[]) => {
+  const handleCreate = async (
+    name: string, 
+    permissions: APIKeyPermission[],
+    collectionScope: CollectionScope,
+    allowedCollections: string[]
+  ) => {
     try {
-      const result = await api.createApiKey({ name, permissions });
+      const result = await api.createApiKey({ 
+        name, 
+        permissions,
+        collection_scope: collectionScope,
+        allowed_collections: collectionScope === "restricted" ? allowedCollections : undefined
+      });
       setNewKeyResult(result);
       setShowCreateModal(false);
       fetchApiKeys();
@@ -301,25 +313,63 @@ export function ApiKeyManager() {
 function CreateKeyModal({
   onClose,
   onCreate,
+  preselectedCollectionId,
 }: {
   onClose: () => void;
-  onCreate: (name: string, permissions: APIKeyPermission[]) => void;
+  onCreate: (name: string, permissions: APIKeyPermission[], collectionScope: CollectionScope, allowedCollections: string[]) => void;
+  preselectedCollectionId?: string;
 }) {
   const [name, setName] = useState("");
   const [readOnly, setReadOnly] = useState(true);
   const [manage, setManage] = useState(false);
   const [creating, setCreating] = useState(false);
+  
+  // Collection scope state
+  const [collectionScope, setCollectionScope] = useState<CollectionScope>(
+    preselectedCollectionId ? "restricted" : "all"
+  );
+  const [selectedCollections, setSelectedCollections] = useState<string[]>(
+    preselectedCollectionId ? [preselectedCollectionId] : []
+  );
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [loadingCollections, setLoadingCollections] = useState(false);
+  
+  // Fetch collections when scope changes to restricted
+  useEffect(() => {
+    if (collectionScope === "restricted" && collections.length === 0) {
+      setLoadingCollections(true);
+      api.getCollections()
+        .then((response) => {
+          setCollections(response.collections || []);
+        })
+        .catch((err) => {
+          console.error("Failed to load collections:", err);
+        })
+        .finally(() => {
+          setLoadingCollections(false);
+        });
+    }
+  }, [collectionScope, collections.length]);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
+    if (collectionScope === "restricted" && selectedCollections.length === 0) return;
 
     const permissions: APIKeyPermission[] = [];
     if (readOnly || manage) permissions.push("read");
     if (manage) permissions.push("manage");
 
     setCreating(true);
-    await onCreate(name, permissions);
+    await onCreate(name, permissions, collectionScope, selectedCollections);
     setCreating(false);
+  };
+
+  const toggleCollection = (collectionId: string) => {
+    setSelectedCollections((prev) =>
+      prev.includes(collectionId)
+        ? prev.filter((id) => id !== collectionId)
+        : [...prev, collectionId]
+    );
   };
 
   return (
@@ -334,7 +384,7 @@ function CreateKeyModal({
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-card rounded-xl border border-border p-6 max-w-md w-full"
+        className="bg-card rounded-xl border border-border p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-xl font-bold text-foreground mb-6">Create API Key</h2>
@@ -397,6 +447,87 @@ function CreateKeyModal({
               </label>
             </div>
           </div>
+
+          {/* Collection Scope */}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-3">
+              Collection Access
+            </label>
+            <div className="space-y-3">
+              <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                <input
+                  type="radio"
+                  name="collectionScope"
+                  checked={collectionScope === "all"}
+                  onChange={() => setCollectionScope("all")}
+                  className="mt-0.5 w-4 h-4 border-border bg-muted accent-accent"
+                />
+                <div>
+                  <div className="font-medium text-foreground">All Collections</div>
+                  <div className="text-sm text-muted-foreground">
+                    Can access all current and future collections
+                  </div>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                <input
+                  type="radio"
+                  name="collectionScope"
+                  checked={collectionScope === "restricted"}
+                  onChange={() => setCollectionScope("restricted")}
+                  className="mt-0.5 w-4 h-4 border-border bg-muted accent-accent"
+                />
+                <div>
+                  <div className="font-medium text-foreground">Specific Collections</div>
+                  <div className="text-sm text-muted-foreground">
+                    Restrict access to selected collections only
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Collection Picker (when restricted) */}
+          {collectionScope === "restricted" && (
+            <div className="pl-7">
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Select Collections
+              </label>
+              {loadingCollections ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading collections...
+                </div>
+              ) : collections.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-2">
+                  No collections available
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
+                  {collections.map((collection) => (
+                    <label
+                      key={collection.id}
+                      className="flex items-center gap-2 p-2 rounded hover:bg-muted/50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedCollections.includes(collection.id)}
+                        onChange={() => toggleCollection(collection.id)}
+                        className="w-4 h-4 rounded border-border bg-muted accent-accent"
+                      />
+                      <span className="text-sm text-foreground">{collection.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {selectedCollections.length > 0 && (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {selectedCollections.length} collection{selectedCollections.length !== 1 ? "s" : ""} selected
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -409,7 +540,12 @@ function CreateKeyModal({
           </button>
           <button
             onClick={handleCreate}
-            disabled={!name.trim() || (!readOnly && !manage) || creating}
+            disabled={
+              !name.trim() || 
+              (!readOnly && !manage) || 
+              (collectionScope === "restricted" && selectedCollections.length === 0) ||
+              creating
+            }
             className="flex-1 py-2.5 bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-accent-foreground rounded-lg transition-colors"
           >
             {creating ? "Creating..." : "Create Key"}

@@ -428,6 +428,7 @@ export interface CustomInputItem {
 // =============================================================================
 
 export type APIKeyPermission = "read" | "manage";
+export type CollectionScope = "all" | "restricted";
 
 export interface APIKeyListItem {
   id: string;
@@ -438,11 +439,16 @@ export interface APIKeyListItem {
   created_at: string;
   last_used_at?: string | null;
   created_by: string;
+  collection_scope: CollectionScope;
+  allowed_collections: string[];
+  allowed_collection_names?: string[] | null;
 }
 
 export interface CreateAPIKeyRequest {
   name: string;
   permissions: APIKeyPermission[];
+  collection_scope?: CollectionScope;
+  allowed_collections?: string[];
 }
 
 export interface CreateAPIKeyResponse {
@@ -452,12 +458,16 @@ export interface CreateAPIKeyResponse {
   key_prefix: string;
   permissions: APIKeyPermission[];
   created_at: string;
+  collection_scope: CollectionScope;
+  allowed_collections: string[];
 }
 
 export interface UpdateAPIKeyRequest {
   name?: string;
   permissions?: APIKeyPermission[];
   is_active?: boolean;
+  collection_scope?: CollectionScope;
+  allowed_collections?: string[];
 }
 
 // =============================================================================

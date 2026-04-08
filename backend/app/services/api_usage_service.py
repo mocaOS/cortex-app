@@ -20,6 +20,7 @@ from app.models import (
     AdminStatsOverview,
     APIKeyWithStats,
     APIKeyPermission,
+    CollectionScope,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,10 @@ class APIUsageService:
                 endpoint_breakdown=stats_data.get("endpoint_breakdown", {})
             )
             
+            # Convert collection scope string to enum
+            scope_str = key_data.get("collection_scope", "all")
+            collection_scope = CollectionScope(scope_str) if scope_str in [e.value for e in CollectionScope] else CollectionScope.ALL
+            
             result.append(APIKeyWithStats(
                 id=key_data["id"],
                 name=key_data["name"],
@@ -242,6 +247,9 @@ class APIUsageService:
                 created_at=_convert_neo4j_datetime(key_data.get("created_at")) or datetime.utcnow(),
                 last_used_at=_convert_neo4j_datetime(key_data.get("last_used_at")),
                 created_by=key_data.get("created_by", "admin"),
+                collection_scope=collection_scope,
+                allowed_collections=key_data.get("allowed_collections", []),
+                allowed_collection_names=key_data.get("allowed_collection_names"),
                 stats=stats
             ))
         

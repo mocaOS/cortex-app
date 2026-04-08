@@ -66,11 +66,27 @@ curl -H "X-API-Key: your-api-key" http://localhost:8000/api/stats
 ### Permission Levels
 
 | Permission | Grants Access To |
-|-----------|-----------------|
+|-----------|-----------------| 
 | **read** | Search, Ask AI, view documents, view entities/relationships/communities, view graph visualization, view stats |
 | **manage** | Everything in `read`, plus: upload documents, delete documents, reprocess documents, manage collections, run entity extraction, run relationship analysis, run community detection, entity deduplication |
 
 Admin-only operations (system reset, API key management, system configuration) always require the admin API key.
+
+### Collection-Scoped Keys
+
+In addition to permission levels, generated API keys can be restricted to specific collections. This enables true multi-tenant deployments from a single instance — each tenant gets a key that can only see and write to their own data.
+
+| Scope | Behaviour |
+|-------|-----------|
+| **All Collections** (default) | Key can access every collection |
+| **Restricted** | Key can only access the collections explicitly listed at creation time |
+
+When a restricted key calls any endpoint, the system enforces the allowed collection list:
+- **List endpoints** (`/api/documents`, `/api/collections`) — results are silently filtered to allowed collections only
+- **Single-resource endpoints** (`GET /api/collections/{id}`, `GET /api/documents/{id}`) — returns 403 if the resource belongs to a disallowed collection
+- **Write endpoints** (`/api/upload`, `/api/custom-input`, `DELETE /api/documents/{id}`) — returns 403 if the target collection is not in the allowed list
+
+New collections created after the key is issued are **not** automatically accessible — access must be explicitly granted by updating the key.
 
 ### Key Validation Flow
 
@@ -98,9 +114,11 @@ Only the first 12 characters (prefix) and a SHA-256 hash of the full key are sto
 
 Navigate to **Settings > API Key Management**:
 
-1. **Create**: Click "Create Key", enter a name, select permissions, optionally set an expiration date
+1. **Create**: Click "New Key", enter a name, select permissions, and choose a collection scope:
+   - *All Collections* — unrestricted access (default)
+   - *Specific Collections* — select one or more collections from the picker
 2. **Copy**: The full key is shown only once — copy it immediately
-3. **View**: See all keys with their names, permissions, creation dates, and last-used timestamps
+3. **View**: See all keys with names, permissions, collection scope badge, creation dates, and last-used timestamps
 4. **Usage Stats**: View per-key request counts, error rates, and endpoint breakdowns (when `TRACK_ADMIN_API_KEY_USAGE=true`)
 5. **Revoke**: Temporarily disable a key (can be reactivated later)
 6. **Activate**: Re-enable a previously revoked key
@@ -109,11 +127,31 @@ Navigate to **Settings > API Key Management**:
 ### Via the API
 
 ```bash
-# Create a new API key
+# Create a read-only key scoped to all collections (default)
 curl -X POST http://localhost:8000/api/admin/api-keys \
   -H "X-API-Key: your-admin-key" \
   -H "Content-Type: application/json" \
   -d '{"name": "My Agent", "permissions": ["read"]}'
+
+# Create a key restricted to specific collections
+curl -X POST http://localhost:8000/api/admin/api-keys \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tenant A - Read Only",
+    "permissions": ["read"],
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123"]
+  }'
+
+# Update collection access on an existing key
+curl -X PATCH http://localhost:8000/api/admin/api-keys/{id} \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123", "coll_def456"]
+  }'
 
 # List all keys
 curl http://localhost:8000/api/admin/api-keys \
@@ -209,9 +247,10 @@ When an injection is detected:
    - Upload pipelines: `["manage"]`
    - Admin operations: Use the admin key only
 
-2. **Set expiration dates** — Rotate keys regularly by setting expiration dates at creation time
+2. **Scope keys to collections** — For multi-tenant deployments, restrict each key to only the collections it needs. A key scoped to `["tenant-a-collection"]` cannot read or write to any other collection, even if it has `manage` permissions.
 
 3. **Use descriptive names** — Name keys after their purpose:
+   - "Tenant A - Read Only"
    - "Slack Bot - Production"
    - "Data Pipeline - Staging"
    - "Research Agent v2"
@@ -223,6 +262,8 @@ When an injection is detected:
 6. **Monitor usage** — Enable `TRACK_ADMIN_API_KEY_USAGE=true` and review statistics regularly
 
 7. **Revoke, don't delete** — When you suspect a key is compromised, revoke it first (to stop access immediately), then investigate. Revoked keys can be reactivated if the concern was unfounded.
+
+8. **Explicit collection grants** — New collections are never automatically accessible to existing restricted keys. Always update the key's `allowed_collections` when you create a new collection for a tenant.
 
 ## Network Security (Production)
 

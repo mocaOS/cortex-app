@@ -453,6 +453,12 @@ class APIKeyPermission(str, Enum):
     MANAGE = "manage"  # Can upload, edit, delete documents and collections
 
 
+class CollectionScope(str, Enum):
+    """Collection access scope for API keys."""
+    ALL = "all"           # Access all collections (unrestricted)
+    RESTRICTED = "restricted"  # Access only specified collections
+
+
 class APIKey(BaseModel):
     """An API key for accessing the backend."""
     id: str = Field(..., description="Unique API key identifier")
@@ -464,6 +470,8 @@ class APIKey(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow, description="When the key was created")
     last_used_at: Optional[datetime] = Field(default=None, description="When the key was last used")
     created_by: str = Field(default="admin", description="Who created this key")
+    collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
+    allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access (when scope is RESTRICTED)")
     
     class Config:
         json_schema_extra = {
@@ -473,7 +481,9 @@ class APIKey(BaseModel):
                 "key_prefix": "moca_ro_",
                 "permissions": ["read"],
                 "is_active": True,
-                "created_by": "admin"
+                "created_by": "admin",
+                "collection_scope": "all",
+                "allowed_collections": []
             }
         }
 
@@ -482,12 +492,16 @@ class CreateAPIKeyRequest(BaseModel):
     """Request model for creating a new API key."""
     name: str = Field(..., min_length=1, max_length=100, description="Name for the API key")
     permissions: List[APIKeyPermission] = Field(..., min_length=1, description="Permissions to grant")
+    collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
+    allowed_collections: Optional[List[str]] = Field(default=None, description="Collection IDs to grant access to (required when scope is RESTRICTED)")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "name": "Frontend Read-Only Key",
-                "permissions": ["read"]
+                "permissions": ["read"],
+                "collection_scope": "all",
+                "allowed_collections": []
             }
         }
 
@@ -500,6 +514,8 @@ class CreateAPIKeyResponse(BaseModel):
     key_prefix: str = Field(..., description="Key prefix for identification")
     permissions: List[APIKeyPermission] = Field(..., description="Granted permissions")
     created_at: datetime = Field(..., description="Creation timestamp")
+    collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
+    allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
     
     class Config:
         json_schema_extra = {
@@ -509,7 +525,9 @@ class CreateAPIKeyResponse(BaseModel):
                 "key": "moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
                 "key_prefix": "moca_ro_",
                 "permissions": ["read"],
-                "created_at": "2024-01-01T00:00:00Z"
+                "created_at": "2024-01-01T00:00:00Z",
+                "collection_scope": "all",
+                "allowed_collections": []
             }
         }
 
@@ -524,6 +542,9 @@ class APIKeyListItem(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     last_used_at: Optional[datetime] = Field(default=None, description="Last usage timestamp")
     created_by: str = Field(..., description="Who created this key")
+    collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
+    allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
+    allowed_collection_names: Optional[List[str]] = Field(default=None, description="Collection names for display")
 
 
 class UpdateAPIKeyRequest(BaseModel):
@@ -531,6 +552,8 @@ class UpdateAPIKeyRequest(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="New name")
     permissions: Optional[List[APIKeyPermission]] = Field(default=None, description="New permissions")
     is_active: Optional[bool] = Field(default=None, description="Activate or deactivate the key")
+    collection_scope: Optional[CollectionScope] = Field(default=None, description="New collection access scope")
+    allowed_collections: Optional[List[str]] = Field(default=None, description="New collection IDs to grant access to")
 
 
 # =============================================================================
