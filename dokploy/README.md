@@ -142,4 +142,5 @@ When using manual labels, ensure router names (e.g., `moca-backend`, `moca-front
   ```
 - Named volumes persist across deployments. To reset data, manually delete the volumes.
 - Dokploy wipes the repo directory on each deploy (git clone), but named volumes are unaffected.
-- **Build context paths**: The compose file uses `./backend` and `./frontend` which resolve relative to the repo root (Dokploy sets the working directory to repo root). If builds fail with path errors, try changing to `../backend` and `../frontend`.
+- **Build context paths**: The compose file uses `../backend` and `../frontend` because Dokploy resolves paths relative to the compose file's directory (`dokploy/`), not the repo root.
+- **Env file path**: Similarly, `env_file: ../.env` points up one level to where Dokploy places the `.env` file (repo root).

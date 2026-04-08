@@ -9,7 +9,7 @@ services:
   neo4j:
     image: neo4j:5.15.0-community
     env_file:
-      - .env
+      - ../.env
     environment:
       # Username is hardcoded to 'neo4j' - don't set NEO4J_USER in Dokploy env vars!
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
@@ -42,10 +42,10 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile.prod
     env_file:
-      - .env
+      - ../.env
     environment:
       # Internal service connections (override .env values)
       - NEO4J_URI=bolt://neo4j:7687
@@ -87,7 +87,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile.prod
       args:
         # Build-time args for Next.js (set these in Dokploy env vars)
@@ -95,7 +95,7 @@ services:
         - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
         - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
     env_file:
-      - .env
+      - ../.env
     environment:
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
