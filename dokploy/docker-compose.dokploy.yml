@@ -189,9 +189,10 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      # Branding
+      # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
       - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
       - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      - ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       # Admin authentication
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}

@@ -33,7 +33,9 @@ export default function RootLayout({
       <head>
         <style
           dangerouslySetInnerHTML={{
-            __html: `:root,.dark{--accent:${process.env.NEXT_PUBLIC_ACCENT_COLOR || "oklch(0.79 0.18 70.67)"}}`,
+            // Use ACCENT_COLOR (non-NEXT_PUBLIC_) so it's read from process.env at runtime
+            // rather than being inlined at build time by Next.js webpack DefinePlugin
+            __html: `:root,.dark{--accent:${process.env.ACCENT_COLOR || "oklch(0.79 0.18 70.67)"}}`,
           }}
         />
       </head>
