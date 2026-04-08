@@ -17,6 +17,7 @@ from app.services.auth_service import generate_api_key, hash_api_key
 from app.models import (
     APIKey,
     APIKeyPermission,
+    CollectionScope,
     CreateAPIKeyRequest,
     CreateAPIKeyResponse,
     APIKeyListItem,
@@ -62,7 +63,9 @@ class APIKeyService:
         self,
         name: str,
         permissions: List[APIKeyPermission],
-        created_by: str = "admin"
+        created_by: str = "admin",
+        collection_scope: CollectionScope = CollectionScope.ALL,
+        allowed_collections: Optional[List[str]] = None
     ) -> Optional[CreateAPIKeyResponse]:
         """
         Create a new API key with the specified permissions.
@@ -71,6 +74,8 @@ class APIKeyService:
             name: Human-readable name for the key
             permissions: List of permissions to grant
             created_by: Who is creating this key
+            collection_scope: 'all' for unrestricted, 'restricted' for collection-specific
+            allowed_collections: List of collection IDs when scope is 'restricted'
             
         Returns:
             CreateAPIKeyResponse with the actual key (shown only once)
@@ -100,7 +105,9 @@ class APIKeyService:
             key_prefix=key_prefix,
             key_hash=key_hash,
             permissions=permission_strings,
-            created_by=created_by
+            created_by=created_by,
+            collection_scope=collection_scope.value,
+            allowed_collections=allowed_collections or []
         )
         
         if not result:
@@ -113,7 +120,9 @@ class APIKeyService:
             key=full_key,
             key_prefix=key_prefix,
             permissions=permissions,
-            created_at=_convert_neo4j_datetime(result.get("created_at")) or datetime.utcnow()
+            created_at=_convert_neo4j_datetime(result.get("created_at")) or datetime.utcnow(),
+            collection_scope=collection_scope,
+            allowed_collections=result.get("allowed_collections", [])
         )
     
     def list_api_keys(self) -> List[APIKeyListItem]:
@@ -133,6 +142,10 @@ class APIKeyService:
                 if p in [e.value for e in APIKeyPermission]
             ]
             
+            # Convert collection scope string to enum
+            scope_str = key_data.get("collection_scope", "all")
+            collection_scope = CollectionScope(scope_str) if scope_str in [e.value for e in CollectionScope] else CollectionScope.ALL
+            
             result.append(APIKeyListItem(
                 id=key_data["id"],
                 name=key_data["name"],
@@ -141,7 +154,10 @@ class APIKeyService:
                 is_active=key_data.get("is_active", True),
                 created_at=_convert_neo4j_datetime(key_data.get("created_at")) or datetime.utcnow(),
                 last_used_at=_convert_neo4j_datetime(key_data.get("last_used_at")),
-                created_by=key_data.get("created_by", "admin")
+                created_by=key_data.get("created_by", "admin"),
+                collection_scope=collection_scope,
+                allowed_collections=key_data.get("allowed_collections", []),
+                allowed_collection_names=key_data.get("allowed_collection_names")
             ))
         
         return result
@@ -164,6 +180,10 @@ class APIKeyService:
             if p in [e.value for e in APIKeyPermission]
         ]
         
+        # Convert collection scope string to enum
+        scope_str = key_data.get("collection_scope", "all")
+        collection_scope = CollectionScope(scope_str) if scope_str in [e.value for e in CollectionScope] else CollectionScope.ALL
+        
         return APIKeyListItem(
             id=key_data["id"],
             name=key_data["name"],
@@ -172,7 +192,10 @@ class APIKeyService:
             is_active=key_data.get("is_active", True),
             created_at=_convert_neo4j_datetime(key_data.get("created_at")) or datetime.utcnow(),
             last_used_at=_convert_neo4j_datetime(key_data.get("last_used_at")),
-            created_by=key_data.get("created_by", "admin")
+            created_by=key_data.get("created_by", "admin"),
+            collection_scope=collection_scope,
+            allowed_collections=key_data.get("allowed_collections", []),
+            allowed_collection_names=key_data.get("allowed_collection_names")
         )
     
     def update_api_key(
@@ -181,7 +204,7 @@ class APIKeyService:
         request: UpdateAPIKeyRequest
     ) -> Optional[APIKeyListItem]:
         """
-        Update an API key's name, permissions, or active status.
+        Update an API key's name, permissions, active status, or collection scope.
         
         Args:
             key_id: The API key ID to update
@@ -195,11 +218,18 @@ class APIKeyService:
         if request.permissions is not None:
             permission_strings = [p.value for p in request.permissions]
         
+        # Convert collection scope to string if provided
+        collection_scope_str = None
+        if request.collection_scope is not None:
+            collection_scope_str = request.collection_scope.value
+        
         result = self.neo4j_service.update_api_key(
             key_id=key_id,
             name=request.name,
             permissions=permission_strings,
-            is_active=request.is_active
+            is_active=request.is_active,
+            collection_scope=collection_scope_str,
+            allowed_collections=request.allowed_collections
         )
         
         if not result:
@@ -211,6 +241,10 @@ class APIKeyService:
             if p in [e.value for e in APIKeyPermission]
         ]
         
+        # Convert collection scope string to enum
+        scope_str = result.get("collection_scope", "all")
+        collection_scope = CollectionScope(scope_str) if scope_str in [e.value for e in CollectionScope] else CollectionScope.ALL
+        
         return APIKeyListItem(
             id=result["id"],
             name=result["name"],
@@ -219,7 +253,10 @@ class APIKeyService:
             is_active=result.get("is_active", True),
             created_at=_convert_neo4j_datetime(result.get("created_at")) or datetime.utcnow(),
             last_used_at=_convert_neo4j_datetime(result.get("last_used_at")),
-            created_by=result.get("created_by", "admin")
+            created_by=result.get("created_by", "admin"),
+            collection_scope=collection_scope,
+            allowed_collections=result.get("allowed_collections", []),
+            allowed_collection_names=result.get("allowed_collection_names")
         )
     
     def delete_api_key(self, key_id: str) -> bool:

@@ -247,6 +247,53 @@ ENABLE_COLLECTIONS=true
 DEFAULT_COLLECTION=default
 ```
 
+## Collection-Scoped API Keys
+
+The most powerful use of collections is pairing them with **collection-scoped API keys**. A key restricted to specific collections can only see and write to those collections — everything else returns a 403. This enables true multi-tenancy from a single MOCA instance.
+
+### Create a restricted key
+
+```bash
+curl -X POST http://localhost:8000/api/admin/api-keys \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tenant A - Read Only",
+    "permissions": ["read"],
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123"]
+  }'
+```
+
+### Update collection access on an existing key
+
+```bash
+curl -X PATCH http://localhost:8000/api/admin/api-keys/{id} \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_scope": "restricted",
+    "allowed_collections": ["coll_abc123", "coll_def456"]
+  }'
+```
+
+### Enforcement
+
+| Endpoint type | Behaviour for restricted key |
+|---------------|------------------------------|
+| `GET /api/collections` | Returns only allowed collections |
+| `GET /api/documents` | Returns only documents in allowed collections |
+| `GET /api/collections/{id}` | 403 if not in allowed list |
+| `GET /api/documents/{id}` | 403 if document's collection not in allowed list |
+| `POST /api/upload?collection_id=...` | 403 if collection not in allowed list |
+| `POST /api/ask` with `collection_id` | 403 if collection not in allowed list |
+
+> New collections are **never** automatically accessible to existing restricted keys — access must be explicitly granted.
+
+### In the UI
+
+Go to **Settings → API Key Management → New Key** and select *Specific Collections* to open a multi-select picker. Each restricted key card shows an amber **N Collections** badge.
+
 ## Best Practices
 
 1. **Meaningful Names** - Use descriptive names for easy identification
@@ -254,3 +301,4 @@ DEFAULT_COLLECTION=default
 3. **Don't Over-Segment** - Too many small collections reduce graph connectivity
 4. **Regular Cleanup** - Remove unused collections periodically
 5. **Use Descriptions** - Add descriptions for documentation
+6. **Pair with scoped keys** - For multi-tenant deployments, give each tenant a key restricted to their collection

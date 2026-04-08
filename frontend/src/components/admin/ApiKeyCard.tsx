@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Activity,
   Shield,
+  Layers,
 } from "lucide-react";
 import type { APIKeyWithStats } from "@/types";
 
@@ -102,7 +103,7 @@ export function ApiKeyCard({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
             <span className="font-mono bg-muted px-2 py-0.5 rounded text-xs">
               {apiKey.key_prefix}...
             </span>
@@ -113,6 +114,20 @@ export function ApiKeyCard({
                   : "bg-muted text-muted-foreground"
               }`}>
                 {apiKey.permissions.includes("manage") ? "Read/Write" : "Read Only"}
+              </span>
+            )}
+            {/* Collection scope badge */}
+            {!isProtectedAdminKey && (
+              <span className={`px-2 py-0.5 text-xs rounded-full flex items-center gap-1 ${
+                apiKey.collection_scope === "restricted"
+                  ? "bg-amber-500/20 text-amber-500"
+                  : "bg-muted text-muted-foreground"
+              }`}>
+                <Layers className="w-3 h-3" />
+                {apiKey.collection_scope === "restricted"
+                  ? `${apiKey.allowed_collections?.length || 0} Collection${(apiKey.allowed_collections?.length || 0) !== 1 ? "s" : ""}`
+                  : "All Collections"
+                }
               </span>
             )}
           </div>
@@ -251,6 +266,43 @@ export function ApiKeyCard({
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Collection Access */}
+              {!isProtectedAdminKey && (
+                <div className="mt-3">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                    <Layers className="w-3 h-3" />
+                    Collection Access
+                  </div>
+                  {apiKey.collection_scope === "restricted" ? (
+                    <div className="flex flex-wrap gap-2">
+                      {apiKey.allowed_collection_names?.length ? (
+                        apiKey.allowed_collection_names.map((name, idx) => (
+                          <span
+                            key={apiKey.allowed_collections?.[idx] || idx}
+                            className="px-2 py-1 bg-amber-500/10 text-amber-500 rounded text-xs"
+                          >
+                            {name}
+                          </span>
+                        ))
+                      ) : apiKey.allowed_collections?.length ? (
+                        apiKey.allowed_collections.map((id) => (
+                          <span
+                            key={id}
+                            className="px-2 py-1 bg-amber-500/10 text-amber-500 rounded text-xs font-mono"
+                          >
+                            {id}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-sm text-muted-foreground">No collections specified</span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">Access to all collections</span>
+                  )}
                 </div>
               )}
 

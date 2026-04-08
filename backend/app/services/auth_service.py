@@ -35,7 +35,9 @@ class AuthResult:
         permissions: List[APIKeyPermission] = None,
         key_id: Optional[str] = None,
         error: Optional[str] = None,
-        key_name: Optional[str] = None
+        key_name: Optional[str] = None,
+        collection_scope: str = "all",
+        allowed_collections: List[str] = None
     ):
         self.is_authenticated = is_authenticated
         self.is_admin = is_admin
@@ -43,12 +45,46 @@ class AuthResult:
         self.key_id = key_id
         self.error = error
         self.key_name = key_name
+        self.collection_scope = collection_scope
+        self.allowed_collections = allowed_collections or []
     
     def has_permission(self, permission: APIKeyPermission) -> bool:
         """Check if this auth result has a specific permission."""
         if self.is_admin:
             return True  # Admin has all permissions
         return permission in self.permissions
+    
+    def can_access_collection(self, collection_id: Optional[str]) -> bool:
+        """Check if this auth result can access a specific collection.
+        
+        Args:
+            collection_id: The collection ID to check. None means no specific collection
+                          (e.g., a global query across all accessible collections).
+        
+        Returns:
+            True if access is allowed, False otherwise.
+        """
+        # Admin always has access
+        if self.is_admin:
+            return True
+        # Unrestricted keys can access everything
+        if self.collection_scope == "all":
+            return True
+        # For restricted keys, None means "query all accessible collections" which is allowed
+        if not collection_id:
+            return True
+        # Check if the specific collection is in the allowed list
+        return collection_id in self.allowed_collections
+    
+    def get_collection_filter(self) -> Optional[List[str]]:
+        """Get the list of collections to filter results by.
+        
+        Returns:
+            None if unrestricted (no filtering needed), or list of allowed collection IDs.
+        """
+        if self.is_admin or self.collection_scope == "all":
+            return None
+        return self.allowed_collections
 
 
 def hash_api_key(api_key: str) -> str:
@@ -126,13 +162,19 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                     if p in [e.value for e in APIKeyPermission]
                 ]
                 
+                # Get collection scope info
+                collection_scope = stored_key.get("collection_scope", "all")
+                allowed_collections = stored_key.get("allowed_collections", []) or []
+                
                 logger.debug(f"API key authenticated: {stored_key['name']} ({stored_key['id']})")
                 return AuthResult(
                     is_authenticated=True,
                     is_admin=False,
                     permissions=permissions,
                     key_id=stored_key["id"],
-                    key_name=stored_key["name"]
+                    key_name=stored_key["name"],
+                    collection_scope=collection_scope,
+                    allowed_collections=allowed_collections
                 )
         
         # No matching key found
@@ -245,3 +287,22 @@ async def require_admin(api_key: Optional[str] = Depends(api_key_header)) -> Aut
         )
     
     return auth
+
+
+def validate_collection_access(auth: AuthResult, collection_id: Optional[str], action: str = "access") -> None:
+    """
+    Validate that the authenticated user can access a specific collection.
+    
+    Args:
+        auth: The authentication result
+        collection_id: The collection ID to check access for
+        action: A verb describing the action (for error message), e.g., "read", "upload to"
+    
+    Raises:
+        HTTPException: If access is denied
+    """
+    if not auth.can_access_collection(collection_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API key does not have permission to {action} collection: {collection_id}"
+        )

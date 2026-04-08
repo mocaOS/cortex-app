@@ -69,6 +69,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
+- **🔐 Collection-Scoped API Keys**: Restrict API keys to specific collections — one instance, multiple isolated tenants. Both `read` and `read+write` keys support collection scoping. Restricted keys see filtered document/collection lists and get 403 on any out-of-scope resource. New collections require explicit access grants.
 - **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
@@ -360,15 +361,15 @@ npm run dev
 |--------|----------|-------------|------|
 | GET | `/api/admin/config` | System configuration (model names, API base URLs, context windows — no secrets) | Admin |
 | POST | `/api/admin/reset` | System reset — selective deletion of all data | Admin |
-| GET | `/api/admin/api-keys` | List all API keys | Admin |
-| POST | `/api/admin/api-keys` | Create new API key | Admin |
-| GET | `/api/admin/api-keys/{id}` | Get API key details | Admin |
-| PATCH | `/api/admin/api-keys/{id}` | Update API key | Admin |
+| GET | `/api/admin/api-keys` | List all API keys (includes `collection_scope`, `allowed_collections`) | Admin |
+| POST | `/api/admin/api-keys` | Create new API key (supports `collection_scope` + `allowed_collections`) | Admin |
+| GET | `/api/admin/api-keys/{id}` | Get API key details (includes `allowed_collection_names`) | Admin |
+| PATCH | `/api/admin/api-keys/{id}` | Update API key (name, permissions, is_active, collection_scope, allowed_collections) | Admin |
 | DELETE | `/api/admin/api-keys/{id}` | Delete API key | Admin |
 | POST | `/api/admin/api-keys/{id}/revoke` | Revoke API key | Admin |
 | POST | `/api/admin/api-keys/{id}/activate` | Reactivate API key | Admin |
 
-> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search) or `manage` (upload, delete) permissions.
+> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search) or `manage` (upload, delete) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance.
 
 ### Example: Search
 
@@ -494,6 +495,40 @@ curl -X POST http://localhost:8000/api/ask \
   -d '{
     "question": "What are the main findings?",
     "collection_id": "<collection-id>"
+  }'
+```
+
+### Example: Collection-Scoped API Keys (Multi-Tenancy)
+
+Restrict an API key to specific collections so it can only see and write to those collections. One MOCA instance, fully isolated tenants:
+
+```bash
+# Create a read-only key for Tenant A scoped to their collection
+curl -X POST http://localhost:8000/api/admin/api-keys \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tenant A - Read Only",
+    "permissions": ["read"],
+    "collection_scope": "restricted",
+    "allowed_collections": ["<tenant-a-collection-id>"]
+  }'
+
+# That key can only see its own collection
+curl -H "X-API-Key: moca_ro_..." http://localhost:8000/api/collections
+# → returns only Tenant A's collection
+
+# It gets a 403 for any other collection
+curl -H "X-API-Key: moca_ro_..." http://localhost:8000/api/collections/<tenant-b-id>
+# → {"detail": "API key does not have permission to view collection: ..."}
+
+# Update collection access on an existing key
+curl -X PATCH http://localhost:8000/api/admin/api-keys/<key-id> \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_scope": "restricted",
+    "allowed_collections": ["<coll-1>", "<coll-2>"]
   }'
 ```
 

@@ -161,17 +161,42 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/api/admin/api-keys` | Admin | List all API keys |
-| `POST` | `/api/admin/api-keys` | Admin | Create key. Body: `{name, permissions: ["read"|"manage"]}` |
-| `GET` | `/api/admin/api-keys/with-stats` | Admin | List keys with usage statistics |
-| `GET` | `/api/admin/api-keys/{id}` | Admin | Key details |
-| `PATCH` | `/api/admin/api-keys/{id}` | Admin | Update key. Body: `{name?, permissions?, is_active?}` |
-| `DELETE` | `/api/admin/api-keys/{id}` | Admin | Delete key permanently |
+| `GET` | `/api/admin/api-keys` | Admin | List all API keys (includes `collection_scope` and `allowed_collections`) |
+| `POST` | `/api/admin/api-keys` | Admin | Create key. Body: `{name, permissions, collection_scope?, allowed_collections?}` |
+| `GET` | `/api/admin/api-keys/with-stats` | Admin | List keys with embedded usage statistics and collection scope |
+| `GET` | `/api/admin/api-keys/{id}` | Admin | Key details including `allowed_collection_names` |
+| `PATCH` | `/api/admin/api-keys/{id}` | Admin | Update key. Body: `{name?, permissions?, is_active?, collection_scope?, allowed_collections?}` |
+| `DELETE` | `/api/admin/api-keys/{id}` | Admin | Delete key permanently (DETACH DELETE removes all relationships) |
 | `POST` | `/api/admin/api-keys/{id}/revoke` | Admin | Revoke (deactivate) key |
 | `POST` | `/api/admin/api-keys/{id}/activate` | Admin | Reactivate revoked key |
 | `GET` | `/api/admin/api-keys/{id}/stats` | Admin | Key usage statistics |
 | `GET` | `/api/admin/api-keys/{id}/usage-history` | Admin | Daily usage history. Query: `days` (1-365) |
 | `GET` | `/api/admin/stats/overview` | Admin | Aggregated stats across all keys |
+
+**`CreateAPIKeyRequest` body:**
+
+```json
+{
+  "name": "Tenant A - Read Only",
+  "permissions": ["read"],
+  "collection_scope": "restricted",
+  "allowed_collections": ["coll_abc123"]
+}
+```
+
+**`UpdateAPIKeyRequest` body (all fields optional):**
+
+```json
+{
+  "name": "New Name",
+  "permissions": ["read", "manage"],
+  "is_active": true,
+  "collection_scope": "restricted",
+  "allowed_collections": ["coll_abc123", "coll_def456"]
+}
+```
+
+`collection_scope` values: `"all"` (default — unrestricted) or `"restricted"` (must supply `allowed_collections`). Validation: `restricted` scope requires at least one collection ID, and all IDs must exist. When a collection is deleted, its `HAS_ACCESS_TO` relationships are automatically removed via DETACH DELETE.
 
 ## Admin — Agent Skills
 

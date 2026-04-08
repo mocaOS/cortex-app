@@ -48,12 +48,30 @@ On import completion, clears client-side caches (same as system reset).
 
 ## API Key Management
 
-- `services/api_key_service.py` — CRUD operations for API keys with permissions (READ, MANAGE, ADMIN)
+- `services/api_key_service.py` — CRUD operations for API keys with permissions (READ, MANAGE) and collection scope
 - `services/api_usage_service.py` — Request logging per key, endpoint categorization, error tracking, statistics aggregation
-- `services/auth_service.py` — Admin API key validation, generated API key validation against Neo4j, permission checking
+- `services/auth_service.py` — Admin API key validation, generated API key validation against Neo4j, permission + collection access checking
+
+### Collection-Scoped API Keys
+
+Keys can be restricted to specific collections via `collection_scope` + `allowed_collections`:
+
+- **`collection_scope: "all"`** (default) — key can access all collections
+- **`collection_scope: "restricted"`** — key can only access collections listed in `allowed_collections`
+
+Storage: `APIKey` node has `collection_scope` property; `HAS_ACCESS_TO` relationships link the key node to permitted `Collection` nodes. `DETACH DELETE` on collection cleanup automatically removes stale access relationships.
+
+`AuthResult` (auth_service.py) carries `collection_scope` and `allowed_collections` from the validated key. Helper methods:
+- `can_access_collection(collection_id)` — returns True if allowed (admin/all-scope always True)
+- `get_collection_filter()` — returns None (no filter) or list of allowed IDs for query-time filtering
+- `validate_collection_access(auth, collection_id, action)` — raises 403 if access denied
+
+Enforcement applied at: `/api/ask`, `/api/ask/stream`, `/api/upload`, `/api/custom-input`, `/api/collections` (list filtered), `/api/collections/{id}`, `/api/collections/{id}/entities`, `/api/documents` (list filtered), `/api/documents/{id}`, `/api/documents/{id}` DELETE, `/api/documents/move`, `/api/collections/{id}/documents/{doc_id}`.
+
+Validation on create/update: restricted scope requires ≥1 collection; all specified collection IDs must exist.
 
 ### Frontend
-- `ApiKeyManager` — manage API keys on Settings page
-- `ApiKeyCard` — individual key display
+- `ApiKeyManager` — manage API keys on Settings page; `CreateKeyModal` includes collection scope radio + multi-select picker
+- `ApiKeyCard` — individual key display with collection scope badge (amber "N Collections" or muted "All Collections") and collection list in expanded details
 - `ApiKeyAnalytics` — usage statistics
 - `UsageChart` — visual usage data

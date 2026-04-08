@@ -4074,10 +4074,26 @@ class Neo4jService:
         key_prefix: str,
         key_hash: str,
         permissions: List[str],
-        created_by: str = "admin"
+        created_by: str = "admin",
+        collection_scope: str = "all",
+        allowed_collections: Optional[List[str]] = None
     ) -> Optional[dict]:
-        """Create a new API key in the database."""
+        """Create a new API key in the database.
+        
+        Args:
+            key_id: Unique identifier for the key
+            name: Human-readable name
+            key_prefix: First 12 chars of key for identification
+            key_hash: SHA-256 hash of the key
+            permissions: List of permission strings ('read', 'manage')
+            created_by: Who created this key
+            collection_scope: 'all' for unrestricted, 'restricted' for collection-specific
+            allowed_collections: List of collection IDs when scope is 'restricted'
+        """
+        allowed_collections = allowed_collections or []
+        
         with self.driver.session() as session:
+            # Create the API key node
             result = session.run("""
                 CREATE (k:APIKey {
                     id: $id,
@@ -4087,27 +4103,46 @@ class Neo4jService:
                     permissions: $permissions,
                     is_active: true,
                     created_at: datetime(),
-                    created_by: $created_by
+                    created_by: $created_by,
+                    collection_scope: $collection_scope
                 })
+                WITH k
+                // Create HAS_ACCESS_TO relationships for restricted keys
+                CALL {
+                    WITH k
+                    UNWIND CASE WHEN size($allowed_collections) > 0 THEN $allowed_collections ELSE [null] END AS coll_id
+                    WITH k, coll_id
+                    WHERE coll_id IS NOT NULL
+                    MATCH (c:Collection {id: coll_id})
+                    CREATE (k)-[:HAS_ACCESS_TO]->(c)
+                    RETURN count(*) as created_relations
+                }
+                // Return the key with collection info
+                OPTIONAL MATCH (k)-[:HAS_ACCESS_TO]->(c:Collection)
                 RETURN k.id as id,
                        k.name as name,
                        k.key_prefix as key_prefix,
                        k.permissions as permissions,
                        k.is_active as is_active,
                        k.created_at as created_at,
-                       k.created_by as created_by
+                       k.created_by as created_by,
+                       k.collection_scope as collection_scope,
+                       collect(DISTINCT c.id) as allowed_collections,
+                       collect(DISTINCT c.name) as allowed_collection_names
             """,
                 id=key_id,
                 name=name,
                 key_prefix=key_prefix,
                 key_hash=key_hash,
                 permissions=permissions,
-                created_by=created_by
+                created_by=created_by,
+                collection_scope=collection_scope,
+                allowed_collections=allowed_collections
             )
             
             record = result.single()
             if record:
-                logger.info(f"Created API key: {name} ({key_id})")
+                logger.info(f"Created API key: {name} ({key_id}) with scope: {collection_scope}")
                 return dict(record)
             return None
     
@@ -4179,6 +4214,7 @@ class Neo4jService:
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (k:APIKey {id: $id})
+                OPTIONAL MATCH (k)-[:HAS_ACCESS_TO]->(c:Collection)
                 RETURN k.id as id,
                        coalesce(k.name, '') as name,
                        coalesce(k.key_prefix, '') as key_prefix,
@@ -4187,11 +4223,20 @@ class Neo4jService:
                        coalesce(k.is_active, true) as is_active,
                        coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       coalesce(k.created_by, '') as created_by
+                       coalesce(k.created_by, '') as created_by,
+                       coalesce(k.collection_scope, 'all') as collection_scope,
+                       collect(DISTINCT c.id) as allowed_collections,
+                       collect(DISTINCT c.name) as allowed_collection_names
             """, id=key_id)
             
             record = result.single()
-            return dict(record) if record else None
+            if record:
+                data = dict(record)
+                # Filter out None values from collections
+                data["allowed_collections"] = [c for c in data.get("allowed_collections", []) if c is not None]
+                data["allowed_collection_names"] = [c for c in data.get("allowed_collection_names", []) if c is not None]
+                return data
+            return None
     
     def get_api_key_by_prefix(self, key_prefix: str) -> List[dict]:
         """Get API keys by their prefix (for validation lookup)."""
@@ -4199,6 +4244,8 @@ class Neo4jService:
             result = session.run("""
                 MATCH (k:APIKey)
                 WHERE k.key_prefix = $prefix AND coalesce(k.is_active, true) = true
+                OPTIONAL MATCH (k)-[:HAS_ACCESS_TO]->(c:Collection)
+                WITH k, collect(DISTINCT c.id) as coll_ids, collect(DISTINCT c.name) as coll_names
                 RETURN k.id as id,
                        coalesce(k.name, '') as name,
                        k.key_prefix as key_prefix,
@@ -4207,16 +4254,28 @@ class Neo4jService:
                        coalesce(k.is_active, true) as is_active,
                        coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       coalesce(k.created_by, '') as created_by
+                       coalesce(k.created_by, '') as created_by,
+                       coalesce(k.collection_scope, 'all') as collection_scope,
+                       coll_ids as allowed_collections,
+                       coll_names as allowed_collection_names
             """, prefix=key_prefix)
             
-            return [dict(record) for record in result]
+            keys = []
+            for record in result:
+                data = dict(record)
+                # Filter out None values from collections
+                data["allowed_collections"] = [c for c in data.get("allowed_collections", []) if c is not None]
+                data["allowed_collection_names"] = [c for c in data.get("allowed_collection_names", []) if c is not None]
+                keys.append(data)
+            return keys
     
     def list_api_keys(self) -> List[dict]:
         """List all API keys (without the hash)."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (k:APIKey)
+                OPTIONAL MATCH (k)-[:HAS_ACCESS_TO]->(c:Collection)
+                WITH k, collect(DISTINCT c.id) as coll_ids, collect(DISTINCT c.name) as coll_names
                 RETURN k.id as id,
                        coalesce(k.name, '') as name,
                        coalesce(k.key_prefix, '') as key_prefix,
@@ -4224,20 +4283,41 @@ class Neo4jService:
                        coalesce(k.is_active, true) as is_active,
                        coalesce(k.created_at, '') as created_at,
                        k.last_used_at as last_used_at,
-                       coalesce(k.created_by, '') as created_by
+                       coalesce(k.created_by, '') as created_by,
+                       coalesce(k.collection_scope, 'all') as collection_scope,
+                       coll_ids as allowed_collections,
+                       coll_names as allowed_collection_names
                 ORDER BY k.created_at DESC
             """)
             
-            return [dict(record) for record in result]
+            keys = []
+            for record in result:
+                data = dict(record)
+                # Filter out None values from collections
+                data["allowed_collections"] = [c for c in data.get("allowed_collections", []) if c is not None]
+                data["allowed_collection_names"] = [c for c in data.get("allowed_collection_names", []) if c is not None]
+                keys.append(data)
+            return keys
     
     def update_api_key(
         self,
         key_id: str,
         name: Optional[str] = None,
         permissions: Optional[List[str]] = None,
-        is_active: Optional[bool] = None
+        is_active: Optional[bool] = None,
+        collection_scope: Optional[str] = None,
+        allowed_collections: Optional[List[str]] = None
     ) -> Optional[dict]:
-        """Update an API key's properties."""
+        """Update an API key's properties.
+        
+        Args:
+            key_id: The API key ID to update
+            name: New name (optional)
+            permissions: New permissions list (optional)
+            is_active: New active status (optional)
+            collection_scope: New collection scope - 'all' or 'restricted' (optional)
+            allowed_collections: New list of allowed collection IDs (optional)
+        """
         with self.driver.session() as session:
             # Build dynamic SET clause
             set_clauses = []
@@ -4252,37 +4332,45 @@ class Neo4jService:
             if is_active is not None:
                 set_clauses.append("k.is_active = $is_active")
                 params["is_active"] = is_active
+            if collection_scope is not None:
+                set_clauses.append("k.collection_scope = $collection_scope")
+                params["collection_scope"] = collection_scope
             
-            if not set_clauses:
-                return self.get_api_key_by_id(key_id)
+            # Handle collection relationships update
+            if allowed_collections is not None:
+                params["allowed_collections"] = allowed_collections
+                
+                # Delete existing HAS_ACCESS_TO relationships and create new ones
+                session.run("""
+                    MATCH (k:APIKey {id: $id})-[r:HAS_ACCESS_TO]->()
+                    DELETE r
+                """, id=key_id)
+                
+                if allowed_collections:
+                    session.run("""
+                        MATCH (k:APIKey {id: $id})
+                        UNWIND $allowed_collections AS coll_id
+                        MATCH (c:Collection {id: coll_id})
+                        CREATE (k)-[:HAS_ACCESS_TO]->(c)
+                    """, id=key_id, allowed_collections=allowed_collections)
             
-            set_clause = ", ".join(set_clauses)
+            # Apply property updates if any
+            if set_clauses:
+                set_clause = ", ".join(set_clauses)
+                session.run(f"""
+                    MATCH (k:APIKey {{id: $id}})
+                    SET {set_clause}
+                """, **params)
             
-            result = session.run(f"""
-                MATCH (k:APIKey {{id: $id}})
-                SET {set_clause}
-                RETURN k.id as id,
-                       coalesce(k.name, '') as name,
-                       coalesce(k.key_prefix, '') as key_prefix,
-                       coalesce(k.permissions, []) as permissions,
-                       coalesce(k.is_active, true) as is_active,
-                       coalesce(k.created_at, '') as created_at,
-                       k.last_used_at as last_used_at,
-                       coalesce(k.created_by, '') as created_by
-            """, **params)
-            
-            record = result.single()
-            if record:
-                logger.info(f"Updated API key: {key_id}")
-                return dict(record)
-            return None
+            # Return updated key data
+            return self.get_api_key_by_id(key_id)
     
     def delete_api_key(self, key_id: str) -> bool:
-        """Delete an API key."""
+        """Delete an API key and all its relationships."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (k:APIKey {id: $id})
-                DELETE k
+                DETACH DELETE k
                 RETURN 1 as deleted
             """, id=key_id)
             
@@ -4652,6 +4740,10 @@ class Neo4jService:
             result = session.run("""
                 MATCH (k:APIKey)
                 
+                // Get collection access info
+                OPTIONAL MATCH (k)-[:HAS_ACCESS_TO]->(c:Collection)
+                WITH k, collect(DISTINCT c.id) as coll_ids, collect(DISTINCT c.name) as coll_names
+                
                 // Get today's log
                 OPTIONAL MATCH (k)-[:HAS_USAGE]->(today_log:APIKeyUsageLog {date: $today_str})
                 
@@ -4666,7 +4758,7 @@ class Neo4jService:
                 // Get all logs for endpoint breakdown
                 OPTIONAL MATCH (k)-[:HAS_USAGE]->(all_log:APIKeyUsageLog)
                 
-                WITH k,
+                WITH k, coll_ids, coll_names,
                      COALESCE(today_log.request_count, 0) as requests_today,
                      COLLECT(DISTINCT week_log) as week_logs,
                      COLLECT(DISTINCT month_log) as month_logs,
@@ -4680,6 +4772,9 @@ class Neo4jService:
                        k.created_at as created_at,
                        k.last_used_at as last_used_at,
                        k.created_by as created_by,
+                       coalesce(k.collection_scope, 'all') as collection_scope,
+                       coll_ids as allowed_collections,
+                       coll_names as allowed_collection_names,
                        COALESCE(k.total_requests, 0) as total_requests,
                        COALESCE(k.error_count, 0) as error_count,
                        k.last_error_at as last_error_at,
@@ -4707,6 +4802,10 @@ class Neo4jService:
                                 endpoint = key[3:]
                                 endpoint_breakdown[endpoint] = endpoint_breakdown.get(endpoint, 0) + int(value)
                 
+                # Filter out None values from collections
+                allowed_collections = [c for c in record.get("allowed_collections", []) if c is not None]
+                allowed_collection_names = [c for c in record.get("allowed_collection_names", []) if c is not None]
+                
                 keys.append({
                     "id": record["id"],
                     "name": record["name"],
@@ -4716,6 +4815,9 @@ class Neo4jService:
                     "created_at": record["created_at"],
                     "last_used_at": record["last_used_at"],
                     "created_by": record["created_by"],
+                    "collection_scope": record["collection_scope"],
+                    "allowed_collections": allowed_collections,
+                    "allowed_collection_names": allowed_collection_names,
                     "stats": {
                         "total_requests": record["total_requests"],
                         "requests_today": record["requests_today"],
