@@ -16,7 +16,7 @@
     --secondary-foreground: oklch(0.2046 0 0);
     --muted: oklch(0.9702 0 0);
     --muted-foreground: oklch(0.5486 0 0);
-    --accent: oklch(0.79 0.18 70.67);
+    /* --accent is set dynamically via inline style in layout.tsx (NEXT_PUBLIC_ACCENT_COLOR) */
     --accent-foreground: oklch(0.1448 0 0);
     --destructive: oklch(0.5830 0.2387 28.4765);
     --destructive-foreground: oklch(0.9702 0 0);
@@ -59,7 +59,7 @@
     --secondary-foreground: oklch(0.9851 0 0);
     --muted: oklch(0.2686 0 0);
     --muted-foreground: oklch(0.7090 0 0);
-    --accent: oklch(0.79 0.18 70.67);
+    /* --accent is set dynamically via inline style in layout.tsx (NEXT_PUBLIC_ACCENT_COLOR) */
     --accent-foreground: oklch(0.1448 0 0);
     --destructive: oklch(0.7022 0.1892 22.2279);
     --destructive-foreground: oklch(0.2686 0 0);
