@@ -2,14 +2,15 @@
 # Uses Dokploy's Traefik proxy via dokploy-network
 # Deploy this via Dokploy's Compose project type
 #
+# Dokploy injects env vars into the shell for ${} interpolation but does NOT
+# create a .env file, so all vars must be passed explicitly via environment.
+#
 # Domain routing: Configure in Dokploy UI (Domains tab) per service,
 # or uncomment the Traefik labels below for GitOps-style domain config.
 
 services:
   neo4j:
     image: neo4j:5.15.0-community
-    env_file:
-      - ../.env
     environment:
       # Username is hardcoded to 'neo4j' - don't set NEO4J_USER in Dokploy env vars!
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
@@ -44,14 +45,107 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile.prod
-    env_file:
-      - ../.env
     environment:
-      # Internal service connections (override .env values)
+      # Internal service connections
       - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
       - PYTHONUNBUFFERED=1
+      # LLM Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_MODEL_FAST_MODE=${OPENAI_MODEL_FAST_MODE:-}
+      # Vision Model
+      - VISION_MODEL=${VISION_MODEL:-}
+      - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
+      - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
+      - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-3}
+      # Graph Extraction Model
+      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
+      - GRAPH_EXTRACTION_API_BASE=${GRAPH_EXTRACTION_API_BASE:-}
+      - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
+      - EXTRACTION_MAX_CONTEXT=${EXTRACTION_MAX_CONTEXT:-32768}
+      # Relationship Extraction Model
+      - RELATIONSHIP_EXTRACTION_MODEL=${RELATIONSHIP_EXTRACTION_MODEL:-}
+      - RELATIONSHIP_EXTRACTION_API_BASE=${RELATIONSHIP_EXTRACTION_API_BASE:-}
+      - RELATIONSHIP_EXTRACTION_API_KEY=${RELATIONSHIP_EXTRACTION_API_KEY:-}
+      - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-65536}
+      - RELATIONSHIP_MAX_OUTPUT_TOKENS=${RELATIONSHIP_MAX_OUTPUT_TOKENS:-16000}
+      - RELATIONSHIP_ANALYSIS_BATCH_SIZE=${RELATIONSHIP_ANALYSIS_BATCH_SIZE:-100}
+      - RELATIONSHIP_TARGET_RATIO=${RELATIONSHIP_TARGET_RATIO:-1.0}
+      - RELATIONSHIP_MAX_ROUNDS=${RELATIONSHIP_MAX_ROUNDS:-3}
+      - RELATIONSHIP_MAX_HOURS=${RELATIONSHIP_MAX_HOURS:-0}
+      - RELATIONSHIP_MAX_PER_ENTITY=${RELATIONSHIP_MAX_PER_ENTITY:-50}
+      - PARALLEL_RELATIONSHIP_BATCHES=${PARALLEL_RELATIONSHIP_BATCHES:-5}
+      - AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=${AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH:-false}
+      - AUTO_COMMUNITY_DETECTION_AFTER_BATCH=${AUTO_COMMUNITY_DETECTION_AFTER_BATCH:-false}
+      # Embedding Configuration
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
+      - EMBEDDING_SEND_DIMENSIONS=${EMBEDDING_SEND_DIMENSIONS:-true}
+      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
+      - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      # Document Processing
+      - CHUNK_SIZE=${CHUNK_SIZE:-500}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - CHUNK_BY=${CHUNK_BY:-sentence}
+      - SENTENCES_PER_CHUNK=${SENTENCES_PER_CHUNK:-5}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+      - CONCURRENT_EXTRACTIONS=${CONCURRENT_EXTRACTIONS:-20}
+      - CONCURRENT_RELATIONS=${CONCURRENT_RELATIONS:-3}
+      - BATCH_PROCESSING_CONCURRENCY=${BATCH_PROCESSING_CONCURRENCY:-10}
+      - PROCESSING_THREAD_WORKERS=${PROCESSING_THREAD_WORKERS:-4}
+      - DOCLING_PAGE_CHUNK_SIZE=${DOCLING_PAGE_CHUNK_SIZE:-50}
+      - DOCLING_MAX_PAGES_PER_CHUNK=${DOCLING_MAX_PAGES_PER_CHUNK:-50}
+      - DOCLING_USE_PYPDFIUM_FOR_LARGE_MB=${DOCLING_USE_PYPDFIUM_FOR_LARGE_MB:-0}
+      # Feature Flags
+      - ENABLE_GRAPH_EXTRACTION=${ENABLE_GRAPH_EXTRACTION:-true}
+      - ENABLE_COMMUNITY_DETECTION=${ENABLE_COMMUNITY_DETECTION:-true}
+      - ENABLE_GRAPH_SUMMARIZATION=${ENABLE_GRAPH_SUMMARIZATION:-true}
+      - ENABLE_AGENTIC_RAG=${ENABLE_AGENTIC_RAG:-true}
+      - ENABLE_AGENT_RESEARCH=${ENABLE_AGENT_RESEARCH:-true}
+      - ENABLE_AGENT_CHAT=${ENABLE_AGENT_CHAT:-true}
+      - ENABLE_HYBRID_SEARCH=${ENABLE_HYBRID_SEARCH:-true}
+      - ENABLE_RERANKING=${ENABLE_RERANKING:-true}
+      - ENABLE_SEMANTIC_ENTITY_RESOLUTION=${ENABLE_SEMANTIC_ENTITY_RESOLUTION:-true}
+      - ENABLE_COLLECTIONS=${ENABLE_COLLECTIONS:-true}
+      - ENABLE_SKILLS=${ENABLE_SKILLS:-true}
+      # Search & RAG
+      - ENTITY_SIMILARITY_THRESHOLD=${ENTITY_SIMILARITY_THRESHOLD:-0.85}
+      - RERANKING_MODEL=${RERANKING_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - MAX_GRAPH_HOPS=${MAX_GRAPH_HOPS:-2}
+      - MAX_AGENTIC_STEPS=${MAX_AGENTIC_STEPS:-3}
+      - MAX_CONVERSATION_HISTORY=${MAX_CONVERSATION_HISTORY:-6}
+      - VECTOR_WEIGHT=${VECTOR_WEIGHT:-0.5}
+      - KEYWORD_WEIGHT=${KEYWORD_WEIGHT:-0.3}
+      - GRAPH_WEIGHT=${GRAPH_WEIGHT:-0.2}
+      - STREAM_REASONING_STEPS=${STREAM_REASONING_STEPS:-true}
+      - SHOW_RETRIEVAL_STATS=${SHOW_RETRIEVAL_STATS:-true}
+      - PROMPT_SECURITY=${PROMPT_SECURITY:-true}
+      # Community Detection
+      - MIN_COMMUNITY_SIZE=${MIN_COMMUNITY_SIZE:-3}
+      - MAX_COMMUNITIES=${MAX_COMMUNITIES:-50}
+      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-default}
+      # Agent Research
+      - RESEARCHER_MAX_ITERATIONS_SPEED=${RESEARCHER_MAX_ITERATIONS_SPEED:-5}
+      - RESEARCHER_MAX_ITERATIONS_QUALITY=${RESEARCHER_MAX_ITERATIONS_QUALITY:-10}
+      - WRITER_MAX_TOKENS_SPEED=${WRITER_MAX_TOKENS_SPEED:-1200}
+      - WRITER_MAX_TOKENS_QUALITY=${WRITER_MAX_TOKENS_QUALITY:-4000}
+      # Admin Authentication
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
+      # Workers
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+      # Compute3 Turbo Mode
+      - COMPUTE3_API_KEY=${COMPUTE3_API_KEY:-}
+      - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
+      - COMPUTE3_GPU_COUNT=${COMPUTE3_GPU_COUNT:-4}
+      - COMPUTE3_MODEL=${COMPUTE3_MODEL:-minimax-m21}
     expose:
       - "8000"
     volumes:
@@ -78,12 +172,6 @@ services:
     #   - "traefik.http.routers.moca-backend.tls.certResolver=letsencrypt"
     #   - "traefik.http.services.moca-backend.loadbalancer.server.port=8000"
     #   - "traefik.docker.network=dokploy-network"
-    # deploy:
-    #   resources:
-    #     limits:
-    #       memory: 4G
-    #     reservations:
-    #       memory: 2G
 
   frontend:
     build:
@@ -92,13 +180,21 @@ services:
       args:
         # Build-time args for Next.js (set these in Dokploy env vars)
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
-        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
-    env_file:
-      - ../.env
+        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
     environment:
+      # Public API URL for client-side requests
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
+      # Branding
+      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      # Admin authentication
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET}
     expose:
       - "3000"
     depends_on:
@@ -115,12 +211,6 @@ services:
     #   - "traefik.http.routers.moca-frontend.tls.certResolver=letsencrypt"
     #   - "traefik.http.services.moca-frontend.loadbalancer.server.port=3000"
     #   - "traefik.docker.network=dokploy-network"
-    # deploy:
-    #   resources:
-    #     limits:
-    #       memory: 2G
-    #     reservations:
-    #       memory: 512M
 
 networks:
   dokploy-network:

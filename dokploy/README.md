@@ -17,7 +17,7 @@ This directory contains the Docker Compose configuration for deploying MOCA on [
 
 ## Required Environment Variables
 
-Set these in Dokploy's **Environment** tab. Dokploy saves them as a `.env` file which is loaded by each service via `env_file: .env`.
+Set these in Dokploy's **Environment** tab. Dokploy injects them into the shell environment for `${}` interpolation in the compose file. Unlike Coolify, Dokploy does **not** create a physical `.env` file, so all variables are passed explicitly via `environment` in the compose file.
 
 ### Core Services
 
@@ -126,7 +126,7 @@ When using manual labels, ensure router names (e.g., `moca-backend`, `moca-front
 
 | Aspect | Coolify | Dokploy |
 |--------|---------|---------|
-| Magic variables | `SERVICE_FQDN_*`, `SERVICE_PASSWORD_*` | None -- use `env_file: .env` |
+| Magic variables | `SERVICE_FQDN_*`, `SERVICE_PASSWORD_*` | None -- explicit `environment` pass-through |
 | Domain routing | Auto via `SERVICE_FQDN_*` env vars | Dokploy UI Domains tab or manual Traefik labels |
 | Password generation | `SERVICE_PASSWORD_NEO4J` auto-generated | Set `NEO4J_PASSWORD` manually |
 | Proxy network | `coolify` | `dokploy-network` |
@@ -143,4 +143,4 @@ When using manual labels, ensure router names (e.g., `moca-backend`, `moca-front
 - Named volumes persist across deployments. To reset data, manually delete the volumes.
 - Dokploy wipes the repo directory on each deploy (git clone), but named volumes are unaffected.
 - **Build context paths**: The compose file uses `../backend` and `../frontend` because Dokploy resolves paths relative to the compose file's directory (`dokploy/`), not the repo root.
-- **Env file path**: Similarly, `env_file: ../.env` points up one level to where Dokploy places the `.env` file (repo root).
+- **No `.env` file**: Dokploy does not create a physical `.env` file. It injects env vars into the shell for `${}` interpolation. All vars are passed explicitly via `environment` in the compose file.
