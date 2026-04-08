@@ -37,6 +37,10 @@ Requires Neo4j 5.15+ with APOC plugin. In Docker this is preconfigured. For loca
 
 Use `coolify/docker-compose.coolify.yml`. Important: services with `SERVICE_FQDN_*` must have `traefik.docker.network=coolify` label and join the external `coolify` network to avoid 504 timeouts.
 
+### Dokploy
+
+Use `dokploy/docker-compose.dokploy.yml`. Configure domains in Dokploy UI (Domains tab) or uncomment Traefik labels in the compose file. See `dokploy/README.md` for full setup.
+
 ### Standalone Docker
 
 `docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`).

@@ -1,0 +1,134 @@
+# Docker Compose for Dokploy deployment
+# Uses Dokploy's Traefik proxy via dokploy-network
+# Deploy this via Dokploy's Compose project type
+#
+# Domain routing: Configure in Dokploy UI (Domains tab) per service,
+# or uncomment the Traefik labels below for GitOps-style domain config.
+
+services:
+  neo4j:
+    image: neo4j:5.15.0-community
+    env_file:
+      - .env
+    environment:
+      # Username is hardcoded to 'neo4j' - don't set NEO4J_USER in Dokploy env vars!
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_pagecache_size=512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # Neo4j stays on the default network only (not exposed via Traefik)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4G
+    #     reservations:
+    #       memory: 1G
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    env_file:
+      - .env
+    environment:
+      # Internal service connections (override .env values)
+      - NEO4J_URI=bolt://neo4j:7687
+      - UPLOAD_DIR=/app/uploads
+      - CUSTOM_INPUTS_DIR=/app/custom_inputs
+      - PYTHONUNBUFFERED=1
+    expose:
+      - "8000"
+    volumes:
+      - uploads_data:/app/uploads
+      - custom_inputs_data:/app/custom_inputs
+      - skills_data:/app/.agents/skills
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - default
+      - dokploy-network
+    # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.moca-backend.rule=Host(`api-moca.yourdomain.com`)"
+    #   - "traefik.http.routers.moca-backend.entrypoints=websecure"
+    #   - "traefik.http.routers.moca-backend.tls.certResolver=letsencrypt"
+    #   - "traefik.http.services.moca-backend.loadbalancer.server.port=8000"
+    #   - "traefik.docker.network=dokploy-network"
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4G
+    #     reservations:
+    #       memory: 2G
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # Build-time args for Next.js (set these in Dokploy env vars)
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
+        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
+    env_file:
+      - .env
+    environment:
+      # Internal API URL for server-side requests
+      - API_URL=http://backend:8000
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+    # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.moca-frontend.rule=Host(`moca.yourdomain.com`)"
+    #   - "traefik.http.routers.moca-frontend.entrypoints=websecure"
+    #   - "traefik.http.routers.moca-frontend.tls.certResolver=letsencrypt"
+    #   - "traefik.http.services.moca-frontend.loadbalancer.server.port=3000"
+    #   - "traefik.docker.network=dokploy-network"
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2G
+    #     reservations:
+    #       memory: 512M
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  uploads_data:
+  custom_inputs_data:
+  skills_data:
