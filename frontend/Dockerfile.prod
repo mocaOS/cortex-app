@@ -36,13 +36,16 @@ ARG API_URL=http://backend:8000
 ENV API_URL=${API_URL}
 
 # Download custom logo if NEXT_PUBLIC_LOGO_URL is set
-# Extracts the file extension and saves with correct format
+# Falls back to default logo on failure (e.g. unreachable URL during build)
 RUN if [ -n "$NEXT_PUBLIC_LOGO_URL" ]; then \
         echo "Downloading custom logo from $NEXT_PUBLIC_LOGO_URL"; \
         EXT="${NEXT_PUBLIC_LOGO_URL##*.}"; \
         EXT=$(echo "$EXT" | cut -d'?' -f1); \
-        curl -fsSL "$NEXT_PUBLIC_LOGO_URL" -o "/app/public/custom-logo.$EXT" && \
-        echo "Custom logo downloaded successfully as custom-logo.$EXT"; \
+        if curl -fsSL --connect-timeout 10 "$NEXT_PUBLIC_LOGO_URL" -o "/app/public/custom-logo.$EXT"; then \
+            echo "Custom logo downloaded successfully as custom-logo.$EXT"; \
+        else \
+            echo "WARNING: Failed to download custom logo from $NEXT_PUBLIC_LOGO_URL - continuing with default logo"; \
+        fi; \
     else \
         echo "No custom logo URL provided, using default logo"; \
     fi
