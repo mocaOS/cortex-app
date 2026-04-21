@@ -1,0 +1,21 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Color — Charts</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 14px; }
+  .sw { display: flex; flex-direction: column; }
+  .chip { height: 56px; border-radius: 8px; border: 1px solid var(--border); }
+  .name { font-size: 11px; color: var(--fg1); margin-top: 6px; font-weight: 500; }
+  .val { font-family: var(--font-mono); font-size: 10px; color: var(--fg2); }
+  .note { font-size: 11px; color: var(--fg2); line-height:1.5; }
+</style></head><body>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--chart-1)"></div><div class="name">chart-1</div><div class="val">0.56</div></div>
+    <div class="sw"><div class="chip" style="background:var(--chart-2)"></div><div class="name">chart-2</div><div class="val">0.45</div></div>
+    <div class="sw"><div class="chip" style="background:var(--chart-3)"></div><div class="name">chart-3</div><div class="val">0.65</div></div>
+    <div class="sw"><div class="chip" style="background:var(--chart-4)"></div><div class="name">chart-4</div><div class="val">0.75</div></div>
+    <div class="sw"><div class="chip" style="background:var(--chart-5)"></div><div class="name">chart-5</div><div class="val">0.35</div></div>
+  </div>
+  <div class="note">Monochrome ladder. Use the <span style="color:var(--accent)">accent</span> for the primary / highlighted series only. Differentiate with stroke style (solid / dashed / dotted), never color alone.</div>
+</body></html>

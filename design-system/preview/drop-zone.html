@@ -1,0 +1,17 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Drop Zone</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); }
+  .dz { border: 2px dashed var(--border); border-radius: 8px; padding: 32px 20px; text-align: center; color: var(--fg2); transition: all 300ms; }
+  .dz.active { border-color: var(--fg1); background: var(--muted); color: var(--fg1); }
+  svg { width: 32px; height: 32px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; margin-bottom: 8px; }
+  .t { font-size: 14px; font-weight: 500; color: var(--fg1); }
+  .s { font-size: 12px; margin-top: 4px; }
+</style></head><body>
+  <div class="dz active">
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    <div class="t">Drop files to ingest</div>
+    <div class="s">PDF · Markdown · DOCX · CSV · up to 50MB</div>
+  </div>
+</body></html>

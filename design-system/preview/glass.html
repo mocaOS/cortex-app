@@ -1,0 +1,29 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Glass Surface</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:0; background: var(--bg); height: 260px; position: relative; overflow: hidden; }
+  .bg { position: absolute; inset: 0; background:
+    radial-gradient(circle at 15% 30%, oklch(0.79 0.18 70.67 / 0.25), transparent 40%),
+    radial-gradient(circle at 80% 70%, oklch(0.45 0 0 / 0.6), transparent 40%);
+    filter: blur(40px); }
+  .wrap { position: relative; display: flex; gap: 16px; padding: 36px; }
+  .g {
+    background: oklch(0.21 0 0 / 0.55);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    color: var(--fg1);
+    min-width: 180px;
+  }
+  .lb { font-size: 11px; color: var(--fg2); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  .v { font-size: 22px; font-weight: 700; margin-top: 6px; }
+</style></head><body>
+  <div class="bg"></div>
+  <div class="wrap">
+    <div class="g"><div class="lb">Documents</div><div class="v">1,284</div></div>
+    <div class="g"><div class="lb">Entities</div><div class="v" style="color: var(--accent)">27,501</div></div>
+    <div class="g"><div class="lb">blur(24px)</div><div class="v" style="font-size: 13px; font-weight: 500; color: var(--fg2); margin-top: 12px;">1px border · card/55%</div></div>
+  </div>
+</body></html>

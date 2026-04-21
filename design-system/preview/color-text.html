@@ -1,0 +1,18 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Color — Text</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); }
+  .row { display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; }
+  .cell { background: var(--card); border:1px solid var(--border); border-radius:8px; padding:14px; }
+  .t1 { color: var(--fg1); font-size:18px; font-weight:600; }
+  .t2 { color: var(--fg2); font-size:13px; margin-top:4px; }
+  .chip { width:28px; height:28px; border-radius:6px; border:1px solid var(--border); margin-bottom:10px; }
+  .lbl { font-family: var(--font-mono); font-size:10px; color: var(--fg2); margin-top:6px; }
+</style></head><body>
+  <div class="row">
+    <div class="cell"><div class="chip" style="background:var(--fg1)"></div><div class="t1">Primary Text</div><div class="t2">fg1 — body, headings</div><div class="lbl">oklch(0.9851 0 0)</div></div>
+    <div class="cell"><div class="chip" style="background:var(--fg2)"></div><div class="t1" style="color:var(--fg2)">Muted Text</div><div class="t2">fg2 — captions, labels</div><div class="lbl">oklch(0.7090 0 0)</div></div>
+    <div class="cell"><div class="chip" style="background:var(--fg3)"></div><div class="t1" style="color:var(--fg3)">Tertiary</div><div class="t2">fg3 — placeholder, ring</div><div class="lbl">oklch(0.5555 0 0)</div></div>
+  </div>
+</body></html>

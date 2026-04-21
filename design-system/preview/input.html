@@ -1,0 +1,22 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Input</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:22px; background: var(--bg); display:flex; flex-direction:column; gap:14px; }
+  .f { }
+  .l { font-size:13px; color: var(--fg1); font-weight:500; display:block; margin-bottom:6px; }
+  input { width: 100%; background: var(--bg); border: 1px solid var(--input); border-radius: 8px; padding: 12px 14px; color: var(--fg1); font-family: inherit; font-size: 16px; outline: none; box-sizing: border-box; transition: border-color 150ms; }
+  input::placeholder { color: var(--fg3); }
+  input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px oklch(0.55 0 0 / 0.35); }
+  .ask { background: oklch(0.21 0 0 / 0.7); backdrop-filter: blur(24px); border: 1px solid var(--border); border-radius: 10px; padding: 8px; display:flex; align-items:center; gap:10px; }
+  .ask input { border:0; background: transparent; padding: 10px; }
+  .ask button { background: var(--accent); color: var(--accent-fg); border:0; border-radius: 8px; padding: 10px 16px; font-weight:500; cursor: pointer; font-family: inherit; }
+  svg { width:16px; height:16px; stroke: var(--fg2); fill: none; stroke-width: 2; flex-shrink: 0; margin-left: 10px; }
+</style></head><body>
+  <div class="f"><label class="l">Email</label><input type="email" placeholder="admin@example.com" /></div>
+  <div class="ask">
+    <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <input type="text" placeholder="Ask a question about your documents..." />
+    <button>Ask</button>
+  </div>
+</body></html>

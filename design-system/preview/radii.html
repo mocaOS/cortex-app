@@ -1,0 +1,16 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Radii</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:flex; gap:16px; align-items:flex-end; }
+  .s { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .b { width: 76px; height: 76px; background: var(--muted); border:1px solid var(--border); }
+  .t { font-family: var(--font-mono); font-size: 11px; color: var(--fg1); }
+  .v { font-family: var(--font-mono); font-size: 10px; color: var(--fg2); }
+</style></head><body>
+  <div class="s"><div class="b" style="border-radius: 4px"></div><div class="t">sm</div><div class="v">4px · chips</div></div>
+  <div class="s"><div class="b" style="border-radius: 6px"></div><div class="t">md</div><div class="v">6px · inner</div></div>
+  <div class="s"><div class="b" style="border-radius: 8px; background: var(--accent); border-color: transparent"></div><div class="t" style="color: var(--accent)">lg (default)</div><div class="v">8px · cards, buttons</div></div>
+  <div class="s"><div class="b" style="border-radius: 16px"></div><div class="t">xl</div><div class="v">16px · modals</div></div>
+  <div class="s"><div class="b" style="border-radius: 50%"></div><div class="t">full</div><div class="v">pill · avatar</div></div>
+</body></html>
