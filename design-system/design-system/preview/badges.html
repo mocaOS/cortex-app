@@ -1,0 +1,22 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Badges & Chips</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; background: var(--muted); color: var(--fg2); font-size: 12px; }
+  .chip.active { background: var(--accent); color: var(--accent-fg); }
+  .chip.entity { background: oklch(0.27 0 0); color: var(--fg2); font-family: var(--font-mono); font-size: 11px; border-radius: 4px; padding: 3px 7px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding: 6px 12px; border-radius: 999px; background: var(--muted); color: var(--fg2); font-size: 12px; }
+  svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
+</style></head><body>
+  <span class="chip active">All</span>
+  <span class="chip">Completed</span>
+  <span class="chip">Processing</span>
+  <span class="chip">Failed</span>
+  <span class="chip entity">PERSON</span>
+  <span class="chip entity">ORG</span>
+  <span class="chip entity">CONCEPT</span>
+  <span class="pill"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><path d="M12 9l7-4"/><path d="M12 15l-7 4"/></svg>Knowledge Graph</span>
+  <span class="pill"><span class="dot"></span>Turbo ready</span>
+</body></html>

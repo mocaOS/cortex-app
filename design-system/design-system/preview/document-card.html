@@ -1,0 +1,33 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Document Card</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:flex; flex-direction:column; gap:12px; }
+  .c { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display:flex; gap: 12px; align-items:center; }
+  .ck { width: 22px; height: 22px; border-radius: 50%; border: 2px solid oklch(0.7 0 0 / .4); flex-shrink:0; }
+  .ck.on { background: var(--accent); border-color: var(--accent); }
+  .ic { width: 36px; height: 36px; border-radius: 6px; background: var(--muted); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  svg { width: 16px; height: 16px; stroke: var(--fg2); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .body { flex: 1; min-width: 0; }
+  .t { font-size: 13px; font-weight: 500; color: var(--fg1); }
+  .m { font-size: 11px; color: var(--fg2); margin-top: 2px; font-family: var(--font-mono); }
+  .bar { height: 4px; background: var(--muted); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .badge { display:inline-flex; align-items:center; gap:5px; padding: 4px 8px; border-radius: 999px; font-size: 11px; }
+  .ok { background: oklch(0.79 0.18 70.67 / 0.1); color: var(--accent); }
+  .proc { background: var(--muted); color: var(--fg2); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+</style></head><body>
+  <div class="c">
+    <div class="ck on"></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+    <div class="body"><div class="t">Q3-2025-financials.pdf</div><div class="m">2.4 MB · Oct 14, 10:42 · <span style="color:var(--accent)">Finance</span></div></div>
+    <div class="badge ok"><span class="dot"></span>Completed</div>
+  </div>
+  <div class="c">
+    <div class="ck"></div>
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+    <div class="body"><div class="t">research-notes-march.md</div><div class="m">48 KB · extracting entities...</div><div class="bar"><div style="width:62%"></div></div></div>
+    <div class="badge proc"><span class="dot"></span>62%</div>
+  </div>
+</body></html>

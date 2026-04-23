@@ -1,0 +1,49 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing · Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body { margin: 0; padding: 28px 32px; background: var(--background); display: flex; flex-direction: column; gap: 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
+  svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-right: 4px;
+  }
+</style></head><body>
+  <div class="row">
+    <span class="label">Default</span>
+    <button class="mk-btn mk-btn-primary">
+      Join Waitlist
+      <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+    </button>
+    <button class="mk-btn mk-btn-secondary">Cancel</button>
+    <button class="mk-btn mk-btn-outline">
+      <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      New
+    </button>
+    <button class="mk-btn mk-btn-ghost">Learn More</button>
+  </div>
+
+  <div class="row">
+    <span class="label">Large</span>
+    <a class="mk-btn mk-btn-primary mk-btn-lg" href="#">
+      Start free — no credit card
+      <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+    </a>
+    <a class="mk-btn mk-btn-secondary mk-btn-lg" href="#">
+      View Pricing
+    </a>
+  </div>
+
+  <div class="row">
+    <span class="label">Small</span>
+    <button class="mk-btn mk-btn-primary mk-btn-sm">Docs</button>
+    <button class="mk-btn mk-btn-outline mk-btn-sm">Sign In</button>
+    <button class="mk-btn mk-btn-ghost mk-btn-sm">Use Cases</button>
+  </div>
+</body></html>

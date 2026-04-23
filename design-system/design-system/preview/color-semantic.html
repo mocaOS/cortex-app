@@ -1,0 +1,55 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Color — Semantic</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin: 0; padding: 20px; background: var(--bg); }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .cell {
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .chip {
+    height: 44px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .n { color: var(--fg1); font-size: 12.5px; font-weight: 600; }
+  .v { font-family: var(--font-mono); font-size: 10px; color: var(--fg2); margin-top: 2px; }
+  .u { font-size: 11px; color: var(--fg2); margin-top: 6px; line-height: 1.4; }
+</style></head><body>
+  <div class="row">
+    <div class="cell">
+      <div class="chip" style="background: var(--destructive); color: var(--destructive-fg);">Destructive</div>
+      <div class="n">destructive</div>
+      <div class="v">oklch(0.70 0.19 22)</div>
+      <div class="u">Errors, delete actions, failed jobs</div>
+    </div>
+    <div class="cell">
+      <div class="chip" style="background: var(--success); color: var(--success-fg);">Success</div>
+      <div class="n">success</div>
+      <div class="v">oklch(0.65 0.11 155)</div>
+      <div class="u">Verified, ingested, connected — never competes with accent</div>
+    </div>
+    <div class="cell">
+      <div class="chip" style="background: var(--warning); color: var(--warning-fg);">Warning</div>
+      <div class="n">warning</div>
+      <div class="v">oklch(0.78 0.14 60)</div>
+      <div class="u">Rate limits, queued retries, near-full quotas</div>
+    </div>
+    <div class="cell">
+      <div class="chip" style="background: var(--info); color: var(--info-fg);">Info</div>
+      <div class="n">info</div>
+      <div class="v">oklch(0.68 0.08 240)</div>
+      <div class="u">Neutral notices, tips, sync status</div>
+    </div>
+  </div>
+</body></html>

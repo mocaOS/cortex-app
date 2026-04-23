@@ -1,0 +1,503 @@
+<!doctype html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MOCA Library — Design System</title>
+  <link rel="stylesheet" href="colors_and_type.css" />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; background: var(--bg); color: var(--fg1); font-family: var(--font-sans); }
+    * { box-sizing: border-box; }
+
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 800px 500px at 0% 0%, oklch(0.79 0.18 70.67 / 0.06), transparent 60%),
+        radial-gradient(ellipse 600px 400px at 100% 100%, oklch(0.5 0 0 / 0.08), transparent 60%);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      min-height: 100vh;
+      position: relative; z-index: 1;
+    }
+
+    /* --- Sidebar nav --- */
+    aside.nav {
+      position: sticky; top: 0; align-self: start;
+      height: 100vh;
+      padding: 24px 18px;
+      border-right: 1px solid var(--border);
+      background: oklch(0.15 0 0 / 0.6);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      overflow-y: auto;
+    }
+    .logo { height: 22px; width: auto; margin-bottom: 4px; display: block; }
+    .tagline {
+      font-size: 11px; color: var(--fg2);
+      margin: 8px 0 24px;
+      letter-spacing: 0.04em;
+    }
+    .nav-section {
+      font-size: 10.5px; font-weight: 500; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--fg3);
+      padding: 16px 6px 6px;
+    }
+    .nav-link {
+      display: block;
+      padding: 6px 10px;
+      font-size: 13px; color: var(--fg2);
+      text-decoration: none;
+      border-radius: var(--radius);
+      transition: background 150ms, color 150ms;
+    }
+    .nav-link:hover { background: var(--muted); color: var(--fg1); }
+    .nav-link.active { background: var(--accent); color: var(--accent-fg); font-weight: 500; }
+
+    /* --- Main --- */
+    main { padding: 40px 48px 80px; max-width: 1200px; }
+    .hero h1 {
+      font-size: 40px; letter-spacing: -0.02em; font-weight: 700;
+      margin: 0 0 8px;
+    }
+    .hero p {
+      color: var(--fg2); font-size: 14.5px; line-height: 1.6;
+      margin: 0; max-width: 640px;
+    }
+    .meta {
+      display: flex; gap: 18px; margin-top: 20px; flex-wrap: wrap;
+      font-family: var(--font-mono); font-size: 11px; color: var(--fg2);
+    }
+    .meta span { display: inline-flex; align-items: center; gap: 6px; }
+    .meta .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+    section.group {
+      margin-top: 56px;
+      scroll-margin-top: 20px;
+    }
+    .group-head {
+      display: flex; align-items: baseline; gap: 14px;
+      padding-bottom: 12px; margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .group-head h2 {
+      font-size: 22px; letter-spacing: -0.01em; font-weight: 600; margin: 0;
+    }
+    .group-head .count {
+      font-family: var(--font-mono); font-size: 11px; color: var(--fg3);
+    }
+    .group-head .desc {
+      font-size: 13px; color: var(--fg2); margin-left: auto;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .grid.cols-1 { grid-template-columns: 1fr; }
+    .grid.cols-2 { grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .card-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: oklch(0.17 0 0 / 0.4);
+    }
+    .card-title {
+      font-size: 12.5px; font-weight: 600;
+      color: var(--fg1);
+    }
+    .card-sub {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 10.5px; color: var(--fg3);
+    }
+    .frame-wrap {
+      position: relative;
+      background:
+        repeating-linear-gradient(45deg,
+          oklch(0.17 0 0) 0 8px,
+          oklch(0.19 0 0) 8px 16px);
+    }
+    iframe {
+      width: 100%;
+      border: 0;
+      display: block;
+      background: var(--bg);
+    }
+
+    /* Card-size tiers */
+    .size-s iframe { height: 180px; }
+    .size-m iframe { height: 240px; }
+    .size-l iframe { height: 320px; }
+    .size-xl iframe { height: 420px; }
+
+    /* Footer */
+    footer {
+      margin-top: 72px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--fg3);
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      aside.nav { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+      main { padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="nav">
+      <img class="logo" src="assets/logo.svg" alt="MOCA Library" />
+      <div class="tagline">Design System · v1.0</div>
+
+      <div class="nav-section">Foundations</div>
+      <a class="nav-link" href="#colors">Colors</a>
+      <a class="nav-link" href="#type">Typography</a>
+      <a class="nav-link" href="#spacing">Spacing &amp; Shape</a>
+      <a class="nav-link" href="#motion">Motion</a>
+
+      <div class="nav-section">Components</div>
+      <a class="nav-link" href="#buttons">Buttons &amp; Inputs</a>
+      <a class="nav-link" href="#surface">Surfaces &amp; Cards</a>
+      <a class="nav-link" href="#domain">Domain UI</a>
+
+      <div class="nav-section">Brand</div>
+      <a class="nav-link" href="#brand">Logo &amp; Icons</a>
+
+      <div class="nav-section">Marketing Track</div>
+      <a class="nav-link" href="#marketing">Overview</a>
+      <a class="nav-link" href="#mk-type">Display Type</a>
+      <a class="nav-link" href="#mk-components">Components</a>
+      <a class="nav-link" href="#mk-sections">Page Sections</a>
+
+      <div class="nav-section">Reference</div>
+      <a class="nav-link" href="README.md" target="_blank">README ↗</a>
+      <a class="nav-link" href="SKILL.md" target="_blank">SKILL.md ↗</a>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <h1>MOCA Library</h1>
+        <p>Dark-first, monochrome-with-one-accent design system for AI knowledge-base products. Glass surfaces, OKLCh color, source-attributed trust, disciplined motion.</p>
+        <div class="meta">
+          <span><span class="dot"></span> Accent · oklch(0.79 0.18 70.67)</span>
+          <span>Inter · JetBrains Mono</span>
+          <span>OKLCh color space</span>
+          <span>Dark mode primary</span>
+        </div>
+      </header>
+
+      <!-- COLORS -->
+      <section class="group" id="colors">
+        <div class="group-head">
+          <h2>Colors</h2>
+          <span class="count">5 specimens</span>
+          <span class="desc">Monochrome ladder + single chromatic accent</span>
+        </div>
+        <div class="grid cols-2">
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Surfaces</span><span class="card-sub">bg · card · muted</span></div>
+            <div class="frame-wrap"><iframe src="preview/color-surfaces.html" title="Surfaces"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Text</span><span class="card-sub">fg1 · fg2 · fg3</span></div>
+            <div class="frame-wrap"><iframe src="preview/color-text.html" title="Text"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Accent</span><span class="card-sub">the only chromatic</span></div>
+            <div class="frame-wrap"><iframe src="preview/color-accent.html" title="Accent"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Semantic</span><span class="card-sub">destructive · success · warning · info</span></div>
+            <div class="frame-wrap"><iframe src="preview/color-semantic.html" title="Semantic"></iframe></div>
+          </div>
+          <div class="card cols-2 size-m" style="grid-column: 1 / -1;">
+            <div class="card-head"><span class="card-title">Charts</span><span class="card-sub">monochrome 5-step ladder</span></div>
+            <div class="frame-wrap"><iframe src="preview/color-charts.html" title="Charts"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TYPE -->
+      <section class="group" id="type">
+        <div class="group-head">
+          <h2>Typography</h2>
+          <span class="count">3 specimens</span>
+          <span class="desc">Inter variable UI · JetBrains Mono for code &amp; IDs</span>
+        </div>
+        <div class="grid cols-1">
+          <div class="card size-l">
+            <div class="card-head"><span class="card-title">Display</span><span class="card-sub">Inter · -0.02em tracking</span></div>
+            <div class="frame-wrap"><iframe src="preview/type-display.html" title="Display"></iframe></div>
+          </div>
+          <div class="card size-l">
+            <div class="card-head"><span class="card-title">Scale</span><span class="card-sub">H1–body · weights 400/500/600/700</span></div>
+            <div class="frame-wrap"><iframe src="preview/type-scale.html" title="Scale"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Mono</span><span class="card-sub">JetBrains Mono · IDs · timestamps</span></div>
+            <div class="frame-wrap"><iframe src="preview/type-mono.html" title="Mono"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SPACING -->
+      <section class="group" id="spacing">
+        <div class="group-head">
+          <h2>Spacing &amp; Shape</h2>
+          <span class="count">4 specimens</span>
+          <span class="desc">4 px grid · 5 radii · soft shadows · glass surfaces</span>
+        </div>
+        <div class="grid">
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Spacing scale</span><span class="card-sub">4 · 8 · 12 · 16 · 24 · 32 · 48</span></div>
+            <div class="frame-wrap"><iframe src="preview/spacing-scale.html" title="Spacing"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Radii</span><span class="card-sub">sm · md · lg · xl</span></div>
+            <div class="frame-wrap"><iframe src="preview/radii.html" title="Radii"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Shadows</span><span class="card-sub">soft elevation · 3 levels</span></div>
+            <div class="frame-wrap"><iframe src="preview/shadows.html" title="Shadows"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Glass</span><span class="card-sub">blur 24 px · subtle borders</span></div>
+            <div class="frame-wrap"><iframe src="preview/glass.html" title="Glass"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MOTION -->
+      <section class="group" id="motion">
+        <div class="group-head">
+          <h2>Motion</h2>
+          <span class="count">1 specimen</span>
+          <span class="desc">Motion communicates — never decorates</span>
+        </div>
+        <div class="grid cols-1">
+          <div class="card size-l">
+            <div class="card-head"><span class="card-title">Durations &amp; easings</span><span class="card-sub">150 · 200 · 320 · 400 ms</span></div>
+            <div class="frame-wrap"><iframe src="preview/motion.html" title="Motion"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- BUTTONS & INPUTS -->
+      <section class="group" id="buttons">
+        <div class="group-head">
+          <h2>Buttons &amp; Inputs</h2>
+          <span class="count">4 specimens</span>
+          <span class="desc">Primary · secondary · ghost · outline · destructive</span>
+        </div>
+        <div class="grid">
+          <div class="card size-l" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Buttons</span><span class="card-sub">with Lucide icons</span></div>
+            <div class="frame-wrap"><iframe src="preview/buttons.html" title="Buttons"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Input</span><span class="card-sub">focus ring + placeholder</span></div>
+            <div class="frame-wrap"><iframe src="preview/input.html" title="Input"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Badges</span><span class="card-sub">status pills · entity chips</span></div>
+            <div class="frame-wrap"><iframe src="preview/badges.html" title="Badges"></iframe></div>
+          </div>
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Nav pill</span><span class="card-sub">active state uses accent</span></div>
+            <div class="frame-wrap"><iframe src="preview/nav-pill.html" title="Nav pill"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SURFACES -->
+      <section class="group" id="surface">
+        <div class="group-head">
+          <h2>Surfaces &amp; Cards</h2>
+          <span class="count">2 specimens</span>
+          <span class="desc">Stats · drop zones · file lists</span>
+        </div>
+        <div class="grid">
+          <div class="card size-l">
+            <div class="card-head"><span class="card-title">Stats card</span><span class="card-sub">label · value · delta</span></div>
+            <div class="frame-wrap"><iframe src="preview/stats-card.html" title="Stats card"></iframe></div>
+          </div>
+          <div class="card size-l">
+            <div class="card-head"><span class="card-title">Drop zone</span><span class="card-sub">dashed border + icon</span></div>
+            <div class="frame-wrap"><iframe src="preview/drop-zone.html" title="Drop zone"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DOMAIN -->
+      <section class="group" id="domain">
+        <div class="group-head">
+          <h2>Domain UI</h2>
+          <span class="count">2 specimens</span>
+          <span class="desc">Components unique to MOCA Library's product surface</span>
+        </div>
+        <div class="grid cols-2">
+          <div class="card size-xl">
+            <div class="card-head"><span class="card-title">Document card</span><span class="card-sub">ingest status · entity count</span></div>
+            <div class="frame-wrap"><iframe src="preview/document-card.html" title="Document card"></iframe></div>
+          </div>
+          <div class="card size-xl">
+            <div class="card-head"><span class="card-title">Chat message</span><span class="card-sub">source-attributed answer</span></div>
+            <div class="frame-wrap"><iframe src="preview/chat-message.html" title="Chat message"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- BRAND -->
+      <section class="group" id="brand">
+        <div class="group-head">
+          <h2>Logo &amp; Icons</h2>
+          <span class="count">2 specimens</span>
+          <span class="desc">Wordmark · Lucide outline icon set</span>
+        </div>
+        <div class="grid">
+          <div class="card size-m">
+            <div class="card-head"><span class="card-title">Logo</span><span class="card-sub">wordmark, 132×37</span></div>
+            <div class="frame-wrap"><iframe src="preview/logo.html" title="Logo"></iframe></div>
+          </div>
+          <div class="card size-l" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Icons</span><span class="card-sub">Lucide · outline · 2 px stroke</span></div>
+            <div class="frame-wrap"><iframe src="preview/icons.html" title="Icons"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MARKETING TRACK -->
+      <section class="group" id="marketing">
+        <div class="group-head">
+          <h2>Marketing Track</h2>
+          <span class="count">parallel system</span>
+          <span class="desc">Sharp edges · bold type · no glass — the cortex landing-site aesthetic</span>
+        </div>
+        <div style="padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: oklch(0.17 0 0 / 0.5); display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 24px; font-size: 13px; color: var(--fg2); line-height: 1.55;">
+          <div>
+            <div class="label" style="margin-bottom: 6px;">When to use</div>
+            Landing pages, pricing, feature marketing. Anything public-facing where the site needs to feel loud and editorial.
+          </div>
+          <div>
+            <div class="label" style="margin-bottom: 6px;">vs. SaaS track</div>
+            Same accent (orange) and fonts. Different shape language — <code style="color: var(--fg1);">--radius: 0</code>, hex palette, no glass, no rounded corners anywhere.
+          </div>
+          <div>
+            <div class="label" style="margin-bottom: 6px;">Opt in</div>
+            Add class <code style="color: var(--fg1);">marketing</code> to <code style="color: var(--fg1);">&lt;html&gt;</code> and load <code style="color: var(--fg1);">marketing_tokens.css</code> after the base tokens.
+          </div>
+        </div>
+      </section>
+
+      <!-- MARKETING TYPE -->
+      <section class="group" id="mk-type">
+        <div class="group-head">
+          <h2>Display Type &amp; Eyebrow</h2>
+          <span class="count">2 specimens</span>
+          <span class="desc">Clamp-scaled Inter · -0.06em tracking · mono eyebrows with accent bar</span>
+        </div>
+        <div class="grid">
+          <div class="card size-xl" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Display scale</span><span class="card-sub">xl · lg · md · sm</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-type-display.html" title="Marketing display"></iframe></div>
+          </div>
+          <div class="card size-l" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Eyebrow + accent bar</span><span class="card-sub">mono · uppercase · 0.2em</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-eyebrow.html" title="Marketing eyebrow"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MARKETING COMPONENTS -->
+      <section class="group" id="mk-components">
+        <div class="group-head">
+          <h2>Marketing Components</h2>
+          <span class="count">3 specimens</span>
+          <span class="desc">Uppercase tracked buttons with animated underlines · transparent cards · sticky navbar</span>
+        </div>
+        <div class="grid">
+          <div class="card size-l" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Buttons</span><span class="card-sub">primary · secondary · outline · ghost</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-buttons.html" title="Marketing buttons"></iframe></div>
+          </div>
+          <div class="card size-l" style="grid-column: span 2;">
+            <div class="card-head"><span class="card-title">Cards</span><span class="card-sub">transparent · bordered · highlighted</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-cards.html" title="Marketing cards"></iframe></div>
+          </div>
+          <div class="card size-l" style="grid-column: 1 / -1;">
+            <div class="card-head"><span class="card-title">Navbar</span><span class="card-sub">sticky · backdrop-blur · logo with accent initial</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-navbar.html" title="Marketing navbar"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MARKETING SECTIONS -->
+      <section class="group" id="mk-sections">
+        <div class="group-head">
+          <h2>Page Sections</h2>
+          <span class="count">3 specimens</span>
+          <span class="desc">Hero with decorative numeral · feature grid with 1px gap · numbered steps</span>
+        </div>
+        <div class="grid">
+          <div class="card size-xl" style="grid-column: 1 / -1;">
+            <div class="card-head"><span class="card-title">Hero</span><span class="card-sub">decorative 01 · accent headline half · tracked CTA</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-hero.html" title="Marketing hero"></iframe></div>
+          </div>
+          <div class="card size-xl" style="grid-column: 1 / -1;">
+            <div class="card-head"><span class="card-title">Feature grid</span><span class="card-sub">1px gap via border-bg trick · accent icons</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-feature-grid.html" title="Marketing feature grid"></iframe></div>
+          </div>
+          <div class="card size-xl" style="grid-column: 1 / -1;">
+            <div class="card-head"><span class="card-title">How it works — steps</span><span class="card-sub">oversized numerals · connector lines · hover-to-accent</span></div>
+            <div class="frame-wrap"><iframe src="preview/mk-steps.html" title="Marketing steps"></iframe></div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <div>MOCA Library Design System — one file, all specimens live.</div>
+        <div>Need a component? See <a href="ui_kits/library/index.html">UI Kit</a>.</div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    // Scroll-spy for nav
+    const links = document.querySelectorAll('.nav-link[href^="#"]');
+    const byId = new Map();
+    links.forEach(a => {
+      const id = a.getAttribute('href').slice(1);
+      const el = document.getElementById(id);
+      if (el) byId.set(el, a);
+    });
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          links.forEach(l => l.classList.remove('active'));
+          byId.get(e.target)?.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    byId.forEach((_, el) => io.observe(el));
+  </script>
+</body>
+</html>

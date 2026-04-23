@@ -1,0 +1,37 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing · Display Type</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body { margin: 0; padding: 28px 32px; background: var(--background); }
+  .stack { display: flex; flex-direction: column; gap: 28px; }
+  .row { display: grid; grid-template-columns: 48px 1fr; gap: 16px; align-items: baseline; }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted-foreground);
+  }
+  .line { color: var(--foreground); }
+  .accent { color: var(--accent); }
+</style></head><body>
+  <div class="stack">
+    <div class="row">
+      <span class="tag">XL</span>
+      <div class="text-display-xl line">Memory<span class="accent">.</span></div>
+    </div>
+    <div class="row">
+      <span class="tag">LG</span>
+      <div class="text-display-lg line">The moat <span class="accent">is memory.</span></div>
+    </div>
+    <div class="row">
+      <span class="tag">MD</span>
+      <div class="text-display line">Built for agents.</div>
+    </div>
+    <div class="row">
+      <span class="tag">SM</span>
+      <div class="text-display-sm line">From documents to intelligence</div>
+    </div>
+  </div>
+</body></html>

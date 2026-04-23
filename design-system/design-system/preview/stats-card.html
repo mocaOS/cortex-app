@@ -1,0 +1,17 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Stats Card</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display:flex; align-items:center; gap:14px; }
+  .ic { width: 48px; height: 48px; border-radius: 8px; background: var(--muted); display:flex; align-items:center; justify-content:center; }
+  .ic.a { background: oklch(0.79 0.18 70.67 / 0.15); }
+  svg { width: 22px; height: 22px; stroke: var(--fg1); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ic.a svg { stroke: var(--accent); }
+  .lb { font-size: 11px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+  .v { font-size: 24px; font-weight: 700; color: var(--fg1); margin-top: 2px; }
+</style></head><body>
+  <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div class="lb">Documents</div><div class="v">1,284</div></div></div>
+  <div class="card"><div class="ic a"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><path d="M12 9l7-4"/><path d="M12 15l-7 4"/></svg></div><div><div class="lb">Entities</div><div class="v">27,501</div></div></div>
+  <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div><div class="lb">Active agents</div><div class="v">6</div></div></div>
+</body></html>

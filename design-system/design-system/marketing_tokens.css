@@ -1,0 +1,330 @@
+/**
+ * MOCA Library — Marketing Tokens
+ *
+ * Sibling to colors_and_type.css. Loads on top of it (or standalone) to apply
+ * the "Bold Typography" marketing track.
+ *
+ * What changes:
+ *   • Sharp edges (--radius: 0) — no rounding anywhere
+ *   • Pure dark-first hex palette (#0a0a0a / #fafafa / #ff9500)
+ *   • Uppercase tracked button style with animated underlines
+ *   • Massive display type (clamp up to 10rem) with -0.06em tracking
+ *   • Decorative oversized numerals + accent bars + mono eyebrows
+ *   • Subtle noise overlay on the page
+ *
+ * What stays the same:
+ *   • Inter + JetBrains Mono
+ *   • Accent hue is still orange — hex form here, OKLCh in the SaaS track
+ *   • 4px spacing grid
+ *
+ * Usage:
+ *   <link rel="stylesheet" href="colors_and_type.css">
+ *   <link rel="stylesheet" href="marketing_tokens.css">
+ *   <html class="dark marketing">  <!-- opt into marketing track -->
+ */
+
+/* ============================================
+   MARKETING TRACK — scoped via .marketing
+   ============================================ */
+.marketing {
+  /* Dark-first hex palette (not OKLCh — matches cortex marketing site 1:1) */
+  --background:      #0a0a0a;
+  --foreground:      #fafafa;
+  --muted:           #1a1a1a;
+  --muted-foreground:#737373;
+  --accent:          #ff9500;
+  --accent-foreground:#0a0a0a;
+  --border:          #262626;
+  --border-hover:    #404040;
+  --input:           #1a1a1a;
+  --card:            #0f0f0f;
+  --card-foreground: #fafafa;
+  --ring:            #ff9500;
+
+  /* Aliases so components written against the SaaS token names keep working */
+  --bg:              #0a0a0a;
+  --fg:              #fafafa;
+  --fg1:             #fafafa;
+  --fg2:             #a3a3a3;
+  --fg3:             #737373;
+  --card-fg:         #fafafa;
+
+  /* Sharp edges only */
+  --radius:          0;
+  --radius-sm:       0;
+  --radius-md:       0;
+  --radius-lg:       0;
+  --radius-xl:       0;
+
+  /* Tighter tracking tokens for display type */
+  --tracking-tighter: -0.06em;
+  --tracking-tight:   -0.04em;
+  --tracking-normal:  -0.01em;
+  --tracking-wide:    0.05em;
+  --tracking-wider:   0.1em;
+  --tracking-widest:  0.2em;
+
+  /* Expo easing matches cortex marketing site */
+  --ease-out-expo: cubic-bezier(0.25, 0, 0, 1);
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ============================================
+   DISPLAY TYPE — clamp-scaled for marketing hero
+   ============================================ */
+.marketing .text-display-xl {
+  font-size: clamp(4rem, 10vw, 10rem);
+  line-height: 1;
+  letter-spacing: -0.06em;
+  font-weight: 700;
+}
+.marketing .text-display-lg {
+  font-size: clamp(3rem, 8vw, 8rem);
+  line-height: 1;
+  letter-spacing: -0.06em;
+  font-weight: 700;
+}
+.marketing .text-display {
+  font-size: clamp(2.5rem, 6vw, 6rem);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+.marketing .text-display-sm {
+  font-size: clamp(2rem, 4vw, 4rem);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-weight: 600;
+}
+
+/* ============================================
+   EYEBROW — mono, uppercase, widest, with accent bar
+   ============================================ */
+.marketing .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--muted-foreground);
+}
+.marketing .eyebrow::before {
+  content: "";
+  width: 2rem;
+  height: 1px;
+  background: var(--accent);
+  display: inline-block;
+}
+
+/* Accent bar as standalone divider */
+.marketing .accent-bar {
+  width: 4rem;
+  height: 0.25rem;
+  background: var(--accent);
+  display: inline-block;
+}
+
+/* ============================================
+   DECORATIVE OVERSIZED NUMERAL
+   ============================================ */
+.marketing .decorative-number {
+  font-size: clamp(6rem, 20vw, 16rem);
+  font-weight: 700;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  color: var(--border);
+  user-select: none;
+  pointer-events: none;
+  transition: color 150ms var(--ease-out-expo);
+}
+.marketing .decorative-number:hover {
+  color: var(--accent);
+}
+
+/* ============================================
+   BUTTONS — uppercase, tracked, animated underline
+   ============================================ */
+.marketing .mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  padding: 0.75rem 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: all 150ms var(--ease-out-expo);
+  text-decoration: none;
+}
+.marketing .mk-btn:active { transform: translateY(1px); }
+
+/* Primary: accent-colored text with animated underline */
+.marketing .mk-btn-primary {
+  color: var(--accent);
+  position: relative;
+}
+.marketing .mk-btn-primary::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(1);
+  transition: transform 150ms var(--ease-out-expo);
+}
+.marketing .mk-btn-primary:hover::after { transform: scaleX(1.1); }
+
+/* Secondary: outlined, inverts on hover */
+.marketing .mk-btn-secondary {
+  border: 1px solid var(--foreground);
+  color: var(--foreground);
+  padding: 0.75rem 1.5rem;
+}
+.marketing .mk-btn-secondary:hover {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* Outline: subtle border, brightens on hover */
+.marketing .mk-btn-outline {
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  padding: 0.75rem 1.5rem;
+}
+.marketing .mk-btn-outline:hover { border-color: var(--foreground); }
+
+/* Ghost: muted text, underline appears on hover */
+.marketing .mk-btn-ghost {
+  color: var(--muted-foreground);
+  padding: 0.75rem 1rem;
+  position: relative;
+}
+.marketing .mk-btn-ghost::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  width: 100%;
+  background: var(--foreground);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 150ms var(--ease-out-expo);
+}
+.marketing .mk-btn-ghost:hover { color: var(--foreground); }
+.marketing .mk-btn-ghost:hover::after { transform: scaleX(1); }
+
+/* Size variants */
+.marketing .mk-btn-sm { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 11px; }
+.marketing .mk-btn-lg { padding-top: 1rem; padding-bottom: 1rem; font-size: 14px; gap: 0.75rem; }
+
+/* ============================================
+   MARKETING CARD — transparent, border-only
+   ============================================ */
+.marketing .mk-card {
+  position: relative;
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  transition: border-color 150ms var(--ease-out-expo);
+}
+@media (min-width: 768px) {
+  .marketing .mk-card { padding: 2rem; }
+}
+.marketing .mk-card:hover { border-color: var(--border-hover); }
+.marketing .mk-card-highlighted { border: 2px solid var(--accent); }
+
+/* Card badge: absolutely positioned label */
+.marketing .mk-card-badge {
+  position: absolute;
+  top: -0.75rem;
+  left: 1.5rem;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  padding: 0.25rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* ============================================
+   UNDERLINE UTILITIES — for inline text links
+   ============================================ */
+.marketing .accent-underline {
+  position: relative;
+  display: inline-block;
+}
+.marketing .accent-underline::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(1);
+  transition: transform 150ms var(--ease-out-expo);
+}
+.marketing .accent-underline:hover::after { transform: scaleX(1.1); }
+
+.marketing .ghost-underline {
+  position: relative;
+  display: inline-block;
+}
+.marketing .ghost-underline::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: var(--foreground);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 150ms var(--ease-out-expo);
+}
+.marketing .ghost-underline:hover::after { transform: scaleX(1); }
+
+/* ============================================
+   NOISE TEXTURE — optional page overlay
+   ============================================ */
+.marketing .noise-overlay {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* ============================================
+   SELECTION
+   ============================================ */
+.marketing ::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* ============================================
+   FOCUS
+   ============================================ */
+.marketing :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Type — Scale</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:18px 24px; background: var(--bg); color: var(--fg1); }
+  .row { display:grid; grid-template-columns: 80px 1fr 180px; gap:16px; align-items:baseline; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .row:last-child { border: 0; }
+  .tag { font-family: var(--font-mono); font-size: 11px; color: var(--fg2); }
+  .meta { font-family: var(--font-mono); font-size: 10px; color: var(--fg2); text-align: right; }
+  .h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.015em; }
+  .h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .h3 { font-size: 18px; font-weight: 600; }
+  .bd { font-size: 16px; font-weight: 400; line-height: 1.5; }
+  .lb { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg2); }
+</style></head><body>
+  <div class="row"><span class="tag">h1</span><span class="h1">Section heading</span><span class="meta">700 · 24/1.3</span></div>
+  <div class="row"><span class="tag">h2</span><span class="h2">Card title</span><span class="meta">600 · 20/1.4</span></div>
+  <div class="row"><span class="tag">h3</span><span class="h3">Panel heading</span><span class="meta">600 · 18/1.4</span></div>
+  <div class="row"><span class="tag">body</span><span class="bd">The quick brown fox jumps.</span><span class="meta">400 · 16/1.5</span></div>
+  <div class="row"><span class="tag">label</span><span class="lb">Section label</span><span class="meta">500 · 12 · +0.06em</span></div>
+</body></html>

@@ -1,36 +1,37 @@
 # Pricing Limits — Tracking & Enforcement Status
 
-> Source of truth for alignment between [cortex.moca.qwellco.de/pricing](https://cortex.moca.qwellco.de/pricing) and what the backend can actually track / enforce via environment variables. Use this as the planning document for wiring up per-tier limits.
+> Source of truth for alignment between [cortex.moca.qwellco.de/pricing](https://cortex.moca.qwellco.de/pricing) and what the backend can actually track / enforce via environment variables. Cortex is sold as a single-tenant deployment — each customer runs their own instance, so **all limits are global to the instance**, not per-API-key.
 
 ---
 
 ## 1. Purpose
 
-The public pricing page promises per-tier hard limits on Files, Entities, Queries, and Collections, plus feature toggles (premium apps, usage analytics, advanced security). This document inventories each promise and maps it to:
+The public pricing page promises hard limits on Files, Entities, Queries, and Collections, plus feature toggles (premium apps, usage analytics, advanced security). Each pricing tier corresponds to a **specific set of env-var values applied to that customer's instance**. There is no per-key / per-user quota inside a shared multi-tenant system — the instance itself *is* the tier.
 
+This document inventories each pricing-page promise and maps it to:
 - what the backend currently **tracks** (metrics exist in code),
 - what it currently **enforces** (requests are rejected when exceeded),
-- the **env var(s)** that already control it (or would need to be added),
+- the **env var(s)** that control it (or need to be added),
 - the **gap** between today's behavior and the pricing-page contract.
 
-No code changes here — this is the specification for later implementation work.
-
-**Design principle — env-var-only control.** The target end state is that every pricing limit and every tier assignment is controlled by an environment variable. Once the roadmap in §6 is complete, operators change caps or move a customer between tiers by editing env config (e.g., in Coolify) and redeploying — no admin UI, no database migration, no code change. The only per-record data that remains in the database is *attribution* (which key owns which document/collection) — not configuration. See §8 for the end-to-end operator workflow.
+**Design principle — env-var-only, global per-instance control.** Every pricing limit is a single global env var. Operators change caps by editing env config (e.g., in Coolify) and redeploying. No per-key attribution, no tier concept stored in the database, no admin UI, no database migration. See §8 for the end-to-end operator workflow.
 
 ---
 
 ## 2. Pricing Tiers Summary
 
-| Tier | Price | Files | Entities | Queries | Collections | Apps | Support / Extras |
-|---|---|---|---|---|---|---|---|
-| **Free** | $0 | 20 | 500 | 1,000 | 1 | Free apps | Community support |
-| **Individual** | $19/mo | 500 | 10,000 | 10,000 | 10 | Free apps | Email support |
-| **Enthusiast** ⭐ (Most Popular) | $79/mo | 3,000 | 100,000 | 100,000 | 100 | Free + select premium | Priority support, Usage analytics |
-| **Business** | $249/mo | 25,000 | 1,000,000 | Unlimited | Unlimited | All premium | Advanced security, Dedicated support |
-| **Enterprise** | Custom | Custom | Custom | Custom | Custom | Custom | Bespoke app dev, dedicated infra |
-| **MOCA Flatrate** | Free (DeCC0 / $MOCA staking) | Same as Enthusiast | | | | | |
+Each tier is a different env-var configuration applied to a fresh instance. When a customer signs up, the operator deploys a Cortex instance with env vars matching the tier's numbers from §5.
 
-Universal features across all tiers: **GraphRAG entity extraction**, **Ask AI with citations**, **API access**.
+| Tier | Price | Files | Entities | Queries/mo | Collections | Premium Apps | Advanced Security |
+|---|---|---|---|---|---|---|---|
+| **Free** | $0 | 20 | 500 | 1,000 | 1 | No | No |
+| **Individual** | $19/mo | 500 | 10,000 | 10,000 | 10 | No | No |
+| **Enthusiast** ⭐ (Most Popular) | $79/mo | 3,000 | 100,000 | 100,000 | 100 | Select | No |
+| **Business** | $249/mo | 25,000 | 1,000,000 | Unlimited | Unlimited | All | Yes |
+| **Enterprise** | Custom | Unlimited | Unlimited | Unlimited | Unlimited | All | Yes |
+| **MOCA Flatrate** (DeCC0 / $MOCA staking) | Free | = Enthusiast values | | | | | |
+
+Universal features across all tiers: **GraphRAG entity extraction**, **Ask AI with citations**, **API access**. Sentinel `0` in env vars means "unlimited".
 
 ---
 
@@ -38,22 +39,21 @@ Universal features across all tiers: **GraphRAG entity extraction**, **Ask AI wi
 
 Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (out of scope)
 
-| # | Pricing Promise | Tracked? | Enforced? | Existing Env Var | Status |
+| # | Pricing Promise | Tracked? | Enforced? | Env Var | Status |
 |---|---|---|---|---|---|
-| 1 | Files / tier | Yes (global) | Yes (global, at upload) | `MAX_FILES` | 🟡 Partial — global only, not per-key |
-| 2 | Entities / tier | Yes (global count) | No | *(none)* | 🔴 Missing |
-| 3 | Queries / tier / month | Yes (per-key, daily rollup) | No | *(none)* | 🟡 Tracked, not enforced |
-| 4 | Collections / tier | Yes (global) | No (config exists, unused) | `MAX_COLLECTIONS` | 🟡 Partial — code gap |
-| 5 | Free apps vs Premium apps | Partial (skill registry) | No | `ENABLE_SKILLS`, `MAX_SKILL_TOOLS` | 🟡 No tier tagging |
-| 6 | GraphRAG entity extraction | N/A (boolean feature) | Yes (global toggle) | `ENABLE_GRAPH_EXTRACTION` | ✅ Ready |
-| 7 | Ask AI with citations | N/A (boolean feature) | Yes (global toggle) | `ENABLE_AGENT_CHAT`, `ENABLE_AGENT_RESEARCH` | ✅ Ready |
-| 8 | API access (rate limits) | Yes (request counts) | No (no middleware) | *(none)* | 🟡 No rate limiting |
-| 9 | Usage analytics (Enthusiast+) | Yes (admin view) | No (no tier gating) | *(none)* | 🟡 No self-service endpoint |
+| 1 | Files | Yes (global) | Yes (global, at upload) | `MAX_FILES` | ✅ Ready |
+| 2 | Entities | Yes (global count) | No | `MAX_ENTITIES` (new) | 🟡 Tracked, needs enforcement |
+| 3 | Queries / month | Yes (per-key daily log; trivially summed) | No | `MAX_QUERIES_PER_MONTH` (new) | 🟡 Tracked, needs middleware |
+| 4 | Collections | Yes (global) | No (config exists, unused) | `MAX_COLLECTIONS` | 🟡 Code gap — wire enforcement |
+| 5 | Premium apps | Via skill management | Partial | `ENABLED_SKILL_IDS` (new) | 🟡 Needs whitelist |
+| 6 | GraphRAG entity extraction | N/A (feature) | Yes | `ENABLE_GRAPH_EXTRACTION` | ✅ Ready |
+| 7 | Ask AI with citations | N/A (feature) | Yes | `ENABLE_AGENT_CHAT`, `ENABLE_AGENT_RESEARCH` | ✅ Ready |
+| 8 | API rate limit | Yes (request counts) | No | `MAX_RPM` (new) | 🟡 No rate-limit middleware |
+| 9 | Usage analytics (self-service) | Yes (admin only) | Partial | `ENABLE_SELF_SERVICE_ANALYTICS` (new) | 🟡 No user-facing endpoint |
 | 10 | Support (Community/Email/Priority/Dedicated) | — | — | — | ⚪ Non-technical |
-| 11 | Advanced security (Business+) | Partial | Partial | `PROMPT_SECURITY` | 🟡 Under-defined |
-| 12 | Bespoke app dev (Enterprise) | — | — | — | ⚪ Non-technical |
-| 13 | **Prerequisite: tier concept on API keys** | No | No | proposed: `API_KEY_TIERS`, `DEFAULT_TIER` | 🟡 Env-var driven at auth time — no DB migration |
-| 14 | MOCA Flatrate eligibility (DeCC0 / $MOCA) | No | No | *(none)* | 🔴 Needs on-chain verification |
+| 11 | Advanced security (Business+) | Partial | Partial | `ENABLE_IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, … (all new) | 🟡 Feature set under-defined |
+| 12 | Bespoke Enterprise work | — | — | — | ⚪ Non-technical |
+| 13 | MOCA Flatrate eligibility | No | No | *(out of scope — on-chain verification)* | 🔴 Separate design |
 
 ---
 
@@ -64,237 +64,153 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 - **Pricing values**: 20 / 500 / 3,000 / 25,000 / Unlimited
 - **Tracked**: Global document count via `neo4j_service.get_stats()["document_count"]`.
 - **Enforced**: Yes, globally, at [backend/app/main.py:548-556](backend/app/main.py#L548-L556) when `max_files > 0`.
-- **Existing env var**: `max_files` at [backend/app/config.py:97-99](backend/app/config.py#L97-L99) (default `0` = unlimited).
-- **Gap**: Global ceiling shared across all API keys — two Free-tier keys would together hit a 20-file cap, not 20 each. No attribution of documents to the key that uploaded them.
-- **Fix path**:
-  1. Add `owner_key_id` property to `Document` nodes, set during upload.
-  2. In the upload endpoint, swap the global `get_stats` check for a per-key count `MATCH (d:Document {owner_key_id: $key_id}) RETURN count(d)`.
-  3. New env vars `TIER_<TIER>_MAX_FILES` (one per tier).
+- **Env var**: `MAX_FILES` at [backend/app/config.py:97-99](backend/app/config.py#L97-L99) (default `0` = unlimited).
+- **Status**: ✅ Ready. No code changes needed.
+- **Operator action**: set `MAX_FILES` to the tier value on each instance.
 
 ### 4.2 Entities
 
 - **Pricing values**: 500 / 10,000 / 100,000 / 1,000,000 / Unlimited
 - **Tracked**: Global entity count via `get_stats()["entity_count"]`.
 - **Enforced**: No.
-- **Existing env var**: None.
-- **Gap**: Entities are produced by the extraction pipeline from documents, not by direct user action. They are shared globally in Neo4j — the same entity node can be referenced by documents from multiple keys.
-- **Fix path**: Attribute entities via their source documents: an entity "belongs to" key `K` if any document with `owner_key_id = K` has a chunk that mentions it.
-  1. Add a pre-extraction quota check in the extraction pipeline that counts `COUNT(DISTINCT e) WHERE EXISTS ((e)<-[:MENTIONS]-(:Chunk)<-[:HAS_CHUNK]-(:Document {owner_key_id: $key_id}))`.
-  2. If adding a new document would push the count over the tier cap, skip extraction or defer it until the key is upgraded.
-  3. New env vars `TIER_<TIER>_MAX_ENTITIES`.
-- **Note**: Entity count may grow asynchronously after upload (during background extraction) — enforcement cannot be purely upload-time; it must also apply at extraction time. See [.claude/domain/relationships.md](.claude/domain/relationships.md) and [.claude/domain/entities.md](.claude/domain/entities.md).
+- **Gap**: No env var, no enforcement code.
+- **Fix path**:
+  1. Add `MAX_ENTITIES` env var to [backend/app/config.py](backend/app/config.py) (default `0` = unlimited).
+  2. Add a pre-extraction check in the extraction pipeline: if adding the new batch would push the global entity count over `MAX_ENTITIES`, skip/defer extraction for that document.
+  3. Surface the remaining-entities count to admins so they can prune before the cap is hit.
+- **Note**: Entity count grows asynchronously during background extraction; enforcement happens at extraction time, not upload time, to be accurate. See [.claude/domain/entities.md](.claude/domain/entities.md).
 
 ### 4.3 Queries
 
 - **Pricing values**: 1,000 / 10,000 / 100,000 / Unlimited / Unlimited
-- **Tracked**: Yes, per-key with daily granularity. Every request to `/api/ask*` or `/api/search*` increments `APIKeyUsageLog.ep_ask` or `ep_ask` category via the existing `APIUsageMiddleware` at [backend/app/main.py:260-298](backend/app/main.py#L260-L298).
-- **Enforced**: No — middleware records usage but does not reject requests when a cap is reached.
-- **Existing env var**: None.
-- **Gap**: No env var for the monthly limit, no quota check before request processing.
+- **Tracked**: Per-key, daily. `APIUsageMiddleware` at [backend/app/main.py:260-298](backend/app/main.py#L260-L298) increments `APIKeyUsageLog.ep_ask` / `ep_search` on every call to `/api/ask*` and `/api/search*`. Summing across all keys gives an instance-wide total.
+- **Enforced**: No — middleware records usage but doesn't reject requests.
+- **Gap**: No env var for the monthly cap, no pre-request quota check.
 - **Fix path**:
-  1. In `APIUsageMiddleware` (or a new dedicated middleware placed *before* it), for requests to `/api/ask*` and `/api/search*`, sum `ep_ask + ep_search` across `APIKeyUsageLog` rows for the current UTC month for the caller's `key_id`.
-  2. If the sum exceeds the tier cap, short-circuit with a 429 response (`Retry-After` = seconds until month rollover).
-  3. New env vars `TIER_<TIER>_MAX_QUERIES_PER_MONTH`. Use sentinel `0` or `-1` for "unlimited" (Business / Enterprise).
-- **Aggregation query already exists**: `neo4j_service.get_api_key_stats()` and `get_api_key_usage_history()` at [backend/app/services/neo4j_service.py](backend/app/services/neo4j_service.py) (lines ~5002–5109 per exploration) — reuse them.
+  1. Add `MAX_QUERIES_PER_MONTH` env var (default `0` = unlimited).
+  2. Add a quota-check middleware in front of `APIUsageMiddleware` for `/api/ask*` and `/api/search*` that sums `ep_ask + ep_search` across **all** `APIKeyUsageLog` rows for the current UTC month (instance-wide, not per-key).
+  3. When the sum exceeds `MAX_QUERIES_PER_MONTH`, short-circuit with 429 (`Retry-After` = seconds until month rollover).
+- **Aggregation Cypher**: `MATCH (log:APIKeyUsageLog) WHERE log.date >= $month_start RETURN sum(log.ep_ask) + sum(log.ep_search)`. Cache the result for a few seconds to avoid hammering Neo4j on every request.
 
 ### 4.4 Collections
 
 - **Pricing values**: 1 / 10 / 100 / Unlimited / Unlimited
 - **Tracked**: Yes, globally.
-- **Enforced**: **No** — `max_collections` config exists at [backend/app/config.py:100-102](backend/app/config.py#L100-L102) but is **not referenced** in the `POST /api/collections` endpoint. This is a pre-existing bug: the knob is declared but ignored.
-- **Existing env var**: `max_collections` (default `0` = unlimited).
-- **Gap**:
-  - Enforcement code missing entirely.
-  - Even if added, limit is global, not per-key.
+- **Enforced**: **No** — `max_collections` config at [backend/app/config.py:100-102](backend/app/config.py#L100-L102) exists but is **not referenced** in the `POST /api/collections` endpoint. Pre-existing bug: knob declared, ignored.
+- **Env var**: `MAX_COLLECTIONS` (default `0` = unlimited) — already exists.
 - **Fix path**:
-  1. Add `owner_key_id` property to `Collection` nodes.
-  2. Add per-key count check in the collection-creation endpoint before creating.
-  3. New env vars `TIER_<TIER>_MAX_COLLECTIONS`.
-- **Note**: The Free tier allows exactly 1 collection, which likely means the auto-created `default` collection — per-key attribution must count the default collection toward the tier's cap.
+  1. Add enforcement in the collection-creation endpoint: `if MAX_COLLECTIONS > 0 and current_count >= MAX_COLLECTIONS: raise HTTPException(403, ...)`.
+  2. The auto-created `default` collection counts toward the cap.
+- **No new env var** — the existing one just needs wiring.
 
-### 4.5 Free Apps vs Premium Apps
+### 4.5 Premium Apps (Skills)
 
-- **Pricing values**: Free (Free/Individual) · Free + select premium (Enthusiast) · All premium (Business) · Custom (Enterprise)
-- **Tracked**: Skills are stored as `Skill` nodes in Neo4j with enable/disable and config schema. See [.claude/domain/skills.md](.claude/domain/skills.md).
-- **Enforced**: Global enable/disable exists via `ENABLE_SKILLS`, `MAX_SKILL_TOOLS`, `ENABLE_SKILL_SCRIPTS`. No tier-aware filtering.
-- **Existing env vars**: `ENABLE_SKILLS`, `MAX_SKILL_TOOLS`, `MAX_SKILL_INSTRUCTIONS_TOKENS`, `SKILLS_DIR`, `ENABLE_SKILL_SCRIPTS`, `SKILL_SCRIPT_TIMEOUT`, `SKILL_HTTP_TIMEOUT`.
-- **Gap**: No `tier_required` (or `premium: bool`) metadata on skills. No filter in the skill-loading path that hides premium skills from lower-tier keys.
-- **Fix path** (env-var only, no DB changes):
-  1. Define tier mapping purely via env vars: `PREMIUM_SKILL_IDS` (comma-separated skill IDs available from Enthusiast+) and `BUSINESS_ONLY_SKILL_IDS` (Business+ only). Free / Individual keys see only skills in neither list.
-  2. For large skill catalogs, support `SKILL_TIER_REGISTRY_PATH` pointing at a YAML file with the same mapping (operator edits one file instead of a long env var).
-  3. `skill_service` loads the lists at startup and filters skills by comparing them against `auth.tier` on every request.
-  4. `Skill` Neo4j nodes stay unchanged — tiering is purely configuration.
-- **Product decision needed**: which specific skills are "premium"? The pricing page does not enumerate them — but whichever they are, they go in the env var, not the database.
+- **Pricing values**: Free apps only (Free/Individual) · Free + select premium (Enthusiast) · All premium (Business+) · Custom (Enterprise)
+- **Tracked**: Skills stored as `Skill` nodes, managed via admin. See [.claude/domain/skills.md](.claude/domain/skills.md).
+- **Enforced**: Global toggle (`ENABLE_SKILLS`); no per-skill gating.
+- **Gap**: No way to restrict which skills are available beyond the global on/off.
+- **Fix path**:
+  1. Add `ENABLED_SKILL_IDS` env var — comma-separated whitelist of skill IDs active on this instance. Empty string = all installed skills active (backward-compatible).
+  2. `skill_service` filters available skills against the whitelist at startup and on every request.
+  3. Operator configures per-tier:
+     - Free/Individual: only free skill IDs.
+     - Enthusiast: free + chosen premium IDs.
+     - Business+: leave empty (= all).
+- **Alternative**: operator manually installs only the allowed skills per instance and skips the env var. The env-var whitelist is cleaner because the same image can ship all skills and the tier config filters at runtime.
+- **Product decision needed**: which specific skill IDs are "free" vs "premium"? The pricing page doesn't enumerate them.
 
 ### 4.6 GraphRAG Entity Extraction
 
-- **Available to**: All tiers including Free.
-- **Status**: ✅ Ready. Already controlled by `ENABLE_GRAPH_EXTRACTION` at [backend/app/config.py:125-127](backend/app/config.py#L125-L127). Global toggle — sufficient because every tier has it enabled.
-- **Future consideration**: If a future tier disables extraction, per-key toggle required.
+- **Available to**: All tiers.
+- **Status**: ✅ Ready. `ENABLE_GRAPH_EXTRACTION` at [backend/app/config.py:125-127](backend/app/config.py#L125-L127). Global toggle, sufficient since every tier has it.
 
 ### 4.7 Ask AI with Citations
 
 - **Available to**: All tiers.
-- **Status**: ✅ Ready. Controlled by `ENABLE_AGENT_CHAT` and `ENABLE_AGENT_RESEARCH` at [backend/app/config.py:222-230](backend/app/config.py#L222-L230). Citations are intrinsic to the RAG pipeline output and do not require a separate flag.
+- **Status**: ✅ Ready. `ENABLE_AGENT_CHAT` and `ENABLE_AGENT_RESEARCH` at [backend/app/config.py:222-230](backend/app/config.py#L222-L230). Citations are intrinsic to the RAG pipeline output.
 
 ### 4.8 API Access (Rate Limiting)
 
 - **Available to**: All tiers.
-- **Status**: Core API-key system is ready ([backend/app/services/api_key_service.py](backend/app/services/api_key_service.py)) with READ/MANAGE permissions and collection scoping. **No rate limiting** is currently implemented.
-- **Gap**: No middleware enforces requests-per-minute / requests-per-second. The Free tier especially needs RPM throttling to prevent abuse within the monthly query cap.
+- **Status**: API-key system is ready ([backend/app/services/api_key_service.py](backend/app/services/api_key_service.py)). **No rate limiting** currently.
+- **Gap**: No middleware enforces requests-per-minute. Free tier especially needs throttling to prevent burning through the monthly quota in seconds.
 - **Fix path**:
-  1. Add a rate-limit middleware keyed by `key_id` (e.g., using a sliding window in Redis, or an in-process token bucket if Redis is not introduced yet).
-  2. New env vars `TIER_<TIER>_RPM` (requests per minute) and optionally `TIER_<TIER>_BURST`.
-- **Suggested defaults**: `TIER_FREE_RPM=30`, `TIER_INDIVIDUAL_RPM=120`, `TIER_ENTHUSIAST_RPM=300`, `TIER_BUSINESS_RPM=1200`.
+  1. Add `MAX_RPM` env var (default `0` = unlimited).
+  2. Add a rate-limit middleware applying a sliding window **across the entire instance** (all keys share the RPM budget). In-process token bucket is fine as a starting point; migrate to Redis if multi-replica.
+  3. Return 429 with `Retry-After` when exceeded.
+- **Suggested tier values**: Free `30`, Individual `120`, Enthusiast `300`, Business `1200`, Enterprise `0`.
 
-### 4.9 Usage Analytics (Enthusiast+)
+### 4.9 Usage Analytics (Self-Service)
 
-- **Available to**: Enthusiast, Business, Enterprise.
-- **Status**: Backend data is ready — per-key stats and history already computed by `neo4j_service.get_api_key_stats()` and `get_api_key_usage_history()`. Admin view exists at [frontend/src/components/admin/UsageChart.tsx](frontend/src/components/admin/UsageChart.tsx).
-- **Gap**: No **self-service** user-facing endpoint (an Enthusiast customer cannot see their own stats). No tier check gating visibility.
+- **Available to**: Enthusiast+ on the pricing page.
+- **Status**: Admin view exists ([frontend/src/components/admin/UsageChart.tsx](frontend/src/components/admin/UsageChart.tsx)); per-key stats via `neo4j_service.get_api_key_stats()` and `get_api_key_usage_history()`.
+- **Gap**: No self-service endpoint for non-admin users. No toggle.
 - **Fix path**:
-  1. Add `GET /api/me/usage` endpoint returning the authenticated key's own stats (request count by period, endpoint category breakdown, remaining quota).
-  2. Gate by `auth.tier in {enthusiast, business, enterprise}`.
-  3. Surface in the frontend for logged-in users.
-- **No new env var required** — the feature flag is implicit in the tier.
+  1. Add `ENABLE_SELF_SERVICE_ANALYTICS` env var (boolean, default `false`). Operator sets `true` on Enthusiast+ instances.
+  2. Add `GET /api/me/usage` endpoint returning the caller's own stats (queries this month, remaining quota, endpoint breakdown). Guarded by the env var.
+  3. Surface in the frontend.
 
-### 4.10 Support Tiers (Community / Email / Priority / Dedicated)
+### 4.10 Support Tiers
 
-- ⚪ **Non-technical.** Handled outside the product (help desk, SLA, email routing). Not an env-var concern.
+- ⚪ **Non-technical.** Handled outside the product (help desk, SLA, email routing). No env var.
 
-### 4.11 Advanced Security (Business+)
+### 4.11 Advanced Security
 
-- **Available to**: Business, Enterprise.
-- **Status**: Under-defined. The pricing page says "Advanced security" without listing concrete deliverables.
-- **Currently exists**: `PROMPT_SECURITY` env var at [backend/app/config.py:320-322](backend/app/config.py#L320-L322), global, default on.
-- **Plausible interpretations** (need product decision):
-  - **IP allowlisting** per API key — new env var `TIER_BUSINESS_ENABLE_IP_ALLOWLIST` + a `allowed_ips` property on `APIKey` nodes.
-  - **Audit logs** — per-key action log with longer retention than free tiers (requires a new `AuditLog` node type).
-  - **SSO / SAML** — significant auth refactor.
-  - **Key rotation policies** — expiry/rotation metadata on `APIKey`.
-  - **Enhanced prompt-injection defenses** — tier-aware `PROMPT_SECURITY` level.
-- **Fix path**: Each deliverable maps to a dedicated env var — see §5 for a concrete starter set (`API_KEY_IP_ALLOWLISTS`, `TIER_*_AUDIT_LOG_RETENTION_DAYS`, `TIER_*_PROMPT_SECURITY_LEVEL`, `TIER_BUSINESS_KEY_ROTATION_RECOMMEND_DAYS`). Product still needs to decide *which* features ship first, but the env-var surface is pre-declared so when the decision lands, wiring is mechanical.
+- **Available to**: Business+.
+- **Status**: Under-defined on the pricing page — covers multiple plausible deliverables. Each maps to its own env var so they can ship independently.
+- **Currently exists**: boolean `PROMPT_SECURITY` at [backend/app/config.py:320-322](backend/app/config.py#L320-L322).
+- **Proposed env vars** (each a discrete, independently-shippable feature):
+  - `ENABLE_IP_ALLOWLIST` (boolean) + `IP_ALLOWLIST` (comma-separated CIDR list). When enabled, reject requests from IPs outside the list.
+  - `AUDIT_LOG_RETENTION_DAYS` (int, default `0` = disabled). When > 0, log admin/destructive actions to a new `AuditLog` node type with the given retention.
+  - `PROMPT_SECURITY_LEVEL` (`off` | `basic` | `strict`, default `basic`). Eventually supersedes the boolean `PROMPT_SECURITY`; ship as an additive new var first, deprecate old one after migration.
+  - `API_KEY_ROTATION_RECOMMEND_DAYS` (int, default `0` = no hint). When > 0, surface a rotation reminder to admins in the UI. Not auto-enforced.
+- **Fix path**: ship each one independently once product decides priorities.
 
-### 4.12 Bespoke App Development / Dedicated Infra (Enterprise)
+### 4.12 Bespoke Enterprise / Dedicated Infra
 
-- ⚪ **Non-technical.** Enterprise deals are custom by definition. No env var needed.
+- ⚪ **Non-technical.** Custom engagements. No env var.
 
-### 4.13 Prerequisite: Tier Concept on API Keys
+### 4.13 MOCA Flatrate (DeCC0 / $MOCA staking)
 
-- **Status**: 🟡 Resolvable via env-var lookup — **no DB migration required**.
-- **Design**: Tier is **not persisted** in Neo4j. Instead, it is computed at auth time from two env vars:
-  - `API_KEY_TIERS` — comma-separated map of API-key `name` → tier. Example: `customer-alice:enthusiast,customer-bob:business,test-key:free`.
-  - `DEFAULT_TIER` — tier assigned to any key not listed in `API_KEY_TIERS` (default: `free`).
-  - The admin key (authenticated by `ADMIN_API_KEY`) is always treated as `enterprise` regardless of the mapping.
-- **Fix path**:
-  1. Add `tier: Tier` field to the `AuthResult` dataclass at [backend/app/services/auth_service.py](backend/app/services/auth_service.py), populated in `validate_api_key()`.
-  2. Ship a helper `resolve_tier(api_key_name: str) -> Tier` that parses `API_KEY_TIERS` once at startup and looks up the name; falls back to `DEFAULT_TIER`.
-  3. For deployments with many customers, support `API_KEY_TIERS_FILE` pointing at a YAML file with the same mapping (avoids a pathologically long env var).
-  4. No admin UI — tier assignment is operator-controlled via env vars (see §8 for the workflow).
-- **Zero migration**: No Neo4j schema changes, no data backfill, no Pydantic-model changes to existing persisted shapes. A redeploy with a new `API_KEY_TIERS` value takes effect on the next request.
-
-### 4.14 MOCA Flatrate (DeCC0 / $MOCA staking)
-
-- **Status**: 🔴 Missing. Eligibility cannot be verified from inside the current codebase — it requires reading on-chain state (NFT ownership or staked balance).
-- **Fix path** (out of scope for env-var-only work):
-  1. Wallet-linking flow: user signs a message with their wallet → backend verifies the signature and stores the linked address on the API key.
-  2. Periodic job checks on-chain state (DeCC0 NFT ownership, $MOCA staking balance) and adjusts the key's `tier` accordingly.
-  3. Env vars for the verification layer: `MOCA_RPC_URL`, `DECC0_CONTRACT_ADDRESS`, `MOCA_TOKEN_ADDRESS`, `MOCA_MIN_STAKE_AMOUNT`, `MOCA_ELIGIBILITY_TIER` (= `enthusiast`).
-- **Note**: This is a feature, not just a limit — it warrants its own design doc separate from PRICING.md.
+- **Status**: 🔴 Out of scope for env-var-only work — requires on-chain verification of NFT ownership or $MOCA stake. For now, the operator manually provisions an Enthusiast-tier instance for a verified community member, same env vars as a paying Enthusiast.
+- **Future design** (separate doc, not covered by PRICING.md):
+  1. Wallet-linking: user signs a message with their wallet; backend verifies signature, stores linked address on the instance's customer record.
+  2. Periodic job checks on-chain state (DeCC0 NFT / $MOCA stake) and flags instances for provisioning/revocation.
+  3. New env vars for the verification layer: `MOCA_RPC_URL`, `DECC0_CONTRACT_ADDRESS`, `MOCA_TOKEN_ADDRESS`, `MOCA_MIN_STAKE_AMOUNT`.
 
 ---
 
-## 5. Proposed Env Var Surface
+## 5. Env Var Surface
 
-A consolidated list of env vars to add to [.env.example](.env.example) and declare in [backend/app/config.py](backend/app/config.py). **Sentinel value `0` or `-1` means "unlimited"** to match the existing `MAX_FILES=0` convention.
+One simple global env var per limit. No tier prefixes, no per-key attribution. To deploy tier X, set these to tier X's numbers.
 
 ```bash
 # =============================================================================
-# Tier-based pricing limits (one set per tier)
+# Global instance limits — sentinel 0 means "unlimited"
 # =============================================================================
-# Values mirror cortex.moca.qwellco.de/pricing. Change here to change caps.
-# Use 0 for "unlimited" (Business queries/collections, Enterprise everywhere).
-
-# --- Free tier ---
-TIER_FREE_MAX_FILES=20
-TIER_FREE_MAX_ENTITIES=500
-TIER_FREE_MAX_QUERIES_PER_MONTH=1000
-TIER_FREE_MAX_COLLECTIONS=1
-TIER_FREE_RPM=30
-
-# --- Individual tier ---
-TIER_INDIVIDUAL_MAX_FILES=500
-TIER_INDIVIDUAL_MAX_ENTITIES=10000
-TIER_INDIVIDUAL_MAX_QUERIES_PER_MONTH=10000
-TIER_INDIVIDUAL_MAX_COLLECTIONS=10
-TIER_INDIVIDUAL_RPM=120
-
-# --- Enthusiast tier (MOCA Flatrate uses these) ---
-TIER_ENTHUSIAST_MAX_FILES=3000
-TIER_ENTHUSIAST_MAX_ENTITIES=100000
-TIER_ENTHUSIAST_MAX_QUERIES_PER_MONTH=100000
-TIER_ENTHUSIAST_MAX_COLLECTIONS=100
-TIER_ENTHUSIAST_RPM=300
-
-# --- Business tier ---
-TIER_BUSINESS_MAX_FILES=25000
-TIER_BUSINESS_MAX_ENTITIES=1000000
-TIER_BUSINESS_MAX_QUERIES_PER_MONTH=0       # unlimited
-TIER_BUSINESS_MAX_COLLECTIONS=0              # unlimited
-TIER_BUSINESS_RPM=1200
-
-# --- Enterprise tier (no caps by default; override per deployment) ---
-TIER_ENTERPRISE_MAX_FILES=0
-TIER_ENTERPRISE_MAX_ENTITIES=0
-TIER_ENTERPRISE_MAX_QUERIES_PER_MONTH=0
-TIER_ENTERPRISE_MAX_COLLECTIONS=0
-TIER_ENTERPRISE_RPM=0
+MAX_FILES=0                       # already implemented
+MAX_ENTITIES=0                    # new — enforce at extraction time
+MAX_QUERIES_PER_MONTH=0           # new — enforce in middleware (summed across all keys)
+MAX_COLLECTIONS=0                 # declared today, enforcement missing — just wire it up
+MAX_RPM=0                         # new — rate-limit middleware (instance-wide)
 
 # =============================================================================
-# API key → tier assignment (env-var driven, no DB migration)
+# Feature toggles
 # =============================================================================
-# Comma-separated mapping of API-key `name` (set at creation) to tier.
-# Valid tiers: free | individual | enthusiast | business | enterprise
-# Example: API_KEY_TIERS=customer-alice:enthusiast,customer-bob:business,internal-test:free
-API_KEY_TIERS=
-# Default tier for any key NOT listed in API_KEY_TIERS.
-DEFAULT_TIER=free
-# Optional: path to a YAML file with the same mapping (use for large deployments).
-# YAML schema: a top-level dict { "<key-name>": "<tier>", ... }
-# API_KEY_TIERS_FILE=/app/config/key_tiers.yaml
+# Comma-separated whitelist of skill IDs active on this instance.
+# Empty = all installed skills active. Use to gate premium apps per tier.
+ENABLED_SKILL_IDS=
+# Expose the self-service usage dashboard (`GET /api/me/usage`).
+ENABLE_SELF_SERVICE_ANALYTICS=false
 
 # =============================================================================
-# Premium app gating
+# Advanced security (each independent; ship as product decides priorities)
 # =============================================================================
-# Comma-separated skill IDs that require an Enthusiast tier or above.
-PREMIUM_SKILL_IDS=
-# Comma-separated skill IDs that require a Business tier.
-BUSINESS_ONLY_SKILL_IDS=
-# Alternative: point at a YAML file mapping skill_id -> tier_required
-# SKILL_TIER_REGISTRY_PATH=/app/config/skill_tiers.yaml
-
-# =============================================================================
-# Advanced security (Business+) — each env var toggles one concrete feature.
-# Ship incrementally as product decides which features go in "Advanced security".
-# =============================================================================
-# IP allowlisting per key: comma-separated `key_name:CIDR` pairs.
-# Example: API_KEY_IP_ALLOWLISTS=customer-bob:10.0.0.0/24,customer-carol:203.0.113.7/32
-API_KEY_IP_ALLOWLISTS=
-# Audit-log retention days per tier (0 = audit logging disabled for that tier).
-# Enterprise uses 0 as sentinel for "unlimited retention".
-TIER_FREE_AUDIT_LOG_RETENTION_DAYS=0
-TIER_INDIVIDUAL_AUDIT_LOG_RETENTION_DAYS=0
-TIER_ENTHUSIAST_AUDIT_LOG_RETENTION_DAYS=30
-TIER_BUSINESS_AUDIT_LOG_RETENTION_DAYS=365
-TIER_ENTERPRISE_AUDIT_LOG_RETENTION_DAYS=0
-# Recommended key-rotation cadence (days). Surfaced in UI; not auto-enforced yet.
-TIER_BUSINESS_KEY_ROTATION_RECOMMEND_DAYS=90
-# Tier-aware prompt-injection defense level: off | basic | strict
-TIER_FREE_PROMPT_SECURITY_LEVEL=basic
-TIER_INDIVIDUAL_PROMPT_SECURITY_LEVEL=basic
-TIER_ENTHUSIAST_PROMPT_SECURITY_LEVEL=basic
-TIER_BUSINESS_PROMPT_SECURITY_LEVEL=strict
-TIER_ENTERPRISE_PROMPT_SECURITY_LEVEL=strict
+ENABLE_IP_ALLOWLIST=false
+IP_ALLOWLIST=                     # comma-separated CIDRs when ENABLE_IP_ALLOWLIST=true
+AUDIT_LOG_RETENTION_DAYS=0        # 0 = audit logging disabled
+PROMPT_SECURITY_LEVEL=basic       # off | basic | strict (supersedes PROMPT_SECURITY)
+API_KEY_ROTATION_RECOMMEND_DAYS=0 # 0 = no rotation hint surfaced
 
 # =============================================================================
 # MOCA Flatrate eligibility (separate design; listed for completeness)
@@ -303,55 +219,68 @@ TIER_ENTERPRISE_PROMPT_SECURITY_LEVEL=strict
 # DECC0_CONTRACT_ADDRESS=
 # MOCA_TOKEN_ADDRESS=
 # MOCA_MIN_STAKE_AMOUNT=
-# MOCA_ELIGIBILITY_TIER=enthusiast
 ```
 
-Existing env vars that **stay** and cover existing functionality: `MAX_FILES`, `MAX_COLLECTIONS` (kept as a global safety ceiling applied on top of tier limits), `MAX_FILE_SIZE_MB`, `ENABLE_GRAPH_EXTRACTION`, `ENABLE_AGENT_CHAT`, `ENABLE_AGENT_RESEARCH`, `ENABLE_SKILLS`, `MAX_SKILL_TOOLS`, `PROMPT_SECURITY`.
+### Recommended values per tier
+
+Paste these into the instance env config at deployment time.
+
+| Env Var | Free | Individual | Enthusiast | Business | Enterprise |
+|---|---|---|---|---|---|
+| `MAX_FILES` | `20` | `500` | `3000` | `25000` | `0` |
+| `MAX_ENTITIES` | `500` | `10000` | `100000` | `1000000` | `0` |
+| `MAX_QUERIES_PER_MONTH` | `1000` | `10000` | `100000` | `0` | `0` |
+| `MAX_COLLECTIONS` | `1` | `10` | `100` | `0` | `0` |
+| `MAX_RPM` | `30` | `120` | `300` | `1200` | `0` |
+| `ENABLED_SKILL_IDS` | *(free only)* | *(free only)* | *(free + select premium)* | *(empty = all)* | *(empty = all)* |
+| `ENABLE_SELF_SERVICE_ANALYTICS` | `false` | `false` | `true` | `true` | `true` |
+| `ENABLE_IP_ALLOWLIST` | `false` | `false` | `false` | `true` | `true` |
+| `AUDIT_LOG_RETENTION_DAYS` | `0` | `0` | `0` | `365` | `0` (= unlimited) |
+| `PROMPT_SECURITY_LEVEL` | `basic` | `basic` | `basic` | `strict` | `strict` |
+| `API_KEY_ROTATION_RECOMMEND_DAYS` | `0` | `0` | `0` | `90` | `90` |
+
+MOCA Flatrate instances get the Enthusiast column.
+
+**Existing env vars that stay**: `MAX_FILE_SIZE_MB`, `ENABLE_GRAPH_EXTRACTION`, `ENABLE_AGENT_CHAT`, `ENABLE_AGENT_RESEARCH`, `ENABLE_SKILLS`, `MAX_SKILL_TOOLS`. `PROMPT_SECURITY` (boolean) stays for backward compatibility and is superseded by `PROMPT_SECURITY_LEVEL` once both are wired — then removed.
 
 ---
 
 ## 6. Implementation Roadmap
 
-Phased so each phase is independently shippable and the system stays in a consistent state between phases.
+Phased so each phase is independently shippable and backward-compatible.
 
-### Phase 1 — Foundations (blocks everything else)
-- Wire `API_KEY_TIERS` + `DEFAULT_TIER` (+ optional `API_KEY_TIERS_FILE`) env vars; add computed `tier` field to `AuthResult` at auth time (**no DB migration for tier itself**).
-- Add `owner_key_id` property to `Document` and `Collection` nodes and populate it on creation — this is the *only* schema change in this phase, and it's data attribution, not configuration.
-- Backfill: existing documents/collections get `owner_key_id` from the admin key (or any recoverable association).
-- **No admin UI built** — tier assignment is purely operator-controlled via env vars (see §8).
+### Phase 1 — Declare env vars, wire the already-declared-but-unused ones
+- Add `MAX_ENTITIES`, `MAX_QUERIES_PER_MONTH`, `MAX_RPM`, `ENABLED_SKILL_IDS`, `ENABLE_SELF_SERVICE_ANALYTICS`, `ENABLE_IP_ALLOWLIST`, `IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, `API_KEY_ROTATION_RECOMMEND_DAYS` to [backend/app/config.py](backend/app/config.py) and [.env.example](.env.example).
+- Fix the `MAX_COLLECTIONS` enforcement gap: add the missing check to the `POST /api/collections` endpoint.
 
-### Phase 2 — Files & Collections enforcement (simple, high-value)
-- Swap the global `max_files` check in the upload endpoint for a tier-aware per-key check.
-- Implement the missing `max_collections` check in collection creation, also tier-aware.
-- Wire the `TIER_*_MAX_FILES` / `TIER_*_MAX_COLLECTIONS` env vars.
+### Phase 2 — Queries & RPM middleware
+- Add a quota-check middleware for `/api/ask*` and `/api/search*` that sums monthly instance-wide query count (reuse existing `APIKeyUsageLog` aggregation) and rejects with 429 when `MAX_QUERIES_PER_MONTH` is exceeded.
+- Add a global rate-limit middleware (in-process token bucket; Redis later if needed) that enforces `MAX_RPM` across the instance.
 
-### Phase 3 — Query quota (requires new middleware)
-- Add a quota-check middleware in front of `APIUsageMiddleware` for `/api/ask*` and `/api/search*`.
-- Use existing `get_api_key_usage_history()` aggregation to sum monthly queries.
-- Return 429 with `Retry-After` when exceeded.
-- Wire the `TIER_*_MAX_QUERIES_PER_MONTH` env vars.
+### Phase 3 — Entity cap
+- Add a pre-extraction check in the extraction pipeline that counts current global entities via `get_stats()` and defers/rejects extraction when `MAX_ENTITIES` is reached.
+- Surface "entities remaining" to admins.
 
-### Phase 4 — Entity attribution
-- Add the entity-count-per-key Cypher query.
-- Enforce at extraction time (not at upload), rejecting the extraction task if it would exceed the cap.
-- Wire the `TIER_*_MAX_ENTITIES` env vars.
+### Phase 4 — Feature gating (skills + self-service analytics)
+- Wire `ENABLED_SKILL_IDS` as a whitelist in `skill_service`.
+- Add `GET /api/me/usage` self-service endpoint, guarded by `ENABLE_SELF_SERVICE_ANALYTICS`.
 
-### Phase 5 — Feature gating and polish
-- Add per-tier RPM rate limiting middleware.
-- Filter skills in `skill_service` by reading `PREMIUM_SKILL_IDS` / `BUSINESS_ONLY_SKILL_IDS` (or `SKILL_TIER_REGISTRY_PATH` YAML) against `auth.tier`. **No DB changes** — skill tiering is config, not data.
-- Add `GET /api/me/usage` self-service analytics endpoint, gated by tier ≥ enthusiast.
+### Phase 5 — Advanced security (pick priorities per product decision)
+- `ENABLE_IP_ALLOWLIST` middleware (straightforward FastAPI `Depends`).
+- `AuditLog` node type + retention job driven by `AUDIT_LOG_RETENTION_DAYS`.
+- `PROMPT_SECURITY_LEVEL` three-level implementation; migrate `PROMPT_SECURITY` → `PROMPT_SECURITY_LEVEL` with a deprecation period.
+- `API_KEY_ROTATION_RECOMMEND_DAYS` UI reminder.
 
-### Phase 6 — Blocked on product decisions
-- "Advanced security" (Business+): decide concrete deliverables — IP allowlist, audit logs, SSO, key rotation, or enhanced prompt-injection defense.
-- MOCA Flatrate: design wallet-link + on-chain verification flow (separate doc).
+### Phase 6 — MOCA Flatrate (separate doc)
+- Wallet-link flow, on-chain verification job, automated provisioning hook.
 
 ---
 
 ## 7. Known Non-Technical Items
 
-These pricing-page items are **not** part of the env-var surface:
+Not part of the env-var surface:
 
-- **Community / Email / Priority / Dedicated support** — handled by the support team, not the application.
+- **Community / Email / Priority / Dedicated support** — handled by the support team.
 - **Bespoke app development** (Enterprise) — one-off engineering engagements.
 - **"Most Popular" badge** on Enthusiast — marketing copy, not a feature.
 
@@ -359,67 +288,59 @@ These pricing-page items are **not** part of the env-var surface:
 
 ## 8. Operator Workflow
 
-Every pricing limit is controlled by env vars. Operators adjust limits by editing env config and redeploying — no database migrations, no admin UI, no code changes.
+Every limit is a global env var on the instance. Edit env config, redeploy, done. No admin UI, no database migration.
 
 ### Scenario A — A customer upgrades from Individual to Enthusiast
 
-1. Look up the customer's API-key `name` (the value set when the key was created).
-2. In the deployment's env config (e.g., Coolify env vars UI), edit `API_KEY_TIERS`:
-   ```
-   API_KEY_TIERS=customer-alice:enthusiast,customer-bob:business
-   ```
-3. Redeploy the backend.
-4. On the next request from that key, `validate_api_key` reads the new mapping; every tier-aware check (files, entities, queries, collections, RPM, premium skills, audit-log retention, prompt-security level) immediately uses the new tier's caps.
+The customer's instance is redeployed with the Enthusiast column from §5:
 
-### Scenario B — Change the Free-tier file cap from 20 to 30
+```
+MAX_FILES=3000
+MAX_ENTITIES=100000
+MAX_QUERIES_PER_MONTH=100000
+MAX_COLLECTIONS=100
+MAX_RPM=300
+ENABLED_SKILL_IDS=<free-skill-ids>,<select-premium-ids>
+ENABLE_SELF_SERVICE_ANALYTICS=true
+```
 
-1. Edit `TIER_FREE_MAX_FILES=30` in env config.
-2. Redeploy.
-3. All Free-tier keys now count up to 30 files before rejection.
+Redeploy. All limits immediately reflect the new tier.
 
-### Scenario C — Add a MOCA Flatrate customer (manual, pre-automation)
+### Scenario B — Change a single cap on an existing instance
 
-1. Issue an API key through the normal flow; record the `name` (e.g., `moca-0xabc...`).
-2. Add to `API_KEY_TIERS`:
-   ```
-   API_KEY_TIERS=...,moca-0xabc:enthusiast
-   ```
-3. Redeploy.
-4. When on-chain verification ships (§4.14), this becomes a scheduled job writing to the same env var surface — the operator workflow stays the same.
+Edit `MAX_FILES=30` in env config, redeploy. The Free-tier instance now accepts 30 files instead of 20.
 
-### Scenario D — Roll out a new premium skill (e.g., `skill-x`) to Enthusiast+
+### Scenario C — Provision a MOCA Flatrate customer
 
-1. Edit `PREMIUM_SKILL_IDS=skill-x,skill-y,skill-z` in env config.
-2. Redeploy.
-3. `skill_service` filters the skill out for Free / Individual keys; Enthusiast+ keys see it.
+Same as provisioning an Enthusiast: apply the Enthusiast column to the customer's instance. When on-chain verification ships (§4.13), provisioning becomes automated by a scheduled job, but the env-var surface the job writes to is identical.
 
-### Scenario E — Tighten prompt-security for Business tier
+### Scenario D — Roll out a new premium skill to Enthusiast+ customers
 
-1. Edit `TIER_BUSINESS_PROMPT_SECURITY_LEVEL=strict` in env config.
-2. Redeploy.
-3. Business-tier requests run through the strict defense path.
+Update `ENABLED_SKILL_IDS` on every Enthusiast+ instance to include the new skill ID and redeploy those instances.
+
+### Scenario E — Harden security on a Business instance
+
+Set `PROMPT_SECURITY_LEVEL=strict`, `ENABLE_IP_ALLOWLIST=true`, `IP_ALLOWLIST=<customer CIDRs>`, `AUDIT_LOG_RETENTION_DAYS=365`. Redeploy.
 
 ### What is *not* controlled by env var
 
-Only per-record data that is inherent to what the system stores lives in the database:
+Only application *content* — documents, collections, entities, chat history, skill installations. These are what the customer creates inside their instance; they are counted against the env-var caps but are not themselves configuration.
 
-- `owner_key_id` on `Document` / `Collection` nodes — set at creation to attribute the record to the API key that created it. This is *data*, not config; it is what the tier-aware counts are counted against.
-
-Every **limit**, every **tier assignment**, every **feature gate** is env-var driven.
+Every **limit**, every **feature toggle**, every **tier-defining number** lives in env vars.
 
 ---
 
 ## 9. Verification Checklist
 
-To keep this doc accurate, on every change to tiers or backend limits:
+On every change to tiers or backend limits:
 
 1. Open [cortex.moca.qwellco.de/pricing](https://cortex.moca.qwellco.de/pricing) side-by-side with §2 — every number matches.
-2. Every env var listed in §5 is either (a) present in [backend/app/config.py](backend/app/config.py), or (b) tagged here as "to be added".
-3. Every file path reference resolves to the line claimed (re-check after refactors).
-4. When a phase from §6 ships, move the corresponding rows in §3 from 🟡/🔴 to ✅ and update [.env.example](.env.example) + [.claude/environment.md](.claude/environment.md) to match.
+2. Every env var in §5 is either (a) already present in [backend/app/config.py](backend/app/config.py), or (b) tagged here as "new".
+3. File references resolve to the lines claimed (re-check after refactors).
+4. When a phase from §6 ships, flip the corresponding 🟡/🔴 rows in §3 to ✅ and update [.env.example](.env.example) + [.claude/environment.md](.claude/environment.md).
 
-Related docs to update alongside this one:
-- [.claude/environment.md](.claude/environment.md) — add tier env vars under a new "Pricing Tier Limits" section.
-- [.claude/domain/admin-features.md](.claude/domain/admin-features.md) — document the `tier` field on API keys once added.
-- [.claude/domain/skills.md](.claude/domain/skills.md) — document premium skill gating once added.
-- [.env.example](.env.example) — keep env-var block in sync with §5.
+Related docs to update alongside PRICING.md:
+- [.env.example](.env.example) — keep in sync with §5.
+- [.claude/environment.md](.claude/environment.md) — add new vars under a "Pricing Limits" section.
+- [.claude/domain/admin-features.md](.claude/domain/admin-features.md) — document audit logs + IP allowlist when those ship.
+- [.claude/domain/skills.md](.claude/domain/skills.md) — document the `ENABLED_SKILL_IDS` whitelist once wired.

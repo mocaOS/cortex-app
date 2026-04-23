@@ -1,0 +1,77 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing · Steps</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body { margin: 0; padding: 32px 40px; background: var(--muted); font-family: var(--font-sans); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 32px;
+  }
+  .step {
+    position: relative;
+  }
+  .num {
+    display: block;
+    font-size: clamp(3.5rem, 7vw, 5rem);
+    font-weight: 700;
+    letter-spacing: -0.06em;
+    line-height: 1;
+    color: var(--border);
+    margin-bottom: 22px;
+    transition: color 150ms var(--ease-out-expo);
+    cursor: default;
+  }
+  .step:hover .num { color: var(--accent); }
+
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--foreground);
+    margin: 0 0 10px;
+  }
+  p {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+  .connector {
+    position: absolute;
+    top: 44px;
+    left: 100%;
+    width: 32px;
+    height: 1px;
+    background: var(--border);
+    transform: translateX(-16px);
+  }
+  .step:last-child .connector { display: none; }
+</style></head><body>
+  <div class="grid">
+    <div class="step">
+      <span class="num">01</span>
+      <h3>Upload</h3>
+      <p>Drag PDFs, Word docs, markdown. Cortex chunks and embeds automatically.</p>
+      <div class="connector"></div>
+    </div>
+    <div class="step">
+      <span class="num">02</span>
+      <h3>Graph</h3>
+      <p>GraphRAG extracts entities and relationships into a traversable Neo4j graph.</p>
+      <div class="connector"></div>
+    </div>
+    <div class="step">
+      <span class="num">03</span>
+      <h3>Query</h3>
+      <p>Hybrid retrieval or natural-language Q&amp;A. Answers cite sources in milliseconds.</p>
+      <div class="connector"></div>
+    </div>
+    <div class="step">
+      <span class="num">04</span>
+      <h3>Launch</h3>
+      <p>Connect agents via 60+ REST endpoints. Ship AI features that actually know your business.</p>
+    </div>
+  </div>
+</body></html>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing Tokens</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body {
+    margin: 0;
+    padding: 28px 32px;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px 40px;
+  }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+
+  .block { display: flex; flex-direction: column; gap: 12px; }
+
+  .block-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--muted-foreground);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .block-label::before {
+    content: "";
+    width: 1.5rem;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  /* ---- Palette swatches ---- */
+  .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0; border: 1px solid var(--border); }
+  .sw {
+    aspect-ratio: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 10px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    border-right: 1px solid var(--border);
+  }
+  .sw:last-child { border-right: 0; }
+  .sw-name { text-transform: uppercase; letter-spacing: 0.12em; }
+  .sw-hex { opacity: 0.7; }
+
+  /* ---- Radius comparison ---- */
+  .radii { display: flex; gap: 14px; align-items: flex-end; }
+  .radius-box {
+    width: 60px; height: 60px;
+    background: var(--foreground);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--background);
+    letter-spacing: 0.1em;
+  }
+  .radius-caption {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-foreground);
+    text-align: center;
+    margin-top: 6px;
+  }
+  .radii-wrap { display: flex; flex-direction: column; align-items: center; }
+
+  /* ---- Typographic scale ---- */
+  .tracking-row {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    align-items: baseline;
+    gap: 18px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .tracking-row:last-child { border-bottom: 0; }
+  .tr-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-foreground);
+  }
+  .tr-specimen {
+    font-weight: 700;
+    font-size: 30px;
+    color: var(--foreground);
+    line-height: 1;
+  }
+  .tr-specimen.tighter { letter-spacing: -0.06em; }
+  .tr-specimen.tight { letter-spacing: -0.04em; }
+  .tr-specimen.normal { letter-spacing: -0.01em; }
+  .tr-specimen.wide { letter-spacing: 0.05em; font-size: 14px; text-transform: uppercase; font-weight: 600; }
+  .tr-specimen.wider { letter-spacing: 0.1em; font-size: 14px; text-transform: uppercase; font-weight: 600; }
+  .tr-specimen.widest { letter-spacing: 0.2em; font-size: 12px; text-transform: uppercase; font-weight: 500; color: var(--muted-foreground); }
+
+  /* ---- Button preview row ---- */
+  .btn-row {
+    display: flex;
+    gap: 22px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 12px 0;
+  }
+
+  /* ---- Accent bar reveal ---- */
+  .accent-demo {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 0 0;
+  }
+  .accent-demo h3 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--foreground);
+  }
+  .accent-demo h3 span { color: var(--accent); }
+</style></head><body>
+
+  <div class="grid">
+
+    <!-- Palette -->
+    <div class="block" style="grid-column: 1 / -1;">
+      <span class="block-label">Palette · hex (not OKLCh)</span>
+      <div class="swatches">
+        <div class="sw" style="background:#0a0a0a; color:#fafafa;">
+          <span class="sw-name">bg</span>
+          <span class="sw-hex">#0a0a0a</span>
+        </div>
+        <div class="sw" style="background:#0f0f0f; color:#fafafa;">
+          <span class="sw-name">card</span>
+          <span class="sw-hex">#0f0f0f</span>
+        </div>
+        <div class="sw" style="background:#1a1a1a; color:#fafafa;">
+          <span class="sw-name">muted</span>
+          <span class="sw-hex">#1a1a1a</span>
+        </div>
+        <div class="sw" style="background:#262626; color:#fafafa;">
+          <span class="sw-name">border</span>
+          <span class="sw-hex">#262626</span>
+        </div>
+        <div class="sw" style="background:#fafafa; color:#0a0a0a;">
+          <span class="sw-name">fg</span>
+          <span class="sw-hex">#fafafa</span>
+        </div>
+        <div class="sw" style="background:#ff9500; color:#0a0a0a;">
+          <span class="sw-name">accent</span>
+          <span class="sw-hex">#ff9500</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Radius -->
+    <div class="block">
+      <span class="block-label">Shape · sharp edges only</span>
+      <div class="radii">
+        <div class="radii-wrap">
+          <div class="radius-box" style="border-radius: 0;">0</div>
+          <div class="radius-caption">default</div>
+        </div>
+        <div class="radii-wrap">
+          <div class="radius-box" style="border-radius: 0;">0</div>
+          <div class="radius-caption">card</div>
+        </div>
+        <div class="radii-wrap">
+          <div class="radius-box" style="border-radius: 0;">0</div>
+          <div class="radius-caption">button</div>
+        </div>
+        <div class="radii-wrap">
+          <div class="radius-box" style="border-radius: 0;">0</div>
+          <div class="radius-caption">input</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="block">
+      <span class="block-label">Buttons · uppercase · 0.1em</span>
+      <div class="btn-row">
+        <a href="#" class="mk-btn mk-btn-primary">Get Started</a>
+        <a href="#" class="mk-btn mk-btn-secondary">Cancel</a>
+        <a href="#" class="mk-btn mk-btn-ghost">Learn More</a>
+      </div>
+    </div>
+
+    <!-- Tracking scale -->
+    <div class="block" style="grid-column: 1 / -1;">
+      <span class="block-label">Tracking scale</span>
+      <div>
+        <div class="tracking-row">
+          <span class="tr-tag">-0.06em</span>
+          <span class="tr-specimen tighter">Memory is the moat</span>
+        </div>
+        <div class="tracking-row">
+          <span class="tr-tag">-0.04em</span>
+          <span class="tr-specimen tight">Display headlines</span>
+        </div>
+        <div class="tracking-row">
+          <span class="tr-tag">-0.01em</span>
+          <span class="tr-specimen normal">Body default</span>
+        </div>
+        <div class="tracking-row">
+          <span class="tr-tag">+0.1em</span>
+          <span class="tr-specimen wider">Button Labels</span>
+        </div>
+        <div class="tracking-row">
+          <span class="tr-tag">+0.2em</span>
+          <span class="tr-specimen widest">Eyebrow mono widest</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Accent rule demo -->
+    <div class="block" style="grid-column: 1 / -1;">
+      <span class="block-label">Accent rule · single chromatic · #ff9500</span>
+      <div class="accent-demo">
+        <h3>Intelligence is everywhere. <span>Memory is the moat.</span></h3>
+        <span class="eyebrow">Exactly one accent element per hero</span>
+      </div>
+    </div>
+
+  </div>
+
+</body></html>

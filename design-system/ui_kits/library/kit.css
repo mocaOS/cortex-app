@@ -1,0 +1,104 @@
+/* MOCA Library — UI Kit shared styles */
+:root { color-scheme: dark; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+
+/* Layout shell */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas: "sidebar topbar" "sidebar main";
+  height: 100vh;
+  overflow: hidden;
+}
+.topbar { grid-area: topbar; }
+.sidebar { grid-area: sidebar; }
+.main { grid-area: main; overflow: auto; }
+
+/* Glass */
+.glass {
+  background: oklch(0.21 0 0 / 0.55);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--border);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 5px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius); font: inherit; font-weight: 500; font-size: 13px; border: 0; cursor: pointer; transition: all 150ms var(--ease-out); white-space: nowrap; }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--accent); color: var(--accent-fg); }
+.btn-primary:hover { background: oklch(0.79 0.18 70.67 / 0.9); }
+.btn-secondary { background: var(--secondary); color: var(--secondary-fg); }
+.btn-secondary:hover { background: oklch(0.32 0 0); }
+.btn-ghost { background: transparent; color: var(--fg1); }
+.btn-ghost:hover { background: var(--muted); }
+.btn-outline { background: transparent; color: var(--fg1); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--muted); }
+.btn-icon { padding: 8px; width: 32px; height: 32px; }
+.btn-sm { padding: 6px 10px; font-size: 12px; }
+.btn-lg { padding: 11px 18px; font-size: 14px; }
+
+/* Inputs */
+.input { width: 100%; background: var(--bg); border: 1px solid var(--input); border-radius: var(--radius); padding: 9px 12px; color: var(--fg1); font: inherit; font-size: 13px; outline: none; transition: border-color 150ms; }
+.input::placeholder { color: var(--fg3); }
+.input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px oklch(0.55 0 0 / 0.35); }
+
+/* Card */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* Chips */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius-md); background: var(--muted); color: var(--fg2); font-size: 12px; border: 1px solid transparent; }
+.chip-active { background: var(--accent); color: var(--accent-fg); }
+.chip-outline { background: transparent; border-color: var(--border); }
+.chip-pill { border-radius: 999px; padding: 5px 12px; }
+.chip-entity { background: oklch(0.27 0 0); color: var(--fg2); font-family: var(--font-mono); font-size: 10.5px; border-radius: var(--radius-sm); padding: 2px 7px; letter-spacing: 0.03em; text-transform: uppercase; }
+
+/* Eyebrow labels */
+.eyebrow { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg2); }
+
+/* Utility */
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-6 { gap: 24px; }
+.mono { font-family: var(--font-mono); }
+.fg2 { color: var(--fg2); } .fg3 { color: var(--fg3); }
+.accent { color: var(--accent); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Icon defaults (lucide inline) */
+.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.icon-sm { width: 14px; height: 14px; }
+.icon-lg { width: 20px; height: 20px; }
+.icon-xl { width: 24px; height: 24px; }
+
+/* Entrance anim — opt-in only. Uses none as fallback so hidden tabs still show content.
+   Avoid using .moca-in on initial-render critical content; use it only for state-change reveals. */
+@keyframes moca-in {
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes moca-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40%           { opacity: 1;   transform: scale(1); }
+}
+.moca-in {
+  animation: moca-in 320ms var(--ease-out) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .moca-in { animation: none; }
+}

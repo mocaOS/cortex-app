@@ -1,0 +1,62 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing · Card</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body { margin: 0; padding: 24px 28px; background: var(--background); display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--foreground);
+    margin: 0 0 8px;
+  }
+  p {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+  .icon {
+    width: 28px; height: 28px;
+    stroke: var(--accent);
+    fill: none; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+    margin-bottom: 20px;
+    display: block;
+  }
+  .price {
+    font-size: 40px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--foreground);
+    line-height: 1;
+    margin: 8px 0;
+  }
+  .plan-name {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted-foreground);
+  }
+</style></head><body>
+  <div class="mk-card">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <h3>GraphRAG</h3>
+    <p>Extract entities and relationships. Build queryable knowledge graphs without manual work.</p>
+  </div>
+
+  <div class="mk-card mk-card-highlighted">
+    <span class="mk-card-badge">Most Popular</span>
+    <span class="plan-name">Individual</span>
+    <div class="price">$19<span style="font-size: 14px; color: var(--muted-foreground); font-weight: 400; letter-spacing: 0;">/mo</span></div>
+    <p>500 files · 10K queries · 10 collections.</p>
+  </div>
+
+  <div class="mk-card">
+    <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <h3>Hybrid Search</h3>
+    <p>Vector similarity, keyword matching, and graph traversal unified with cross-encoder re-ranking.</p>
+  </div>
+</body></html>

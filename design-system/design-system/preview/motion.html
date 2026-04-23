@@ -1,0 +1,17 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Motion</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); color: var(--fg1); font-family: var(--font-sans); }
+  .row { display:grid; grid-template-columns: 130px 1fr 160px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .row:last-child { border: 0; }
+  .tag { font-family: var(--font-mono); font-size: 11px; color: var(--fg2); }
+  .curve { height: 6px; background: linear-gradient(90deg, var(--muted), var(--accent)); border-radius: 3px; }
+  .meta { font-family: var(--font-mono); font-size: 10px; color: var(--fg2); text-align: right; }
+</style></head><body>
+  <div class="row"><span class="tag">micro</span><div class="curve" style="width:20%"></div><span class="meta">150–200ms · ease-out</span></div>
+  <div class="row"><span class="tag">entrance</span><div class="curve" style="width:45%"></div><span class="meta">300ms · opacity+y(20→0)</span></div>
+  <div class="row"><span class="tag">stagger</span><div class="curve" style="width:65%"></div><span class="meta">50ms per item</span></div>
+  <div class="row"><span class="tag">modal</span><div class="curve" style="width:85%"></div><span class="meta">spring · damping 25</span></div>
+  <div class="row"><span class="tag">exit</span><div class="curve" style="width:30%"></div><span class="meta">200ms · ease-in</span></div>
+</body></html>

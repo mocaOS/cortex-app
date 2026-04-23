@@ -1,0 +1,116 @@
+<!doctype html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MOCA Library — UI Kit</title>
+  <link rel="stylesheet" href="../../colors_and_type.css" />
+  <link rel="stylesheet" href="kit.css" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <style>
+    html, body, #root { height: 100%; }
+    body { background: var(--bg); overflow: hidden; }
+    /* Subtle ambient glow in the background */
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 800px 500px at 20% 10%, oklch(0.79 0.18 70.67 / 0.06), transparent 60%),
+        radial-gradient(ellipse 600px 400px at 100% 100%, oklch(0.5 0 0 / 0.1), transparent 60%);
+      z-index: 0;
+    }
+    #root { position: relative; z-index: 1; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="Icons.jsx"></script>
+  <script type="text/babel" src="Shell.jsx"></script>
+  <script type="text/babel" src="ManageScreen.jsx"></script>
+  <script type="text/babel" src="ExploreScreen.jsx"></script>
+  <script type="text/babel" src="DeduplicateScreen.jsx"></script>
+  <script type="text/babel" src="AskScreen.jsx"></script>
+
+  <script type="text/babel">
+    const ROUTES = {
+      documents: {
+        Screen: window.ManageScreen,
+        crumbs: (col) => [
+          { label: "Library" },
+          { label: col === "all" ? "All documents" : labelFor(col), meta: metaFor(col) },
+        ],
+      },
+      graph: {
+        Screen: window.ExploreScreen,
+        crumbs: () => [
+          { label: "Library" },
+          { label: "Knowledge Graph", meta: "27,501 nodes · 84,330 edges" },
+        ],
+      },
+      deduplicate: {
+        Screen: window.DeduplicateScreen,
+        crumbs: () => [
+          { label: "Library" },
+          { label: "Deduplicate", meta: "38 pending clusters" },
+        ],
+      },
+      ask: {
+        Screen: window.AskScreen,
+        crumbs: () => [
+          { label: "Workspace" },
+          { label: "Ask", meta: "haiku-4-5 · all collections" },
+        ],
+      },
+    };
+
+    const COLLECTION_META = {
+      all:      { label: "All documents", meta: "1,284 docs" },
+      finance:  { label: "Finance",       meta: "124 docs"   },
+      research: { label: "Research",      meta: "58 docs"    },
+      legal:    { label: "Legal",         meta: "31 docs"    },
+      personal: { label: "Personal",      meta: "42 docs"    },
+    };
+    const labelFor = (id) => (COLLECTION_META[id]?.label ?? id);
+    const metaFor  = (id) => (COLLECTION_META[id]?.meta  ?? "");
+
+    function App() {
+      const [route, setRoute] = React.useState(() => {
+        const saved = localStorage.getItem("moca-route");
+        // Migrate old route names
+        if (saved === "manage")  return "documents";
+        if (saved === "explore") return "graph";
+        return ROUTES[saved] ? saved : "documents";
+      });
+      const [collection, setCollection] = React.useState(() =>
+        localStorage.getItem("moca-collection") || "all"
+      );
+
+      React.useEffect(() => { localStorage.setItem("moca-route", route); }, [route]);
+      React.useEffect(() => { localStorage.setItem("moca-collection", collection); }, [collection]);
+
+      const cfg = ROUTES[route] ?? ROUTES.documents;
+      const Screen = cfg.Screen;
+
+      return (
+        <AppShell
+          route={route}
+          onRoute={setRoute}
+          collection={collection}
+          onCollection={(c) => { setCollection(c); setRoute("documents"); }}
+          crumbs={cfg.crumbs(collection)}
+        >
+          <Screen key={route + ":" + collection} />
+        </AppShell>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Chat Message</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:flex; flex-direction:column; gap:10px; }
+  .row { display: flex; }
+  .user { justify-content: flex-end; }
+  .u { background: var(--primary); color: var(--primary-fg); padding: 10px 14px; border-radius: 12px; max-width: 70%; font-size: 14px; }
+  .a { background: var(--card); border: 1px solid var(--border); color: var(--fg1); padding: 12px 14px; border-radius: 12px; max-width: 85%; font-size: 14px; line-height: 1.55; }
+  .src { color: var(--accent); text-decoration: underline; text-decoration-style: dotted; }
+  .meta { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; gap: 8px; font-size: 11px; color: var(--fg2); }
+  .badge { background: var(--muted); padding: 3px 8px; border-radius: 4px; font-family: var(--font-mono); }
+</style></head><body>
+  <div class="row user"><div class="u">What's our Q3 revenue from EU markets?</div></div>
+  <div class="row"><div class="a">Based on <span class="src">Q3-2025-financials.pdf</span>, EU markets contributed €14.2M — up 23% YoY. Germany and France led at 68% of the region.
+    <div class="meta"><span class="badge">3 sources</span><span class="badge">7 entities</span></div>
+  </div></div>
+</body></html>

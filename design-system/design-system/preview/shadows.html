@@ -1,0 +1,18 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Shadows + Glow</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:24px; background: var(--bg); display:grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .card { background: var(--card); border:1px solid var(--border); border-radius: 8px; height: 84px; display:flex; align-items:flex-end; justify-content:center; padding: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--fg2); }
+  .s1 { box-shadow: 0 1px 2px oklch(0 0 0 / .3); }
+  .s2 { box-shadow: 0 4px 6px oklch(0 0 0 / .35); }
+  .s3 { box-shadow: 0 10px 15px oklch(0 0 0 / .4); }
+  .s4 { box-shadow: 0 20px 25px oklch(0 0 0 / .5); }
+  .s5 { box-shadow: 0 0 20px oklch(0.79 0.18 70.67 / 0.35); border-color: var(--accent); }
+</style></head><body>
+  <div class="card s1">sm · resting</div>
+  <div class="card s2">md · elevated</div>
+  <div class="card s3">lg · popover</div>
+  <div class="card s4">xl · modal</div>
+  <div class="card s5">glow-accent</div>
+</body></html>

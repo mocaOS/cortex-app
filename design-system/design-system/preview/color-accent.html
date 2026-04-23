@@ -1,0 +1,24 @@
+<!doctype html>
+<html class="dark"><head><meta charset="utf-8"><title>Color — Accent</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin:0; padding:20px; background: var(--bg); display:flex; gap:16px; align-items:center;}
+  .big { width: 220px; height: 220px; background: var(--accent); border-radius: 12px; position: relative; box-shadow: 0 0 40px oklch(0.79 0.18 70.67 / 0.25); }
+  .big::after { content: ""; position:absolute; inset:0; border-radius:12px; background: radial-gradient(circle at 30% 30%, oklch(1 0 0 / 0.12), transparent 60%); }
+  .meta { flex:1; }
+  .h { color: var(--fg1); font-size: 20px; font-weight: 700; }
+  .p { color: var(--fg2); font-size: 13px; margin-top: 6px; line-height: 1.6; }
+  .row { display:flex; gap:10px; margin-top: 14px; }
+  .pill { font-family: var(--font-mono); font-size: 11px; background: var(--muted); color: var(--fg1); padding: 6px 10px; border-radius: 6px; }
+  .pill.acc { background: var(--accent); color: var(--accent-fg); }
+</style></head><body>
+  <div class="big"></div>
+  <div class="meta">
+    <div class="h">Accent — the only chromatic color</div>
+    <div class="p">Used for CTAs, active states, progress, and key data. Max 2–3 visible per viewport.</div>
+    <div class="row">
+      <div class="pill acc">oklch(0.79 0.18 70.67)</div>
+      <div class="pill">same in light + dark</div>
+    </div>
+  </div>
+</body></html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html class="dark marketing"><head><meta charset="utf-8"><title>Marketing · Navbar</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../marketing_tokens.css">
+<style>
+  body { margin: 0; background: var(--background); font-family: var(--font-sans); }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    background: rgba(10, 10, 10, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 72px;
+    padding: 0 40px;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-weight: 600;
+    font-size: 20px;
+    letter-spacing: -0.015em;
+    color: var(--foreground);
+    text-decoration: none;
+  }
+  .logo .c { color: var(--accent); }
+
+  .links { display: flex; gap: 32px; }
+  .links a {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    text-decoration: none;
+    transition: color 150ms var(--ease-out-expo);
+  }
+  .links a:hover { color: var(--foreground); }
+
+  .cta-wrap { display: flex; gap: 12px; }
+
+  /* Context below the bar to show how it sits on a page */
+  .context {
+    padding: 120px 40px;
+    text-align: left;
+  }
+  .context .eyebrow { margin-bottom: 16px; }
+  .context h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.05em;
+    font-weight: 700;
+    margin: 0;
+    color: var(--foreground);
+  }
+</style></head><body>
+  <header>
+    <nav>
+      <a href="#" class="logo"><span class="c">C</span>ortex</a>
+      <div class="links">
+        <a href="#" class="ghost-underline">Use Cases</a>
+        <a href="#" class="ghost-underline">Apps</a>
+        <a href="#" class="ghost-underline">Pricing</a>
+        <a href="#" class="ghost-underline">Features</a>
+        <a href="#" class="ghost-underline">Docs ↗</a>
+      </div>
+      <div class="cta-wrap">
+        <a href="#" class="mk-btn mk-btn-primary mk-btn-sm">Join Waitlist</a>
+      </div>
+    </nav>
+  </header>
+
+  <div class="context">
+    <span class="eyebrow">Sticky · backdrop-blur · bottom border</span>
+    <h1>Marketing-track navbar.</h1>
+  </div>
+</body></html>

@@ -29,33 +29,12 @@ This folder is the single source of truth for MOCA Library's visual language: co
 | `README.md` | This file — orientation, content & visual foundations, iconography |
 | `SKILL.md` | Agent-skill front-matter so this folder works as a drop-in Claude Code skill |
 | `colors_and_type.css` | The canonical CSS — tokens, semantic vars, font faces. Import this anywhere. |
-| `marketing_tokens.css` | **Marketing track** — sibling stylesheet for sharp-edge, bold-type landing pages. Opt in with `class="marketing"`. |
 | `tokens.css` | Raw token map (subset of above, no `@font-face`) |
 | `fonts/` | Inter + JetBrains Mono variable TTFs |
 | `assets/` | Logos, brand marks, shipped imagery |
 | `preview/*.html` | Small cards that populate the Design System tab |
 | `ui_kits/library/` | MOCA Library web app — pixel-faithful UI recreation with interactive screens |
 | `reference/MASTER.md` | Raw research notes pulled from the repo (not canonical — treat as scratch) |
-
----
-
-## Two tracks, one brand
-
-MOCA ships under two related-but-distinct design directions. Both use Inter + JetBrains Mono and the same orange accent — they diverge on shape, surface, and typographic scale.
-
-| | **SaaS / product (default)** | **Marketing / landing** |
-|---|---|---|
-| Opt in | `<html class="dark">` | `<html class="dark marketing">` |
-| Stylesheet | `colors_and_type.css` | + `marketing_tokens.css` |
-| Color space | OKLCh | Hex (`#0a0a0a` / `#fafafa` / `#ff9500`) |
-| Radius | 8 px default | **0** everywhere |
-| Surfaces | Glass morphism (blur 24 px) | Transparent with 1 px borders |
-| Buttons | Filled, rounded, sentence case | Uppercase tracked, animated underline |
-| Display type | Inter 32 px, -0.02em | Clamp up to 10rem, -0.06em |
-| Decoration | Radial accent glows | Oversized numerals + accent bars + noise |
-| When | Dashboard, ask, explore, manage | Hero, pricing, features, use-cases pages |
-
-Mirrors the split in the source repos: `mocaOS/meta-cortex/design-system` = SaaS, `mocaOS/cortex` repo = marketing. Both are documented below; the marketing track gets its own preview group in `design-system.html`.
 
 ---
 
