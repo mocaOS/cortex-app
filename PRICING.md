@@ -43,7 +43,7 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 |---|---|---|---|---|---|
 | 1 | Files | Yes (global) | Yes (global, at upload) | `MAX_FILES` | ✅ Ready |
 | 2 | Entities | Yes (global count) | No | `MAX_ENTITIES` (new) | 🟡 Tracked, needs enforcement |
-| 3 | Queries / month | Yes (per-key daily log; trivially summed) | No | `MAX_QUERIES_PER_MONTH` (new) | 🟡 Tracked, needs middleware |
+| 3 | Queries / month | Yes (per-key daily log; trivially summed) | Yes (global, sum of `ep_ask + ep_search` across all keys) | `MAX_QUERIES_PER_MONTH` | ✅ Ready |
 | 4 | Collections | Yes (global) | No (config exists, unused) | `MAX_COLLECTIONS` | 🟡 Code gap — wire enforcement |
 | 5 | Premium apps | Via skill management | Partial | `ENABLED_SKILL_IDS` (new) | 🟡 Needs whitelist |
 | 6 | GraphRAG entity extraction | N/A (feature) | Yes | `ENABLE_GRAPH_EXTRACTION` | ✅ Ready |
@@ -83,14 +83,11 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 ### 4.3 Queries
 
 - **Pricing values**: 1,000 / 10,000 / 100,000 / Unlimited / Unlimited
-- **Tracked**: Per-key, daily. `APIUsageMiddleware` at [backend/app/main.py:260-298](backend/app/main.py#L260-L298) increments `APIKeyUsageLog.ep_ask` / `ep_search` on every call to `/api/ask*` and `/api/search*`. Summing across all keys gives an instance-wide total.
-- **Enforced**: No — middleware records usage but doesn't reject requests.
-- **Gap**: No env var for the monthly cap, no pre-request quota check.
-- **Fix path**:
-  1. Add `MAX_QUERIES_PER_MONTH` env var (default `0` = unlimited).
-  2. Add a quota-check middleware in front of `APIUsageMiddleware` for `/api/ask*` and `/api/search*` that sums `ep_ask + ep_search` across **all** `APIKeyUsageLog` rows for the current UTC month (instance-wide, not per-key).
-  3. When the sum exceeds `MAX_QUERIES_PER_MONTH`, short-circuit with 429 (`Retry-After` = seconds until month rollover).
-- **Aggregation Cypher**: `MATCH (log:APIKeyUsageLog) WHERE log.date >= $month_start RETURN sum(log.ep_ask) + sum(log.ep_search)`. Cache the result for a few seconds to avoid hammering Neo4j on every request.
+- **Tracked**: Per-key, daily. `APIUsageMiddleware` increments `APIKeyUsageLog.ep_ask` / `ep_search` on every call to `/api/ask*` and `/api/search*`.
+- **Enforced**: Yes. `enforce_query_quota` FastAPI dependency on each chat handler (`/api/search`, `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking`). When `MAX_QUERIES_PER_MONTH > 0`, the dependency calls `neo4j_service.get_query_count_this_month()` (sums `ep_ask + ep_search` across **all** `APIKeyUsageLog` rows for the current UTC month) and rejects with 429 + `Retry-After` (seconds until next UTC month) once the count is `>= MAX_QUERIES_PER_MONTH`.
+- **Env var**: `MAX_QUERIES_PER_MONTH` (default `0` = unlimited).
+- **Implementation**: dependency in [backend/app/main.py](backend/app/main.py); helper in [backend/app/services/neo4j_service.py](backend/app/services/neo4j_service.py) (`get_query_count_this_month`); tests in [backend/tests/test_max_queries_per_month.py](backend/tests/test_max_queries_per_month.py).
+- **Future optimisation**: PRICING.md previously suggested caching the monthly count for a few seconds. Skipped for the initial impl — the aggregation is a single-label scan with a date filter. Add a `cachetools.TTLCache` if profiling shows it matters.
 
 ### 4.4 Collections
 

@@ -239,6 +239,42 @@ app.add_middleware(
 
 
 # =============================================================================
+# Query quota enforcement (MAX_QUERIES_PER_MONTH)
+# =============================================================================
+
+def _seconds_until_next_utc_month() -> int:
+    """Seconds until the start of the next UTC calendar month, for Retry-After."""
+    now = datetime.utcnow()
+    if now.month == 12:
+        nxt = datetime(now.year + 1, 1, 1)
+    else:
+        nxt = datetime(now.year, now.month + 1, 1)
+    return max(1, int((nxt - now).total_seconds()))
+
+
+async def enforce_query_quota() -> None:
+    """Reject chat requests with 429 once MAX_QUERIES_PER_MONTH is hit.
+
+    No-op when the env var is unset (default 0 = unlimited).
+    """
+    settings = get_settings()
+    if settings.max_queries_per_month <= 0:
+        return
+    neo4j = get_neo4j_service()
+    count = await asyncio.to_thread(neo4j.get_query_count_this_month)
+    if count >= settings.max_queries_per_month:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Monthly query limit reached "
+                f"(max: {settings.max_queries_per_month}). "
+                f"Resets at the start of next UTC month."
+            ),
+            headers={"Retry-After": str(_seconds_until_next_utc_month())},
+        )
+
+
+# =============================================================================
 # API Usage Tracking Middleware
 # =============================================================================
 
@@ -545,16 +581,21 @@ async def upload_file(
     
     settings = get_settings()
     
-    # Enforce file limit
-    if settings.max_files > 0:
+    # Enforce file and entity limits
+    if settings.max_files > 0 or settings.max_entities > 0:
         neo4j = get_neo4j_service()
         stats = await asyncio.to_thread(neo4j.get_stats)
-        if stats["document_count"] >= settings.max_files:
+        if settings.max_files > 0 and stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
                 detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
             )
-    
+        if settings.max_entities > 0 and stats["entity_count"] >= settings.max_entities:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Entity limit reached (max: {settings.max_entities}). Delete existing entities or increase MAX_ENTITIES."
+            )
+
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in settings.allowed_extensions:
@@ -890,15 +931,20 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
     settings = get_settings()
     neo4j = get_neo4j_service()
     
-    # Enforce file limit
-    if settings.max_files > 0:
+    # Enforce file and entity limits
+    if settings.max_files > 0 or settings.max_entities > 0:
         stats = await asyncio.to_thread(neo4j.get_stats)
-        if stats["document_count"] >= settings.max_files:
+        if settings.max_files > 0 and stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
                 detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
             )
-    
+        if settings.max_entities > 0 and stats["entity_count"] >= settings.max_entities:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Entity limit reached (max: {settings.max_entities}). Delete existing entities or increase MAX_ENTITIES."
+            )
+
     # Validate Q&A has an answer
     if request.input_type == CustomInputType.QA and not request.answer:
         raise HTTPException(
@@ -1654,7 +1700,11 @@ async def cleanup_orphaned_entities(auth: AuthResult = Depends(require_manage_pe
 
 
 @app.post("/api/search", response_model=SearchResponse)
-async def search(request: SearchRequest, auth: AuthResult = Depends(require_read_permission)):
+async def search(
+    request: SearchRequest,
+    auth: AuthResult = Depends(require_read_permission),
+    _quota: None = Depends(enforce_query_quota),
+):
     """
     Perform hybrid search on the knowledge base.
     
@@ -1717,7 +1767,11 @@ async def search(request: SearchRequest, auth: AuthResult = Depends(require_read
 
 
 @app.post("/api/ask", response_model=RAGResponse)
-async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
+async def ask_question(
+    request: RAGRequest,
+    auth: AuthResult = Depends(require_read_permission),
+    _quota: None = Depends(enforce_query_quota),
+):
     """
     Ask a question using enhanced GraphRAG.
     
@@ -1840,7 +1894,11 @@ async def ask_question(request: RAGRequest, auth: AuthResult = Depends(require_r
 
 
 @app.post("/api/ask/stream")
-async def ask_question_stream(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
+async def ask_question_stream(
+    request: RAGRequest,
+    auth: AuthResult = Depends(require_read_permission),
+    _quota: None = Depends(enforce_query_quota),
+):
     """
     Stream the RAG response for better UX.
     
@@ -3282,7 +3340,11 @@ async def search_communities(
 # =============================================================================
 
 @app.post("/api/ask/stream/thinking")
-async def ask_with_thinking_stream(request: RAGRequest, auth: AuthResult = Depends(require_read_permission)):
+async def ask_with_thinking_stream(
+    request: RAGRequest,
+    auth: AuthResult = Depends(require_read_permission),
+    _quota: None = Depends(enforce_query_quota),
+):
     """
     Stream the RAG response with extended thinking visibility.
     

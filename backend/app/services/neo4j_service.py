@@ -5201,7 +5201,25 @@ class Neo4jService:
                 "most_active_key": most_active_key,
                 "endpoint_breakdown": endpoint_breakdown
             }
-    
+
+    def get_query_count_this_month(self) -> int:
+        """Sum ep_ask + ep_search across ALL APIKeyUsageLog rows for the current
+        UTC calendar month. Used to enforce MAX_QUERIES_PER_MONTH instance-wide.
+        """
+        month_start = datetime.utcnow().strftime("%Y-%m-01")
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (log:APIKeyUsageLog)
+                WHERE log.date >= $month_start
+                RETURN COALESCE(SUM(log.ep_ask), 0)
+                     + COALESCE(SUM(log.ep_search), 0) AS total
+                """,
+                month_start=month_start,
+            )
+            record = result.single()
+            return int(record["total"]) if record and record["total"] is not None else 0
+
     def list_api_keys_with_stats(self) -> List[dict]:
         """
         List all API keys with their usage statistics.

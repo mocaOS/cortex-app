@@ -252,6 +252,18 @@ class LibraryTransferService:
                     fail_task_fn(task_id, "Invalid export archive: missing manifest.json")
                     return
 
+                # Helper to read NDJSON
+                def read_ndjson(filename):
+                    if filename not in zf.namelist():
+                        return []
+                    data = zf.read(filename).decode("utf-8")
+                    items = []
+                    for line in data.strip().split("\n"):
+                        line = line.strip()
+                        if line:
+                            items.append(json.loads(line))
+                    return items
+
                 # 2. Read manifest
                 step += 1
                 update_progress(task_id, step, total_steps, "Reading manifest...")
@@ -259,6 +271,30 @@ class LibraryTransferService:
                 export_version = manifest.get("version", "unknown")
                 if export_version != EXPORT_VERSION:
                     warnings.append(f"Export version mismatch: archive is v{export_version}, expected v{EXPORT_VERSION}")
+
+                # Enforce MAX_FILES before any destructive action (e.g. replace-mode reset).
+                if self.settings.max_files > 0:
+                    incoming_documents = read_ndjson("documents.ndjson")
+                    if len(incoming_documents) > self.settings.max_files:
+                        fail_task_fn(
+                            task_id,
+                            f"Library import would create {len(incoming_documents)} documents, "
+                            f"exceeding MAX_FILES limit ({self.settings.max_files}). "
+                            f"Increase MAX_FILES or use a smaller export."
+                        )
+                        return
+
+                # Enforce MAX_ENTITIES before any destructive action.
+                if self.settings.max_entities > 0:
+                    incoming_entities = read_ndjson("entities.ndjson")
+                    if len(incoming_entities) > self.settings.max_entities:
+                        fail_task_fn(
+                            task_id,
+                            f"Library import would create {len(incoming_entities)} entities, "
+                            f"exceeding MAX_ENTITIES limit ({self.settings.max_entities}). "
+                            f"Increase MAX_ENTITIES or use a smaller export."
+                        )
+                        return
 
                 # 3. Check embedding compatibility
                 step += 1
@@ -294,18 +330,6 @@ class LibraryTransferService:
                 elif mode == "replace":
                     update_progress(task_id, step, total_steps, "Clearing existing data...")
                     self._full_reset()
-
-                # Helper to read NDJSON
-                def read_ndjson(filename):
-                    if filename not in zf.namelist():
-                        return []
-                    data = zf.read(filename).decode("utf-8")
-                    items = []
-                    for line in data.strip().split("\n"):
-                        line = line.strip()
-                        if line:
-                            items.append(json.loads(line))
-                    return items
 
                 # 5. Import collections
                 step += 1

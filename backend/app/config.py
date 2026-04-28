@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     max_collections: int = Field(
         default=0
     )  # Max collections (default collection counts as 1). 0 = unlimited
+    max_entities: int = Field(
+        default=0
+    )  # Max total entities (global). 0 = unlimited.
+    max_queries_per_month: int = Field(
+        default=0
+    )  # Max chat queries (ask + search) per UTC calendar month, instance-wide. 0 = unlimited
 
     # Embedding Configuration
     embedding_model: str = Field(default="openai/text-embedding-3-small")

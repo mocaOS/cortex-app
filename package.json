@@ -1,0 +1,7 @@
+{
+  "name": "cortex",
+  "private": true,
+  "scripts": {
+    "test": "cd backend && .venv/bin/python -m pytest"
+  }
+}
