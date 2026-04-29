@@ -41,10 +41,10 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 
 | # | Pricing Promise | Tracked? | Enforced? | Env Var | Status |
 |---|---|---|---|---|---|
-| 1 | Files | Yes (global) | Yes (global, at upload) | `MAX_FILES` | ✅ Ready |
-| 2 | Entities | Yes (global count) | No | `MAX_ENTITIES` (new) | 🟡 Tracked, needs enforcement |
+| 1 | Files | Yes (global) | Yes (global, at upload + custom input) | `MAX_FILES` | ✅ Ready |
+| 2 | Entities | Yes (global count) | Yes (global, at upload + custom input) | `MAX_ENTITIES` | ✅ Ready |
 | 3 | Queries / month | Yes (per-key daily log; trivially summed) | Yes (global, sum of `ep_ask + ep_search` across all keys) | `MAX_QUERIES_PER_MONTH` | ✅ Ready |
-| 4 | Collections | Yes (global) | No (config exists, unused) | `MAX_COLLECTIONS` | 🟡 Code gap — wire enforcement |
+| 4 | Collections | Yes (global) | Yes (global, at creation) | `MAX_COLLECTIONS` | ✅ Ready |
 | 5 | Premium apps | Via skill management | Partial | `ENABLED_SKILL_IDS` (new) | 🟡 Needs whitelist |
 | 6 | GraphRAG entity extraction | N/A (feature) | Yes | `ENABLE_GRAPH_EXTRACTION` | ✅ Ready |
 | 7 | Ask AI with citations | N/A (feature) | Yes | `ENABLE_AGENT_CHAT`, `ENABLE_AGENT_RESEARCH` | ✅ Ready |
@@ -63,8 +63,9 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 
 - **Pricing values**: 20 / 500 / 3,000 / 25,000 / Unlimited
 - **Tracked**: Global document count via `neo4j_service.get_stats()["document_count"]`.
-- **Enforced**: Yes, globally, at [backend/app/main.py:548-556](backend/app/main.py#L548-L556) when `max_files > 0`.
+- **Enforced**: Yes, globally, at [backend/app/main.py:585-597](backend/app/main.py#L585-L597) (file upload) and [backend/app/main.py:935-946](backend/app/main.py#L935-L946) (custom input creation) when `max_files > 0`.
 - **Env var**: `MAX_FILES` at [backend/app/config.py:97-99](backend/app/config.py#L97-L99) (default `0` = unlimited).
+- **Tests**: [backend/tests/test_max_files.py](backend/tests/test_max_files.py).
 - **Status**: ✅ Ready. No code changes needed.
 - **Operator action**: set `MAX_FILES` to the tier value on each instance.
 
@@ -72,13 +73,12 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 
 - **Pricing values**: 500 / 10,000 / 100,000 / 1,000,000 / Unlimited
 - **Tracked**: Global entity count via `get_stats()["entity_count"]`.
-- **Enforced**: No.
-- **Gap**: No env var, no enforcement code.
-- **Fix path**:
-  1. Add `MAX_ENTITIES` env var to [backend/app/config.py](backend/app/config.py) (default `0` = unlimited).
-  2. Add a pre-extraction check in the extraction pipeline: if adding the new batch would push the global entity count over `MAX_ENTITIES`, skip/defer extraction for that document.
-  3. Surface the remaining-entities count to admins so they can prune before the cap is hit.
-- **Note**: Entity count grows asynchronously during background extraction; enforcement happens at extraction time, not upload time, to be accurate. See [.claude/domain/entities.md](.claude/domain/entities.md).
+- **Enforced**: Yes, globally, at [backend/app/main.py:585-597](backend/app/main.py#L585-L597) (file upload) and [backend/app/main.py:935-946](backend/app/main.py#L935-L946) (custom input creation) when `max_entities > 0`. The check rejects new ingestion once the existing global entity count is at or above the cap.
+- **Env var**: `MAX_ENTITIES` at [backend/app/config.py:103-105](backend/app/config.py#L103-L105) (default `0` = unlimited).
+- **Tests**: [backend/tests/test_max_entities.py](backend/tests/test_max_entities.py).
+- **Status**: ✅ Ready.
+- **Design note**: enforcement happens at upload time (gate ingestion of new docs once the cap is reached), not mid-extraction. This means a single in-flight document can push the post-extraction count somewhat above the cap — accepted as a simplification. Surfacing the remaining-entities count to admins so they can prune before the cap is hit is still TODO.
+- **Gap**: `MAX_ENTITIES` is not yet in [.env.example](.env.example) — add it so operators see it alongside the other limits.
 
 ### 4.3 Queries
 
@@ -92,13 +92,12 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 ### 4.4 Collections
 
 - **Pricing values**: 1 / 10 / 100 / Unlimited / Unlimited
-- **Tracked**: Yes, globally.
-- **Enforced**: **No** — `max_collections` config at [backend/app/config.py:100-102](backend/app/config.py#L100-L102) exists but is **not referenced** in the `POST /api/collections` endpoint. Pre-existing bug: knob declared, ignored.
-- **Env var**: `MAX_COLLECTIONS` (default `0` = unlimited) — already exists.
-- **Fix path**:
-  1. Add enforcement in the collection-creation endpoint: `if MAX_COLLECTIONS > 0 and current_count >= MAX_COLLECTIONS: raise HTTPException(403, ...)`.
-  2. The auto-created `default` collection counts toward the cap.
-- **No new env var** — the existing one just needs wiring.
+- **Tracked**: Yes, globally, via `get_stats()["collection_count"]`.
+- **Enforced**: Yes, globally, at [backend/app/main.py:2709-2715](backend/app/main.py#L2709-L2715) inside `POST /api/collections` when `max_collections > 0`.
+- **Env var**: `MAX_COLLECTIONS` at [backend/app/config.py:100-102](backend/app/config.py#L100-L102) (default `0` = unlimited).
+- **Tests**: [backend/tests/test_max_collections.py](backend/tests/test_max_collections.py).
+- **Status**: ✅ Ready. The auto-created `default` collection counts toward the cap.
+- **Operator action**: set `MAX_COLLECTIONS` to the tier value on each instance.
 
 ### 4.5 Premium Apps (Skills)
 
@@ -185,10 +184,10 @@ One simple global env var per limit. No tier prefixes, no per-key attribution. T
 # =============================================================================
 # Global instance limits — sentinel 0 means "unlimited"
 # =============================================================================
-MAX_FILES=0                       # already implemented
-MAX_ENTITIES=0                    # new — enforce at extraction time
-MAX_QUERIES_PER_MONTH=0           # new — enforce in middleware (summed across all keys)
-MAX_COLLECTIONS=0                 # declared today, enforcement missing — just wire it up
+MAX_FILES=0                       # implemented (upload + custom-input gate)
+MAX_ENTITIES=0                    # implemented (upload-time gate); not yet in .env.example
+MAX_QUERIES_PER_MONTH=0           # implemented (FastAPI dependency, summed across all keys)
+MAX_COLLECTIONS=0                 # implemented (POST /api/collections gate)
 MAX_RPM=0                         # new — rate-limit middleware (instance-wide)
 
 # =============================================================================
@@ -246,17 +245,18 @@ MOCA Flatrate instances get the Enthusiast column.
 
 Phased so each phase is independently shippable and backward-compatible.
 
-### Phase 1 — Declare env vars, wire the already-declared-but-unused ones
-- Add `MAX_ENTITIES`, `MAX_QUERIES_PER_MONTH`, `MAX_RPM`, `ENABLED_SKILL_IDS`, `ENABLE_SELF_SERVICE_ANALYTICS`, `ENABLE_IP_ALLOWLIST`, `IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, `API_KEY_ROTATION_RECOMMEND_DAYS` to [backend/app/config.py](backend/app/config.py) and [.env.example](.env.example).
-- Fix the `MAX_COLLECTIONS` enforcement gap: add the missing check to the `POST /api/collections` endpoint.
+### Phase 1 — Declare env vars, wire the already-declared-but-unused ones ✅ (partially shipped)
+- ✅ `MAX_ENTITIES` and `MAX_QUERIES_PER_MONTH` added to [backend/app/config.py](backend/app/config.py).
+- ✅ `MAX_COLLECTIONS` enforcement wired into `POST /api/collections`.
+- 🟡 Remaining: add `MAX_ENTITIES` to [.env.example](.env.example); add the still-new vars (`MAX_RPM`, `ENABLED_SKILL_IDS`, `ENABLE_SELF_SERVICE_ANALYTICS`, `ENABLE_IP_ALLOWLIST`, `IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, `API_KEY_ROTATION_RECOMMEND_DAYS`) to both `config.py` and `.env.example`.
 
-### Phase 2 — Queries & RPM middleware
-- Add a quota-check middleware for `/api/ask*` and `/api/search*` that sums monthly instance-wide query count (reuse existing `APIKeyUsageLog` aggregation) and rejects with 429 when `MAX_QUERIES_PER_MONTH` is exceeded.
-- Add a global rate-limit middleware (in-process token bucket; Redis later if needed) that enforces `MAX_RPM` across the instance.
+### Phase 2 — Queries & RPM middleware (queries shipped, RPM pending)
+- ✅ `enforce_query_quota` FastAPI dependency wired onto `/api/search`, `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking`; sums monthly instance-wide query count (reuses `APIKeyUsageLog` aggregation) and rejects with 429 + `Retry-After` when `MAX_QUERIES_PER_MONTH` is exceeded.
+- 🟡 Remaining: add a global rate-limit middleware (in-process token bucket; Redis later if needed) that enforces `MAX_RPM` across the instance.
 
-### Phase 3 — Entity cap
-- Add a pre-extraction check in the extraction pipeline that counts current global entities via `get_stats()` and defers/rejects extraction when `MAX_ENTITIES` is reached.
-- Surface "entities remaining" to admins.
+### Phase 3 — Entity cap ✅ (upload-gate variant shipped)
+- ✅ Upload-time check counts current global entities via `get_stats()` and rejects new ingestion (file uploads + custom inputs) when the cap is reached. See §4.2 for the design tradeoff vs. mid-extraction enforcement.
+- 🟡 Remaining: surface "entities remaining" to admins.
 
 ### Phase 4 — Feature gating (skills + self-service analytics)
 - Wire `ENABLED_SKILL_IDS` as a whitelist in `skill_service`.
