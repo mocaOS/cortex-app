@@ -623,6 +623,10 @@ async def _run_researcher_loop(
                             hdr_name, hdr_val = auth_tmpl.split(": ", 1)
                             headers[hdr_name] = hdr_val.replace(var_name, config[var_name])
 
+                # Rails-backed APIs (e.g. Zammad) reject untyped bodies with 422.
+                if body and "Content-Type" not in headers:
+                    headers["Content-Type"] = "application/json"
+
                 logger.info(f"http_request: {method} {url} | auth={'yes' if headers else 'none'}")
 
                 yield {
