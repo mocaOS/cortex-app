@@ -610,6 +610,8 @@ async def _run_researcher_loop(
                 method = args.get("method", "GET").upper()
                 url = _substitute_variables(args.get("url", ""), _merged_configs)
                 body = args.get("body")
+                if body:
+                    body = _substitute_variables(body, _merged_configs)
 
                 # Build headers server-side from config schemas.
                 # The LLM never provides headers — auth is fully automatic.
