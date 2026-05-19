@@ -74,5 +74,6 @@ See [`.claude/domain/skills.md`](domain/skills.md) for the full Agent Skills sys
 See [`PRICING.md`](../PRICING.md) for the per-tier value matrix. Sentinel `0` means "unlimited" on every cap below.
 
 - `MAX_FILES` (default: 0) — total documents (uploads + custom inputs). Enforced at upload time and at library import.
-- `MAX_COLLECTIONS` (default: 0) — total collections (default counts as 1). Declared but enforcement is wired separately per PRICING.md §4.4.
+- `MAX_ENTITIES` (default: 0) — total entities across the graph. Enforced at upload-time and custom-input creation: new ingestion is rejected once `get_stats()["entity_count"]` is at or above the cap. A single in-flight document can push the post-extraction count slightly above the cap (accepted tradeoff per PRICING.md §4.2).
+- `MAX_COLLECTIONS` (default: 0) — total collections (default counts as 1). Enforced at `POST /api/collections`.
 - `MAX_QUERIES_PER_MONTH` (default: 0) — instance-wide cap on chat-style queries (sum of `ep_ask + ep_search` across all `APIKeyUsageLog` rows for the current UTC calendar month). Applies to `POST /api/search`, `POST /api/ask`, `POST /api/ask/stream`, `POST /api/ask/stream/thinking`. Other endpoints (admin, upload, document/collection/graph management) are NOT counted. Returns `429 Too Many Requests` with a `Retry-After` header (seconds until next UTC month) when exceeded.

@@ -76,6 +76,11 @@ services:
       - AUTO_COMMUNITY_DETECTION_AFTER_BATCH=${AUTO_COMMUNITY_DETECTION_AFTER_BATCH:-false}
       # API Key Analytics - track admin key usage (default: false)
       - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
+      # Resource Limits / Pricing Caps (0 = unlimited). See PRICING.md.
+      - MAX_FILES=${MAX_FILES:-0}
+      - MAX_ENTITIES=${MAX_ENTITIES:-0}
+      - MAX_COLLECTIONS=${MAX_COLLECTIONS:-0}
+      - MAX_QUERIES_PER_MONTH=${MAX_QUERIES_PER_MONTH:-0}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs

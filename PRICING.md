@@ -78,7 +78,6 @@ Status legend: ✅ Ready · 🟡 Partial · 🔴 Missing · ⚪ Non-technical (o
 - **Tests**: [backend/tests/test_max_entities.py](backend/tests/test_max_entities.py).
 - **Status**: ✅ Ready.
 - **Design note**: enforcement happens at upload time (gate ingestion of new docs once the cap is reached), not mid-extraction. This means a single in-flight document can push the post-extraction count somewhat above the cap — accepted as a simplification. Surfacing the remaining-entities count to admins so they can prune before the cap is hit is still TODO.
-- **Gap**: `MAX_ENTITIES` is not yet in [.env.example](.env.example) — add it so operators see it alongside the other limits.
 
 ### 4.3 Queries
 
@@ -185,7 +184,7 @@ One simple global env var per limit. No tier prefixes, no per-key attribution. T
 # Global instance limits — sentinel 0 means "unlimited"
 # =============================================================================
 MAX_FILES=0                       # implemented (upload + custom-input gate)
-MAX_ENTITIES=0                    # implemented (upload-time gate); not yet in .env.example
+MAX_ENTITIES=0                    # implemented (upload-time gate)
 MAX_QUERIES_PER_MONTH=0           # implemented (FastAPI dependency, summed across all keys)
 MAX_COLLECTIONS=0                 # implemented (POST /api/collections gate)
 MAX_RPM=0                         # new — rate-limit middleware (instance-wide)
@@ -246,9 +245,9 @@ MOCA Flatrate instances get the Enthusiast column.
 Phased so each phase is independently shippable and backward-compatible.
 
 ### Phase 1 — Declare env vars, wire the already-declared-but-unused ones ✅ (partially shipped)
-- ✅ `MAX_ENTITIES` and `MAX_QUERIES_PER_MONTH` added to [backend/app/config.py](backend/app/config.py).
+- ✅ `MAX_ENTITIES` and `MAX_QUERIES_PER_MONTH` added to [backend/app/config.py](backend/app/config.py) and [.env.example](.env.example).
 - ✅ `MAX_COLLECTIONS` enforcement wired into `POST /api/collections`.
-- 🟡 Remaining: add `MAX_ENTITIES` to [.env.example](.env.example); add the still-new vars (`MAX_RPM`, `ENABLED_SKILL_IDS`, `ENABLE_SELF_SERVICE_ANALYTICS`, `ENABLE_IP_ALLOWLIST`, `IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, `API_KEY_ROTATION_RECOMMEND_DAYS`) to both `config.py` and `.env.example`.
+- 🟡 Remaining: add the still-new vars (`MAX_RPM`, `ENABLED_SKILL_IDS`, `ENABLE_SELF_SERVICE_ANALYTICS`, `ENABLE_IP_ALLOWLIST`, `IP_ALLOWLIST`, `AUDIT_LOG_RETENTION_DAYS`, `PROMPT_SECURITY_LEVEL`, `API_KEY_ROTATION_RECOMMEND_DAYS`) to both `config.py` and `.env.example`.
 
 ### Phase 2 — Queries & RPM middleware (queries shipped, RPM pending)
 - ✅ `enforce_query_quota` FastAPI dependency wired onto `/api/search`, `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking`; sums monthly instance-wide query count (reuses `APIKeyUsageLog` aggregation) and rejects with 429 + `Retry-After` when `MAX_QUERIES_PER_MONTH` is exceeded.
