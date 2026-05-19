@@ -268,7 +268,7 @@ async def enforce_query_quota() -> None:
             detail=(
                 f"Monthly query limit reached "
                 f"(max: {settings.max_queries_per_month}). "
-                f"Resets at the start of next UTC month."
+                f"Upgrade your plan or wait until next month."
             ),
             headers={"Retry-After": str(_seconds_until_next_utc_month())},
         )
@@ -588,12 +588,12 @@ async def upload_file(
         if settings.max_files > 0 and stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
-                detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
+                detail=f"File limit reached (max: {settings.max_files}). Upgrade your plan to upload more documents."
             )
         if settings.max_entities > 0 and stats["entity_count"] >= settings.max_entities:
             raise HTTPException(
                 status_code=403,
-                detail=f"Entity limit reached (max: {settings.max_entities}). Delete existing entities or increase MAX_ENTITIES."
+                detail=f"Entity limit reached (max: {settings.max_entities}). Upgrade your plan to extract more entities."
             )
 
     # Validate file extension
@@ -937,12 +937,12 @@ async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Dep
         if settings.max_files > 0 and stats["document_count"] >= settings.max_files:
             raise HTTPException(
                 status_code=403,
-                detail=f"File limit reached (max: {settings.max_files}). Delete existing files or increase MAX_FILES."
+                detail=f"File limit reached (max: {settings.max_files}). Upgrade your plan to upload more documents."
             )
         if settings.max_entities > 0 and stats["entity_count"] >= settings.max_entities:
             raise HTTPException(
                 status_code=403,
-                detail=f"Entity limit reached (max: {settings.max_entities}). Delete existing entities or increase MAX_ENTITIES."
+                detail=f"Entity limit reached (max: {settings.max_entities}). Upgrade your plan to extract more entities."
             )
 
     # Validate Q&A has an answer
@@ -2711,7 +2711,7 @@ async def create_collection(request: CollectionCreate, auth: AuthResult = Depend
             if stats["collection_count"] >= settings.max_collections:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Collection limit reached (max: {settings.max_collections}). Delete existing collections or increase MAX_COLLECTIONS."
+                    detail=f"Collection limit reached (max: {settings.max_collections}). Upgrade your plan to create more collections."
                 )
         
         collection = await asyncio.to_thread(neo4j.create_collection, request.name, request.description)

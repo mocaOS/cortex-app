@@ -278,9 +278,9 @@ class LibraryTransferService:
                     if len(incoming_documents) > self.settings.max_files:
                         fail_task_fn(
                             task_id,
-                            f"Library import would create {len(incoming_documents)} documents, "
-                            f"exceeding MAX_FILES limit ({self.settings.max_files}). "
-                            f"Increase MAX_FILES or use a smaller export."
+                            f"File limit reached: import would add {len(incoming_documents)} documents, "
+                            f"exceeding your plan limit ({self.settings.max_files}). "
+                            f"Upgrade your plan or use a smaller export."
                         )
                         return
 
@@ -290,9 +290,9 @@ class LibraryTransferService:
                     if len(incoming_entities) > self.settings.max_entities:
                         fail_task_fn(
                             task_id,
-                            f"Library import would create {len(incoming_entities)} entities, "
-                            f"exceeding MAX_ENTITIES limit ({self.settings.max_entities}). "
-                            f"Increase MAX_ENTITIES or use a smaller export."
+                            f"Entity limit reached: import would add {len(incoming_entities)} entities, "
+                            f"exceeding your plan limit ({self.settings.max_entities}). "
+                            f"Upgrade your plan or use a smaller export."
                         )
                         return
 

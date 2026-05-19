@@ -215,7 +215,8 @@ def test_library_import_rejected_when_over_cap(
     fail_task.assert_called_once()
     args = fail_task.call_args.args
     assert args[0] == "task-1"
-    assert "MAX_FILES" in args[1]
+    assert "File limit reached" in args[1]
+    assert "Upgrade your plan" in args[1]
     assert "10" in args[1]
     complete_task.assert_not_called()
     mock_neo4j.import_documents_batch.assert_not_called()
