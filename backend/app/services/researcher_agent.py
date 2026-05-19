@@ -610,6 +610,8 @@ async def _run_researcher_loop(
                 method = args.get("method", "GET").upper()
                 url = _substitute_variables(args.get("url", ""), _merged_configs)
                 body = args.get("body")
+                if body:
+                    body = _substitute_variables(body, _merged_configs)
 
                 # Build headers server-side from config schemas.
                 # The LLM never provides headers — auth is fully automatic.
@@ -623,7 +625,16 @@ async def _run_researcher_loop(
                             hdr_name, hdr_val = auth_tmpl.split(": ", 1)
                             headers[hdr_name] = hdr_val.replace(var_name, config[var_name])
 
-                logger.info(f"http_request: {method} {url} | auth={'yes' if headers else 'none'}")
+                # Rails-backed APIs (e.g. Zammad) reject untyped bodies with 422.
+                if body and "Content-Type" not in headers:
+                    headers["Content-Type"] = "application/json"
+
+                logger.info(
+                    f"http_request: {method} {url} | "
+                    f"auth={'yes' if any(h.lower() == 'authorization' for h in headers) else 'none'} | "
+                    f"ct={headers.get('Content-Type', 'none')} | "
+                    f"body_len={len(body) if body else 0}"
+                )
 
                 yield {
                     "type": "thinking",
@@ -650,7 +661,12 @@ async def _run_researcher_loop(
                         f"Error: HTTP {e.response.status_code} — "
                         f"{e.response.text[:500]}"
                     )
-                    logger.warning(f"http_request failed: {method} {url} → {e.response.status_code}")
+                    logger.warning(
+                        f"http_request failed: {method} {url} → "
+                        f"{e.response.status_code} | "
+                        f"req_body={(body or '')[:300]} | "
+                        f"resp_body={e.response.text[:300]}"
+                    )
                 except Exception as e:
                     response_text = f"Error: {str(e)[:500]}"
                     logger.warning(f"http_request exception: {method} {url} → {e}")
