@@ -20,8 +20,8 @@ This chapter covers deploying your own Cortex Library instance. Whether you're s
 ### Step 1: Clone and Configure
 
 ```bash
-git clone https://github.com/mocaOS/library.git
-cd library
+git clone https://github.com/mocaOS/cortex-app.git
+cd cortex-app
 cp .env.example .env
 ```
 
@@ -36,7 +36,7 @@ NEO4J_PASSWORD=your-secure-neo4j-password
 # ── Admin Authentication ────────────────────────────────────────
 ADMIN_EMAIL=admin@yourdomain.com
 ADMIN_PASSWORD=your-secure-admin-password
-ADMIN_API_KEY=moca_admin_your-secret-key-here
+ADMIN_API_KEY=cortex_admin_your-secret-key-here
 SESSION_SECRET=at-least-32-characters-long-random-secret
 
 # ── Primary LLM ─────────────────────────────────────────────────
@@ -49,7 +49,7 @@ OPENAI_MODEL=gpt-4o-mini
 
 ```bash
 # Generate a secure admin API key
-echo "moca_admin_$(openssl rand -hex 32)"
+echo "cortex_admin_$(openssl rand -hex 32)"
 
 # Generate a session secret
 openssl rand -hex 32
@@ -156,7 +156,7 @@ Best for teams already using Coolify as their self-hosting platform. Provides au
 
 1. **Create a new resource** in your Coolify dashboard
 2. **Select Docker Compose** as the project type
-3. **Connect your git repository** (or use the MOCA Library repo URL)
+3. **Connect your git repository** (or use the Cortex repo URL)
 4. **Set the compose file path** to `coolify/docker-compose.coolify.yml`
 5. **Configure environment variables** in the Coolify UI:
 
@@ -165,7 +165,7 @@ Best for teams already using Coolify as their self-hosting platform. Provides au
 OPENAI_API_KEY=sk-your-key
 ADMIN_EMAIL=admin@yourdomain.com
 ADMIN_PASSWORD=your-secure-password
-ADMIN_API_KEY=moca_admin_$(openssl rand -hex 32)
+ADMIN_API_KEY=cortex_admin_$(openssl rand -hex 32)
 SESSION_SECRET=$(openssl rand -hex 32)
 
 # Domain configuration

@@ -98,7 +98,7 @@ def verify_api_key_hash(api_key: str, stored_hash: str) -> bool:
     return secrets.compare_digest(computed_hash, stored_hash)
 
 
-def generate_api_key(prefix: str = "moca_") -> Tuple[str, str]:
+def generate_api_key(prefix: str = "cortex_") -> Tuple[str, str]:
     """
     Generate a new API key with a prefix.
     

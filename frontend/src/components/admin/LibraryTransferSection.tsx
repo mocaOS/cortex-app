@@ -152,7 +152,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
             setImportState("done");
             // Clear client-side caches (same as system reset)
             localStorage.removeItem("dedup_dismissed");
-            localStorage.removeItem("moca_community_detection_task");
+            localStorage.removeItem("cortex_community_detection_task");
             sessionStorage.removeItem("regenerateStep");
             sessionStorage.removeItem("regenerateStartedAt");
             sessionStorage.removeItem("regenerateTaskId");
@@ -333,7 +333,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
               <h3 className="font-medium text-foreground">Import Library</h3>
             </div>
             <p className="text-muted-foreground text-sm leading-relaxed">
-              Restore a library export from another MOCA instance. Imports all documents, knowledge graph data, and embeddings.
+              Restore a library export from another Cortex instance. Imports all documents, knowledge graph data, and embeddings.
             </p>
 
             {importState === "idle" && (

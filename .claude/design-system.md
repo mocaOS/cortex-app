@@ -1,12 +1,12 @@
 # Design System
 
-The project has a portable design system at `design-system/moca-cortex/`:
+The project has a portable design system at `design-system/`:
 
 ## Files
 
 - `MASTER.md` — Complete design spec: colors (OKLCh), typography (Inter + JetBrains Mono), spacing, glass morphism, animation tokens, component patterns, accessibility checklist, z-index scale, and anti-patterns. This is the source of truth for all visual decisions.
 - `tokens.css` — Drop-in CSS file with all custom properties (light + dark themes), glass/glow/shimmer classes. Import this into any new project to reuse the design system.
-- `tailwind.preset.ts` — Tailwind preset with all color/font/radius tokens. Use via `presets: [mocaPreset]` in other projects.
+- `tailwind.preset.ts` — Tailwind preset with all color/font/radius tokens. Use via `presets: [cortexPreset]` in other projects.
 - `pages/*.md` — Page-specific overrides (dashboard, ask, explore, documents) that take precedence over MASTER.md for those pages.
 
 ## Key Characteristics

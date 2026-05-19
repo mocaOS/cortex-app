@@ -1,6 +1,6 @@
 # Dokploy Deployment
 
-This directory contains the Docker Compose configuration for deploying MOCA on [Dokploy](https://dokploy.com/), an open-source self-hosted PaaS that uses Traefik for reverse proxy and automatic SSL.
+This directory contains the Docker Compose configuration for deploying Cortex on [Dokploy](https://dokploy.com/), an open-source self-hosted PaaS that uses Traefik for reverse proxy and automatic SSL.
 
 ## Prerequisites
 
@@ -83,7 +83,7 @@ Cross-document relationship discovery settings.
 | `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key (default: `false`) | No |
 
 > **Generating secure values:**
-> - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `moca_admin_`
+> - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `cortex_admin_`
 > - `SESSION_SECRET`: Use `openssl rand -hex 32`
 > - `NEO4J_PASSWORD`: Use `openssl rand -hex 16`
 
@@ -91,7 +91,7 @@ Cross-document relationship discovery settings.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `NEXT_PUBLIC_API_URL` | Public URL of the backend API (e.g., `https://api-moca.yourdomain.com`) | Yes |
+| `NEXT_PUBLIC_API_URL` | Public URL of the backend API (e.g., `https://api-cortex.yourdomain.com`) | Yes |
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo URL | No |
 | `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No |
 
@@ -105,8 +105,8 @@ Dokploy uses Traefik for reverse proxy with automatic SSL via Let's Encrypt. The
 
 1. In your Compose project, click on the **backend** service
 2. Go to the **Domains** tab
-3. Add your backend domain (e.g., `api-moca.yourdomain.com`) mapped to port `8000`
-4. Repeat for the **frontend** service with your frontend domain (e.g., `moca.yourdomain.com`) mapped to port `3000`
+3. Add your backend domain (e.g., `api-cortex.yourdomain.com`) mapped to port `8000`
+4. Repeat for the **frontend** service with your frontend domain (e.g., `cortex.yourdomain.com`) mapped to port `3000`
 
 Dokploy auto-configures Traefik labels and TLS certificates. Allow ~10 seconds after deployment for certificate generation.
 
@@ -114,12 +114,12 @@ Dokploy auto-configures Traefik labels and TLS certificates. Allow ~10 seconds a
 
 For GitOps workflows where you want domain config in version control, uncomment the `labels` block in the compose file for each web-facing service and replace `yourdomain.com` with your actual domain.
 
-When using manual labels, ensure router names (e.g., `moca-backend`, `moca-frontend`) are globally unique across all services on the Dokploy instance.
+When using manual labels, ensure router names (e.g., `cortex-backend`, `cortex-frontend`) are globally unique across all services on the Dokploy instance.
 
 ## What Gets Exposed
 
-- **Frontend**: Main domain (e.g., `moca.yourdomain.com`) on port 3000
-- **Backend API**: API subdomain (e.g., `api-moca.yourdomain.com`) on port 8000
+- **Frontend**: Main domain (e.g., `cortex.yourdomain.com`) on port 3000
+- **Backend API**: API subdomain (e.g., `api-cortex.yourdomain.com`) on port 8000
 - **Neo4j**: Not exposed externally (internal only, not on dokploy-network)
 
 ## Differences from Coolify Deployment

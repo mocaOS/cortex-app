@@ -1,9 +1,9 @@
 ---
 title: Quick Start
-description: Get MOCA Library running in 5 minutes with Docker
+description: Get Cortex running in 5 minutes with Docker
 ---
 
-Get MOCA Library running locally in just a few minutes using Docker Compose.
+Get Cortex running locally in just a few minutes using Docker Compose.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Before you begin, make sure you have:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/mocaOS/library.git
+git clone https://github.com/mocaOS/cortex-app.git
 cd library
 ```
 
@@ -39,7 +39,7 @@ NEO4J_PASSWORD=your-secure-password-here
 # Required: Admin credentials for the frontend
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=your-admin-password
-ADMIN_API_KEY=moca_admin_your-secure-key-here
+ADMIN_API_KEY=cortex_admin_your-secure-key-here
 SESSION_SECRET=a-random-string-at-least-32-characters-long
 ```
 
@@ -47,7 +47,7 @@ SESSION_SECRET=a-random-string-at-least-32-characters-long
 
 #### LLM Configuration
 
-MOCA uses LLMs for Q&A, entity extraction, relationship extraction, image understanding, and embeddings. Each capability can point to a different model or provider (any OpenAI-compatible API), giving you 5 independently configurable model slots.
+Cortex uses LLMs for Q&A, entity extraction, relationship extraction, image understanding, and embeddings. Each capability can point to a different model or provider (any OpenAI-compatible API), giving you 5 independently configurable model slots.
 
 ```bash
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────

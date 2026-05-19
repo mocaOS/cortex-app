@@ -1,6 +1,6 @@
-# MOCA Library — Web App UI Kit
+# Cortex — Web App UI Kit
 
-Pixel-faithful recreation of the MOCA Library web app. Dark-mode, glassmorphic, Lucide icons, OKLCh colors.
+Pixel-faithful recreation of the Cortex web app. Dark-mode, glassmorphic, Lucide icons, OKLCh colors.
 
 ## Files
 - `index.html` — the kit entry point. Interactive click-through with sidebar routing between the three core screens.

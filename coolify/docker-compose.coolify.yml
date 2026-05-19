@@ -59,7 +59,7 @@ services:
       # Number of uvicorn workers (default 1, increase if you have RAM - each uses ~1-2GB)
       - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
       # Expose backend at api-kg subdomain on port 8000
-      # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.moca.qwellco.de)
+      # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.cortex.qwellco.de)
       - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
       # Admin authentication - set ADMIN_API_KEY in Coolify env vars
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
@@ -102,7 +102,7 @@ services:
         - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
     environment:
       # Expose frontend at kg subdomain on port 3000
-      # Set FRONTEND_URL in Coolify env vars (e.g., https://kg.moca.qwellco.de)
+      # Set FRONTEND_URL in Coolify env vars (e.g., https://kg.cortex.qwellco.de)
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}

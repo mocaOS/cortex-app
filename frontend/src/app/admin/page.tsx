@@ -217,7 +217,7 @@ export default function AdminPage() {
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">Settings</h1>
             <p className="text-muted-foreground">
-              Manage your MOCA Knowledge Base settings and API access
+              Manage your Cortex settings and API access
             </p>
           </div>
           <button

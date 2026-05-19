@@ -1,11 +1,11 @@
 ---
 title: Document Upload
-description: Upload and process documents into the MOCA knowledge base
+description: Upload and process documents into the Cortex knowledge base
 ---
 
 import { Mermaid } from "zudoku/mermaid";
 
-MOCA Library supports various document formats and provides flexible upload options for both single files and bulk operations. In the web UI, uploading is done directly from the **Documents** page via the **Upload** button, which opens a drag-and-drop modal with collection selection. The modal closes immediately after files are selected — upload progress is shown inline in the document list. Once uploaded, use the **Generate Graph** button on the Documents page (which navigates to the **Knowledge Graph** page under Manage) to build the full knowledge graph pipeline — entity extraction, relationship analysis, and community detection.
+Cortex supports various document formats and provides flexible upload options for both single files and bulk operations. In the web UI, uploading is done directly from the **Documents** page via the **Upload** button, which opens a drag-and-drop modal with collection selection. The modal closes immediately after files are selected — upload progress is shown inline in the document list. Once uploaded, use the **Generate Graph** button on the Documents page (which navigates to the **Knowledge Graph** page under Manage) to build the full knowledge graph pipeline — entity extraction, relationship analysis, and community detection.
 
 ## Supported Formats
 
@@ -141,8 +141,8 @@ curl -X POST "http://localhost:8000/api/custom-input" \
   -d '{
     "type": "qa",
     "title": "Company FAQ",
-    "question": "What is MOCA?",
-    "answer": "MOCA is an agentic knowledge base..."
+    "question": "What is Cortex?",
+    "answer": "Cortex is an agentic knowledge base..."
   }'
 ```
 
@@ -155,7 +155,7 @@ curl -X POST "http://localhost:8000/api/custom-input" \
   -d '{
     "type": "text",
     "title": "Product Description",
-    "content": "MOCA Library is a powerful..."
+    "content": "Cortex is a powerful..."
   }'
 ```
 
@@ -168,7 +168,7 @@ curl -X POST "http://localhost:8000/api/custom-input" \
   -d '{
     "type": "markdown",
     "title": "Technical Documentation",
-    "content": "# Overview\n\nMOCA provides..."
+    "content": "# Overview\n\nCortex provides..."
   }'
 ```
 
@@ -200,7 +200,7 @@ curl "http://localhost:8000/api/documents" \
 
 ### Delete a Document
 
-When you delete a document, MOCA automatically:
+When you delete a document, Cortex automatically:
 
 1. **Cancels active processing** - If the document is being processed, the task is stopped
 2. **Removes chunks** - All text chunks are deleted

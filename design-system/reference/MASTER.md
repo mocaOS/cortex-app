@@ -1,13 +1,13 @@
-# MOCA Cortex Design System
+# Cortex Design System
 
-> **Source of Truth** for all MOCA/Cortex projects.
+> **Source of Truth** for all Cortex projects.
 > When building a specific page, check `design-system/pages/[page-name].md` first.
 > If that file exists, its rules **override** this Master file.
 > If not, follow the rules below exclusively.
 
 ---
 
-**Project:** MOCA Cortex
+**Project:** Cortex
 **Category:** AI Knowledge Base / SaaS Tool
 **Primary Theme:** Dark mode (default)
 **Style:** Monochrome glassmorphism with single chromatic accent

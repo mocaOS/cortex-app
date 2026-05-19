@@ -7,8 +7,8 @@ const docsUrl = process.env.DOCS_URL || "http://localhost:3000";
 const config: ZudokuConfig = {
   site: {
     logo: {
-      src: { light: "/moca-logo-light.svg", dark: "/moca-logo-dark.svg" },
-      alt: "MOCA Library",
+      src: { light: "/cortex-logo-light.svg", dark: "/cortex-logo-dark.svg" },
+      alt: "Cortex",
       width: "130px",
     },
   },
@@ -130,7 +130,7 @@ const config: ZudokuConfig = {
               type: "link",
               icon: "github",
               label: "GitHub",
-              to: "https://github.com/mocaOS/library",
+              to: "https://github.com/mocaOS/cortex-app",
             },
             {
               type: "link",

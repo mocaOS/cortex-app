@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MOCA Library — UI Kit</title>
+  <title>Cortex — UI Kit</title>
   <link rel="stylesheet" href="../../colors_and_type.css" />
   <link rel="stylesheet" href="kit.css" />
 
@@ -81,18 +81,18 @@
 
     function App() {
       const [route, setRoute] = React.useState(() => {
-        const saved = localStorage.getItem("moca-route");
+        const saved = localStorage.getItem("cortex-route");
         // Migrate old route names
         if (saved === "manage")  return "documents";
         if (saved === "explore") return "graph";
         return ROUTES[saved] ? saved : "documents";
       });
       const [collection, setCollection] = React.useState(() =>
-        localStorage.getItem("moca-collection") || "all"
+        localStorage.getItem("cortex-collection") || "all"
       );
 
-      React.useEffect(() => { localStorage.setItem("moca-route", route); }, [route]);
-      React.useEffect(() => { localStorage.setItem("moca-collection", collection); }, [collection]);
+      React.useEffect(() => { localStorage.setItem("cortex-route", route); }, [route]);
+      React.useEffect(() => { localStorage.setItem("cortex-collection", collection); }, [collection]);
 
       const cfg = ROUTES[route] ?? ROUTES.documents;
       const Screen = cfg.Screen;

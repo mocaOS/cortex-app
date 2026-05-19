@@ -1,15 +1,15 @@
 ---
 title: Security
-description: Security features and best practices for MOCA Library
+description: Security features and best practices for Cortex
 ---
 
 import { Mermaid } from "zudoku/mermaid";
 
-MOCA Library includes several security features to protect your data and prevent abuse. This guide covers security configuration and best practices.
+Cortex includes several security features to protect your data and prevent abuse. This guide covers security configuration and best practices.
 
 ## Prompt Security
 
-MOCA includes built-in protection against **prompt injection attacks** - attempts to manipulate the AI through malicious input.
+Cortex includes built-in protection against **prompt injection attacks** - attempts to manipulate the AI through malicious input.
 
 ### How It Works
 
@@ -45,7 +45,7 @@ PROMPT_SECURITY=true
 
 ### Safe Refusal
 
-When an attack is detected, MOCA returns a safe refusal:
+When an attack is detected, Cortex returns a safe refusal:
 
 ```json
 {
@@ -65,7 +65,7 @@ Use cryptographically secure API keys:
 openssl rand -base64 32
 
 # Example format
-ADMIN_API_KEY=moca_admin_Kj8nP2mQ9xL5vR7wY3hT
+ADMIN_API_KEY=cortex_admin_Kj8nP2mQ9xL5vR7wY3hT
 ```
 
 ### Key Permissions
@@ -158,7 +158,7 @@ Restrict which origins can access your API:
 CORS_ORIGINS=*
 
 # Production (restrict to your domains)
-CORS_ORIGINS=https://moca.yourdomain.com,https://app.yourdomain.com
+CORS_ORIGINS=https://cortex.yourdomain.com,https://app.yourdomain.com
 ```
 
 ## Network Security
@@ -228,7 +228,7 @@ Enable audit logs for compliance:
 
 ```bash
 ENABLE_AUDIT_LOG=true
-AUDIT_LOG_PATH=/var/log/moca/audit.log
+AUDIT_LOG_PATH=/var/log/cortex/audit.log
 ```
 
 Logged events:

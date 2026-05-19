@@ -478,7 +478,7 @@ class APIKey(BaseModel):
             "example": {
                 "id": "key_abc123",
                 "name": "Production Read-Only",
-                "key_prefix": "moca_ro_",
+                "key_prefix": "cortex_ro_",
                 "permissions": ["read"],
                 "is_active": True,
                 "created_by": "admin",
@@ -522,8 +522,8 @@ class CreateAPIKeyResponse(BaseModel):
             "example": {
                 "id": "key_abc123",
                 "name": "Frontend Read-Only Key",
-                "key": "moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                "key_prefix": "moca_ro_",
+                "key": "cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "key_prefix": "cortex_ro_",
                 "permissions": ["read"],
                 "created_at": "2024-01-01T00:00:00Z",
                 "collection_scope": "all",

@@ -9,7 +9,7 @@ System administration: reset, library transfer, bulk download, and API key manag
 When documents are deleted, also cleans up:
 - `MergeHistory` nodes (dedup audit trail)
 - `SystemMeta` nodes (staleness timestamps)
-- Frontend clears client-side cached data (`dedup_dismissed` and `moca_community_detection_task` from localStorage, `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage)
+- Frontend clears client-side cached data (`dedup_dismissed` and `cortex_community_detection_task` from localStorage, `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage)
 
 Accessible via Settings page → Danger Zone → System Reset modal with "DELETE" confirmation.
 

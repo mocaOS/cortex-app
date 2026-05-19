@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MOCA Knowledge Base",
+  title: "Cortex",
   description: "AI-powered knowledge base with Neo4j + Haystack",
 };
 

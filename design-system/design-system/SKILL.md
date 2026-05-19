@@ -1,6 +1,6 @@
 ---
-name: moca-library-design
-description: Use this skill to generate well-branded interfaces and assets for MOCA Library, either for production or throwaway prototypes/mocks/etc. Contains essential design guidelines, colors, type, fonts, assets, and UI kit components for prototyping.
+name: cortex-design
+description: Use this skill to generate well-branded interfaces and assets for Cortex, either for production or throwaway prototypes/mocks/etc. Contains essential design guidelines, colors, type, fonts, assets, and UI kit components for prototyping.
 user-invocable: true
 ---
 

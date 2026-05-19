@@ -1,4 +1,4 @@
-// MOCA Library — Explore screen (knowledge graph canvas)
+// Cortex — Explore screen (knowledge graph canvas)
 
 const exploreStyles = {
   wrap: { display: "grid", gridTemplateColumns: "260px 1fr 320px", height: "100%", overflow: "hidden" },

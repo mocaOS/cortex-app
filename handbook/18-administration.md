@@ -230,7 +230,7 @@ When documents are deleted, the system also cleans up:
 - All entities, relationships, and communities
 - `MergeHistory` nodes (deduplication audit trail)
 - `SystemMeta` nodes (staleness timestamps)
-- Frontend clears `dedup_dismissed` and `moca_community_detection_task` from localStorage, and `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage
+- Frontend clears `dedup_dismissed` and `cortex_community_detection_task` from localStorage, and `regenerateStep`/`regenerateStartedAt`/`regenerateTaskId` from sessionStorage
 
 ## Data Import/Export
 
@@ -290,12 +290,12 @@ Settings > Data Management > Import Library
 # Clean import (target must be empty)
 curl -X POST "http://localhost:8000/api/admin/import?mode=clean" \
   -H "X-API-Key: your-admin-key" \
-  -F "file=@moca-library-export-2026-03-27.zip"
+  -F "file=@cortex-export-2026-03-27.zip"
 
 # Replace import (wipes existing data first)
 curl -X POST "http://localhost:8000/api/admin/import?mode=replace" \
   -H "X-API-Key: your-admin-key" \
-  -F "file=@moca-library-export-2026-03-27.zip"
+  -F "file=@cortex-export-2026-03-27.zip"
 
 # Poll progress
 curl http://localhost:8000/api/tasks/{task_id} \
@@ -307,7 +307,7 @@ curl http://localhost:8000/api/tasks/{task_id} \
 The export is a ZIP64 archive containing:
 
 ```
-moca-library-export-YYYY-MM-DD.zip
+cortex-export-YYYY-MM-DD.zip
 ├── manifest.json              # Version, date, embedding config, item counts
 ├── documents.ndjson           # Document nodes
 ├── chunks.ndjson              # Chunk nodes with embeddings

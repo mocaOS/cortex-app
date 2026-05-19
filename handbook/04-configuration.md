@@ -186,8 +186,8 @@ See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API URL (used by the frontend to make API calls). |
-| `NEXT_PUBLIC_LOGO_URL` | MOCA logo | Custom logo image URL. |
-| `NEXT_PUBLIC_ACCENT_COLOR` | MOCA theme color | Custom accent color. Accepts any CSS color value: hex (`#ff6600`), rgb, hsl, or oklch (`oklch(0.79 0.18 70.67)`). |
+| `NEXT_PUBLIC_LOGO_URL` | Cortex logo | Custom logo image URL. |
+| `NEXT_PUBLIC_ACCENT_COLOR` | Cortex theme color | Custom accent color. Accepts any CSS color value: hex (`#ff6600`), rgb, hsl, or oklch (`oklch(0.79 0.18 70.67)`). |
 
 ## Compute3 Turbo Mode Configuration
 

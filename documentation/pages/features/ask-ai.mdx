@@ -5,11 +5,11 @@ description: AI-powered question answering with RAG streaming, agentic reasoning
 
 import { Mermaid } from "zudoku/mermaid";
 
-Ask questions about your documents and get intelligent answers with source citations. MOCA's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries. The primary interface is the **streaming endpoint**, which delivers results in real time via Server-Sent Events (SSE).
+Ask questions about your documents and get intelligent answers with source citations. Cortex's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries. The primary interface is the **streaming endpoint**, which delivers results in real time via Server-Sent Events (SSE).
 
 ## Frontend UI
 
-In the MOCA frontend, Ask AI is accessed via the **Explore** section with two dedicated tabs:
+In the Cortex frontend, Ask AI is accessed via the **Explore** section with two dedicated tabs:
 
 | Tab | Description | Best For |
 |-----|-------------|----------|
@@ -372,7 +372,7 @@ import httpx
 import json
 
 def ask_stream(base_url: str, api_key: str, question: str, **kwargs):
-    """Stream answers from MOCA's Ask AI endpoint."""
+    """Stream answers from Cortex's Ask AI endpoint."""
     payload = {"question": question, **kwargs}
 
     with httpx.stream(
@@ -517,7 +517,7 @@ Set `ENABLE_AGENT_RESEARCH=false` if your model doesn't support function calling
 
 ## Prompt Security
 
-MOCA includes built-in protection against prompt injection attacks:
+Cortex includes built-in protection against prompt injection attacks:
 
 ```bash
 PROMPT_SECURITY=true

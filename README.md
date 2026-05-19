@@ -1,8 +1,8 @@
 <div align="center">
 
-![MOCA Library](frontend/public/banner.jpg)
+![Cortex](frontend/public/banner.jpg)
 
-# 🧠 MOCA Library
+# 🧠 Cortex
 
 **The Agentic Knowledge Base for the AI Era**
 
@@ -13,20 +13,20 @@
 
 </div>
 
-## 🚀 What is MOCA Library?
+## 🚀 What is Cortex?
 
-In a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight, your knowledge shouldn't be locked into any single system. **MOCA Library** is an agentic knowledge base that ingests your documents and analyzes their contents via LLM-assisted workflows, enabling bleeding-edge understanding of any content you throw at it.
+In a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight, your knowledge shouldn't be locked into any single system. **Cortex** is an agentic knowledge base that ingests your documents and analyzes their contents via LLM-assisted workflows, enabling bleeding-edge understanding of any content you throw at it.
 
 The LLM-driven system automatically extracts entities and builds relationships between them, creating a **scalable knowledge graph** that grows smarter with every document. This graph is exposed via API, ready to be integrated into Q+A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
 
-### 💡 Why MOCA Library?
+### 💡 Why Cortex?
 
 Think of the memory hierarchy in your AI systems:
 - **Context** = Short-term memory
 - **Agent Memory Stack** = Mid-term memory
-- **MOCA Library** = Long-term memory (survives crashes, redeployments, and even framework migrations)
+- **Cortex** = Long-term memory (survives crashes, redeployments, and even framework migrations)
 
-MOCA Library sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph nightly to propagate updated knowledge across all your agents and apps. Every agent—whether prompted or autonomously executing—can selectively pull knowledge from available buckets to better serve itself and your users.
+Cortex sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph nightly to propagate updated knowledge across all your agents and apps. Every agent—whether prompted or autonomously executing—can selectively pull knowledge from available buckets to better serve itself and your users.
 
 The beauty? Your data isn't trapped. When a hot new agent framework drops next month, just wait for an official plugin OR write a migration script and connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
@@ -109,8 +109,8 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 1. **Clone and setup environment**
 
 ```bash
-git clone <your-repo>
-cd moca-neo4j-haystack
+git clone https://github.com/mocaOS/cortex-app.git
+cd cortex-app
 
 # Copy environment template
 cp .env.example .env
@@ -127,13 +127,13 @@ NEO4J_PASSWORD=password123
 # Admin Authentication
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=your-secure-password
-ADMIN_API_KEY=moca_admin_your-secret-key
+ADMIN_API_KEY=cortex_admin_your-secret-key
 SESSION_SECRET=at-least-32-characters-secret
 ```
 
 3. **Configure LLM providers**
 
-MOCA uses LLMs for Q&A, entity extraction, relationship analysis, community summarization, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API). Entity extraction and community summarization use the extraction model, while all relationship work (per-chunk + batch analysis) uses the dedicated relationship model. Fallback chain: relationship model → extraction model → primary model.
+Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community summarization, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API). Entity extraction and community summarization use the extraction model, while all relationship work (per-chunk + batch analysis) uses the dedicated relationship model. Fallback chain: relationship model → extraction model → primary model.
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
@@ -500,7 +500,7 @@ curl -X POST http://localhost:8000/api/ask \
 
 ### Example: Collection-Scoped API Keys (Multi-Tenancy)
 
-Restrict an API key to specific collections so it can only see and write to those collections. One MOCA instance, fully isolated tenants:
+Restrict an API key to specific collections so it can only see and write to those collections. One Cortex instance, fully isolated tenants:
 
 ```bash
 # Create a read-only key for Tenant A scoped to their collection
@@ -515,11 +515,11 @@ curl -X POST http://localhost:8000/api/admin/api-keys \
   }'
 
 # That key can only see its own collection
-curl -H "X-API-Key: moca_ro_..." http://localhost:8000/api/collections
+curl -H "X-API-Key: cortex_ro_..." http://localhost:8000/api/collections
 # → returns only Tenant A's collection
 
 # It gets a 403 for any other collection
-curl -H "X-API-Key: moca_ro_..." http://localhost:8000/api/collections/<tenant-b-id>
+curl -H "X-API-Key: cortex_ro_..." http://localhost:8000/api/collections/<tenant-b-id>
 # → {"detail": "API key does not have permission to view collection: ..."}
 
 # Update collection access on an existing key
@@ -785,8 +785,8 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `NEXT_PUBLIC_API_URL` | Backend API URL | Yes | `http://localhost:8000` |
-| `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | MOCA logo |
-| `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | MOCA theme |
+| `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | Cortex logo |
+| `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | Cortex theme |
 
 #### Compute3 Turbo Mode
 
@@ -966,7 +966,7 @@ The system can automatically detect communities of related entities:
 
 ### Document Deletion & Cleanup
 
-When documents are deleted, MOCA ensures complete cleanup of the knowledge graph:
+When documents are deleted, Cortex ensures complete cleanup of the knowledge graph:
 
 1. **Task Cancellation** - Any active processing tasks for the document are stopped immediately
 2. **Chunk Removal** - All text chunks associated with the document are deleted

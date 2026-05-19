@@ -5,7 +5,7 @@ description: Hybrid search combining vector similarity, keyword matching, and gr
 
 import { Mermaid } from "zudoku/mermaid";
 
-MOCA Library implements **hybrid search** that combines three search methods for optimal results: vector similarity, keyword matching, and knowledge graph traversal.
+Cortex implements **hybrid search** that combines three search methods for optimal results: vector similarity, keyword matching, and knowledge graph traversal.
 
 ## Search Methods
 
@@ -113,7 +113,7 @@ curl -X POST "http://localhost:8000/api/search" \
 
 ## Reciprocal Rank Fusion (RRF)
 
-MOCA uses RRF to combine results from multiple search methods:
+Cortex uses RRF to combine results from multiple search methods:
 
 ```
 RRF_score(d) = Σ 1 / (k + rank(d))

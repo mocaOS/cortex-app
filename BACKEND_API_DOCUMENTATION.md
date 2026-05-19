@@ -1,8 +1,8 @@
-# MOCA Backend API Documentation
+# Cortex Backend API Documentation
 
 ## Overview
 
-MOCA (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combines:
+Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combines:
 - **Document Processing**: PDF, TXT, MD, DOCX, XLSX file upload and processing
 - **GraphRAG**: Entity and relationship extraction from documents using LLM
 - **Semantic Search**: Vector embeddings with hybrid search (vector + keyword + graph)
@@ -1071,14 +1071,14 @@ The API uses **API Key authentication** via the `X-API-Key` header.
 
 ### API Key Format
 
-- Read-only keys: `moca_ro_<64 hex chars>`
-- Read-write keys: `moca_rw_<64 hex chars>`
+- Read-only keys: `cortex_ro_<64 hex chars>`
+- Read-write keys: `cortex_rw_<64 hex chars>`
 - Prefix (first 12 chars) used for lookup
 
 ### Usage Example
 
 ```bash
-curl -H "X-API-Key: moca_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   https://api.example.com/api/ask
 ```
 

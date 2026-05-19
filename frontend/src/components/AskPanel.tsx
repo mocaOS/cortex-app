@@ -36,7 +36,7 @@ interface Message {
 // =========================================================================
 // LocalStorage persistence for collection setting only
 // =========================================================================
-const ASK_SETTINGS_KEY = "moca-ask-collection";
+const ASK_SETTINGS_KEY = "cortex-ask-collection";
 
 interface PersistedSettings {
   selectedCollectionId?: string;

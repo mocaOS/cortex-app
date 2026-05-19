@@ -31,7 +31,7 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
   const [detectionProgress, setDetectionProgress] = useState<TaskProgress | null>(null);
   const [deletingCommunityId, setDeletingCommunityId] = useState<number | null>(null);
 
-  const TASK_STORAGE_KEY = "moca_community_detection_task";
+  const TASK_STORAGE_KEY = "cortex_community_detection_task";
 
   const resumeTaskPolling = async (taskId: string) => {
     setIsDetecting(true);

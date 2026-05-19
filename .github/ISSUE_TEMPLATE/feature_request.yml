@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Describe the feature you'd like to see in MOCA Library.
+        Describe the feature you'd like to see in Cortex.
 
   - type: dropdown
     id: feature-area

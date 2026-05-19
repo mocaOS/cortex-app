@@ -1,7 +1,7 @@
 ---
 name: library
 description: >
-  Sync agent memory files to a Cortex Library knowledge graph for enhanced retrieval,
+  Sync agent memory files to a Cortex knowledge graph for enhanced retrieval,
   hybrid search (vector + keyword + graph), AI-powered Q&A with agentic deep research,
   and knowledge graph exploration.
 license: MIT
@@ -11,7 +11,7 @@ metadata:
   category: knowledge
 ---
 
-# Cortex Library Skill
+# Cortex Skill
 
 This skill has moved to **Cortex Skills**, the official skill registry.
 

@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug or unexpected behavior in MOCA Library
+description: Report a bug or unexpected behavior in Cortex
 title: "[Bug]: "
 labels: ["bug", "triage"]
 body:
@@ -53,7 +53,7 @@ body:
     id: deployment
     attributes:
       label: Deployment Method
-      description: How are you running MOCA Library?
+      description: How are you running Cortex?
       options:
         - Docker Compose (dev)
         - Docker Compose (prod with Nginx)

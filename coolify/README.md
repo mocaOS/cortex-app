@@ -1,6 +1,6 @@
 # Coolify Deployment
 
-This directory contains the Docker Compose configuration for deploying MOCA on [Coolify](https://coolify.io/).
+This directory contains the Docker Compose configuration for deploying Cortex on [Coolify](https://coolify.io/).
 
 ## Magic Variables
 
@@ -72,7 +72,7 @@ Cross-document relationship discovery settings.
 | `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key (default: `false`) | No |
 
 > 💡 **Generating secure values:**
-> - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `moca_admin_`
+> - `ADMIN_API_KEY`: Use `openssl rand -hex 32` prefixed with `cortex_admin_`
 > - `SESSION_SECRET`: Use `openssl rand -hex 32`
 
 > ⚠️ **Do NOT set `NEO4J_USER`** - Neo4j interprets all `NEO4J_*` env vars as config settings, causing startup failures. The username is hardcoded to `neo4j` in the compose file.
@@ -86,8 +86,8 @@ Cross-document relationship discovery settings.
 
 ## What Gets Exposed
 
-- **Frontend**: Main domain (e.g., `moca.yourdomain.com`)
-- **Backend API**: API subdomain (e.g., `api-moca.yourdomain.com`)
+- **Frontend**: Main domain (e.g., `cortex.yourdomain.com`)
+- **Backend API**: API subdomain (e.g., `api-cortex.yourdomain.com`)
 - **Neo4j**: Not exposed externally (internal only)
 
 ## Notes

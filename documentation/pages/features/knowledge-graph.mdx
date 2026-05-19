@@ -5,7 +5,7 @@ description: AI-powered entity extraction, relationships, and graph visualizatio
 
 import { Mermaid } from "zudoku/mermaid";
 
-MOCA automatically builds a knowledge graph from your documents using GraphRAG (Graph Retrieval-Augmented Generation). This enables semantic understanding, relationship discovery, and enhanced search capabilities.
+Cortex automatically builds a knowledge graph from your documents using GraphRAG (Graph Retrieval-Augmented Generation). This enables semantic understanding, relationship discovery, and enhanced search capabilities.
 
 ## What is GraphRAG?
 
@@ -18,7 +18,7 @@ GraphRAG uses Large Language Models to:
 
 ## Two-Phase Extraction Pipeline
 
-MOCA uses a two-phase approach for building the knowledge graph:
+Cortex uses a two-phase approach for building the knowledge graph:
 
 **Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Entity resolution deduplicates entities at storage time using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as a fallback. This merges variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call using the **relationship model** (falls back to extraction model, then primary model) to extract relationships using the chunk text as direct evidence. Entity names in per-chunk relationships are automatically mapped to their canonical (dedup-resolved) names before storage, ensuring relationships reference the correct merged entities. Self-referential relationships (where source and target are the same entity) are automatically filtered out. Per-chunk extraction uses retry with exponential backoff (tenacity, 4 attempts, 2-30s wait) for rate limit errors, and concurrency is controlled by `CONCURRENT_RELATIONS` (default 3). These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 
@@ -52,7 +52,7 @@ flowchart TD
 
 ## Entity Types
 
-MOCA extracts various entity types:
+Cortex extracts various entity types:
 
 | Type | Examples |
 |------|----------|
@@ -229,7 +229,7 @@ curl -X PATCH "http://localhost:8000/api/graph/entity/OpenAI" \
 
 ## Semantic Entity Resolution
 
-MOCA automatically merges entities that refer to the same thing:
+Cortex automatically merges entities that refer to the same thing:
 
 <Mermaid chart={`
 flowchart LR
@@ -252,7 +252,7 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 
 ## Entity Deduplication
 
-While MOCA automatically resolves many duplicates during extraction (via embedding-based semantic matching with Levenshtein 85% fallback), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
+While Cortex automatically resolves many duplicates during extraction (via embedding-based semantic matching with Levenshtein 85% fallback), some near-duplicates may still slip through -- especially across large document sets or when entity names vary in subtle ways (e.g., "Machine Learning" vs "machine learning (ML)"). The Entity Deduplication feature provides tools to find and merge these remaining duplicates.
 
 ### Quick Access from Entities
 
@@ -371,7 +371,7 @@ flowchart TD
 
 ## Graph in Search
 
-During search, MOCA uses the knowledge graph to:
+During search, Cortex uses the knowledge graph to:
 
 1. **Expand queries** - Find related entities
 2. **Traverse relationships** - Discover connected information
@@ -466,7 +466,7 @@ AUTO_COMMUNITY_DETECTION_AFTER_BATCH=true
 
 ## Graph Cleanup
 
-When documents are deleted, MOCA automatically cleans up the knowledge graph:
+When documents are deleted, Cortex automatically cleans up the knowledge graph:
 
 <Mermaid chart={`
 flowchart TD

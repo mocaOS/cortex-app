@@ -148,7 +148,7 @@ MAX_COLLECTIONS=0              # Max collections (0 = unlimited)
 
 ## Collection-Scoped API Keys
 
-You can lock an API key to specific collections so it can only read or write within those collections. This enables true multi-tenancy on a single MOCA instance — each tenant, agent, or application gets its own key scoped to its own data.
+You can lock an API key to specific collections so it can only read or write within those collections. This enables true multi-tenancy on a single Cortex instance — each tenant, agent, or application gets its own key scoped to its own data.
 
 ### Create a Collection-Scoped Key
 

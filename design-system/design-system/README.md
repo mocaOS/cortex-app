@@ -1,8 +1,8 @@
-# MOCA Library — Design System
+# Cortex — Design System
 
-> An agentic, portable knowledge base for the AI era. MOCA Library ingests documents, extracts entities and relationships with LLMs, builds a Neo4j knowledge graph, and exposes it through a REST API + web UI so AI agents and knowledge workers can search, ask, and explore.
+> An agentic, portable knowledge base for the AI era. Cortex ingests documents, extracts entities and relationships with LLMs, builds a Neo4j knowledge graph, and exposes it through a REST API + web UI so AI agents and knowledge workers can search, ask, and explore.
 
-This folder is the single source of truth for MOCA Library's visual language: colors, type, motion, components, and copy. It powers both the product UI and anything brand-adjacent (slides, marketing, mocks, throwaway prototypes).
+This folder is the single source of truth for Cortex's visual language: colors, type, motion, components, and copy. It powers both the product UI and anything brand-adjacent (slides, marketing, mocks, throwaway prototypes).
 
 ---
 
@@ -16,7 +16,7 @@ This folder is the single source of truth for MOCA Library's visual language: co
 - **For two audiences at once.** Technical (engineers wiring up agents to the REST API) and non-technical (analysts dragging PDFs into a graph). The UI is bilingual — same screen, same chrome, different depth.
 
 ### Source material
-- Repo: **mocaOS/library** (read via GitHub on demand)
+- Repo: **mocaOS/cortex-app** (read via GitHub on demand)
 - Fonts (uploaded): `InterVariable.ttf`, `InterVariable-Italic.ttf`, `JetBrainsMono[wght].ttf`, `JetBrainsMono-Italic[wght].ttf` — copied into `fonts/`
 - Brand brief from the user (accent color, glass morphism, motion rules) — captured verbatim in the Visual Foundations section below.
 
@@ -33,16 +33,16 @@ This folder is the single source of truth for MOCA Library's visual language: co
 | `fonts/` | Inter + JetBrains Mono variable TTFs |
 | `assets/` | Logos, brand marks, shipped imagery |
 | `preview/*.html` | Small cards that populate the Design System tab |
-| `ui_kits/library/` | MOCA Library web app — pixel-faithful UI recreation with interactive screens |
+| `ui_kits/library/` | Cortex web app — pixel-faithful UI recreation with interactive screens |
 | `reference/MASTER.md` | Raw research notes pulled from the repo (not canonical — treat as scratch) |
 
 ---
 
 ## Content fundamentals
 
-**Voice: confident, technical, lowercase-friendly, no hype.** MOCA Library talks to people who ship. It doesn't explain what an LLM is; it tells you what it did with yours.
+**Voice: confident, technical, lowercase-friendly, no hype.** Cortex talks to people who ship. It doesn't explain what an LLM is; it tells you what it did with yours.
 
-- **Casing.** Sentence case everywhere — buttons, headings, nav. Title case only in legal/proper nouns ("Neo4j", "MOCA Library"). ALL CAPS is reserved for small eyebrow labels (`SECTION LABEL`, letter-spacing +0.06em).
+- **Casing.** Sentence case everywhere — buttons, headings, nav. Title case only in legal/proper nouns ("Neo4j", "Cortex"). ALL CAPS is reserved for small eyebrow labels (`SECTION LABEL`, letter-spacing +0.06em).
 - **Person.** "You" for the operator. "It" / "the graph" / "the library" for the system — never "we" or "our AI". The product is a tool, not a colleague.
 - **Tense.** Past for completed work ("Extracted 142 entities from 3 docs"), present for state ("2 jobs running"), imperative for actions ("Ingest", "Ask", "Pin to canvas").
 - **Numbers.** Always precise. `27,501 entities`. `€14.2M`. `3 sources`. Never "a lot" or "many". The product's whole value prop is provenance, so the copy matches.
@@ -172,7 +172,7 @@ Framer Motion. **Animation communicates state changes or spatial relationships �
 
 ## Caveats & flags
 
-- **No color tokens pulled from the repo yet** — OKLCh values are computed from the user's brief. Treat them as canonical until the `mocaOS/library` repo token file confirms/overrides.
+- **No color tokens pulled from the repo yet** — OKLCh values are computed from the user's brief. Treat them as canonical until the `mocaOS/cortex-app` repo token file confirms/overrides.
 - **Fonts:** the user uploaded Inter Variable + JetBrains Mono Variable (both Italic & Roman). No substitutions needed.
 - **Iconography is CDN-linked (Lucide).** If the repo ships an icon sprite, swap to that when building production code.
 

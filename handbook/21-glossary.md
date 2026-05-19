@@ -9,7 +9,7 @@
 | **Community** | A cluster of related entities detected by graph algorithms (Leiden/Louvain), with an LLM-generated name and summary. Communities provide high-level thematic context for search. |
 | **Community Detection** | Step 3 of the Knowledge Graph pipeline. Uses the Leiden algorithm (preferred) to discover groups of tightly connected entities. |
 | **Compute3** | A distributed GPU compute platform used by Turbo Mode. Provides dedicated H100/A100 GPUs running vLLM for accelerated inference. |
-| **Cortex** | MOCA's managed Agent as a Service platform. The Library is its core knowledge engine. Available as both a managed cloud service and self-hosted open-source deployment. |
+| **Cortex** | MOCA's managed Agent as a Service platform and the open-source knowledge engine at its core. Available as both a managed cloud service and self-hosted open-source deployment. |
 | **Cross-Encoder** | A re-ranking model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) that evaluates (query, document) pairs directly for improved search precision. Applied after RRF fusion. |
 | **DETACH DELETE** | A Neo4j Cypher operation that deletes nodes and all their relationships. Used for entity and document cleanup. |
 | **Docling** | The document conversion engine used by the Library to extract text and images from PDF, Word, PowerPoint, Excel, HTML, and other file formats. |

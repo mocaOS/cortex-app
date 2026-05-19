@@ -1,4 +1,4 @@
-/* MOCA Library — UI Kit shared styles */
+/* Cortex — UI Kit shared styles */
 :root { color-scheme: dark; }
 html, body { height: 100%; }
 body {
@@ -87,18 +87,18 @@ body {
 .icon-xl { width: 24px; height: 24px; }
 
 /* Entrance anim — opt-in only. Uses none as fallback so hidden tabs still show content.
-   Avoid using .moca-in on initial-render critical content; use it only for state-change reveals. */
-@keyframes moca-in {
+   Avoid using .cortex-in on initial-render critical content; use it only for state-change reveals. */
+@keyframes cortex-in {
   0%   { opacity: 0; transform: translateY(10px); }
   100% { opacity: 1; transform: translateY(0); }
 }
-@keyframes moca-pulse {
+@keyframes cortex-pulse {
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
   40%           { opacity: 1;   transform: scale(1); }
 }
-.moca-in {
-  animation: moca-in 320ms var(--ease-out) both;
+.cortex-in {
+  animation: cortex-in 320ms var(--ease-out) both;
 }
 @media (prefers-reduced-motion: reduce) {
-  .moca-in { animation: none; }
+  .cortex-in { animation: none; }
 }

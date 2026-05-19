@@ -26,7 +26,7 @@ The handbook contains 21 chapters (`01-introduction.md` through `21-glossary.md`
 When making changes that affect the project overview, features, API endpoints, environment variables, architecture, or setup instructions, update `README.md` accordingly.
 
 ### `design-system/` — Visual Design
-When making global design changes (color tokens, typography, spacing scale, animation defaults, new component patterns, or glass morphism treatment), update `design-system/moca-cortex/MASTER.md`, `tokens.css`, and `tailwind.preset.ts` accordingly. For page-specific design changes, update or create the corresponding `design-system/moca-cortex/pages/<page>.md` override. See [`.claude/design-system.md`](design-system.md).
+When making global design changes (color tokens, typography, spacing scale, animation defaults, new component patterns, or glass morphism treatment), update `design-system/MASTER.md`, `tokens.css`, and `tailwind.preset.ts` accordingly. For page-specific design changes, update or create the corresponding `design-system/pages/<page>.md` override. See [`.claude/design-system.md`](design-system.md).
 
 ### `.claude/` — This Handbook (Claude Code Context)
 When changes affect the architecture, domain logic, key patterns, environment variables, or development/deployment instructions:

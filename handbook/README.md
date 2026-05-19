@@ -1,4 +1,4 @@
-# Cortex Library Handbook
+# Cortex Handbook
 
 **The Complete Guide for Administrators and End Users**
 
@@ -8,10 +8,10 @@
 
 ## About This Handbook
 
-This handbook is the definitive guide to the Cortex Library — the knowledge graph engine at the heart of MOCA's Cortex Agent as a Service platform. It is designed for two audiences:
+This handbook is the definitive guide to Cortex — the knowledge graph engine at the heart of MOCA's Cortex Agent as a Service platform. It is designed for two audiences:
 
-- **Administrators** who deploy, configure, secure, and maintain a self-hosted Cortex Library instance
-- **End Users** who interact with the Library through its web interface or REST API to manage documents, explore knowledge graphs, search, and build AI-powered applications
+- **Administrators** who deploy, configure, secure, and maintain a self-hosted Cortex instance
+- **End Users** who interact with Cortex through its web interface or REST API to manage documents, explore knowledge graphs, search, and build AI-powered applications
 
 ## Table of Contents
 
@@ -52,7 +52,7 @@ This handbook is the definitive guide to the Cortex Library — the knowledge gr
 
 - **Technical Documentation**: The `documentation/` directory contains the full Zudoku-based docs site with OpenAPI specs
 - **OpenAPI Specification**: Available at `/docs` (Swagger UI) and `/redoc` (ReDoc) on any running instance
-- **Design System**: The `design-system/moca-cortex/` directory contains the portable design tokens
+- **Design System**: The `design-system/` directory contains the portable design tokens
 - **Follow MOCA**: [x.com/MuseumofCrypto](https://x.com/MuseumofCrypto)
 
 ---

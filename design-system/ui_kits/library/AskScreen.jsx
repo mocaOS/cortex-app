@@ -1,4 +1,4 @@
-// MOCA Library — Ask screen (source-attributed Q&A)
+// Cortex — Ask screen (source-attributed Q&A)
 
 const askStyles = {
   wrap: {
@@ -98,7 +98,7 @@ const askStyles = {
   dot: (delay) => ({
     width: 6, height: 6, borderRadius: "50%",
     background: "var(--accent)",
-    animation: `moca-pulse 1.2s ${delay}s infinite ease-in-out`,
+    animation: `cortex-pulse 1.2s ${delay}s infinite ease-in-out`,
   }),
 };
 

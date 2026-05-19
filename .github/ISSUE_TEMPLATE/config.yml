@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security Vulnerability
-    url: https://github.com/mocaOS/library/security/advisories/new
+    url: https://github.com/mocaOS/cortex-app/security/advisories/new
     about: Report a security vulnerability through GitHub's private advisory system
   - name: Documentation
-    url: https://github.com/mocaOS/library/tree/main/documentation
+    url: https://github.com/mocaOS/cortex-app/tree/main/documentation
     about: Browse the documentation site source
   - name: Discussions
-    url: https://github.com/mocaOS/library/discussions
+    url: https://github.com/mocaOS/cortex-app/discussions
     about: Ask questions or share ideas in Discussions

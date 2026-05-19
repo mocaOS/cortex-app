@@ -1,9 +1,9 @@
 ---
 title: Data Import/Export
-description: Export and import your entire MOCA Library including documents, knowledge graph, and embeddings
+description: Export and import your entire Cortex including documents, knowledge graph, and embeddings
 ---
 
-MOCA Library supports full instance migration through its library import/export feature. Export your entire knowledge base — documents, entities, relationships, communities, embeddings, and all graph data — as a portable ZIP archive, then import it into another instance without re-running the expensive knowledge graph generation pipeline.
+Cortex supports full instance migration through its library import/export feature. Export your entire knowledge base — documents, entities, relationships, communities, embeddings, and all graph data — as a portable ZIP archive, then import it into another instance without re-running the expensive knowledge graph generation pipeline.
 
 ## Overview
 
@@ -82,12 +82,12 @@ curl -OJ http://localhost:8000/api/admin/export/task_abc123def456/download \
 # Clean import (target must be empty)
 curl -X POST "http://localhost:8000/api/admin/import?mode=clean" \
   -H "X-API-Key: your-admin-key" \
-  -F "file=@moca-library-export-2026-03-27.zip"
+  -F "file=@cortex-export-2026-03-27.zip"
 
 # Replace import (auto-wipes existing data)
 curl -X POST "http://localhost:8000/api/admin/import?mode=replace" \
   -H "X-API-Key: your-admin-key" \
-  -F "file=@moca-library-export-2026-03-27.zip"
+  -F "file=@cortex-export-2026-03-27.zip"
 ```
 
 Response:
@@ -110,7 +110,7 @@ curl http://localhost:8000/api/tasks/task_789xyz \
 The export is a ZIP64 archive using NDJSON (newline-delimited JSON) for efficient streaming:
 
 ```
-moca-library-export-YYYY-MM-DD.zip
+cortex-export-YYYY-MM-DD.zip
 ├── manifest.json              # Version, date, embedding model/dimension, counts
 ├── documents.ndjson           # Document metadata and properties
 ├── chunks.ndjson              # Text chunks with vector embeddings

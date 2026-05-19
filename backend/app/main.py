@@ -1,4 +1,4 @@
-"""MOCA Knowledge Base - FastAPI Backend."""
+"""Cortex - FastAPI Backend."""
 
 import os
 import logging
@@ -222,7 +222,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="MOCA Knowledge Base",
+    title="Cortex",
     description="A Neo4j + Haystack powered GraphRAG knowledge base with entity extraction, knowledge graph construction, and semantic search",
     version="2.0.0",
     lifespan=lifespan
@@ -4446,8 +4446,8 @@ async def start_library_export(
     transfer = get_library_transfer_service()
 
     task = create_task("library_export")
-    export_dir = _tempfile.mkdtemp(prefix="moca_export_")
-    export_path = os.path.join(export_dir, f"moca-library-export-{datetime.utcnow().strftime('%Y-%m-%d')}.zip")
+    export_dir = _tempfile.mkdtemp(prefix="cortex_export_")
+    export_path = os.path.join(export_dir, f"cortex-export-{datetime.utcnow().strftime('%Y-%m-%d')}.zip")
 
     background_tasks.add_task(
         transfer.export_library,
@@ -4517,7 +4517,7 @@ async def start_library_import(
             )
 
     # Save uploaded file to temp location
-    tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="moca_import_")
+    tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="cortex_import_")
     try:
         with os.fdopen(tmp_fd, "wb") as tmp_file:
             while True:

@@ -1,4 +1,4 @@
-// MOCA Library — Manage screen (dashboard + document list)
+// Cortex — Manage screen (dashboard + document list)
 
 const manageStyles = {
   wrap: { padding: "24px 28px 48px", maxWidth: 1280, margin: "0 auto" },

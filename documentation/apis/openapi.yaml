@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: MOCA Library API
+  title: Cortex API
   description: |
-    The MOCA Library API provides endpoints for document management, semantic search, 
+    The Cortex API provides endpoints for document management, semantic search, 
     AI-powered Q&A, knowledge graph operations, and more.
 
     ## Authentication
@@ -14,8 +14,8 @@ info:
 
   version: 1.0.0
   contact:
-    name: MOCA Library
-    url: https://github.com/mocaOS/library
+    name: Cortex
+    url: https://github.com/mocaOS/cortex-app
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT

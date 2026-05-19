@@ -1,9 +1,9 @@
 ---
 title: Python Examples
-description: Complete Python code examples for the MOCA Library API
+description: Complete Python code examples for the Cortex API
 ---
 
-Complete Python examples for interacting with the MOCA Library API, including a reusable client class and common operations.
+Complete Python examples for interacting with the Cortex API, including a reusable client class and common operations.
 
 ## Setup
 
@@ -13,28 +13,28 @@ Install the required library:
 pip install requests
 ```
 
-## MOCA Client Class
+## Cortex Client Class
 
 A reusable client wrapper for all API operations:
 
 ```python
-"""MOCA Library Python Client"""
+"""Cortex Python Client"""
 
 import requests
 from typing import Optional, Dict, Any, List, Iterator
 from pathlib import Path
 
 
-class MOCAClient:
-    """Client for the MOCA Library API."""
+class CortexClient:
+    """Client for the Cortex API."""
     
     def __init__(self, base_url: str, api_key: str):
         """
-        Initialize the MOCA client.
+        Initialize the Cortex client.
         
         Args:
             base_url: The API base URL (e.g., "http://localhost:8000")
-            api_key: Your MOCA API key
+            api_key: Your Cortex API key
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
@@ -314,7 +314,7 @@ class MOCAClient:
 
 ```python
 # Initialize the client
-client = MOCAClient(
+client = CortexClient(
     base_url="http://localhost:8000",
     api_key="your-api-key"
 )
@@ -443,12 +443,12 @@ except HTTPError as e:
 #!/usr/bin/env python3
 """Example: Upload documents and ask questions."""
 
-from moca_client import MOCAClient
+from cortex_client import CortexClient
 import sys
 
 def main():
     # Initialize client
-    client = MOCAClient(
+    client = CortexClient(
         base_url="http://localhost:8000",
         api_key="your-api-key"
     )

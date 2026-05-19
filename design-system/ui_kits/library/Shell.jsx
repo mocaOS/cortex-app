@@ -1,4 +1,4 @@
-// MOCA Library — Shell (Sidebar + Topbar + AppShell wrapper)
+// Cortex — Shell (Sidebar + Topbar + AppShell wrapper)
 
 const shellStyles = {
   sidebar: {
@@ -113,7 +113,7 @@ const shellStyles = {
   },
 };
 
-// Main navigation — mirrors the real MOCA Library app IA
+// Main navigation — mirrors the real Cortex app IA
 const NAV_LIBRARY = [
   { id: "documents",     icon: "FileText", label: "Documents", count: "1,284" },
   { id: "graph",         icon: "Network",  label: "Knowledge Graph" },
@@ -156,7 +156,7 @@ function Sidebar({ route, onRoute, collection, onCollection }) {
   return (
     <aside className="sidebar" style={shellStyles.sidebar}>
       <div style={shellStyles.logoRow}>
-        <img src="../../assets/logo.svg" alt="MOCA Library" style={shellStyles.logoImg} />
+        <img src="../../assets/logo.svg" alt="Cortex" style={shellStyles.logoImg} />
       </div>
 
       <div style={shellStyles.section}>Library</div>

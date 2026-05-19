@@ -5,7 +5,7 @@ description: Automatic detection of document clusters and theme summarization
 
 import { Mermaid } from "zudoku/mermaid";
 
-MOCA automatically detects **communities** - clusters of related documents and entities that share common themes. This enables topic discovery, document organization, and focused Q&A.
+Cortex automatically detects **communities** - clusters of related documents and entities that share common themes. This enables topic discovery, document organization, and focused Q&A.
 
 ## What Are Communities?
 
@@ -45,7 +45,7 @@ graph TB
 
 ## Detection Algorithm
 
-MOCA uses **Leiden** (preferred) or **Louvain** algorithm for community detection, with a BFS fallback when GDS is unavailable:
+Cortex uses **Leiden** (preferred) or **Louvain** algorithm for community detection, with a BFS fallback when GDS is unavailable:
 
 <Mermaid chart={`
 flowchart TD

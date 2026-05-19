@@ -4,7 +4,7 @@
 
 Cortex is the managed, API-first Knowledge Graph System at the heart of MOCA's (The Museum of Crypto Art) Agent as a Service platform. It transforms your documents into intelligent, queryable knowledge — the persistent memory layer for AI agents, applications, and teams.
 
-At its core sits the **MOCA Library**, an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 60+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
+**Cortex** is an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 60+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
 
 Cortex is designed for a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight. Your knowledge shouldn't be locked into any single system. The beauty of Cortex is that your data isn't trapped — when a hot new agent framework drops next month, just connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
@@ -50,7 +50,7 @@ A growing marketplace of integrations that extend the Library's capabilities:
 
 ## Deployment Options
 
-The Library is available in two forms:
+Cortex is available in two forms:
 
 | Option | Best For | Features |
 |--------|----------|----------|

@@ -55,7 +55,7 @@ export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
       // Clear client-side cached data tied to the knowledge graph
       if (request.delete_documents) {
         localStorage.removeItem("dedup_dismissed");
-        localStorage.removeItem("moca_community_detection_task");
+        localStorage.removeItem("cortex_community_detection_task");
         sessionStorage.removeItem("regenerateStep");
         sessionStorage.removeItem("regenerateStartedAt");
         sessionStorage.removeItem("regenerateTaskId");

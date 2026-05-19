@@ -1,38 +1,38 @@
 ---
 title: Integration Examples
-description: Integrate MOCA Library with popular frameworks, tools, and platforms
+description: Integrate Cortex with popular frameworks, tools, and platforms
 ---
 
-Examples for integrating MOCA Library with popular frameworks, AI tools, and automation platforms.
+Examples for integrating Cortex with popular frameworks, AI tools, and automation platforms.
 
 ## Next.js / React Integration
 
 ### API Route Handler
 
-Create a backend route to proxy requests to MOCA:
+Create a backend route to proxy requests to Cortex:
 
 ```typescript
 // app/api/search/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-const MOCA_URL = process.env.MOCA_API_URL!;
-const MOCA_KEY = process.env.MOCA_API_KEY!;
+const CORTEX_URL = process.env.CORTEX_API_URL!;
+const CORTEX_KEY = process.env.CORTEX_API_KEY!;
 
 export async function POST(request: NextRequest) {
   try {
     const { query, limit = 10 } = await request.json();
     
-    const response = await fetch(`${MOCA_URL}/api/search`, {
+    const response = await fetch(`${CORTEX_URL}/api/search`, {
       method: 'POST',
       headers: {
-        'X-API-Key': MOCA_KEY,
+        'X-API-Key': CORTEX_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query, limit }),
     });
     
     if (!response.ok) {
-      throw new Error(`MOCA API error: ${response.status}`);
+      throw new Error(`Cortex API error: ${response.status}`);
     }
     
     const data = await response.json();
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
 ### React Hook
 
 ```typescript
-// hooks/useMOCA.ts
+// hooks/useCortex.ts
 import { useState, useCallback } from 'react';
 
 interface SearchResult {
@@ -65,7 +65,7 @@ interface SearchResponse {
   total: number;
 }
 
-export function useMOCASearch() {
+export function useCortexSearch() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +97,7 @@ export function useMOCASearch() {
 
 // Usage in component
 function SearchComponent() {
-  const { search, results, loading, error } = useMOCASearch();
+  const { search, results, loading, error } = useCortexSearch();
   const [query, setQuery] = useState('');
 
   return (
@@ -129,12 +129,12 @@ function SearchComponent() {
 ### Streaming Chat Component
 
 ```typescript
-// components/ChatWithMOCA.tsx
+// components/ChatWithCortex.tsx
 'use client';
 
 import { useState, useRef } from 'react';
 
-export function ChatWithMOCA() {
+export function ChatWithCortex() {
   const [messages, setMessages] = useState<Array<{role: string, content: string}>>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -220,8 +220,8 @@ from typing import List
 import requests
 
 
-class MOCARetriever(BaseRetriever):
-    """LangChain retriever that uses MOCA Library for search."""
+class CortexRetriever(BaseRetriever):
+    """LangChain retriever that uses Cortex for search."""
     
     base_url: str
     api_key: str
@@ -232,7 +232,7 @@ class MOCARetriever(BaseRetriever):
         arbitrary_types_allowed = True
     
     def _get_relevant_documents(self, query: str) -> List[Document]:
-        """Retrieve relevant documents from MOCA."""
+        """Retrieve relevant documents from Cortex."""
         response = requests.post(
             f"{self.base_url}/api/search",
             headers={"X-API-Key": self.api_key},
@@ -262,7 +262,7 @@ class MOCARetriever(BaseRetriever):
 from langchain.chains import RetrievalQA
 from langchain.chat_models import ChatOpenAI
 
-retriever = MOCARetriever(
+retriever = CortexRetriever(
     base_url="http://localhost:8000",
     api_key="your-key",
     collection_id="research",
@@ -287,8 +287,8 @@ from langchain.tools import Tool
 import requests
 
 
-def moca_search(query: str) -> str:
-    """Search the MOCA knowledge base."""
+def cortex_search(query: str) -> str:
+    """Search the Cortex knowledge base."""
     response = requests.post(
         "http://localhost:8000/api/search",
         headers={"X-API-Key": "your-key"},
@@ -301,9 +301,9 @@ def moca_search(query: str) -> str:
     ])
 
 
-moca_tool = Tool(
-    name="MOCA Search",
-    func=moca_search,
+cortex_tool = Tool(
+    name="Cortex Search",
+    func=cortex_search,
     description="Search the company knowledge base for information about products, processes, and documentation."
 )
 
@@ -312,7 +312,7 @@ from langchain.agents import initialize_agent, AgentType
 from langchain.chat_models import ChatOpenAI
 
 agent = initialize_agent(
-    tools=[moca_tool],
+    tools=[cortex_tool],
     llm=ChatOpenAI(model="gpt-4o-mini"),
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION
 )
@@ -332,8 +332,8 @@ import os
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
-MOCA_URL = os.environ["MOCA_API_URL"]
-MOCA_KEY = os.environ["MOCA_API_KEY"]
+CORTEX_URL = os.environ["CORTEX_API_URL"]
+CORTEX_KEY = os.environ["CORTEX_API_KEY"]
 
 
 @app.command("/ask")
@@ -350,8 +350,8 @@ def handle_ask(ack, respond, command):
     
     try:
         response = requests.post(
-            f"{MOCA_URL}/api/ask",
-            headers={"X-API-Key": MOCA_KEY},
+            f"{CORTEX_URL}/api/ask",
+            headers={"X-API-Key": CORTEX_KEY},
             json={"query": question}
         )
         response.raise_for_status()
@@ -398,8 +398,8 @@ def handle_search(ack, respond, command):
     
     try:
         response = requests.post(
-            f"{MOCA_URL}/api/search",
-            headers={"X-API-Key": MOCA_KEY},
+            f"{CORTEX_URL}/api/search",
+            headers={"X-API-Key": CORTEX_KEY},
             json={"query": query, "limit": 5}
         )
         response.raise_for_status()
@@ -449,7 +449,7 @@ if __name__ == "__main__":
 Set a webhook URL to receive notifications:
 
 ```bash
-WEBHOOK_URL=https://your-app.com/webhooks/moca
+WEBHOOK_URL=https://your-app.com/webhooks/cortex
 ```
 
 ### Webhook Handler (Flask)
@@ -473,11 +473,11 @@ def verify_signature(payload: bytes, signature: str) -> bool:
     return hmac.compare_digest(f"sha256={expected}", signature)
 
 
-@app.route('/webhooks/moca', methods=['POST'])
+@app.route('/webhooks/cortex', methods=['POST'])
 def handle_webhook():
-    """Handle MOCA webhooks."""
+    """Handle Cortex webhooks."""
     # Verify signature
-    signature = request.headers.get('X-MOCA-Signature', '')
+    signature = request.headers.get('X-Cortex-Signature', '')
     if not verify_signature(request.data, signature):
         return jsonify({"error": "Invalid signature"}), 401
     
@@ -517,11 +517,11 @@ if __name__ == "__main__":
 Configure an HTTP Request node in n8n:
 
 **Method:** POST  
-**URL:** `{{$env.MOCA_URL}}/api/ask`  
+**URL:** `{{$env.CORTEX_URL}}/api/ask`  
 **Headers:**
 ```json
 {
-  "X-API-Key": "{{$env.MOCA_API_KEY}}",
+  "X-API-Key": "{{$env.CORTEX_API_KEY}}",
   "Content-Type": "application/json"
 }
 ```
@@ -535,7 +535,7 @@ Configure an HTTP Request node in n8n:
 ### Example n8n Workflow
 
 1. **Webhook Trigger** - Receive incoming questions
-2. **HTTP Request** - Call MOCA API
+2. **HTTP Request** - Call Cortex API
 3. **Set Node** - Format the response
 4. **Respond to Webhook** - Return the answer
 
@@ -543,7 +543,7 @@ Configure an HTTP Request node in n8n:
 
 ## Zapier Integration
 
-Use Zapier's Webhooks to integrate with MOCA:
+Use Zapier's Webhooks to integrate with Cortex:
 
 1. **Trigger:** New row in Google Sheets
 2. **Action:** Webhooks by Zapier → POST

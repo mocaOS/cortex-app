@@ -110,9 +110,9 @@ When an API request arrives:
 
 ### Key Generation
 
-Generated keys follow this format: `moca_` + 64 random hex characters
+Generated keys follow this format: `cortex_` + 64 random hex characters
 
-Example: `moca_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0`
+Example: `cortex_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0`
 
 Only the first 12 characters (prefix) and a SHA-256 hash of the full key are stored. The full key is returned **only once** at creation time — it cannot be retrieved later.
 

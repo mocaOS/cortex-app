@@ -1,17 +1,17 @@
 ---
 title: cURL Examples
-description: Command-line examples using cURL for all MOCA Library API operations
+description: Command-line examples using cURL for all Cortex API operations
 ---
 
-Complete cURL examples for all major MOCA Library API operations. These examples are ready to copy and paste.
+Complete cURL examples for all major Cortex API operations. These examples are ready to copy and paste.
 
 ## Setup
 
 Set your API configuration as environment variables:
 
 ```bash
-export MOCA_URL="http://localhost:8000"
-export MOCA_API_KEY="your-api-key"
+export CORTEX_URL="http://localhost:8000"
+export CORTEX_API_KEY="your-api-key"
 ```
 
 ## Health & Statistics
@@ -19,14 +19,14 @@ export MOCA_API_KEY="your-api-key"
 ### Health Check
 
 ```bash
-curl "$MOCA_URL/health"
+curl "$CORTEX_URL/health"
 ```
 
 ### Get Statistics
 
 ```bash
-curl "$MOCA_URL/api/stats" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/stats" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ---
@@ -37,8 +37,8 @@ curl "$MOCA_URL/api/stats" \
 
 ```bash
 # collection_id and start_processing are query parameters
-curl -X POST "$MOCA_URL/api/upload?collection_id=default&start_processing=true" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/upload?collection_id=default&start_processing=true" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -F "file=@document.pdf"
 ```
 
@@ -46,58 +46,58 @@ curl -X POST "$MOCA_URL/api/upload?collection_id=default&start_processing=true" 
 
 ```bash
 # start_processing is a query parameter
-curl -X POST "$MOCA_URL/api/upload?start_processing=false" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/upload?start_processing=false" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -F "file=@document.pdf"
 ```
 
 ### Process Pending Documents
 
 ```bash
-curl -X POST "$MOCA_URL/api/documents/process-pending" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X POST "$CORTEX_URL/api/documents/process-pending" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### List Documents
 
 ```bash
-curl "$MOCA_URL/api/documents" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/documents" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### List Documents in a Collection
 
 ```bash
-curl "$MOCA_URL/api/documents?collection_id=research" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/documents?collection_id=research" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Get Document Details
 
 ```bash
-curl "$MOCA_URL/api/documents/doc_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/documents/doc_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Delete a Document
 
 ```bash
-curl -X DELETE "$MOCA_URL/api/documents/doc_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X DELETE "$CORTEX_URL/api/documents/doc_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Reprocess a Document
 
 ```bash
-curl -X POST "$MOCA_URL/api/documents/doc_abc123/reprocess" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X POST "$CORTEX_URL/api/documents/doc_abc123/reprocess" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Bulk Delete
 
 ```bash
-curl -X POST "$MOCA_URL/api/documents/delete" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/documents/delete" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"document_ids": ["doc_1", "doc_2", "doc_3"]}'
 ```
@@ -109,35 +109,35 @@ curl -X POST "$MOCA_URL/api/documents/delete" \
 ### Add Q&A Pair
 
 ```bash
-curl -X POST "$MOCA_URL/api/custom-input" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/custom-input" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "qa",
     "title": "FAQ Entry",
-    "question": "What is MOCA?",
-    "answer": "MOCA is an agentic knowledge base."
+    "question": "What is Cortex?",
+    "answer": "Cortex is an agentic knowledge base."
   }'
 ```
 
 ### Add Plain Text
 
 ```bash
-curl -X POST "$MOCA_URL/api/custom-input" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/custom-input" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "text",
     "title": "Company Info",
-    "content": "MOCA Library is a powerful knowledge management system..."
+    "content": "Cortex is a powerful knowledge management system..."
   }'
 ```
 
 ### Add Markdown
 
 ```bash
-curl -X POST "$MOCA_URL/api/custom-input" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/custom-input" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "markdown",
@@ -153,8 +153,8 @@ curl -X POST "$MOCA_URL/api/custom-input" \
 ### Basic Search
 
 ```bash
-curl -X POST "$MOCA_URL/api/search" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/search" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "machine learning", "limit": 10}'
 ```
@@ -162,8 +162,8 @@ curl -X POST "$MOCA_URL/api/search" \
 ### Hybrid Search
 
 ```bash
-curl -X POST "$MOCA_URL/api/search" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/search" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "neural networks",
@@ -175,8 +175,8 @@ curl -X POST "$MOCA_URL/api/search" \
 ### Search in Collection
 
 ```bash
-curl -X POST "$MOCA_URL/api/search" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/search" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "transformer architecture",
@@ -188,8 +188,8 @@ curl -X POST "$MOCA_URL/api/search" \
 ### Vector-Only Search
 
 ```bash
-curl -X POST "$MOCA_URL/api/search" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/search" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "semantic similarity concepts",
@@ -204,8 +204,8 @@ curl -X POST "$MOCA_URL/api/search" \
 ### Ask a Question
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "What are the main findings?"}' \
   --no-buffer
@@ -214,8 +214,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### Ask About a Collection
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "Summarize the key points",
@@ -226,8 +226,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### Fast Mode
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What is the company mission?",
@@ -238,8 +238,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### Streaming Response
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"question": "Explain GraphRAG in detail"}' \
   --no-buffer
@@ -248,8 +248,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### Deep Research (Agentic) Mode
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "Compare the methodologies in papers A and B",
@@ -260,8 +260,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### With Conversation History
 
 ```bash
-curl -X POST "$MOCA_URL/api/ask/stream" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/ask/stream" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "Can you elaborate on the third point?",
@@ -279,8 +279,8 @@ curl -X POST "$MOCA_URL/api/ask/stream" \
 ### Create Collection
 
 ```bash
-curl -X POST "$MOCA_URL/api/collections" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/collections" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Research Papers",
@@ -291,22 +291,22 @@ curl -X POST "$MOCA_URL/api/collections" \
 ### List Collections
 
 ```bash
-curl "$MOCA_URL/api/collections" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/collections" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Get Collection Details
 
 ```bash
-curl "$MOCA_URL/api/collections/coll_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Update Collection
 
 ```bash
-curl -X PUT "$MOCA_URL/api/collections/coll_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X PUT "$CORTEX_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Updated Name",
@@ -317,15 +317,15 @@ curl -X PUT "$MOCA_URL/api/collections/coll_abc123" \
 ### Delete Collection
 
 ```bash
-curl -X DELETE "$MOCA_URL/api/collections/coll_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X DELETE "$CORTEX_URL/api/collections/coll_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Move Documents
 
 ```bash
-curl -X POST "$MOCA_URL/api/documents/move" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/documents/move" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "document_ids": ["doc_1", "doc_2"],
@@ -340,29 +340,29 @@ curl -X POST "$MOCA_URL/api/documents/move" \
 ### Get Graph Visualization
 
 ```bash
-curl "$MOCA_URL/api/graph/visualization" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/graph/visualization" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Search Entities
 
 ```bash
-curl "$MOCA_URL/api/graph/entities?search=neural&limit=20" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/graph/entities?search=neural&limit=20" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Get Entity Details
 
 ```bash
-curl "$MOCA_URL/api/graph/entities/ent_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/graph/entities/ent_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Get Subgraph
 
 ```bash
-curl -X POST "$MOCA_URL/api/graph/subgraph" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/graph/subgraph" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "entity_name": "Machine Learning",
@@ -374,15 +374,15 @@ curl -X POST "$MOCA_URL/api/graph/subgraph" \
 ### Find Duplicate Entities
 
 ```bash
-curl "$MOCA_URL/api/entities/duplicates?threshold=0.85&limit=50" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/entities/duplicates?threshold=0.85&limit=50" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Merge Duplicate Entities
 
 ```bash
-curl -X POST "$MOCA_URL/api/entities/merge" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/entities/merge" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "canonical": "Machine Learning",
@@ -393,15 +393,15 @@ curl -X POST "$MOCA_URL/api/entities/merge" \
 ### View Merge History
 
 ```bash
-curl "$MOCA_URL/api/entities/merge-history?limit=20" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/entities/merge-history?limit=20" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Delete All Entities
 
 ```bash
-curl -X DELETE "$MOCA_URL/api/graph/entities" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X DELETE "$CORTEX_URL/api/graph/entities" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ---
@@ -411,8 +411,8 @@ curl -X DELETE "$MOCA_URL/api/graph/entities" \
 ### Detect Communities
 
 ```bash
-curl -X POST "$MOCA_URL/api/graph/communities/detect" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/graph/communities/detect" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"min_community_size": 3}'
 ```
@@ -420,22 +420,22 @@ curl -X POST "$MOCA_URL/api/graph/communities/detect" \
 ### List Communities
 
 ```bash
-curl "$MOCA_URL/api/graph/communities" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/graph/communities" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Get Community Details
 
 ```bash
-curl "$MOCA_URL/api/graph/communities/comm_1" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/graph/communities/comm_1" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Summarize Community
 
 ```bash
-curl -X POST "$MOCA_URL/api/graph/communities/comm_1/summarize" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X POST "$CORTEX_URL/api/graph/communities/comm_1/summarize" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ---
@@ -445,22 +445,22 @@ curl -X POST "$MOCA_URL/api/graph/communities/comm_1/summarize" \
 ### Get Task Status
 
 ```bash
-curl "$MOCA_URL/api/tasks/task_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/tasks/task_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### List Tasks
 
 ```bash
-curl "$MOCA_URL/api/tasks" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/tasks" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Cancel Task
 
 ```bash
-curl -X DELETE "$MOCA_URL/api/tasks/task_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X DELETE "$CORTEX_URL/api/tasks/task_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ---
@@ -470,8 +470,8 @@ curl -X DELETE "$MOCA_URL/api/tasks/task_abc123" \
 ### Create API Key
 
 ```bash
-curl -X POST "$MOCA_URL/api/admin/api-keys" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/admin/api-keys" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Production App",
@@ -483,22 +483,22 @@ curl -X POST "$MOCA_URL/api/admin/api-keys" \
 ### List API Keys
 
 ```bash
-curl "$MOCA_URL/api/admin/api-keys" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/admin/api-keys" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Revoke API Key
 
 ```bash
-curl -X POST "$MOCA_URL/api/admin/api-keys/key_abc123/revoke" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X POST "$CORTEX_URL/api/admin/api-keys/key_abc123/revoke" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Delete API Key
 
 ```bash
-curl -X DELETE "$MOCA_URL/api/admin/api-keys/key_abc123" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X DELETE "$CORTEX_URL/api/admin/api-keys/key_abc123" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ---
@@ -508,15 +508,15 @@ curl -X DELETE "$MOCA_URL/api/admin/api-keys/key_abc123" \
 ### Check Turbo Status
 
 ```bash
-curl "$MOCA_URL/api/turbo/status" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/turbo/status" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Start Turbo Job
 
 ```bash
-curl -X POST "$MOCA_URL/api/turbo/start" \
-  -H "X-API-Key: $MOCA_API_KEY" \
+curl -X POST "$CORTEX_URL/api/turbo/start" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"runtime_seconds": 3600}'
 ```
@@ -524,13 +524,13 @@ curl -X POST "$MOCA_URL/api/turbo/start" \
 ### Stop Turbo Job
 
 ```bash
-curl -X POST "$MOCA_URL/api/turbo/stop" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl -X POST "$CORTEX_URL/api/turbo/stop" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
 ### Check Turbo Jobs
 
 ```bash
-curl "$MOCA_URL/api/turbo/jobs" \
-  -H "X-API-Key: $MOCA_API_KEY"
+curl "$CORTEX_URL/api/turbo/jobs" \
+  -H "X-API-Key: $CORTEX_API_KEY"
 ```

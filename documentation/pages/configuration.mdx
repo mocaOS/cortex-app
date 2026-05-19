@@ -1,13 +1,13 @@
 ---
 title: Configuration
-description: Complete reference for all 50+ environment variables in MOCA Library
+description: Complete reference for all 50+ environment variables in Cortex
 ---
 
-MOCA Library is configured through environment variables. This page documents every available option.
+Cortex is configured through environment variables. This page documents every available option.
 
 ## Required Variables
 
-These must be set for MOCA to function:
+These must be set for Cortex to function:
 
 ### Neo4j Database
 
@@ -33,7 +33,7 @@ OPENAI_MODEL=gpt-4o-mini
 ```bash
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=your-secure-admin-password
-ADMIN_API_KEY=moca_admin_your-secure-api-key-here
+ADMIN_API_KEY=cortex_admin_your-secure-api-key-here
 SESSION_SECRET=your-session-secret-key-at-least-32-characters-long
 ```
 
@@ -198,7 +198,7 @@ discovery:
 ```bash
 # Enable embedding-based entity deduplication during storage
 # Uses vector similarity via Neo4j vector index to catch semantic matches
-# (e.g., "Museum of Crypto Art" ↔ "MOCA") that string similarity misses
+# (e.g., "Museum of Crypto Art" ↔ "Cortex") that string similarity misses
 # Falls back to Levenshtein string matching when disabled
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 

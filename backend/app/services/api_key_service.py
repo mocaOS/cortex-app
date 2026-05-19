@@ -85,9 +85,9 @@ class APIKeyService:
         
         # Determine prefix based on permissions
         if APIKeyPermission.MANAGE in permissions:
-            prefix = "moca_rw_"  # Read-write key
+            prefix = "cortex_rw_"  # Read-write key
         else:
-            prefix = "moca_ro_"  # Read-only key
+            prefix = "cortex_ro_"  # Read-only key
         
         # Generate the actual API key
         full_key, key_prefix = generate_api_key(prefix)

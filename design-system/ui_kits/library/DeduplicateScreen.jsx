@@ -1,4 +1,4 @@
-// MOCA Library — Deduplicate screen
+// Cortex — Deduplicate screen
 // Review candidate duplicate clusters and merge/dismiss.
 
 const dedupStyles = {

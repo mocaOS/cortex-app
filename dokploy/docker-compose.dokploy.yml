@@ -167,10 +167,10 @@ services:
     # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
     # labels:
     #   - "traefik.enable=true"
-    #   - "traefik.http.routers.moca-backend.rule=Host(`api-moca.yourdomain.com`)"
-    #   - "traefik.http.routers.moca-backend.entrypoints=websecure"
-    #   - "traefik.http.routers.moca-backend.tls.certResolver=letsencrypt"
-    #   - "traefik.http.services.moca-backend.loadbalancer.server.port=8000"
+    #   - "traefik.http.routers.cortex-backend.rule=Host(`api-cortex.yourdomain.com`)"
+    #   - "traefik.http.routers.cortex-backend.entrypoints=websecure"
+    #   - "traefik.http.routers.cortex-backend.tls.certResolver=letsencrypt"
+    #   - "traefik.http.services.cortex-backend.loadbalancer.server.port=8000"
     #   - "traefik.docker.network=dokploy-network"
 
   frontend:
@@ -209,10 +209,10 @@ services:
     # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
     # labels:
     #   - "traefik.enable=true"
-    #   - "traefik.http.routers.moca-frontend.rule=Host(`moca.yourdomain.com`)"
-    #   - "traefik.http.routers.moca-frontend.entrypoints=websecure"
-    #   - "traefik.http.routers.moca-frontend.tls.certResolver=letsencrypt"
-    #   - "traefik.http.services.moca-frontend.loadbalancer.server.port=3000"
+    #   - "traefik.http.routers.cortex-frontend.rule=Host(`cortex.yourdomain.com`)"
+    #   - "traefik.http.routers.cortex-frontend.entrypoints=websecure"
+    #   - "traefik.http.routers.cortex-frontend.tls.certResolver=letsencrypt"
+    #   - "traefik.http.services.cortex-frontend.loadbalancer.server.port=3000"
     #   - "traefik.docker.network=dokploy-network"
 
 networks:
