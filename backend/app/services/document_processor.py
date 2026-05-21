@@ -1458,7 +1458,11 @@ class DocumentProcessor:
                     async def _extract_from_chunk(cid: str, ents: list):
                         async with sem:
                             text = chunk_content_map.get(cid, "")
-                            return await self.graph_extractor.extract_chunk_relationships_async(text, ents)
+                            return await self.graph_extractor.extract_chunk_relationships_async(
+                                text,
+                                ents,
+                                max_output_tokens=self.settings.relationship_max_output_tokens,
+                            )
 
                     # Gather all chunks with 2+ entities
                     tasks = []
@@ -1792,7 +1796,7 @@ class DocumentProcessor:
                 all_entities=entities,
                 context="",
                 max_context_tokens=self.settings.relationship_max_context,
-                max_output_tokens=self.settings.relationship_max_output_tokens,
+                max_output_tokens=self.settings.relationship_batch_max_output_tokens,
                 existing_relationships=existing_relationships,
                 on_batch_complete=store_batch_relationships,
                 get_batch_context=get_batch_context,

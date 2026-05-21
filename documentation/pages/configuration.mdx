@@ -50,6 +50,10 @@ OPENAI_MODEL=gpt-4o-mini
 
 # Optional: Faster/cheaper model for "Fast Mode"
 OPENAI_MODEL_FAST_MODE=gpt-4o-mini
+
+# Primary token budgets (floor of the fallback chain — see "Budget Fallback Chain" below)
+OPENAI_MAX_OUTPUT_TOKENS=8000   # Default output tokens for every LLM call
+OPENAI_MAX_CONTEXT=32768        # Default input context budget
 ```
 
 ### Embedding Configuration
@@ -130,8 +134,12 @@ MAX_GRAPH_HOPS=2
 CONCURRENT_EXTRACTIONS=3
 
 # Max context window tokens for entity extraction batching
-# Increase if your extraction model supports a larger context window
-# EXTRACTION_MAX_CONTEXT=32768
+# 0 = inherit OPENAI_MAX_CONTEXT. Set explicitly when extraction model has bigger window than primary.
+# GRAPH_EXTRACTION_MAX_CONTEXT=0
+
+# Output budget for entity-extraction LLM calls
+# 0 = inherit OPENAI_MAX_OUTPUT_TOKENS. Bump to 3500–4000 for Qwen3-family models.
+# EXTRACTION_MAX_OUTPUT_TOKENS=0
 ```
 
 ### Relationship Model
@@ -162,12 +170,17 @@ scanning + structured confirmation) with co-occurrence batching and multi-round
 discovery:
 
 ```bash
-# Max INPUT context window tokens for relationship analysis batching
-# Increase if your relationship/extraction model supports a larger context window
-# RELATIONSHIP_MAX_CONTEXT=65536
+# Max INPUT context window tokens for Phase 2 batch relationship analysis
+# 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → OPENAI_MAX_CONTEXT
+# RELATIONSHIP_MAX_CONTEXT=0
 
-# Max OUTPUT tokens for relationship analysis LLM responses
-# RELATIONSHIP_MAX_OUTPUT_TOKENS=16000
+# Output budget for per-chunk + candidate-pair scan (in the inheritance chain)
+# 0 = inherit EXTRACTION_MAX_OUTPUT_TOKENS → OPENAI_MAX_OUTPUT_TOKENS
+# RELATIONSHIP_MAX_OUTPUT_TOKENS=0
+
+# Output budget for Phase 2 batch relationship analysis (standalone, NOT in chain)
+# Batch processes hundreds of entity pairs per call — needs ~16k headroom.
+# RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000
 
 # Number of relationship analysis batches to process in parallel
 # PARALLEL_RELATIONSHIP_BATCHES=5
@@ -226,6 +239,70 @@ DEFAULT_REASONING_MODE=auto
 **Forward compatibility.** Same-family minor releases route automatically — `gpt-5.8` works like `gpt-5.1`. For new majors (e.g. `gpt-6`) or models the heuristic misclassifies, set `REASONING_MODEL_OVERRIDES`. If the API rejects the param, the wrapper strips it on retry, logs a warning, and caches the model so future calls skip the param upfront.
 
 **Caveats.** `gpt-5-pro` is hard-pinned to `reasoning_effort=high` (OFF is silently ignored, one-time WARN). `gpt-5-codex` auto-downgrades `minimal`→`low`. Anthropic Opus 4.7+ uses adaptive thinking — manual `thinking` returns 400, so the helper omits the param. OpenRouter `exclude:true` does NOT save tokens; we use `effort:"none"` instead.
+
+### Budget Fallback Chain
+
+Every LLM call has two budgets that matter: **output tokens** (how much the model may write) and **input context** (how much input the call may consume). All sub-tier knobs default to `0` (= inherit from the next tier up), letting you configure a multi-model stack with just two or three env vars.
+
+```
+OUTPUT TOKENS:                          INPUT CONTEXT:
+  OPENAI_MAX_OUTPUT_TOKENS=8000           OPENAI_MAX_CONTEXT=32768
+       ↓                                       ↓
+  EXTRACTION_MAX_OUTPUT_TOKENS            GRAPH_EXTRACTION_MAX_CONTEXT
+       ↓                                       ↓
+  RELATIONSHIP_MAX_OUTPUT_TOKENS          RELATIONSHIP_MAX_CONTEXT
+       ↓
+  VISION_MAX_OUTPUT_TOKENS
+
+  RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000   (standalone, Phase 2 only)
+```
+
+**Recommended minimal stack** — configure two models + two context windows; everything else inherits:
+
+```bash
+OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7        # primary / agentic (196K window)
+OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M2.7 full input window
+
+GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b    # extraction + (inherited) relationship (256K window)
+GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B full input window; relationship_max_context inherits
+
+VISION_MODEL=google-gemma-3-27b-it         # image analysis (does NOT inherit from extraction)
+
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B    # text embedding (native 4096, MRL 32–4096)
+EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+# Output budgets cascade through defaults
+```
+
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap MiniMax-M2.7 and Qwen3.7-27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096.
+
+**Performance tuning (Venice-validated).** Pair these four knobs with the stack above to maximize ingestion throughput. Bench-validated against Venice; safe on Venice, Compute3, or large self-hosted vLLM endpoints. Dial back on stock OpenAI or smaller hosts to avoid rate-limit errors.
+
+```bash
+BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3 — biggest multiplier)
+CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+```
+
+The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. If you swap to a slower provider, `CONCURRENT_EXTRACTIONS` is the first knob to lower — it's the biggest multiplier and entity extraction is the heaviest call. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
+
+**Override examples:**
+
+```bash
+# Constrain extraction-tier output independently (inherited 8000 default covers
+# Qwen3-family verbose XML by default; only override to tighten or expand this tier)
+EXTRACTION_MAX_OUTPUT_TOKENS=2000
+
+# Big-context model for relationship analysis — raise the input context
+OPENAI_MAX_CONTEXT=131072
+
+# Only bump vision because of detailed chart images
+VISION_MAX_OUTPUT_TOKENS=8000
+```
+
+**Migration note.** The env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` previously controlled the Phase 2 batch budget (16000). It now feeds the **per-chunk + candidate scan** chain. The Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` (default still 16000, behavior unchanged for users who never set the legacy var). If you explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` in your `.env`, per-chunk extraction will run with a 16000 cap (harmless overkill); migrate to the new name when convenient.
+
+**Migration note.** `EXTRACTION_MAX_CONTEXT` was renamed to `GRAPH_EXTRACTION_MAX_CONTEXT` to match the `GRAPH_EXTRACTION_MODEL`/`GRAPH_EXTRACTION_API_BASE`/`GRAPH_EXTRACTION_API_KEY` prefix convention. The legacy name is honored as a deprecated alias for one release; the backend logs a one-shot `WARN` at startup if your `.env` still uses it. Rename to `GRAPH_EXTRACTION_MAX_CONTEXT` at your convenience — value semantics are identical.
 
 ### Semantic Entity Resolution
 
@@ -406,7 +483,9 @@ See [Authentication Guide](/guides/authentication) for details.
 
 ---
 
-## Compute3 Turbo Mode (Optional)
+## Compute3 Turbo Mode (ON HOLD)
+
+> ⚠️ **Not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The variables below are kept in the codebase against future activation but have no runtime effect today. Safe to leave all of them unset.
 
 GPU-accelerated inference for faster processing:
 
@@ -462,6 +541,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `NEO4J_PASSWORD` | Yes | - | Neo4j password |
 | `OPENAI_API_KEY` | Yes | - | OpenAI API key |
 | `OPENAI_MODEL` | No | `gpt-4o-mini` | LLM model |
+| `OPENAI_MAX_OUTPUT_TOKENS` | No | `8000` | Floor of the output-token budget chain |
+| `OPENAI_MAX_CONTEXT` | No | `32768` | Floor of the input-context budget chain |
 | `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |
 | `EMBEDDING_DIMENSION` | No | `1536` | Embedding dimensions |
 | `EMBEDDING_SEND_DIMENSIONS` | No | `true` | Send `dimensions` param to embedding API. Set `false` for fixed-dim models |
@@ -478,9 +559,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `RELATIONSHIP_EXTRACTION_API_BASE` | No | `GRAPH_EXTRACTION_API_BASE` | API base for relationship model |
 | `RELATIONSHIP_EXTRACTION_API_KEY` | No | `GRAPH_EXTRACTION_API_KEY` | API key for relationship model |
 | `CONCURRENT_RELATIONS` | No | `3` | Concurrent per-chunk relationship extractions per document |
-| `EXTRACTION_MAX_CONTEXT` | No | `32768` | Max context window tokens for entity extraction batching |
-| `RELATIONSHIP_MAX_CONTEXT` | No | `65536` | Max INPUT context window tokens for relationship analysis batching. Must match `RELATIONSHIP_EXTRACTION_MODEL` context window |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `16000` | Max OUTPUT tokens for relationship analysis LLM responses |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | No | `0` (=inherit) | Input context for entity extraction batching. Inherits `OPENAI_MAX_CONTEXT`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for entity extraction. Inherits `OPENAI_MAX_OUTPUT_TOKENS` |
+| `RELATIONSHIP_MAX_CONTEXT` | No | `0` (=inherit) | Input context for Phase 2 batch. Inherits `GRAPH_EXTRACTION_MAX_CONTEXT` → primary |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for **per-chunk + candidate scan** (was Phase 2 batch in old releases — see migration note). Inherits `EXTRACTION_MAX_OUTPUT_TOKENS` |
+| `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | No | `16000` | Output budget for **Phase 2 batch** (standalone, NOT in chain) |
+| `VISION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for image analysis. Inherits `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary |
 | `PARALLEL_RELATIONSHIP_BATCHES` | No | `5` | Parallel relationship analysis batches |
 | `RELATIONSHIP_TARGET_RATIO` | No | `1.0` | Target entity-to-relationship ratio (ERR) |
 | `RELATIONSHIP_MAX_ROUNDS` | No | `3` | Max discovery rounds per batch |

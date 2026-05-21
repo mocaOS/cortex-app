@@ -72,7 +72,7 @@ ss -tlnp | grep 3000
 - [ ] `ENABLE_GRAPH_EXTRACTION=true`
 - [ ] `OPENAI_API_KEY` (or extraction key) is valid
 - [ ] `GRAPH_EXTRACTION_API_BASE` points to the correct endpoint
-- [ ] `EXTRACTION_MAX_CONTEXT` doesn't exceed the model's actual context window
+- [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` doesn't exceed the model's actual context window
 - [ ] Check backend logs for LLM API error responses
 
 ### Relationship Analysis Fails
@@ -81,8 +81,9 @@ ss -tlnp | grep 3000
 
 **Checklist:**
 - [ ] Entities exist (run Step 1 first)
-- [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window
-- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient (default: 16000)
+- [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window (or leave 0 to inherit from `GRAPH_EXTRACTION_MAX_CONTEXT` / `OPENAI_MAX_CONTEXT`)
+- [ ] `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` is sufficient for Phase 2 batch (default: 16000)
+- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already handles Qwen3-family verbose XML; only override if you've explicitly tightened the chain elsewhere and need to relax it.
 - [ ] LLM API key has sufficient credits/quota
 - [ ] Check task status for error messages: `GET /api/tasks/{task_id}`
 
@@ -258,6 +259,28 @@ curl -X POST http://localhost:8000/api/cleanup/orphaned-entities \
 **Prevention:** Always back up before resetting. See [Chapter 18: Administration](18-administration.md).
 
 **If no backup exists:** Data deleted by system reset cannot be recovered. Re-upload documents and rebuild the graph.
+
+## Env Var Changes Don't Take Effect After `docker compose restart`
+
+**Symptom:** You update `.env`, run `docker compose restart backend`, and the backend still behaves as if the old values are in place. The admin Settings page still shows the old model / endpoint / dimension.
+
+**Root cause:** `docker compose restart` restarts the container's *process* but does NOT re-read the `env_file:`. Environment variables are baked into the container at *create* time. A restart preserves them.
+
+**Fix:** Use `up --force-recreate` (or down + up):
+
+```bash
+docker compose up -d backend --force-recreate
+# or
+docker compose down backend && docker compose up -d backend
+```
+
+**Verify the new env reached the container:**
+
+```bash
+docker compose exec backend printenv | grep YOUR_VAR_NAME
+```
+
+This is a common foot-gun whenever the `.env`-file approach is used. Aliasing `dcr() { docker compose up -d --force-recreate "$1"; }` is a popular workaround.
 
 ## Getting Help
 

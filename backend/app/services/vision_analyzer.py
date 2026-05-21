@@ -301,7 +301,7 @@ class VisionAnalyzer:
                     ],
                 }
             ],
-            "max_tokens": 4096,
+            "max_tokens": self.settings.vision_max_output_tokens,
         }
 
         # Suppress reasoning on capable vision models (e.g. Qwen3-VL-27B) so

@@ -20,6 +20,8 @@ The Library uses Pydantic BaseSettings for configuration. Environment variables 
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | Base URL for the LLM API. Change for LiteLLM, Azure, or local providers. |
 | `OPENAI_MODEL` | `openai/minimax-m21` | Model name for Q&A, research, and chat. Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5). |
 | `OPENAI_MODEL_FAST_MODE` | Same as `OPENAI_MODEL` | Optional faster/cheaper model for the "Fast Mode" search in Ask AI. |
+| `OPENAI_MAX_OUTPUT_TOKENS` | `8000` | Floor of the output-token budget chain. All sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit from here when set to 0. 8000 covers Qwen3-family verbose XML; tighter models simply finish under cap. See [Budget Fallback Chain](#budget-fallback-chain). |
+| `OPENAI_MAX_CONTEXT` | `32768` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0. |
 
 ## Graph Extraction Configuration
 
@@ -31,7 +33,8 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | `GRAPH_EXTRACTION_MODEL` | Same as `OPENAI_MODEL` | Dedicated model for entity extraction and community summarization. Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B). |
 | `GRAPH_EXTRACTION_API_BASE` | Same as `OPENAI_API_BASE` | API base URL for the extraction model. |
 | `GRAPH_EXTRACTION_API_KEY` | Same as `OPENAI_API_KEY` | API key for the extraction model. |
-| `EXTRACTION_MAX_CONTEXT` | `32768` | Max context window tokens for entity extraction batching. Must match the extraction model's actual context window. |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | `0` (=inherit `OPENAI_MAX_CONTEXT`) | Max context window tokens for entity extraction batching. Set explicitly when your extraction model has a bigger window than the primary. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored). |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | `0` (=inherit `OPENAI_MAX_OUTPUT_TOKENS`) | Max output tokens for entity-extraction LLM calls. Bump to 3500–4000 for Qwen3-family models that emit verbose XML. |
 | `CONCURRENT_EXTRACTIONS` | `3` | Number of chunks processed in parallel during entity extraction (thread pool size). |
 
 ## Relationship Analysis Configuration
@@ -39,8 +42,9 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RELATIONSHIP_EXTRACTION_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for relationship extraction (per-chunk and cross-document). Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B). |
-| `RELATIONSHIP_MAX_CONTEXT` | `65536` | Max input context window tokens for relationship analysis batching. Must match the `RELATIONSHIP_EXTRACTION_MODEL` context window. |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `16000` | Max output tokens for relationship analysis LLM responses. |
+| `RELATIONSHIP_MAX_CONTEXT` | `0` (=inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary) | Max input context window tokens for Phase 2 batch relationship analysis. Set when relationship model has bigger window than extraction. |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `0` (=inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary) | Output budget for **per-chunk + candidate-pair scan** (in the chain). **Migrated semantics** — see migration note below. |
+| `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | `16000` | Output budget for **Phase 2 batch** relationship analysis. Standalone (NOT in chain) — batch processes hundreds of pairs per call and genuinely needs ~16k. |
 | `RELATIONSHIP_MAX_PER_ENTITY` | `50` | Soft cap on relationships per entity. Prevents hub entities from accumulating disproportionate connections. 0 = no cap. |
 | `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | `false` | Automatically run relationship analysis after batch document processing completes. |
@@ -69,6 +73,73 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 - Anthropic Opus 4.7+ uses adaptive thinking — manual `thinking` returns 400, so the helper omits the param. Reasoning may still occur regardless of mode.
 - OpenRouter `exclude:true` does NOT save tokens (model still reasons and bills you); we use `effort:"none"`/`"minimal"` instead.
 
+## Budget Fallback Chain
+
+Output-token and input-context budgets cascade through a parent chain when sub-tier knobs are left at `0`. This mirrors the existing string-fallback pattern (`extraction_model` → `openai_model`) for ints, using `0` as the inherit sentinel.
+
+```
+OUTPUT TOKENS:                          INPUT CONTEXT:
+  OPENAI_MAX_OUTPUT_TOKENS=8000           OPENAI_MAX_CONTEXT=32768
+       ↓                                       ↓
+  EXTRACTION_MAX_OUTPUT_TOKENS            GRAPH_EXTRACTION_MAX_CONTEXT
+       ↓                                       ↓
+  RELATIONSHIP_MAX_OUTPUT_TOKENS          RELATIONSHIP_MAX_CONTEXT
+       ↓
+  VISION_MAX_OUTPUT_TOKENS
+
+  RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000   (standalone, Phase 2 only)
+```
+
+**Recommended minimal stack** — configure two models + two context windows; everything else inherits:
+
+```bash
+OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7        # primary / agentic (196K window)
+OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M2.7's full input window
+
+GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b    # extraction + (inherited) relationship (256K window)
+GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B's full input window; relationship_max_context inherits
+
+VISION_MODEL=google-gemma-3-27b-it         # image analysis (does NOT inherit from extraction)
+
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B    # text embedding model (native 4096, MRL 32–4096)
+EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+# Output budgets + all other knobs cascade through defaults
+```
+
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting MiniMax-M2.7 and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware.
+
+**Performance tuning (Venice-validated)** — bench-validated against Venice as the LLM provider, paired with the recommended stack above. Cranks ingestion throughput at the cost of much higher peak concurrency:
+
+```bash
+BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3 — biggest multiplier)
+CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+```
+
+**Compounding behavior.** `BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs because they're *per-document* limits — each in-flight document can run its own pool of extraction / relationship threads. `VISION_MAX_CONCURRENT` is a global semaphore and does *not* compound. The pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual concurrent in-flight calls stays meaningfully below the worst-case theoretical product — you won't see the full multiplication hit a single provider at one moment.
+
+Safe on Venice, Compute3, or a large self-hosted vLLM endpoint. On stock OpenAI or a small box you'll still want to dial `CONCURRENT_EXTRACTIONS` down first (biggest multiplier, heaviest call). `VISION_MAX_CONCURRENT` is independent and safe to keep at 5 even on smaller stacks.
+
+**Targeted overrides:**
+- Constrain extraction tier output independently → `EXTRACTION_MAX_OUTPUT_TOKENS=2000` (the inherited 8000 covers Qwen3-family verbose XML by default — only override to tighten or further loosen this specific tier)
+- Big-context primary → `OPENAI_MAX_CONTEXT=131072` (lifts both extraction + relationship context)
+- Phase 2 batch tuning → `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=24000` (standalone, doesn't touch other tiers)
+
+### Migration: `RELATIONSHIP_MAX_OUTPUT_TOKENS`
+
+This env var's meaning changed:
+- **Before:** controlled Phase 2 batch budget (default 16000).
+- **After:** controls per-chunk + candidate-pair scan (in the inheritance chain, default 0 = inherit).
+
+The Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who never set the legacy var see no change (defaults are equivalent). Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` will get a per-chunk cap of 16000 (harmless overkill — the model finishes well below cap on chunk-sized work). Migrate at convenience by renaming the var.
+
+### Migration: `EXTRACTION_MAX_CONTEXT` → `GRAPH_EXTRACTION_MAX_CONTEXT`
+
+This env var was renamed to match the `GRAPH_EXTRACTION_MODEL` / `GRAPH_EXTRACTION_API_BASE` / `GRAPH_EXTRACTION_API_KEY` prefix convention — the tier's env vars are now consistent.
+
+The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for one release. Backend logs a one-shot `WARN` at startup if your `.env` still uses it. Rename to `GRAPH_EXTRACTION_MAX_CONTEXT` whenever convenient — value semantics are identical.
+
 ## Embedding Configuration
 
 | Variable | Default | Description |
@@ -76,7 +147,7 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 | `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model name. |
 | `EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension. Must match the model's output dimension. |
 | `EMBEDDING_SEND_DIMENSIONS` | `true` | Send `dimensions` parameter to the embedding API. Set `false` for models with fixed output dimensions (e.g., `qwen3-vl-embedding-2b`). |
-| `USE_OPENAI_EMBEDDINGS` | `true` | Use OpenAI-compatible API for embeddings. Set `false` to use local sentence-transformers. |
+| `USE_OPENAI_EMBEDDINGS` | `true` | Controls embedding *transport*, not provider. `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP endpoint (works for OpenAI, OpenRouter, vLLM, Compute3, any `/v1/embeddings` server). `false` = ignore `EMBEDDING_MODEL` entirely and run `sentence-transformers/all-MiniLM-L6-v2` locally inside the container. Keep `true` for Qwen3-Embedding-8B and any remote embedding model. |
 | `EMBEDDING_API_BASE` | Same as `OPENAI_API_BASE` | Optional separate endpoint for embeddings. |
 | `EMBEDDING_API_KEY` | Same as `OPENAI_API_KEY` | Optional separate API key for embeddings. |
 
@@ -186,6 +257,7 @@ See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installin
 | `VISION_MODEL_API_KEY` | Same as `OPENAI_API_KEY` | API key for the vision model. |
 | `VISION_MAX_CONCURRENT` | `3` | Max concurrent vision API calls system-wide. Controls the global semaphore. |
 | `VISION_REASONING_MODE` | `off` | Reasoning mode applied to the vision-model call (see [Reasoning Control](#reasoning-control-ingestion-pipelines) for the value set). Off by default so reasoning multimodal models (Qwen3-VL, GLM-V) don't emit `<think>` blocks in image descriptions. |
+| `VISION_MAX_OUTPUT_TOKENS` | `0` (=inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary) | Output budget for the vision-model image-description call. Bump when verbose multimodal models hit the inherited cap on complex images. |
 
 ## Reasoning and UX Configuration
 
@@ -214,6 +286,8 @@ See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installin
 | `NEXT_PUBLIC_ACCENT_COLOR` | Cortex theme color | Custom accent color. Accepts any CSS color value: hex (`#ff6600`), rgb, hsl, or oklch (`oklch(0.79 0.18 70.67)`). |
 
 ## Compute3 Turbo Mode Configuration
+
+> ⚠️ **On hold — not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The variables below are kept in the codebase against future activation but have no runtime effect today. Setting `COMPUTE3_API_KEY` makes the UI toggle appear, but no live endpoint is reachable. Safe to leave all of these unset. See [Chapter 15: Turbo Mode](15-turbo-mode.md) for the full feature description (preserved for reference).
 
 | Variable | Default | Description |
 |----------|---------|-------------|

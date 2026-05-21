@@ -25,6 +25,38 @@ cd cortex-app
 cp .env.example .env
 ```
 
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M2.7 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+>
+> ```env
+> # Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+> OPENAI_API_KEY=
+> OPENAI_API_BASE=
+> OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7
+> OPENAI_MAX_CONTEXT=196608
+>
+> # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+> GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b
+> GRAPH_EXTRACTION_MAX_CONTEXT=256000
+>
+> # Vision — image analysis (does NOT inherit; api_base/api_key inherit from OPENAI_*)
+> VISION_MODEL=google-gemma-3-27b-it
+>
+> # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
+> EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+> EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+> ```
+>
+> **Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Safe on Venice / Compute3 / large vLLM endpoints; dial `CONCURRENT_EXTRACTIONS` down first if you're on stock OpenAI or a smaller host.
+>
+> ```env
+> BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
+> CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3)
+> CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+> VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+> ```
+>
+> You still need to set `NEO4J_PASSWORD` and the `ADMIN_*` / `SESSION_SECRET` block from Step 2 (those are infrastructure, not part of the LLM stack choice). Requires a provider hosting both models (OpenRouter, self-hosted vLLM, Compute3, etc.).
+
 ### Step 2: Set Required Environment Variables
 
 Open `.env` in your editor and set these minimum required variables:
@@ -66,6 +98,8 @@ This starts three services:
 - **Backend** (FastAPI) on port 8000
 - **Frontend** (Next.js) on port 3000
 
+> **After any `.env` change**, use `docker compose up -d --force-recreate backend` (not `docker compose restart backend`). Restart only restarts the process — it does NOT re-read the `env_file:`. See [Troubleshooting → Env Var Changes Don't Take Effect](20-troubleshooting.md#env-var-changes-dont-take-effect-after-docker-compose-restart) for details.
+
 ### Step 4: Verify the Deployment
 
 ```bash
@@ -100,7 +134,7 @@ docker compose up --build
 ```
 
 **What's included:**
-- Neo4j Community Edition (5.15.0) with APOC plugin
+- Neo4j Community Edition (5.26) with APOC plugin — 4096-dim vector indexes supported
 - Backend with live code mounting (changes reflect immediately)
 - Frontend with live code mounting and `.next` cache
 - Shared volumes for uploads and custom inputs
@@ -123,7 +157,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 ```
 
 **What's included:**
-- Neo4j Enterprise Edition (5.15.0) with optimized memory settings (512MB initial heap, 2GB max, 512MB page cache)
+- Neo4j Enterprise Edition (5.26) with optimized memory settings (512MB initial heap, 2GB max, 512MB page cache)
 - Production-optimized Docker builds (multi-stage, smaller images)
 - Nginx Alpine reverse proxy on ports 80/443
 - SSL/TLS support (place certificates in `nginx/ssl/`)
@@ -224,7 +258,7 @@ docker run -d \
   -e NEO4J_AUTH=neo4j/password123 \
   -e NEO4J_PLUGINS='["apoc"]' \
   -e NEO4J_dbms_security_procedures_unrestricted=apoc.* \
-  neo4j:5.15.0-community
+  neo4j:5.26-community
 ```
 
 Set environment variables:
@@ -293,12 +327,20 @@ COMMUNITY_SUMMARY_MODEL=gpt-4o-mini   # Defaults to GRAPH_EXTRACTION_MODEL if no
 These must match the actual context window of their respective models:
 
 ```env
-EXTRACTION_MAX_CONTEXT=256000          # Must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000        # Must match RELATIONSHIP_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_OUTPUT_TOKENS=16000   # Max output tokens for relationship analysis
+# Primary budgets — sub-tiers (extraction / relationship / vision) inherit
+# unless overridden. See Chapter 4 § "Budget Fallback Chain" for the full diagram.
+OPENAI_MAX_CONTEXT=256000              # Floor — all input context budgets inherit
+OPENAI_MAX_OUTPUT_TOKENS=8000          # Floor — all output budgets inherit
+
+# Per-tier overrides — only set when a sub-tier model has different limits than primary
+GRAPH_EXTRACTION_MAX_CONTEXT=0               # 0 = inherit OPENAI_MAX_CONTEXT
+RELATIONSHIP_MAX_CONTEXT=0             # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary
+RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000  # Phase 2 batch (standalone, NOT in chain)
 ```
 
 Setting these values higher than the model's actual context window will cause errors. Setting them lower wastes capacity.
+
+Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled Phase 2 batch (default 16000). It now feeds per-chunk + candidate scan in the inheritance chain, and the Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`. A stale `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` setting is harmless (per-chunk just gets unused headroom) — rename when convenient.
 
 ## Performance Tuning
 

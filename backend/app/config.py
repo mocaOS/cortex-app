@@ -1,9 +1,17 @@
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# Module-level guard so the deprecation WARN fires exactly once per process,
+# not on every Settings() construction (e.g. test fixtures building fresh
+# instances). Reset via _reset_deprecation_warnings_for_tests().
+_warned_legacy_env_aliases: set[str] = set()
 
 
 def _find_env_file() -> str | None:
@@ -41,6 +49,15 @@ class Settings(BaseSettings):
         default=""
     )  # Model for "Fast Mode" in Ask AI (defaults to openai_model if empty)
 
+    # Primary token budgets — sub-tier fields default to 0 (=inherit from primary).
+    # This lets users configure a 3-model stack with just OPENAI_MODEL +
+    # GRAPH_EXTRACTION_MODEL set and inherit context/output budgets downwards.
+    # Default 8000 is generous enough that verbose-XML models (Qwen3-family)
+    # don't truncate their <relationship> output. Models that finish much
+    # earlier (Mistral, GPT-OSS) simply use less of the cap — no cost penalty.
+    openai_max_output_tokens: int = Field(default=8000)
+    openai_max_context: int = Field(default=32768)
+
     # Vision Model Configuration (for image analysis)
     vision_model: str = Field(
         default=""
@@ -54,6 +71,14 @@ class Settings(BaseSettings):
     vision_max_concurrent: int = Field(
         default=3
     )  # Max concurrent vision API calls system-wide (controls semaphore + thread pool sizing)
+    # Raw field: 0 = inherit through the chain (relationship → extraction → primary).
+    # Property `vision_max_output_tokens` resolves the inheritance.
+    vision_max_output_tokens_raw: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "vision_max_output_tokens_raw", "VISION_MAX_OUTPUT_TOKENS"
+        ),
+    )
 
     # Upload Configuration
     upload_dir: str = Field(default="./uploads")
@@ -174,15 +199,44 @@ class Settings(BaseSettings):
     )  # Number of chunks to process concurrently for graph extraction
 
     # Extraction Context Window Configuration
-    extraction_max_context: int = Field(
-        default=32768
-    )  # Max context window tokens for entity extraction batching
-    relationship_max_context: int = Field(
-        default=65536
-    )  # Max context window tokens for relationship analysis INPUT batching
-    relationship_max_output_tokens: int = Field(
-        default=16000
-    )  # Max output tokens for relationship analysis LLM responses
+    # Raw fields default to 0 (=inherit). Resolved values exposed via the
+    # @property accessors at the bottom of the class.
+    # Renamed from EXTRACTION_MAX_CONTEXT → GRAPH_EXTRACTION_MAX_CONTEXT to
+    # match the `GRAPH_EXTRACTION_MODEL` env-var prefix convention. The legacy
+    # name is honored as a deprecated alias for one release; a startup-time
+    # WARN nudges users to migrate (see _warn_deprecated_env_aliases below).
+    graph_extraction_max_context_raw: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "graph_extraction_max_context_raw",
+            "GRAPH_EXTRACTION_MAX_CONTEXT",
+            "EXTRACTION_MAX_CONTEXT",
+        ),
+    )
+    relationship_max_context_raw: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "relationship_max_context_raw", "RELATIONSHIP_MAX_CONTEXT"
+        ),
+    )
+    # Output-token budgets — chain: vision → relationship → extraction → primary.
+    extraction_max_output_tokens_raw: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "extraction_max_output_tokens_raw", "EXTRACTION_MAX_OUTPUT_TOKENS"
+        ),
+    )
+    relationship_max_output_tokens_raw: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "relationship_max_output_tokens_raw", "RELATIONSHIP_MAX_OUTPUT_TOKENS"
+        ),
+    )
+    # Phase 2 batch relationship analysis runs OUTSIDE the chain — it processes
+    # hundreds of entity pairs per call and genuinely needs ~16k output. The
+    # legacy env var name was RELATIONSHIP_MAX_OUTPUT_TOKENS (which now belongs
+    # to the per-chunk chained field). Migrate to RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS.
+    relationship_batch_max_output_tokens: int = Field(default=16000)
 
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(
@@ -449,6 +503,50 @@ class Settings(BaseSettings):
         """Get the model to use for entity embeddings."""
         return self.entity_embedding_model or self.embedding_model
 
+    # ----- Token & context budget fallback chain ----------------------------
+    # Each property resolves: raw_field if explicitly set (>0), else inherit
+    # from the next tier up. Same idiom as extraction_model → openai_model
+    # for strings, but with `0` as the "inherit" sentinel for ints.
+
+    @property
+    def extraction_max_context(self) -> int:
+        """Resolved input context budget for entity extraction.
+
+        Reads `GRAPH_EXTRACTION_MAX_CONTEXT` (or the deprecated
+        `EXTRACTION_MAX_CONTEXT` alias) and falls back to `OPENAI_MAX_CONTEXT`.
+        """
+        return self.graph_extraction_max_context_raw or self.openai_max_context
+
+    @property
+    def relationship_max_context(self) -> int:
+        """Resolved input context budget for relationship analysis batching."""
+        return self.relationship_max_context_raw or self.extraction_max_context
+
+    @property
+    def extraction_max_output_tokens(self) -> int:
+        """Resolved output budget for entity extraction calls."""
+        return self.extraction_max_output_tokens_raw or self.openai_max_output_tokens
+
+    @property
+    def relationship_max_output_tokens(self) -> int:
+        """Resolved output budget for per-chunk + candidate-scan relationship calls.
+
+        Note: Phase 2 batch analysis uses `relationship_batch_max_output_tokens`
+        directly (not in this chain) — see config field for migration guidance.
+        """
+        return (
+            self.relationship_max_output_tokens_raw
+            or self.extraction_max_output_tokens
+        )
+
+    @property
+    def vision_max_output_tokens(self) -> int:
+        """Resolved output budget for vision-model image analysis."""
+        return (
+            self.vision_max_output_tokens_raw
+            or self.relationship_max_output_tokens
+        )
+
     @property
     def parsed_reasoning_overrides(self) -> dict:
         """Parse REASONING_MODEL_OVERRIDES once and cache on the instance.
@@ -473,6 +571,35 @@ class Settings(BaseSettings):
             return {k: v for k, v in values.items() if v != ""}
         return values
 
+    @model_validator(mode="after")
+    def _warn_deprecated_env_aliases(self):
+        """One-shot deprecation WARN when only the legacy env name is set.
+
+        Detection inspects `os.environ` directly because Pydantic's
+        AliasChoices doesn't surface which alias matched.
+        """
+        deprecations = [
+            # (legacy_name, new_name)
+            ("EXTRACTION_MAX_CONTEXT", "GRAPH_EXTRACTION_MAX_CONTEXT"),
+        ]
+        for legacy, canonical in deprecations:
+            if legacy in _warned_legacy_env_aliases:
+                continue
+            # Require non-empty values — docker-compose env passthroughs like
+            # `${EXTRACTION_MAX_CONTEXT:-}` set empty strings in os.environ
+            # which would falsely trip the warning otherwise.
+            legacy_val = os.environ.get(legacy, "").strip()
+            canonical_val = os.environ.get(canonical, "").strip()
+            if legacy_val and not canonical_val:
+                logger.warning(
+                    "%s is a deprecated env-var name; please rename it to %s "
+                    "in your .env. The old name is honored for now but will "
+                    "be removed in a future release.",
+                    legacy, canonical,
+                )
+                _warned_legacy_env_aliases.add(legacy)
+        return self
+
     # Pydantic v2 configuration
     model_config = SettingsConfigDict(
         env_file=_find_env_file(),
@@ -485,3 +612,8 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def _reset_deprecation_warnings_for_tests() -> None:
+    """Test-only: clear the once-per-process deprecation guard."""
+    _warned_legacy_env_aliases.clear()

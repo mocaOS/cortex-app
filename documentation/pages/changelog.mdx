@@ -7,6 +7,140 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## May 21, 2026
+
+### Reasoning Suppression Control (Provider-Agnostic)
+
+Modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax M2) over-think on structured-extraction tasks, inline `<think>` tokens that corrupt XML output, and burn token budget on chain-of-thought that the parser never sees. A new provider-agnostic switch forces reasoning OFF (or any other level) on every LLM call inside the knowledge-graph pipeline while leaving the researcher/writer Q&A path on AUTO.
+
+- New `backend/app/services/reasoning_config.py` — `ReasoningMode` enum, regex-based model-family classifier, and a per-backend dispatch table. Each backend gets the correct kwargs:
+  - **OpenAI** → `reasoning_effort` (`none`/`minimal`/`low`/…)
+  - **OpenRouter** → `extra_body.reasoning.effort`
+  - **Venice** → `extra_body.venice_parameters.disable_thinking`
+  - **Anthropic** → `extra_body.thinking={"type":"disabled"}` (omitted on Opus 4.7+ adaptive thinking)
+  - **vLLM / Compute3** → `extra_body.chat_template_kwargs.enable_thinking=false`
+- `safe_chat_completion` / `safe_chat_completion_sync` wrappers handle a runtime fallback: if a model 400s on the reasoning param, the wrapper retries without it and caches the `(base_url, model)` pair so future calls skip the param upfront — one wasted call per misclassified model, then nothing.
+- All 14 LLM call sites in `graph_extractor.py` route through the wrappers — entity extraction, document summaries, community naming, entity enrichment, candidate scan, gleaning pass, per-chunk + Phase-2 relationship extraction.
+- **Vision-model image analysis** uses the same switch via a `flatten_reasoning_body()` helper that converts OpenAI-SDK-style `extra_body` into a raw-HTTP body dict (vision uses `httpx`, not the OpenAI client). One-shot 400-fallback works the same way.
+- New env vars: `EXTRACTION_REASONING_MODE` (default `off`), `RELATIONSHIP_REASONING_MODE` (default `off`), `VISION_REASONING_MODE` (default `off`), `DEFAULT_REASONING_MODE` (default `auto` — Q&A stays on provider default). Per-model escape hatch via `REASONING_MODEL_OVERRIDES=model1:mode1,model2:mode2`.
+- Defaults are no-ops for pure-instruct models (Mistral, Llama, GPT-OSS) — zero behavior change for users not on reasoning models.
+
+### Token & Context Budget Inheritance Chain
+
+The hardcoded `max_output_tokens=2000` default in per-chunk relationship extraction was collapsing Qwen3-family output (Run 03 stored 13 relationships across 77 candidate pairs because the model truncated mid-XML). Budgets are now configurable across the whole stack via a fallback chain so a 3-model deployment can be configured with just two env vars.
+
+**Inheritance chain (output tokens):**
+
+```
+OPENAI_MAX_OUTPUT_TOKENS=8000      (new primary default — covers Qwen3 verbose XML)
+     ↓ (when EXTRACTION_*=0)
+EXTRACTION_MAX_OUTPUT_TOKENS
+     ↓ (when RELATIONSHIP_*=0)
+RELATIONSHIP_MAX_OUTPUT_TOKENS      ← per-chunk + candidate scan
+     ↓ (when VISION_*=0)
+VISION_MAX_OUTPUT_TOKENS
+
+RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000   (standalone — Phase 2 batch only, NOT in chain)
+```
+
+**Inheritance chain (input context):**
+
+```
+OPENAI_MAX_CONTEXT=32768
+     ↓ (when EXTRACTION_*=0)
+GRAPH_EXTRACTION_MAX_CONTEXT
+     ↓ (when RELATIONSHIP_*=0)
+RELATIONSHIP_MAX_CONTEXT
+```
+
+- `0` is the inherit sentinel for ints (consistent with `MAX_FILES=0` = unlimited convention).
+- `EXTRACTION_MAX_CONTEXT` → **renamed to `GRAPH_EXTRACTION_MAX_CONTEXT`** for prefix consistency with `GRAPH_EXTRACTION_MODEL` / `GRAPH_EXTRACTION_API_BASE`. Legacy name honored as a deprecated alias for one release; a one-shot startup `WARN` from `app.config._warn_deprecated_env_aliases` nudges migration.
+- `RELATIONSHIP_MAX_OUTPUT_TOKENS` **semantic split**: the env var now drives per-chunk + candidate-scan in the chain; the Phase 2 batch budget moved to the new standalone `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` for Phase 2 should rename to the new var; the legacy value still works (per-chunk gets harmless 16000-token headroom).
+- Entity-extraction call sites at `graph_extractor.py:821`, `1014`, `1840` now read `settings.extraction_max_output_tokens` instead of hardcoded `3000`/`8000`. Per-chunk relationship caller in `document_processor.py:1461` passes `settings.relationship_max_output_tokens`. Phase 2 batch caller switched to `settings.relationship_batch_max_output_tokens`. Vision call (`vision_analyzer.py:304`) reads `settings.vision_max_output_tokens`.
+- Utility-tier hardcoded budgets stay hardcoded (50/300/500/1000 for community names, entity descriptions, query-time extraction) — those are task-tuned and would harm functionality if scaled with the primary.
+- 17-test `backend/tests/test_budget_fallback.py` covers all chain combinations, mid-chain overrides, Phase 2 isolation, legacy alias loading, and the deprecation WARN trigger.
+
+### Neo4j 5.26 Upgrade (4096-dim Vector Indexes)
+
+Neo4j 5.15-community caps vector-index dimensions at 2048, blocking native use of Qwen3-Embedding-8B (4096) and other modern embedding models. Bumped to Neo4j 5.26 LTS across all compose files.
+
+- `image: neo4j:5.26-community` in `docker-compose.yml`, `coolify/docker-compose.coolify.yml`, `dokploy/docker-compose.dokploy.yml`; `neo4j:5.26-enterprise` in `docker-compose.prod.yml`.
+- In-place data file migration (within Neo4j 5.x the named volume `neo4j_data` upgrades automatically on first boot).
+- Python `neo4j` driver pin (`>=5.17.0`) is already forward-compatible with the new server — no driver changes needed.
+- APOC plugin auto-installs the matching APOC version via `NEO4J_PLUGINS=["apoc"]` — no separate APOC version bump required.
+- **Existing deployments at 1536/2048-dim embeddings keep their corpora intact**: Cortex preserves the vector index when `EMBEDDING_DIMENSION` matches the stored one. Only bumping the dim triggers an auto drop-and-recreate of the index (requires re-embedding).
+- New deployments can set `EMBEDDING_DIMENSION=4096` directly for native Qwen3-Embedding-8B fidelity.
+
+### Recommended Minimal Stack + `.env.recommended`
+
+The model + budget inheritance chains compress a 3-model 12-env-var stack down to a 2-model 6-env-var stack. New `.env.recommended` template at the project root captures the bench-validated Venice setup:
+
+```env
+OPENAI_API_KEY=...
+OPENAI_API_BASE=https://api.venice.ai/api/v1
+OPENAI_MODEL=minimax-m27
+OPENAI_MAX_CONTEXT=196608
+
+GRAPH_EXTRACTION_MODEL=qwen3-6-27b
+GRAPH_EXTRACTION_MAX_CONTEXT=256000
+
+VISION_MODEL=google-gemma-3-27b-it
+
+EMBEDDING_MODEL=text-embedding-qwen3-8b
+EMBEDDING_DIMENSION=4096
+
+BATCH_PROCESSING_CONCURRENCY=5
+CONCURRENT_EXTRACTIONS=10
+CONCURRENT_RELATIONS=5
+VISION_MAX_CONCURRENT=5
+```
+
+- The same canonical block now appears in `.env.example` (top-of-file Quick Start), `README.md` (Quick Setup), `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` — eight locations total.
+- Companion **performance tuning (Venice-validated)** block documents the concurrency knobs and warns that `CONCURRENT_EXTRACTIONS` is the biggest multiplier to dial down on smaller providers.
+- Relationship + (optionally) Vision sub-tier models inherit `GRAPH_EXTRACTION_MODEL` automatically; embedding API base/key inherit from `OPENAI_*` so no separate config is needed when Venice serves both.
+- **Vision exception**: `VISION_MODEL` does NOT inherit — set it explicitly or Cortex falls back to Docling's built-in SmolVLM (no API call).
+
+### Autonomous LLM-Stack Benchmark Harness
+
+New `bench/` directory — a self-contained orchestrator that cycles a fixed dataset through arbitrary LLM-model combinations against the Cortex ingestion pipeline, measuring extraction yield, relationship density, and runtime per combo. Includes a model registry, automated `.env` backup/restore safety, and per-run heuristics. *Not yet publicly documented; CLI is internal-only for now.*
+
+### Admin Settings Page Enhancements
+
+Settings page (`/admin`) didn't expose the new budget knobs. The **LLM Configuration** section now shows:
+
+- **Primary Model**: added **Context Window** (`OPENAI_MAX_CONTEXT`) and **Output Tokens** (`OPENAI_MAX_OUTPUT_TOKENS`) rows
+- **Extraction Model**: added **Output Tokens** (`EXTRACTION_MAX_OUTPUT_TOKENS`)
+- **Relationship Model**: split into **Output Tokens (per-chunk)** and **Output Tokens (batch)** — reflecting the inheritance-chain + standalone split
+- **Vision Model**: added **Output Tokens** (`VISION_MAX_OUTPUT_TOKENS`)
+
+Each new field includes a tooltip explaining its inheritance path and where it sits in the budget chain. Backend `SystemConfigResponse` model + `/api/admin/config` endpoint extended with the corresponding fields.
+
+### Pricing & Plan Limits
+
+- New `MAX_ENTITIES` env var (default `0` = unlimited) caps the total entity count across the graph. Enforced at upload-time and custom-input creation: new ingestion is rejected once `get_stats()["entity_count"]` is at or above the cap. A single in-flight document can push the post-extraction count slightly above the cap (accepted tradeoff per PRICING.md §4.2).
+- `MAX_QUERIES_PER_MONTH` instance-wide cap on chat-style queries — applies to `POST /api/search`, `POST /api/ask`, `POST /api/ask/stream`, `POST /api/ask/stream/thinking`. Returns `429 Too Many Requests` with a `Retry-After` header (seconds until next UTC month) when exceeded.
+- Error messages on limit-rejection updated to indicate users should upgrade their plan rather than just stating the limit was hit.
+- Comprehensive test coverage in `backend/tests/` for `MAX_FILES`, `MAX_ENTITIES`, `MAX_COLLECTIONS` enforcement across upload, custom input, collection creation, and library import endpoints.
+
+### Skill `http_request` Tool Improvements
+
+- **Config variable substitution in request body**: `_substitute_variables()` previously ran on the URL only, so skills that referenced configured values in a JSON body (e.g. `"group": "ZAMMAD_GROUP_NAME"`) shipped the literal placeholder string instead of the substituted value. Now applied to URL + body.
+- **Default `Content-Type` injection**: the tool previously only injected `Authorization` headers from skill config schemas. Skills `POST`/`PUT`-ing JSON bodies without explicitly setting `Content-Type` were getting `text/plain` and being rejected by strict APIs. Default is now `application/json` when a body is present, overridable per request.
+- **Improved researcher-agent logging**: tool call inputs/outputs are now logged at INFO level with payload truncation for easier debugging of skill-driven research flows.
+
+### Design System & UI Kit
+
+- **MOCA Library UI Kit**: complete UI kit for the MOCA Library web app, including the `ManageScreen` for document management and the `Shell` component for top-level navigation chrome.
+- **Design system preview files + tokens**: HTML previews for drop zone, glass surface, icons, input, logo, motion, nav pill, radii, shadows, spacing scale, stats card, and other primitives. Tokens published as the canonical reference for in-product surfaces and partner integrations.
+
+### Minor Fixes
+
+- **Restart-vs-recreate gotcha documented**: `docker compose restart` does NOT re-read `env_file:` (env vars are baked at container *create* time). Added a callout to `handbook/03-getting-started.md` and a dedicated section in `handbook/20-troubleshooting.md` pointing users to `docker compose up -d --force-recreate backend` after any `.env` change.
+- Build resilience: logo download via `curl` no longer fails the frontend build when the Directus URL is unreachable — logs a warning and continues with the default logo (`81d99af`).
+- Code structure cleanup across `.claude/architecture.md`, `.claude/design-system.md`, and several services (`172c1db`).
+
+---
+
 ## April 8, 2026
 
 ### Collection-Based Auth System

@@ -800,10 +800,15 @@ class SystemConfigResponse(BaseModel):
     # LLM Configuration
     openai_model: str = Field(..., description="Primary LLM model")
     openai_api_base: str = Field(..., description="Primary LLM API base URL")
+    openai_max_context: int = Field(..., description="Primary LLM input context window")
+    openai_max_output_tokens: int = Field(..., description="Primary LLM output-token budget (floor of the inheritance chain)")
     extraction_model: str = Field(..., description="Model used for entity/relationship extraction")
     extraction_api_base: str = Field(..., description="Extraction model API base URL")
     extraction_max_context: int = Field(..., description="Max context window tokens for entity extraction")
+    extraction_max_output_tokens: int = Field(..., description="Output budget for entity-extraction calls")
     relationship_max_context: int = Field(..., description="Max context window tokens for relationship analysis")
+    relationship_max_output_tokens: int = Field(..., description="Output budget for per-chunk + candidate-scan relationship calls")
+    relationship_batch_max_output_tokens: int = Field(..., description="Output budget for Phase 2 batch relationship analysis (standalone)")
     parallel_relationship_batches: int = Field(..., description="Number of relationship batches processed in parallel")
     relationship_target_ratio: float = Field(default=3.0, description="Target relationships-per-entity ratio")
     relationship_max_rounds: int = Field(default=1, description="Max auto-discovery rounds per analysis run")
@@ -819,6 +824,7 @@ class SystemConfigResponse(BaseModel):
     vision_model: str = Field(..., description="Vision model name for image analysis")
     vision_api_base: str = Field(..., description="Vision model API base URL")
     vision_max_concurrent: int = Field(..., description="Max concurrent vision API calls")
+    vision_max_output_tokens: int = Field(..., description="Output budget for vision-model image descriptions")
 
     # Embedding Configuration
     embedding_model: str = Field(..., description="Embedding model")

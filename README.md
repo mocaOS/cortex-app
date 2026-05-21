@@ -135,6 +135,38 @@ SESSION_SECRET=at-least-32-characters-secret
 
 Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community summarization, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API). Entity extraction and community summarization use the extraction model, while all relationship work (per-chunk + batch analysis) uses the dedicated relationship model. Fallback chain: relationship model → extraction model → primary model.
 
+**Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
+
+```env
+# Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+OPENAI_API_KEY=
+OPENAI_API_BASE=
+OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7
+OPENAI_MAX_CONTEXT=196608
+
+# Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b
+GRAPH_EXTRACTION_MAX_CONTEXT=256000
+
+# Vision — image analysis (does NOT inherit; api_base/api_key inherit from OPENAI_*)
+VISION_MODEL=google-gemma-3-27b-it
+
+# Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+```
+
+**Performance tuning (Venice-validated)** — pair these with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice / Compute3 / large vLLM endpoints, dial back for stock OpenAI or smaller hosts.
+
+```env
+BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3 — biggest multiplier)
+CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+```
+
+Or configure each tier explicitly:
+
 ```env
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
 # Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
@@ -155,8 +187,15 @@ RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODE
 RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
 RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
 
-# Context budgets — must match the context window of their respective models
-EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
+# Token budgets — primary defaults cascade to sub-tiers via the fallback chain
+# (set sub-tier to 0 = inherit). See "Budget Fallback Chain" further below.
+OPENAI_MAX_OUTPUT_TOKENS=8000                # primary output cap; sub-tiers inherit
+OPENAI_MAX_CONTEXT=32768                     # primary input context; sub-tiers inherit
+# EXTRACTION_MAX_OUTPUT_TOKENS=3500          # bump for verbose-XML models (Qwen3)
+# RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000 # Phase 2 batch (standalone, NOT in chain)
+
+# Context budgets — only override when sub-tier model has bigger window than primary
+GRAPH_EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
 RELATIONSHIP_MAX_CONTEXT=198000              # must match RELATIONSHIP_EXTRACTION_MODEL context window
 
 # Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
@@ -171,6 +210,7 @@ DEFAULT_REASONING_MODE=auto                  # Q&A / researcher agent (stays AUT
 VISION_MODEL=
 VISION_MODEL_API_BASE=                       # defaults to OPENAI_API_BASE
 VISION_MODEL_API_KEY=                        # defaults to OPENAI_API_KEY
+# VISION_MAX_OUTPUT_TOKENS=0                 # 0 = inherit RELATIONSHIP → EXTRACTION → OPENAI
 
 # ── Embeddings ───────────────────────────────────────────────────
 EMBEDDING_MODEL=
@@ -224,7 +264,7 @@ docker run -d \
   -p 7474:7474 -p 7687:7687 \
   -e NEO4J_AUTH=neo4j/password123 \
   -e NEO4J_ACCEPT_LICENSE_AGREEMENT=yes \
-  neo4j:5.15.0-enterprise
+  neo4j:5.26-enterprise
 
 # Run the API
 uvicorn app.main:app --reload --port 8000
@@ -662,7 +702,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
 | `EMBEDDING_SEND_DIMENSIONS` | Send `dimensions` param to embedding API. Set `false` for models with fixed output dim (e.g. qwen3-vl-embedding-2b) | No | `true` |
-| `USE_OPENAI_EMBEDDINGS` | Use OpenAI API for embeddings | No | `true` |
+| `USE_OPENAI_EMBEDDINGS` | Embedding transport flag (not provider-specific). `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP API. `false` = ignore `EMBEDDING_MODEL` and run a local `sentence-transformers/all-MiniLM-L6-v2` model | No | `true` |
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
@@ -680,7 +720,14 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `20` |
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
-| `EXTRACTION_MAX_CONTEXT` | Max context window tokens for entity extraction batching | No | `32768` |
+| `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
+| `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `32768` |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Bump to 3500–4000 for Qwen3-family models | No | `0` (=inherit) |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `OPENAI_MAX_CONTEXT`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit) |
+| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Output budget for **per-chunk + candidate scan** (in chain). 0 = inherit. **Semantics changed** — see migration note | No | `0` (=inherit) |
+| `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | Output budget for **Phase 2 batch** relationship analysis. Standalone — NOT in inheritance chain | No | `16000` |
+| `RELATIONSHIP_MAX_CONTEXT` | Input context for Phase 2 batch. 0 = inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary | No | `0` (=inherit) |
+| `VISION_MAX_OUTPUT_TOKENS` | Output budget for image analysis. 0 = inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary | No | `0` (=inherit) |
 | `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
 | `CHUNK_OVERLAP` | Overlap between chunks | No | `50` |
 | `CHUNK_BY` | Chunking strategy: `word` or `sentence` | No | `sentence` |
@@ -739,8 +786,6 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship analysis batching | No | `65536` |
-| `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship analysis LLM responses | No | `16000` |
 | `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_RELATIONS`) | No | `5` |
 | `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached | No | `1.0` |
 | `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) | No | `3` |
@@ -802,6 +847,8 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | Cortex theme |
 
 #### Compute3 Turbo Mode
+
+> ⚠️ **On hold — not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The vars below have no runtime effect today and the UI toggle is hidden when `COMPUTE3_API_KEY` is empty. Code kept against future activation; safe to leave all of these unset.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
@@ -1055,7 +1102,7 @@ The header shows a Turbo Mode status indicator when configured (green when ready
 - **cross-encoder** - Re-ranking for improved precision
 
 ### Database
-- **Neo4j 5.15** - Graph database with vector search (Community or Enterprise)
+- **Neo4j 5.26** - Graph database with vector search (Community or Enterprise) — 4096-dim vector indexes supported
 - **APOC** - Neo4j procedures library
 
 ## 📝 License

@@ -818,7 +818,7 @@ class GraphExtractor:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,
-                max_tokens=3000,
+                max_tokens=self.settings.extraction_max_output_tokens,
             )
 
             content = self._extract_response_content(response)
@@ -1011,7 +1011,7 @@ class GraphExtractor:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,
-                max_tokens=3000,
+                max_tokens=self.settings.extraction_max_output_tokens,
             )
 
             content = self._extract_response_content(response)
@@ -1837,7 +1837,7 @@ Respond with ONLY the community name, nothing else."""
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=8000,
+                    max_tokens=self.settings.extraction_max_output_tokens,
                 )
 
                 content = self._extract_response_content(response)
@@ -2515,7 +2515,8 @@ Extract relationships supported by the text above:"""
 
             # --- Phase 1: Candidate scan (extraction model) ---
             candidates = await self.scan_candidate_pairs_async(
-                batch, batch_context, batch_existing, max_output_tokens=4000,
+                batch, batch_context, batch_existing,
+                max_output_tokens=self.settings.relationship_max_output_tokens,
             )
 
             if not candidates:

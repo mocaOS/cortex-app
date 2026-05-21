@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.15.0-community
+    image: neo4j:5.26-community
     container_name: cortex-neo4j
     environment:
       - NEO4J_AUTH=neo4j/${SERVICE_PASSWORD_NEO4J:-bW3qnJ63dltJPIoMz054Bzn4uDsPGDVH}

@@ -303,7 +303,7 @@ def apply_combo_to_env(combo: dict) -> None:
     env.set("GRAPH_EXTRACTION_MODEL", extraction["model_id"])
     env.set("GRAPH_EXTRACTION_API_BASE", extraction["base_url"])
     env.set("GRAPH_EXTRACTION_API_KEY", extraction["api_key"])
-    env.set("EXTRACTION_MAX_CONTEXT", str(extraction["context_length"]))
+    env.set("GRAPH_EXTRACTION_MAX_CONTEXT", str(extraction["context_length"]))
 
     # Relationship tier — candidate scan + per-chunk + Phase 2 batch
     env.set("RELATIONSHIP_EXTRACTION_MODEL", relationship["model_id"])

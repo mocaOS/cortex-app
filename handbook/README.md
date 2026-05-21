@@ -31,7 +31,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 12 | [Communities](12-communities.md) | `12-communities.md` | End Users |
 | 13 | [Entity Deduplication](13-deduplication.md) | `13-deduplication.md` | End Users |
 | 14 | [Image Analysis](14-image-analysis.md) | `14-image-analysis.md` | Everyone |
-| 15 | [Turbo Mode (GPU Acceleration)](15-turbo-mode.md) | `15-turbo-mode.md` | Administrators |
+| 15 | [Turbo Mode (GPU Acceleration)](15-turbo-mode.md) ⚠️ on hold | `15-turbo-mode.md` | Reference only — Compute3 service not yet in production |
 | 16 | [API Reference](16-api-reference.md) | `16-api-reference.md` | Developers |
 | 17 | [Integration Patterns](17-integrations.md) | `17-integrations.md` | Developers |
 | 18 | [Administration and Maintenance](18-administration.md) | `18-administration.md` | Administrators |

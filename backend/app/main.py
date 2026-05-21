@@ -3730,10 +3730,15 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         # LLM Configuration
         openai_model=settings.openai_model,
         openai_api_base=settings.openai_api_base,
+        openai_max_context=settings.openai_max_context,
+        openai_max_output_tokens=settings.openai_max_output_tokens,
         extraction_model=settings.extraction_model,
         extraction_api_base=settings.extraction_api_base,
         extraction_max_context=settings.extraction_max_context,
+        extraction_max_output_tokens=settings.extraction_max_output_tokens,
         relationship_max_context=settings.relationship_max_context,
+        relationship_max_output_tokens=settings.relationship_max_output_tokens,
+        relationship_batch_max_output_tokens=settings.relationship_batch_max_output_tokens,
         parallel_relationship_batches=settings.parallel_relationship_batches,
         relationship_target_ratio=settings.relationship_target_ratio,
         relationship_max_rounds=settings.relationship_max_rounds,
@@ -3749,6 +3754,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         vision_model=settings.vision_model or "Not configured",
         vision_api_base=settings.vision_model_api_base or settings.openai_api_base,
         vision_max_concurrent=settings.vision_max_concurrent,
+        vision_max_output_tokens=settings.vision_max_output_tokens,
 
         # Embedding Configuration
         embedding_model=settings.embedding_model,

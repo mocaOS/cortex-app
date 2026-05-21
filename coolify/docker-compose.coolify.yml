@@ -4,7 +4,7 @@
 
 services:
   neo4j:
-    image: neo4j:5.15.0-community
+    image: neo4j:5.26-community
     environment:
       # Username is hardcoded to 'neo4j' - don't set NEO4J_USER in Coolify env vars!
       - NEO4J_AUTH=neo4j/${SERVICE_PASSWORD_NEO4J}

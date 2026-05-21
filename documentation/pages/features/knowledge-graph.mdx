@@ -433,16 +433,19 @@ ENABLE_GRAPH_EXTRACTION=true
 # Graph traversal depth
 MAX_GRAPH_HOPS=2
 
-# Context window budget for entity extraction batching (default: 32768)
-# EXTRACTION_MAX_CONTEXT=32768
+# Context + output budgets cascade from primary (OPENAI_MAX_*) when set to 0.
+# See "Budget Fallback Chain" in /pages/configuration for the full chain.
+# GRAPH_EXTRACTION_MAX_CONTEXT=0              # 0 = inherit OPENAI_MAX_CONTEXT (=32768)
+# EXTRACTION_MAX_OUTPUT_TOKENS=0        # 0 = inherit OPENAI_MAX_OUTPUT_TOKENS (=8000); only override to constrain or expand this specific tier
 
 # Entity resolution
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 ENTITY_SIMILARITY_THRESHOLD=0.85
 
 # Relationship analysis (Phase B / Step 2)
-# RELATIONSHIP_MAX_CONTEXT=65536        # Max INPUT context tokens for batching
-# RELATIONSHIP_MAX_OUTPUT_TOKENS=16000  # Max OUTPUT tokens for LLM responses
+# RELATIONSHIP_MAX_CONTEXT=0                    # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary
+# RELATIONSHIP_MAX_OUTPUT_TOKENS=0              # per-chunk + candidate scan (in chain)
+# RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000    # Phase 2 batch (standalone, NOT in chain)
 # PARALLEL_RELATIONSHIP_BATCHES=5       # Batches processed in parallel
 # RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
 # RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)

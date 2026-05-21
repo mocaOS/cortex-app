@@ -10,11 +10,14 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default: gpt-4o-mini) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
 - `OPENAI_API_BASE` — for LiteLLM-compatible providers
+- `OPENAI_MAX_OUTPUT_TOKENS` (default: 8000) — floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0. 8000 is generous enough that verbose-XML models (Qwen3-family) don't truncate `<relationship>` output; tighter models simply finish under cap with no cost penalty. See [Budget Fallback Chain](#budget-fallback-chain).
+- `OPENAI_MAX_CONTEXT` (default: 32768) — floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0.
 
 ## Extraction LLM
 
 - `GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY` — Extraction model for entity extraction and community summarization. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to primary model equivalents.
-- `EXTRACTION_MAX_CONTEXT` (default: 32768) — context window budget for entity extraction (must match `GRAPH_EXTRACTION_MODEL` context window)
+- `GRAPH_EXTRACTION_MAX_CONTEXT` (default: 0 = inherit `OPENAI_MAX_CONTEXT` = 32768) — input context budget for entity extraction batching. Override when extraction model has bigger window than primary.
+- `EXTRACTION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS` = 8000) — output budget for entity-extraction LLM calls (`graph_extractor.py:821/1014/1840`). The inherited 8000 already accommodates Qwen3-family verbose XML; override only if you want to constrain or expand that tier specifically.
 
 ## Relationship LLM
 
@@ -22,7 +25,9 @@ See [`.claude/domain/relationships.md`](domain/relationships.md) for how these a
 
 - `RELATIONSHIP_EXTRACTION_MODEL`, `RELATIONSHIP_EXTRACTION_API_BASE`, `RELATIONSHIP_EXTRACTION_API_KEY` — dedicated LLM model for all relationship extraction work (per-chunk in Step 1 + batch analysis in Step 2). Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model equivalents. Config properties: `rel_extraction_model`, `rel_extraction_api_base`, `rel_extraction_api_key` with fallback chain: relationship model -> extraction model -> main model. Uses `get_relationship_llm_config()` from `llm_config.py`.
 - `CONCURRENT_RELATIONS` (default: 3) — concurrent per-chunk relationship extractions per document (separate rate limit from entity extraction)
-- `RELATIONSHIP_MAX_CONTEXT` (default: 65536), `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 16000) — context window and output budgets for relationship analysis (must match `RELATIONSHIP_EXTRACTION_MODEL` context window)
+- `RELATIONSHIP_MAX_CONTEXT` (default: 0 = inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary) — input context budget for Phase 2 batch relationship analysis.
+- `RELATIONSHIP_MAX_OUTPUT_TOKENS` (default: 0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary) — output budget for **per-chunk** + **candidate-pair scan** (lines 1962/2026/2068/2137). **NOTE: This env var changed meaning** — previously it was the Phase 2 batch budget (16000). Migrate that semantic to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`.
+- `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` (default: 16000) — output budget for **Phase 2 batch** analysis (`graph_extractor.py:2270`). Standalone, NOT in the inheritance chain (batches process hundreds of entity pairs per call and need ~16k).
 - `PARALLEL_RELATIONSHIP_BATCHES` (default: 5) — number of relationship analysis batches to process in parallel
 - `RELATIONSHIP_TARGET_RATIO` (default: 1.0) — target relationships-per-entity ratio (ERR) for admin monitoring
 - `RELATIONSHIP_MAX_ROUNDS` (default: 3) — max auto-discovery rounds for initial analysis ("Find more" always does 1 round). Stops early if target ratio reached.
@@ -59,6 +64,41 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 - `VISION_MAX_CONCURRENT` (default: 3) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing)
 - `VISION_REASONING_MODE` (default: `off`) — see [Reasoning Control (ingestion)](#reasoning-control-ingestion). Suppresses `<think>` output on reasoning multimodal models (Qwen3-VL, GLM-V, etc.) so image descriptions stay clean.
+- `VISION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → `EXTRACTION_MAX_OUTPUT_TOKENS` → `OPENAI_MAX_OUTPUT_TOKENS`) — output budget for the vision-model image-description call (`vision_analyzer.py:304`).
+
+## Budget Fallback Chain
+
+`backend/app/config.py` exposes `@property` accessors that resolve token / context budgets through a parent chain when the raw env var equals `0`. Same idiom as the existing model-name fallback (`extraction_model` → `openai_model`) but for ints, with `0` as the inherit sentinel (consistent with `MAX_FILES=0` etc.).
+
+**Output tokens chain:** `VISION_*` → `RELATIONSHIP_*` → `EXTRACTION_*` → `OPENAI_MAX_OUTPUT_TOKENS=8000`
+**Input context chain:** `RELATIONSHIP_MAX_CONTEXT` → `GRAPH_EXTRACTION_MAX_CONTEXT` → `OPENAI_MAX_CONTEXT=32768`
+**Standalone:** `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000` (Phase 2 batch only — not in chain)
+
+Recommended minimal config when running a 3-tier stack:
+```env
+OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7      # primary / agentic (196K window)
+OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M2.7 full input window
+GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b  # extraction + (inherited) relationship (256K window)
+GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.7-27B full input window; relationship_max_context inherits
+VISION_MODEL=google-gemma-3-27b-it       # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B  # text embedding (native 4096, MRL 32–4096)
+EMBEDDING_DIMENSION=4096                 # native; Neo4j 5.26 (default) supports 4096-dim vector indexes
+# Output budgets cascade automatically
+```
+Both `*_MAX_CONTEXT` overrides are required — the conservative default (32768) doesn't match either model's actual input window.
+
+Companion performance-tuning block (Venice-validated; pair with the stack above to maximize ingestion throughput):
+```env
+BATCH_PROCESSING_CONCURRENCY=5    # docs in parallel (default 2)
+CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3) — biggest multiplier
+CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=5           # system-wide vision semaphore (default 3)
+```
+`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / Compute3 / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
+
+**Migration:** the env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` was previously the Phase 2 batch budget (16000). It now drives **per-chunk + candidate scan** instead, and the Phase 2 batch value lives in the new `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` will see per-chunk extraction also get 16000 tokens (overkill but harmless — model finishes well below cap).
+
+**Migration:** `EXTRACTION_MAX_CONTEXT` → `GRAPH_EXTRACTION_MAX_CONTEXT` — env var renamed to match the `GRAPH_EXTRACTION_MODEL`/`GRAPH_EXTRACTION_API_BASE`/`GRAPH_EXTRACTION_API_KEY` prefix convention. Legacy name is honored as a deprecated alias for one release; a one-shot startup `WARN` (from `app.config._warn_deprecated_env_aliases`) fires when only the old name is set. The Python property `settings.extraction_max_context` is unchanged.
 
 ## Embeddings
 

@@ -663,10 +663,15 @@ export interface SystemConfig {
   // LLM Configuration
   openai_model: string;
   openai_api_base: string;
+  openai_max_context: number;
+  openai_max_output_tokens: number;
   extraction_model: string;
   extraction_api_base: string;
   extraction_max_context: number;
+  extraction_max_output_tokens: number;
   relationship_max_context: number;
+  relationship_max_output_tokens: number;
+  relationship_batch_max_output_tokens: number;
   parallel_relationship_batches: number;
 
   // Relationship Extraction Model
@@ -679,6 +684,7 @@ export interface SystemConfig {
   vision_model: string;
   vision_api_base: string;
   vision_max_concurrent: number;
+  vision_max_output_tokens: number;
 
   // Embedding Configuration
   embedding_model: string;

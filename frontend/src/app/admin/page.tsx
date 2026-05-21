@@ -455,6 +455,8 @@ export default function AdminPage() {
                       <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M2.7, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
                       <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
                       <ConfigItem label="API Base" value={config.openai_api_base} tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
+                      <ConfigItem label="Context Window" value={config.openai_max_context.toLocaleString()} tooltip="Input context budget for the primary model. Floor of the context-budget fallback chain — sub-tier *_MAX_CONTEXT knobs inherit from this when set to 0 (OPENAI_MAX_CONTEXT)" />
+                      <ConfigItem label="Output Tokens" value={config.openai_max_output_tokens.toLocaleString()} tooltip="Output-token budget for the primary model. Floor of the output-budget fallback chain — sub-tier *_MAX_OUTPUT_TOKENS knobs inherit from this when set to 0 (OPENAI_MAX_OUTPUT_TOKENS)" />
                     </div>
 
                     {/* Extraction Model */}
@@ -463,7 +465,8 @@ export default function AdminPage() {
                       <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion, and generates community summaries. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to the primary model if not set separately.</p>
                       <ConfigItem label="Model" value={config.extraction_model} tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.extraction_api_base} tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
-                      <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Must match this model's context window (EXTRACTION_MAX_CONTEXT)" />
+                      <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Inherits OPENAI_MAX_CONTEXT when GRAPH_EXTRACTION_MAX_CONTEXT is 0 (GRAPH_EXTRACTION_MAX_CONTEXT)" />
+                      <ConfigItem label="Output Tokens" value={config.extraction_max_output_tokens.toLocaleString()} tooltip="Output budget for entity-extraction LLM calls. Inherits OPENAI_MAX_OUTPUT_TOKENS when EXTRACTION_MAX_OUTPUT_TOKENS is 0 (EXTRACTION_MAX_OUTPUT_TOKENS)" />
                       <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the extraction pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
                     </div>
 
@@ -474,7 +477,9 @@ export default function AdminPage() {
                       <ConfigItem label="Model" value={config.relationship_model} tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.relationship_api_base} tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Concurrency" value={config.concurrent_relations} tooltip="How many per-chunk relationship extractions run in parallel per document (CONCURRENT_RELATIONS)" />
-                      <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max context window tokens for relationship analysis. Must match this model's context window (RELATIONSHIP_MAX_CONTEXT)" />
+                      <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max input context tokens for Phase 2 batch analysis. Inherits extraction → primary when RELATIONSHIP_MAX_CONTEXT is 0 (RELATIONSHIP_MAX_CONTEXT)" />
+                      <ConfigItem label="Output Tokens (per-chunk)" value={config.relationship_max_output_tokens.toLocaleString()} tooltip="Output budget for per-chunk + candidate-scan calls. Inherits extraction → primary when RELATIONSHIP_MAX_OUTPUT_TOKENS is 0 (RELATIONSHIP_MAX_OUTPUT_TOKENS)" />
+                      <ConfigItem label="Output Tokens (batch)" value={config.relationship_batch_max_output_tokens.toLocaleString()} tooltip="Output budget for Phase 2 batch analysis — standalone, NOT in the inheritance chain. Batches process hundreds of entity pairs per call (RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS)" />
                       <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Number of relationship analysis batches processed concurrently in Step 2. Higher values speed up analysis but increase API load (PARALLEL_RELATIONSHIP_BATCHES)" />
                     </div>
 
@@ -485,6 +490,7 @@ export default function AdminPage() {
                         <p className="text-muted-foreground text-xs mb-2">Analyzes images extracted from documents during ingestion, generating descriptions and running OCR in the background.</p>
                         <ConfigItem label="Model" value={config.vision_model} tooltip="Vision-capable model used for image analysis during document ingestion (VISION_MODEL)" />
                         <ConfigItem label="API Base" value={config.vision_api_base} tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
+                        <ConfigItem label="Output Tokens" value={config.vision_max_output_tokens.toLocaleString()} tooltip="Output budget for vision-model image descriptions. Inherits relationship → extraction → primary when VISION_MAX_OUTPUT_TOKENS is 0 (VISION_MAX_OUTPUT_TOKENS)" />
                         <ConfigItem label="Max Concurrent" value={config.vision_max_concurrent} tooltip="System-wide cap on concurrent vision API calls. Controls how many images are analyzed in parallel across all documents (VISION_MAX_CONCURRENT)" />
                       </div>
                     )}

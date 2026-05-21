@@ -16,7 +16,7 @@ Extracts entities from each document's chunks using an LLM. The UI shows entity 
 
 **What happens:**
 
-1. Each document's chunks are grouped into batches sized to fit within `EXTRACTION_MAX_CONTEXT`
+1. Each document's chunks are grouped into batches sized to fit within `GRAPH_EXTRACTION_MAX_CONTEXT`
 2. Consecutive batches share 1 chunk of overlap for context continuity
 3. The LLM receives a system prompt requesting entities in strict XML format:
    ```xml
@@ -34,7 +34,7 @@ Extracts entities from each document's chunks using an LLM. The UI shows entity 
 **Token budget calculation:**
 
 ```
-available_tokens = (EXTRACTION_MAX_CONTEXT × 0.8) − system_prompt_tokens − template_tokens − 1500 (output reserve)
+available_tokens = (GRAPH_EXTRACTION_MAX_CONTEXT × 0.8) − system_prompt_tokens − template_tokens − 1500 (output reserve)
 ```
 
 **When to run:** After uploading new documents. The Knowledge Graph page automatically detects pending documents.

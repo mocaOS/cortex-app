@@ -26,7 +26,7 @@ Per-collection (Phase B) with two-phase per-batch processing:
 
 ### Phase 1 — Candidate Scan
 
-Relationship model scans all entities in the batch + chunk context to identify candidate entity pairs that may be related. Output: simple `EntityA | EntityB` pairs. Uses `EXTRACTION_MAX_CONTEXT` token budget (larger context window for scanning). Includes few-shot good/bad examples to guide the LLM and anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
+Relationship model scans all entities in the batch + chunk context to identify candidate entity pairs that may be related. Output: simple `EntityA | EntityB` pairs. Uses `GRAPH_EXTRACTION_MAX_CONTEXT` token budget (larger context window for scanning). Includes few-shot good/bad examples to guide the LLM and anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
 
 ### Phase 2 — Relationship Extraction
 

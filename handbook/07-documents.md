@@ -146,7 +146,7 @@ Each chunk is embedded using the configured embedding model. The Library creates
 
 If `ENABLE_GRAPH_EXTRACTION=true`, each document's chunks are analyzed by an LLM to extract entities:
 
-1. Chunks are batched by token budget (fitting within `EXTRACTION_MAX_CONTEXT`)
+1. Chunks are batched by token budget (fitting within `GRAPH_EXTRACTION_MAX_CONTEXT`)
 2. Each batch includes 1-chunk overlap with the previous batch for continuity
 3. The LLM returns entities in XML format
 4. Entities are stored with fuzzy resolution (85% Levenshtein threshold)

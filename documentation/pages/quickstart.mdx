@@ -49,6 +49,38 @@ SESSION_SECRET=a-random-string-at-least-32-characters-long
 
 Cortex uses LLMs for Q&A, entity extraction, relationship extraction, image understanding, and embeddings. Each capability can point to a different model or provider (any OpenAI-compatible API), giving you 5 independently configurable model slots.
 
+**Recommended Minimal Stack** — bench-validated 2-model setup. Fill in two API values and you're done; relationship + vision inherit from the extraction model, output budgets cascade automatically.
+
+```bash
+# Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+OPENAI_API_KEY=
+OPENAI_API_BASE=
+OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7
+OPENAI_MAX_CONTEXT=196608
+
+# Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b
+GRAPH_EXTRACTION_MAX_CONTEXT=256000
+
+# Vision — image analysis (does NOT inherit; api_base/api_key inherit from OPENAI_*)
+VISION_MODEL=google-gemma-3-27b-it
+
+# Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+```
+
+**Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice / Compute3 / large vLLM endpoints. Dial back for stock OpenAI or smaller hosts.
+
+```bash
+BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3)
+CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+```
+
+Or configure each tier independently:
+
 ```bash
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
 # Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
@@ -71,9 +103,11 @@ RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODE
 RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
 RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
 
-# Context budgets — must match the context window of their respective models
-EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000              # must match relationship/extraction model context window
+# Context budgets — primary OPENAI_MAX_CONTEXT cascades to sub-tiers via the
+# fallback chain (0 = inherit). Override only when a sub-tier model has a
+# different window than the primary.
+GRAPH_EXTRACTION_MAX_CONTEXT=256000                # override only when extraction model has bigger window than primary
+RELATIONSHIP_MAX_CONTEXT=0                   # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → OPENAI_MAX_CONTEXT
 
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=

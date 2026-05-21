@@ -1,5 +1,7 @@
 # Chapter 15: Turbo Mode (GPU Acceleration)
 
+> ⚠️ **On hold — not currently available.** Turbo Mode is a Compute3 partnership prepared in 2025. The Compute3 service is not yet in production, so this feature is non-functional today. The integration code and `COMPUTE3_*` env vars remain in the codebase against future activation; you can ignore this chapter for production setups. If you've set `COMPUTE3_API_KEY` you'll see the toggle in the UI, but no live endpoint is reachable.
+
 Turbo Mode enables GPU-accelerated LLM inference using Compute3, providing significantly faster response times, higher throughput, and potentially lower costs than cloud API providers for sustained workloads.
 
 ## What Is Compute3?
