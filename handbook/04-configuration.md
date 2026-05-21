@@ -47,8 +47,6 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | `16000` | Output budget for **Phase 2 batch** relationship analysis. Standalone (NOT in chain) — batch processes hundreds of pairs per call and genuinely needs ~16k. |
 | `RELATIONSHIP_MAX_PER_ENTITY` | `50` | Soft cap on relationships per entity. Prevents hub entities from accumulating disproportionate connections. 0 = no cap. |
 | `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
-| `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | `true` | Automatically run relationship analysis after batch document processing completes. Set `false` to keep the step manual (visible as a button on `/extract`). |
-| `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | `true` | Automatically run community detection after relationship analysis completes. Set `false` to keep the step manual. |
 
 ## Reasoning Control (ingestion pipelines)
 

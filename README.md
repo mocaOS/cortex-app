@@ -789,8 +789,6 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_RELATIONS`) | No | `5` |
 | `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached | No | `1.0` |
 | `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) | No | `3` |
-| `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | Auto-analyze after batch processing | No | `true` |
-| `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | Auto-detect communities after analysis | No | `true` |
 
 #### Community Detection & Graph Summarization
 

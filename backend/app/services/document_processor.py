@@ -958,43 +958,6 @@ class DocumentProcessor:
             f"Processing complete: {completed} succeeded, {failed} failed out of {total}"
         )
 
-        # Auto-trigger relationship analysis after batch processing
-        if self.settings.auto_relationship_analysis_after_batch and completed > 0:
-            logger.info("Auto-triggering relationship analysis after batch processing")
-            try:
-                await self.analyze_collection_relationships(
-                    collection_id=None,
-                    scope="full",
-                    progress_callback=progress_callback,
-                )
-            except Exception as e:
-                logger.error(f"Auto relationship analysis failed: {e}")
-
-        # Auto-trigger community detection after batch processing
-        if self.settings.auto_community_detection_after_batch and completed > 0:
-            logger.info("Auto-triggering community detection after batch processing")
-            try:
-                communities = await asyncio.to_thread(
-                    self.neo4j.detect_communities,
-                    self.settings.min_community_size,
-                )
-                if communities and self.settings.enable_graph_summarization:
-                    for community in communities:
-                        entity_names = [e.get("name") for e in community.get("entities", [])]
-                        rels = await asyncio.to_thread(
-                            self.neo4j.get_community_relationships, community["id"]
-                        )
-                        summary = await self.graph_extractor.generate_community_summary_async(
-                            community.get("entities", []), rels
-                        )
-                        await asyncio.to_thread(
-                            self.neo4j.store_community,
-                            community["id"], entity_names,
-                            summary.get("summary"), summary.get("name"),
-                        )
-            except Exception as e:
-                logger.error(f"Auto community detection failed: {e}")
-
         return {
             "processed": completed,
             "failed": failed,
@@ -1868,7 +1831,10 @@ class DocumentProcessor:
         image_entity_names: list[str] = []
         entity_names_lock = asyncio.Lock()
 
-        logger.info(f"Document {doc_id}: starting background analysis of {total} images")
+        logger.info(
+            f"Document {doc_id}: starting background analysis of {total} images "
+            f"(extraction tier={self.graph_extractor.extraction_model_name})"
+        )
 
         # Set initial image progress
         try:
@@ -1967,7 +1933,12 @@ class DocumentProcessor:
                     f"(method={analysis.analysis_method}, len={len(analysis.description)})"
                 )
 
-                # Graph extraction for image content
+                # Graph extraction for image content — single combined call
+                # (entities + relationships) on the extraction tier (qwen3).
+                # The combined-prompt approach co-generates relationships with
+                # entity descriptions, which empirically produces a much richer
+                # relationship set on short image-description content than the
+                # split entity-then-relationship pattern used for text chunks.
                 if (
                     self.graph_extractor.is_available
                     and self.settings.enable_graph_extraction
@@ -1988,7 +1959,6 @@ class DocumentProcessor:
                                     extraction_method="per_chunk",
                                 ),
                             )
-                            # Collect entity names for cross-linking to text chunks
                             if extraction.entities:
                                 async with entity_names_lock:
                                     image_entity_names.extend(

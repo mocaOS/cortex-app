@@ -962,37 +962,45 @@ class GraphExtractor:
     # =========================================================================
     
     async def extract_from_text_async(
-        self, 
-        text: str, 
+        self,
+        text: str,
         document_summary: Optional[str] = None,
         entity_types: Optional[List[str]] = None,
         relation_types: Optional[List[str]] = None
     ) -> ExtractionResult:
         """
         Async version of extract_from_text using AsyncOpenAI for true concurrency.
-        
-        This method uses the async OpenAI client directly, allowing many LLM calls
-        to run concurrently without thread pool bottlenecks.
-        
+
+        Single-call combined entity + relationship extraction. Used by the
+        image-content path where the analyzed description is short enough that
+        co-generating entities and their relationships in one XML response
+        yields richer relationships than the two-step text-chunk pattern.
+
+        Routes through the extraction tier (qwen3) when configured; falls back
+        to the primary client only if the extraction client is unavailable.
+
         Args:
             text: The text to extract from
             document_summary: Optional document summary for context
             entity_types: Optional list of entity types to constrain extraction
             relation_types: Optional list of relation types to constrain extraction
         """
-        if not self.async_client:
+        client = self.async_extraction_client or self.async_client
+        if not client:
             logger.warning("Graph extraction unavailable - returning empty result")
             return ExtractionResult()
-        
+
+        model = self.extraction_model_name if self.async_extraction_client else self.current_model
+
         # Use provided types or defaults
         e_types = entity_types or self.entity_types
         r_types = relation_types or self.relation_types
-        
+
         # Build context section if summary provided
         context_section = ""
         if document_summary:
             context_section = f"Document Summary (for context):\n{document_summary}\n"
-        
+
         # Format the user prompt
         user_prompt = EXTRACTION_USER_PROMPT.format(
             entity_types=", ".join(e_types),
@@ -1000,11 +1008,11 @@ class GraphExtractor:
             context_section=context_section,
             text=text
         )
-        
+
         try:
             response = await self._async_safe_completion(
-                self.async_client,
-                model=self.current_model,
+                client,
+                model=model,
                 mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},

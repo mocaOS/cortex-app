@@ -451,8 +451,6 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 # RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
 # RELATIONSHIP_MAX_HOURS=0              # Max hours for relationship analysis (0 = no limit)
 # RELATIONSHIP_MAX_PER_ENTITY=50        # Soft cap on relationships per entity (0 = no cap)
-# AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
-# AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
 
 # Reasoning Control — lets you use reasoning-capable models for ingestion
 # (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, etc.) with their thinking
@@ -475,12 +473,6 @@ DEFAULT_REASONING_MODE=auto      # Q&A / researcher agent (stays AUTO)
 1. **Upload documents** - entities are extracted per-document (Phase A)
 2. **Analyze relationships** - `POST /api/graph/relationships/analyze` (Phase B)
 3. **Detect communities** - `POST /api/graph/communities/detect`
-
-Or enable auto-triggers:
-```bash
-AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=true
-AUTO_COMMUNITY_DETECTION_AFTER_BATCH=true
-```
 
 ## Graph Cleanup
 
