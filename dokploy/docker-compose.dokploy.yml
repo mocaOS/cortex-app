@@ -5,12 +5,13 @@
 # Dokploy injects env vars into the shell for ${} interpolation but does NOT
 # create a .env file, so all vars must be passed explicitly via environment.
 #
-# Only REQUIRED env vars are declared below. All optional knobs (vision/graph-extraction
-# overrides, Compute3 turbo mode, relationship & community tuning, feature flags, chunking,
-# resource caps, agent research, skills, etc.) default to sensible values in
-# backend/app/config.py. To override one, add it as a Dokploy env var AND add a matching
-# `- VAR=${VAR}` line under `environment:` below. See handbook/04-configuration.md for
-# the full catalogue.
+# Only REQUIRED env vars are declared below. Everything else — embedding settings,
+# vision/graph-extraction overrides, Compute3, relationship & community tuning, feature
+# flags, chunking, resource caps, agent research, skills, branding (logo/accent color),
+# admin email, etc. — defaults to sensible values in backend/app/config.py. To override
+# one, add it as a Dokploy env var AND add a matching `- VAR=${VAR}` line under
+# `environment:` below (and a `- VAR=${VAR}` under `build.args:` too if it is a NEXT_PUBLIC_*
+# var that needs build-time inlining). See handbook/04-configuration.md for the full catalogue.
 #
 # Domain routing: Configure in Dokploy UI (Domains tab) per service,
 # or uncomment the Traefik labels below for GitOps-style domain config.
@@ -60,16 +61,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      # --- Embeddings (required) ---
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
-      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
       - PYTHONUNBUFFERED=1
       # --- Admin authentication ---
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
     expose:
@@ -104,10 +100,8 @@ services:
       context: ../frontend
       dockerfile: Dockerfile.prod
       args:
-        # Build-time args for Next.js (set these in Dokploy env vars)
+        # Build-time args for Next.js (set NEXT_PUBLIC_API_URL in Dokploy env vars)
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
-        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
         # Server-side API URL baked into next.config.mjs rewrites at build time
         - API_URL=http://backend:8000
     environment:
@@ -115,12 +109,7 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
-      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
-      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
-      - ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       # Admin authentication (must match backend)
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}

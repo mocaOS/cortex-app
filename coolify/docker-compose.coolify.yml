@@ -2,11 +2,13 @@
 # Uses Coolify magic variables for dynamic URL generation
 # Deploy this via Coolify's Docker Compose resource
 #
-# Only REQUIRED env vars are declared below. All optional knobs (vision/graph-extraction
-# model overrides, Compute3 turbo mode, relationship & community tuning, feature flags,
-# pricing caps, branding, etc.) default to sensible values in backend/app/config.py.
-# To override one, add it as a Coolify env var AND add a matching `- VAR=${VAR}` line
-# under `environment:` below. See handbook/04-configuration.md for the full catalogue.
+# Only REQUIRED env vars are declared below. Everything else — embedding settings,
+# vision/graph-extraction overrides, Compute3, relationship & community tuning, feature
+# flags, pricing caps, branding (logo/accent color), admin email, etc. — defaults to
+# sensible values in backend/app/config.py. To override one, add it as a Coolify env
+# var AND add a matching `- VAR=${VAR}` line under `environment:` below (and a `- VAR=${VAR}`
+# under `build.args:` too if it is a NEXT_PUBLIC_* var that needs build-time inlining).
+# See handbook/04-configuration.md for the full catalogue.
 
 services:
   neo4j:
@@ -47,10 +49,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      # --- Embeddings (required) ---
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
-      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
@@ -58,7 +56,6 @@ services:
       # --- Backend public URL (set BACKEND_URL in Coolify, e.g. https://api-kg.cortex.qwellco.de) ---
       - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
       # --- Admin authentication ---
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
     volumes:
@@ -82,21 +79,14 @@ services:
       args:
         # Build-time arg for the public API URL (set BACKEND_URL in Coolify)
         - NEXT_PUBLIC_API_URL=${BACKEND_URL}
-        # Build-time args for branding customization (optional)
-        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
-        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
     environment:
       # Expose frontend at kg subdomain on port 3000 (set FRONTEND_URL in Coolify)
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}
-      # Branding customization (optional — also needs the matching build args above)
-      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
-      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
       # Admin authentication (must match backend)
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
