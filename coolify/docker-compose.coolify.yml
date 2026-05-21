@@ -1,6 +1,12 @@
 # Docker Compose for Coolify deployment
 # Uses Coolify magic variables for dynamic URL generation
 # Deploy this via Coolify's Docker Compose resource
+#
+# Only REQUIRED env vars are declared below. All optional knobs (vision/graph-extraction
+# model overrides, Compute3 turbo mode, relationship & community tuning, feature flags,
+# pricing caps, branding, etc.) default to sensible values in backend/app/config.py.
+# To override one, add it as a Coolify env var AND add a matching `- VAR=${VAR}` line
+# under `environment:` below. See handbook/04-configuration.md for the full catalogue.
 
 services:
   neo4j:
@@ -33,55 +39,28 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     environment:
+      # --- Database (required) ---
       - NEO4J_URI=bolt://neo4j:7687
       # NEO4J_USER not needed - backend defaults to 'neo4j'
       - NEO4J_PASSWORD=${SERVICE_PASSWORD_NEO4J}
+      # --- LLM (required) ---
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      # Vision model for image analysis (optional - falls back to OpenAI settings if API base/key not set).
-      # VISION_MODEL_API_KEY is not declared here; if you need a separate key, add it as a Coolify env var.
-      - VISION_MODEL=${VISION_MODEL:-}
-      - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
-      # Graph extraction model (optional - smaller/faster model for entity extraction)
-      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
-      - GRAPH_EXTRACTION_API_BASE=${GRAPH_EXTRACTION_API_BASE:-}
-      - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
-      # Embedding configuration
+      # --- Embeddings (required) ---
       - EMBEDDING_MODEL=${EMBEDDING_MODEL}
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
       - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS}
-      - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
-      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
       - PYTHONUNBUFFERED=1
-      # Number of uvicorn workers (default 1, increase if you have RAM - each uses ~1-2GB)
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
-      # Expose backend at api-kg subdomain on port 8000
-      # Set BACKEND_URL in Coolify env vars (e.g., https://api-kg.cortex.qwellco.de)
+      # --- Backend public URL (set BACKEND_URL in Coolify, e.g. https://api-kg.cortex.qwellco.de) ---
       - SERVICE_FQDN_BACKEND_8000=${BACKEND_URL}
-      # Admin authentication - set ADMIN_API_KEY in Coolify env vars
+      # --- Admin authentication ---
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
-      # Compute3 Turbo Mode (optional, currently on hold — see handbook/15-turbo-mode.md).
-      # COMPUTE3_API_KEY is not declared here; add it as a Coolify env var only if you want to enable Turbo Mode.
-      - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
-      - COMPUTE3_GPU_COUNT=${COMPUTE3_GPU_COUNT:-4}
-      - COMPUTE3_MODEL=${COMPUTE3_MODEL:-minimax-m21}
-      # Relationship analysis
-      - RELATIONSHIP_ANALYSIS_BATCH_SIZE=${RELATIONSHIP_ANALYSIS_BATCH_SIZE:-100}
-      # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH and AUTO_COMMUNITY_DETECTION_AFTER_BATCH
-      # default to true in backend/app/config.py. Add them here explicitly only if you
-      # want to opt out (set to false) — leaving them out keeps the UI uncluttered.
-      # API Key Analytics - track admin key usage (default: false)
-      - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
-      # Resource Limits / Pricing Caps (0 = unlimited). See PRICING.md.
-      - MAX_FILES=${MAX_FILES:-0}
-      - MAX_ENTITIES=${MAX_ENTITIES:-0}
-      - MAX_COLLECTIONS=${MAX_COLLECTIONS:-0}
-      - MAX_QUERIES_PER_MONTH=${MAX_QUERIES_PER_MONTH:-0}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs
@@ -103,21 +82,20 @@ services:
       args:
         # Build-time arg for the public API URL (set BACKEND_URL in Coolify)
         - NEXT_PUBLIC_API_URL=${BACKEND_URL}
-        # Build-time args for branding customization
-        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
-        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
+        # Build-time args for branding customization (optional)
+        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
     environment:
-      # Expose frontend at kg subdomain on port 3000
-      # Set FRONTEND_URL in Coolify env vars (e.g., https://kg.cortex.qwellco.de)
+      # Expose frontend at kg subdomain on port 3000 (set FRONTEND_URL in Coolify)
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}
-      # Branding customization - set these in Coolify env vars
-      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL}
-      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
+      # Branding customization (optional — also needs the matching build args above)
+      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      # Admin authentication - set these in Coolify env vars
+      # Admin authentication (must match backend)
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
