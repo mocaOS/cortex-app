@@ -254,10 +254,10 @@ class Settings(BaseSettings):
         default=5
     )  # Number of relationship analysis batches to process in parallel
     auto_relationship_analysis_after_batch: bool = Field(
-        default=False
+        default=True
     )  # Auto-trigger relationship analysis after batch processing completes
     auto_community_detection_after_batch: bool = Field(
-        default=False
+        default=True
     )  # Auto-trigger community detection after relationship analysis
     relationship_target_ratio: float = Field(
         default=1.0
