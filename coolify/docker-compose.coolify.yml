@@ -39,10 +39,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      # Vision model for image analysis (optional - falls back to OpenAI settings if API base/key not set)
+      # Vision model for image analysis (optional - falls back to OpenAI settings if API base/key not set).
+      # VISION_MODEL_API_KEY is not declared here; if you need a separate key, add it as a Coolify env var.
       - VISION_MODEL=${VISION_MODEL:-}
       - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
-      - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
       # Graph extraction model (optional - smaller/faster model for entity extraction)
       - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
       - GRAPH_EXTRACTION_API_BASE=${GRAPH_EXTRACTION_API_BASE:-}
@@ -65,8 +65,8 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
-      # Compute3 Turbo Mode (optional - set COMPUTE3_API_KEY in Coolify env vars)
-      - COMPUTE3_API_KEY=${COMPUTE3_API_KEY:-}
+      # Compute3 Turbo Mode (optional, currently on hold — see handbook/15-turbo-mode.md).
+      # COMPUTE3_API_KEY is not declared here; add it as a Coolify env var only if you want to enable Turbo Mode.
       - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
       - COMPUTE3_GPU_COUNT=${COMPUTE3_GPU_COUNT:-4}
       - COMPUTE3_MODEL=${COMPUTE3_MODEL:-minimax-m21}

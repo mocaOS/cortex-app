@@ -57,10 +57,10 @@ services:
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_MODEL_FAST_MODE=${OPENAI_MODEL_FAST_MODE:-}
-      # Vision Model
+      # Vision Model — VISION_MODEL_API_KEY is not declared here (falls back to OPENAI_API_KEY).
+      # Add it as a Dokploy env var only if you need a separate vision key.
       - VISION_MODEL=${VISION_MODEL:-}
       - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
-      - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
       - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-3}
       # Graph Extraction Model
       - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
@@ -161,8 +161,8 @@ services:
       - SKILL_HTTP_TIMEOUT=${SKILL_HTTP_TIMEOUT:-15}
       - MAX_SKILL_TOOLS=${MAX_SKILL_TOOLS:-10}
       - MAX_SKILL_INSTRUCTIONS_TOKENS=${MAX_SKILL_INSTRUCTIONS_TOKENS:-4000}
-      # Compute3 Turbo Mode
-      - COMPUTE3_API_KEY=${COMPUTE3_API_KEY:-}
+      # Compute3 Turbo Mode (currently on hold — see handbook/15-turbo-mode.md).
+      # COMPUTE3_API_KEY is not declared here; add it as a Dokploy env var only if enabling Turbo Mode.
       - COMPUTE3_API_BASE=${COMPUTE3_API_BASE:-https://api.compute3.ai}
       - COMPUTE3_GPU_TYPE=${COMPUTE3_GPU_TYPE:-h100}
       - COMPUTE3_GPU_COUNT=${COMPUTE3_GPU_COUNT:-4}
