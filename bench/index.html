@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex · Bench Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ---------- Cortex design tokens ---------- */
+    :root {
+      --bg: oklch(0.1448 0 0);
+      --card: oklch(0.2134 0 0);
+      --card-hover: oklch(0.2686 0 0);
+      --fg: oklch(0.9851 0 0);
+      --fg-muted: oklch(0.7090 0 0);
+      --fg-subtle: oklch(0.5500 0 0);
+      --border: oklch(0.3407 0 0);
+      --border-strong: oklch(0.4386 0 0);
+      --accent: oklch(0.79 0.18 70.67);
+      --accent-fg: oklch(0.1448 0 0);
+      --accent-soft: oklch(0.79 0.18 70.67 / 0.12);
+      --destructive: oklch(0.7022 0.1892 22.2279);
+      --destructive-soft: oklch(0.7022 0.1892 22.2279 / 0.15);
+      --warn: oklch(0.78 0.12 70);
+      --warn-soft: oklch(0.78 0.12 70 / 0.12);
+      --radius: 0.5rem;
+      --radius-sm: 0.375rem;
+      --radius-lg: 0.75rem;
+      --font-sans: Inter, system-ui, -apple-system, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, monospace;
+      --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.3);
+      --shadow-md: 0 4px 12px oklch(0 0 0 / 0.3);
+      --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.4);
+    }
+
+    /* ---------- reset + global ---------- */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; transition: opacity 120ms ease; }
+    a:hover { opacity: 0.8; }
+    code, pre, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+
+    /* ---------- layout ---------- */
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 32px 24px 96px;
+    }
+
+    /* ---------- header ---------- */
+    header.bench-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand svg {
+      height: 28px;
+      width: auto;
+      color: var(--fg);
+    }
+    .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+    .brand-text h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .brand-text .tag {
+      font-size: 12px;
+      color: var(--fg-muted);
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .header-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--fg-muted);
+    }
+    .refresh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--fg);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 120ms ease, border 120ms ease;
+    }
+    .refresh-btn:hover { background: var(--card-hover); border-color: var(--border-strong); }
+
+    /* ---------- section primitives ---------- */
+    section.bench-section {
+      margin-bottom: 32px;
+    }
+    h2.section-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+    }
+
+    /* ---------- glass card ---------- */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* ---------- live "running now" card ---------- */
+    .live-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      box-shadow: var(--shadow-md);
+      margin-bottom: 24px;
+    }
+    .live-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .live-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .live-pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 0 var(--accent);
+      animation: live-pulse 1.6s infinite;
+    }
+    @keyframes live-pulse {
+      0%   { opacity: 1;   box-shadow: 0 0 0 0 oklch(0.79 0.18 70.67 / 0.55); }
+      70%  { opacity: 0.55; box-shadow: 0 0 0 8px oklch(0.79 0.18 70.67 / 0); }
+      100% { opacity: 1;   box-shadow: 0 0 0 0 oklch(0.79 0.18 70.67 / 0); }
+    }
+    .live-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: var(--accent);
+      text-transform: uppercase;
+      padding: 2px 8px;
+      background: var(--accent-soft);
+      border-radius: 999px;
+    }
+    .live-title-text {
+      font-family: var(--font-mono);
+      color: var(--fg);
+    }
+    .live-meta {
+      font-size: 11px;
+      color: var(--fg-muted);
+      font-family: var(--font-mono);
+      text-align: right;
+    }
+    .live-phase-row {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .phase-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
+      background: oklch(0 0 0 / 0.25);
+      color: var(--fg-muted);
+      border: 1px solid var(--border);
+    }
+    .phase-chip.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .phase-chip.done {
+      color: var(--fg);
+      background: oklch(0 0 0 / 0.35);
+    }
+    .phase-arrow {
+      color: var(--fg-subtle);
+      font-size: 11px;
+    }
+    .live-stats-row {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+    }
+    .live-stats-row .stat .value { font-family: var(--font-mono); }
+    .live-events-card {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    .live-events-card h4 {
+      margin: 0 0 8px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+    }
+    .live-events-list {
+      max-height: 240px;
+      overflow-y: auto;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    .live-events-list li {
+      display: flex;
+      gap: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid oklch(0 0 0 / 0.15);
+    }
+    .live-events-list li:last-child { border-bottom: 0; }
+    .live-events-list .ev-ts { color: var(--fg-muted); flex-shrink: 0; font-size: 11px; }
+    .live-events-list .ev-text { color: var(--fg); flex: 1; }
+    .live-events-list .ev-warning .ev-text { color: var(--warn); }
+    .live-events-list .ev-error .ev-text { color: var(--destructive); font-weight: 500; }
+    .live-events-list .ev-candidate_scan_zero .ev-text { color: var(--warn); }
+    .live-empty-events {
+      color: var(--fg-muted);
+      font-size: 12px;
+      font-style: italic;
+      padding: 8px 0;
+    }
+
+    /* ---------- empty state ---------- */
+    .empty-state {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 64px 32px;
+      text-align: center;
+      box-shadow: var(--shadow-md);
+      max-width: 640px;
+      margin: 80px auto;
+    }
+    .empty-state h1 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .empty-state p { color: var(--fg-muted); margin: 0 0 16px; }
+    .empty-state .preview-list {
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      text-align: left;
+    }
+    .empty-state .preview-list h3 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+    }
+    .empty-state .preview-list ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--fg-muted);
+    }
+    .empty-state .preview-list li { margin-bottom: 6px; font-size: 13px; }
+
+    /* ---------- hero ---------- */
+    .hero {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 28px;
+      box-shadow: var(--shadow-md);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: center;
+    }
+    .hero-main h2 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .hero-sub {
+      color: var(--fg-muted);
+      font-size: 13px;
+      margin: 0;
+    }
+    .hero-stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .stat {
+      background: oklch(0 0 0 / 0.25);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      min-width: 96px;
+    }
+    .stat .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+    }
+    .stat .value {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .verdict-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      font-family: var(--font-mono);
+    }
+    .chip .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .chip.GOOD { background: var(--accent-soft); color: var(--accent); }
+    .chip.MIXED { background: oklch(0 0 0 / 0.3); color: var(--fg); border: 1px solid var(--border-strong); }
+    .chip.POOR { background: oklch(0 0 0 / 0.4); color: var(--fg-muted); border: 1px solid var(--border); }
+    .chip.ERROR, .chip.TIMED_OUT { background: var(--destructive-soft); color: var(--destructive); }
+    .chip.UNKNOWN { background: oklch(0 0 0 / 0.2); color: var(--fg-muted); }
+
+    /* ---------- chart grid ---------- */
+    .chart-row {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 16px;
+    }
+    @media (max-width: 880px) { .chart-row { grid-template-columns: 1fr; } }
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .chart-card h3 {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .chart-card .chart-sub {
+      font-size: 12px;
+      color: var(--fg-muted);
+      margin: 0 0 16px;
+    }
+    .chart-canvas-wrap {
+      position: relative;
+      height: 260px;
+    }
+    .chart-canvas-wrap.tall { height: 320px; }
+
+    /* ---------- failure heatmap ---------- */
+    .heatmap-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+      overflow-x: auto;
+    }
+    .heatmap {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .heatmap th, .heatmap td {
+      padding: 8px 10px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .heatmap th {
+      font-weight: 600;
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 10px;
+      background: oklch(0 0 0 / 0.2);
+    }
+    .heatmap td.combo-cell { text-align: left; font-family: var(--font-mono); font-size: 11px; color: var(--fg); }
+    .heatmap td.signal-cell {
+      font-family: var(--font-mono);
+      font-weight: 500;
+    }
+    .heatmap td.signal-cell.zero { color: var(--fg-subtle); }
+    .heatmap td.signal-cell.low { background: var(--warn-soft); color: var(--warn); }
+    .heatmap td.signal-cell.high { background: var(--destructive-soft); color: var(--destructive); font-weight: 600; }
+
+    /* ---------- per-combo detail cards ---------- */
+    .combo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+      gap: 16px;
+    }
+    @media (max-width: 540px) { .combo-grid { grid-template-columns: 1fr; } }
+    .combo-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border 120ms ease;
+    }
+    .combo-card:hover { border-color: var(--border-strong); }
+    .combo-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .combo-id {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      letter-spacing: -0.01em;
+    }
+    .combo-batch {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--fg-subtle);
+      margin: 2px 0 0;
+    }
+    .model-trio {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 12px;
+      font-size: 11px;
+      padding: 12px;
+      background: oklch(0 0 0 / 0.2);
+      border-radius: var(--radius-sm);
+    }
+    .model-trio .tier {
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 10px;
+    }
+    .model-trio .model {
+      font-family: var(--font-mono);
+      color: var(--fg);
+      word-break: break-all;
+    }
+    .combo-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      font-size: 11px;
+    }
+    .combo-stats .mini-stat {
+      padding: 8px;
+      background: oklch(0 0 0 / 0.2);
+      border-radius: var(--radius-sm);
+      text-align: center;
+    }
+    .combo-stats .mini-stat .label {
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 9px;
+    }
+    .combo-stats .mini-stat .value {
+      font-weight: 600;
+      font-size: 14px;
+      margin-top: 2px;
+      font-family: var(--font-mono);
+    }
+    details.analysis {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    details.analysis summary {
+      cursor: pointer;
+      color: var(--fg-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      list-style: none;
+      user-select: none;
+    }
+    details.analysis summary::-webkit-details-marker { display: none; }
+    details.analysis summary::before {
+      content: "▸";
+      display: inline-block;
+      margin-right: 6px;
+      transition: transform 150ms ease;
+    }
+    details.analysis[open] summary::before { transform: rotate(90deg); }
+    .analysis-block {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--fg);
+    }
+    .analysis-block h4 {
+      margin: 12px 0 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--fg-muted);
+      font-weight: 600;
+    }
+    .analysis-block h4:first-child { margin-top: 0; }
+    .analysis-block p { margin: 0; color: var(--fg); }
+    .analysis-block pre {
+      margin: 4px 0 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      color: var(--fg);
+      font-family: var(--font-sans);
+      font-size: 12px;
+    }
+
+    /* ---------- findings markdown ---------- */
+    .findings-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px 32px;
+      box-shadow: var(--shadow-md);
+    }
+    .findings-card .findings-md h1 { font-size: 22px; margin: 24px 0 12px; font-weight: 600; }
+    .findings-card .findings-md h2 { font-size: 18px; margin: 22px 0 10px; font-weight: 600; }
+    .findings-card .findings-md h3 { font-size: 15px; margin: 18px 0 8px; font-weight: 600; color: var(--fg-muted); }
+    .findings-card .findings-md h1:first-child,
+    .findings-card .findings-md h2:first-child,
+    .findings-card .findings-md h3:first-child { margin-top: 0; }
+    .findings-card .findings-md p { margin: 0 0 12px; color: var(--fg); }
+    .findings-card .findings-md ul, .findings-card .findings-md ol { margin: 0 0 12px; padding-left: 24px; color: var(--fg); }
+    .findings-card .findings-md li { margin-bottom: 6px; }
+    .findings-card .findings-md code {
+      background: oklch(0 0 0 / 0.3);
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .findings-card .findings-md pre {
+      background: oklch(0 0 0 / 0.3);
+      border: 1px solid var(--border);
+      padding: 14px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+    }
+    .findings-card .findings-md pre code { background: none; padding: 0; }
+    .findings-card .findings-md blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 12px 0;
+      padding: 4px 16px;
+      color: var(--fg-muted);
+      background: oklch(0 0 0 / 0.2);
+    }
+    .findings-card .findings-md hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+    .findings-card .findings-md a { color: var(--accent); }
+    .findings-card .findings-md strong { color: var(--fg); font-weight: 600; }
+    .findings-card .findings-md table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+    .findings-card .findings-md th,
+    .findings-card .findings-md td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .findings-card .findings-md th {
+      background: oklch(0 0 0 / 0.2);
+      font-weight: 600;
+    }
+
+    /* ---------- footer ---------- */
+    footer.bench-footer {
+      margin-top: 48px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--fg-muted);
+      font-size: 11px;
+      text-align: center;
+    }
+    footer code { color: var(--accent); }
+
+    /* ---------- small helpers ---------- */
+    .row-flex { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .placeholder {
+      padding: 40px;
+      text-align: center;
+      color: var(--fg-muted);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="bench-header">
+      <div class="brand">
+        <!-- Cortex logo (inlined from frontend/public/logo.svg, white→currentColor) -->
+        <svg viewBox="0 0 132 37" xmlns="http://www.w3.org/2000/svg" fill="none" aria-hidden="true">
+          <g clip-path="url(#dash_logo_clip)" fill="currentColor">
+            <path d="M55.3038 12.5392C57.3334 12.9588 58.7295 13.9483 58.4223 14.7493C58.1148 15.5502 56.2203 15.8593 54.1907 15.4397C52.1612 15.0201 50.7651 14.0307 51.0723 13.2297C51.3798 12.4288 53.2743 12.1196 55.3038 12.5392Z"/>
+            <path d="M55.6832 21.8686C55.9904 21.0677 54.5942 20.0782 52.5647 19.6586C50.5352 19.239 48.6406 19.5481 48.3331 20.3491C48.0259 21.15 49.4221 22.1395 51.4516 22.5591C53.4811 22.9787 55.3757 22.6696 55.6832 21.8686Z"/>
+            <path d="M62.4747 28.1382C65.0337 25.9383 66.6486 23.3668 67.6475 20.8455C68.5781 18.4247 69.0297 16.1947 68.9068 13.9145C68.7835 11.9859 68.3044 10.1074 66.9086 8.42992C65.9369 7.25465 64.6507 6.36064 62.803 5.98898C62.0642 5.83832 61.4619 6.09948 61.2568 6.60173C61.0514 7.11402 61.339 7.58614 62.0503 7.7569C63.46 8.09843 64.3357 8.83171 64.9927 9.75585C66.0601 11.2726 66.3885 12.92 66.3885 14.6076C66.3885 18.1334 65.2117 21.4382 62.8577 24.5019C61.5305 26.2397 59.8882 27.7866 57.4934 28.8213C56.3849 29.2934 55.1942 29.5345 53.8941 29.3034C53.7162 29.2733 53.5247 29.2633 53.3468 29.2833C52.7583 29.3537 52.3068 29.7152 52.2657 30.1471C52.2246 30.6094 52.6076 31.001 53.3057 31.1315C54.7154 31.4027 56.1112 31.3023 57.4659 30.9107C59.4777 30.3279 61.0925 29.3336 62.4747 28.1382Z"/>
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M53.3192 3.96983C49.7066 6.83266 46.7231 10.9812 44.9304 15.6522C43.1377 20.3231 42.7272 25.0041 43.7808 28.8312C44.944 33.0904 47.7906 35.8929 51.7865 36.7167C55.7828 37.5401 60.2028 36.2445 64.2263 33.0602C67.8392 30.1973 70.8226 26.0487 72.6154 21.3778C74.4081 16.7069 74.8186 12.036 73.7647 8.19878C72.6015 3.9397 69.7552 1.13716 65.7589 0.313467C61.763 -0.520268 57.3426 0.775541 53.3192 3.96983ZM65.0883 2.05127C58.7659 0.745419 50.8012 7.04362 47.3115 16.1243V16.1343C47.2979 16.1695 47.2843 16.2072 47.2705 16.2448C47.2569 16.2825 47.2433 16.3202 47.2294 16.3553C43.8765 25.3557 46.1894 33.6427 52.4707 34.9386C58.7934 36.2445 66.7581 29.9463 70.2478 20.8655V20.8555C70.2614 20.8203 70.275 20.7826 70.2889 20.745C70.3025 20.7073 70.3161 20.6697 70.3297 20.6345C73.6825 11.6442 71.3561 3.34708 65.0883 2.05127Z"/>
+            <path d="M99.5748 3.7891C99.5748 2.99556 99.5748 2.22208 99.5748 1.42853C98.4937 1.42853 97.4398 1.42853 96.3587 1.42853C96.3587 1.02673 96.3587 0.65506 96.3587 0.263306C94.1966 0.263306 92.0616 0.263306 89.8995 0.263306C89.8995 0.65506 89.8995 1.03677 89.8995 1.43857C88.8181 1.43857 87.7645 1.43857 86.6835 1.43857C86.6835 1.84037 86.6835 2.22208 86.6835 2.62388C86.1222 2.62388 85.6024 2.62388 85.0687 2.62388C85.0687 3.02569 85.0687 3.39735 85.0687 3.79914C84.521 3.79914 84.0012 3.79914 83.4538 3.79914C83.4538 4.21099 83.4538 4.59271 83.4538 4.98444C82.9062 4.98444 82.4 4.98444 81.8526 4.98444C81.8526 5.77801 81.8526 6.55146 81.8526 7.34504C81.3053 7.34504 80.7987 7.34504 80.2514 7.34504C80.2514 7.74683 80.2514 8.12855 80.2514 8.53034C79.6905 8.53034 79.1703 8.53034 78.6366 8.53034C78.6366 9.32389 78.6366 10.0974 78.6366 10.8909C78.0893 10.8909 77.5691 10.8909 77.0218 10.8909C77.0218 12.0863 77.0218 13.2615 77.0218 14.4468C76.4745 14.4468 75.9679 14.4468 75.4206 14.4468C75.4206 16.0339 75.4206 17.601 75.4206 19.1881C74.8597 19.1881 74.3395 19.1881 73.8333 19.1881C73.8333 22.3522 73.8333 25.4963 73.8333 28.6605C74.367 28.6605 74.8868 28.6605 75.4342 28.6605C75.4342 29.8557 75.4342 31.0211 75.4342 32.2063C75.9818 32.2063 76.5016 32.2063 77.049 32.2063C77.049 33.0099 77.049 33.7834 77.049 34.577C77.5966 34.577 78.1029 34.577 78.6502 34.577C78.6502 34.9789 78.6502 35.3605 78.6502 35.7624C79.7452 35.7624 80.7987 35.7624 81.8798 35.7624C81.8798 36.1641 81.8798 36.5359 81.8798 36.9174C83.4946 36.9174 85.0958 36.9174 86.7245 36.9174C86.7245 36.5158 86.7245 36.1339 86.7245 35.7423C87.8056 35.7423 88.8592 35.7423 89.9406 35.7423C89.9406 35.3403 89.9406 34.9588 89.9406 34.5669C90.4879 34.5669 90.9942 34.5669 91.5415 34.5669C91.5415 34.1652 91.5415 33.7834 91.5415 33.3817C92.1027 33.3817 92.6226 33.3817 93.1563 33.3817C93.1563 32.9797 93.1563 32.6083 93.1563 32.2063C93.7039 32.2063 94.2238 32.2063 94.7575 32.2063C94.7575 31.4026 94.7575 30.6191 94.7575 29.8457C94.2238 29.8457 93.7039 29.8457 93.1291 29.8457C93.1291 30.2577 93.1291 30.6393 93.1291 31.0412C92.5818 31.0412 92.0752 31.0412 91.5279 31.0412C91.5279 31.4429 91.5279 31.8247 91.5279 32.2163C90.9806 32.2163 90.474 32.2163 89.9267 32.2163C89.9267 32.6183 89.9267 32.9999 89.9267 33.3817C87.7509 33.3817 85.6296 33.3817 83.4674 33.3817C83.4674 32.9898 83.4674 32.6083 83.4674 32.2063C82.9201 32.2063 82.4 32.2063 81.8526 32.2063C81.8526 31.4026 81.8526 30.6292 81.8526 29.8359C81.3053 29.8359 80.7987 29.8359 80.2789 29.8359C80.2789 25.4863 80.2789 21.1569 80.2789 16.7974C80.8262 16.7974 81.3461 16.7974 81.8798 16.7974C81.8798 15.2103 81.8798 13.6533 81.8798 12.0662C82.4274 12.0662 82.9473 12.0662 83.481 12.0662C83.481 10.8708 83.481 9.70561 83.481 8.52031C84.0284 8.52031 84.5485 8.52031 85.0958 8.52031C85.0958 7.7167 85.0958 6.94322 85.0958 6.14967C85.6432 6.14967 86.1497 6.14967 86.6971 6.14967C86.6971 5.74788 86.6971 5.36616 86.6971 4.96437C87.2583 4.96437 87.7781 4.96437 88.3119 4.96437C88.3119 4.56258 88.3119 4.19089 88.3119 3.7891C88.8592 3.7891 89.3794 3.7891 89.9267 3.7891C89.9267 3.37725 89.9267 2.99556 89.9267 2.62388C92.0891 2.62388 94.2102 2.62388 96.3451 2.62388C96.3451 3.41744 96.3451 4.19089 96.3451 4.98444C95.8114 4.98444 95.3048 4.98444 94.7711 4.98444C94.7711 6.57156 94.7711 8.13858 94.7711 9.72568C95.3048 9.72568 95.825 9.72568 96.3723 9.72568C96.3723 10.1275 96.3723 10.4992 96.3723 10.8809C97.4534 10.8809 98.5073 10.8809 99.602 10.8809C99.602 10.4791 99.602 10.0974 99.602 9.70561C100.15 9.70561 100.656 9.70561 101.176 9.70561C101.176 7.72673 101.176 5.76795 101.176 3.77907C100.642 3.7891 100.122 3.7891 99.5748 3.7891Z"/>
+            <path d="M96.3452 27.5154C95.7979 27.5154 95.2913 27.5154 94.7576 27.5154C94.7576 28.3089 94.7576 29.0824 94.7576 29.8658C95.2913 29.8658 95.8115 29.8658 96.3452 29.8658C96.3452 29.0623 96.3452 28.2788 96.3452 27.5154Z"/>
+            <path d="M115.682 31.0413C115.682 31.8248 115.682 32.5982 115.682 33.4119C115.148 33.4119 114.628 33.4119 114.081 33.4119C114.081 33.8136 114.081 34.1854 114.081 34.5871C113.534 34.5871 113.013 34.5871 112.466 34.5871C112.466 34.9988 112.466 35.3806 112.466 35.7725C111.385 35.7725 110.331 35.7725 109.25 35.7725C109.25 36.1742 109.25 36.5561 109.25 36.9477C108.169 36.9477 107.115 36.9477 106.034 36.9477C106.034 36.5759 106.034 36.1943 106.034 35.7823C105.473 35.7823 104.953 35.7823 104.419 35.7823C104.419 35.3806 104.419 35.0089 104.419 34.6072C103.872 34.6072 103.352 34.6072 102.804 34.6072C102.804 34.1955 102.804 33.8136 102.804 33.422C102.257 33.422 101.751 33.422 101.203 33.422C101.203 28.6807 101.203 23.9494 101.203 19.1982C101.723 19.1982 102.243 19.1982 102.777 19.1982C102.777 17.6111 102.777 16.0541 102.777 14.467C103.325 14.467 103.844 14.467 104.392 14.467C104.392 13.6634 104.392 12.8899 104.392 12.0964C104.939 12.0964 105.446 12.0964 105.993 12.0964C105.993 11.3028 105.993 10.5293 105.993 9.73579C106.54 9.73579 107.047 9.73579 107.594 9.73579C107.594 8.94225 107.594 8.16877 107.594 7.36516C108.155 7.36516 108.675 7.36516 109.209 7.36516C109.209 6.57161 109.209 5.79814 109.209 5.00459C109.756 5.00459 110.277 5.00459 110.824 5.00459C110.824 4.59276 110.824 4.21104 110.824 3.81929C111.371 3.81929 111.878 3.81929 112.425 3.81929C112.425 3.4175 112.425 3.03577 112.425 2.63398C112.986 2.63398 113.506 2.63398 114.04 2.63398C114.04 2.23218 114.04 1.86051 114.04 1.45871C115.121 1.45871 116.175 1.45871 117.256 1.45871C117.256 1.05691 117.256 0.685247 117.256 0.283447C119.418 0.283447 121.553 0.283447 123.715 0.283447C123.715 1.06696 123.715 1.85047 123.715 2.63398L123.729 2.62393C123.195 2.62393 122.662 2.62393 122.087 2.62393C122.087 2.21209 122.087 1.83038 122.087 1.45871C121.006 1.45871 119.952 1.45871 118.871 1.45871C118.871 1.85047 118.871 2.23218 118.871 2.64402C118.309 2.64402 117.79 2.64402 117.256 2.64402C117.256 3.04581 117.256 3.4175 117.256 3.81929C116.709 3.81929 116.188 3.81929 115.655 3.81929C115.655 4.22108 115.655 4.59276 115.655 4.99455C115.107 4.99455 114.587 4.99455 114.04 4.99455C114.04 5.79816 114.04 6.57161 114.04 7.36516C113.493 7.36516 112.986 7.36516 112.439 7.36516C112.439 8.15874 112.439 8.93218 112.439 9.73579C111.878 9.73579 111.358 9.73579 110.824 9.73579C110.824 10.9311 110.824 12.0964 110.824 13.2817C110.277 13.2817 109.756 13.2817 109.209 13.2817C109.209 14.477 109.209 15.6523 109.209 16.8376C108.662 16.8376 108.155 16.8376 107.608 16.8376C107.608 18.8165 107.608 20.7752 107.608 22.7641C107.047 22.7641 106.527 22.7641 106.02 22.7641C106.02 25.1448 106.02 27.4853 106.02 29.8659C106.554 29.8659 107.074 29.8659 107.635 29.8659C107.635 30.6695 107.635 31.443 107.635 32.2164C109.797 32.2164 111.919 32.2164 114.081 32.2164C114.081 31.8248 114.081 31.443 114.081 31.0513C114.642 31.0513 115.162 31.0513 115.682 31.0413Z"/>
+            <path d="M128.587 31.0412C128.053 31.0412 127.52 31.0412 126.972 31.0412C126.972 31.463 126.972 31.8348 126.972 32.2163C126.425 32.2163 125.905 32.2163 125.385 32.2163C125.385 29.4541 125.385 26.7118 125.385 23.9394C125.919 23.9394 126.438 23.9394 127 23.9394C127 21.1669 127 18.4146 127 15.6422C127.547 15.6422 128.053 15.6422 128.601 15.6422C128.601 13.2716 128.601 10.911 128.601 8.53034C129.162 8.53034 129.682 8.53034 130.216 8.53034C130.216 6.14967 130.216 3.79914 130.216 1.42853C130.763 1.42853 131.283 1.42853 131.789 1.42853C131.789 1.01668 131.789 0.63497 131.789 0.263306C130.175 0.263306 128.587 0.263306 126.972 0.263306C126.972 1.05686 126.972 1.83033 126.972 2.62388C125.878 2.62388 124.81 2.62388 123.743 2.62388L123.756 2.61384C123.756 6.85282 123.756 11.0818 123.756 15.3208C123.756 15.4212 123.756 15.5116 123.756 15.6422C123.222 15.6422 122.703 15.6422 122.155 15.6422C122.155 17.2293 122.155 18.7863 122.155 20.3734C121.608 20.3734 121.088 20.3734 120.54 20.3734C120.54 21.5688 120.54 22.744 120.54 23.9293C119.993 23.9293 119.487 23.9293 118.939 23.9293C118.939 24.7229 118.939 25.4963 118.939 26.2999C118.378 26.2999 117.858 26.2999 117.324 26.2999C117.324 27.0935 117.324 27.867 117.324 28.6605C116.777 28.6605 116.257 28.6605 115.696 28.6605C115.696 29.4741 115.696 30.2577 115.696 31.0412L115.682 31.0312C116.216 31.0312 116.75 31.0312 117.324 31.0312C117.324 30.6194 117.324 30.2376 117.324 29.8359C117.872 29.8359 118.378 29.8359 118.925 29.8359C118.925 29.0422 118.925 28.2687 118.925 27.4852C119.473 27.4852 119.979 27.4852 120.527 27.4852C120.527 30.6393 120.527 33.7834 120.527 36.9375C121.622 36.9375 122.675 36.9375 123.756 36.9375C123.756 36.5459 123.756 36.1641 123.756 35.7624C124.304 35.7624 124.824 35.7624 125.371 35.7624C125.371 35.3504 125.371 34.9689 125.371 34.577C125.919 34.577 126.425 34.577 126.972 34.577C126.972 34.1753 126.972 33.7934 126.972 33.3918C127.533 33.3918 128.053 33.3918 128.56 33.3918C128.573 32.5982 128.573 31.8147 128.587 31.0412Z"/>
+            <path d="M130.215 28.6805C129.682 28.6805 129.148 28.6805 128.587 28.6805C128.587 29.4842 128.587 30.2677 128.587 31.0412L128.573 31.0311C129.121 31.0311 129.655 31.0311 130.202 31.0311C130.202 30.2275 130.202 29.454 130.215 28.6805Z"/>
+            <path d="M130.202 28.6806C130.736 28.6806 131.269 28.6806 131.803 28.6806C131.803 28.2688 131.803 27.8971 131.803 27.5154C131.269 27.5154 130.749 27.5154 130.215 27.5154C130.215 27.9172 130.215 28.2989 130.202 28.6806Z"/>
+            <path d="M45.1083 27.5154C44.561 27.5154 44.0544 27.5154 43.521 27.5154C43.521 28.3089 43.521 29.0824 43.521 29.8658C44.0544 29.8658 44.5746 29.8658 45.1083 29.8658C45.1083 29.0522 45.1083 28.2788 45.1083 27.5154Z"/>
+            <path d="M41.8923 32.2163C42.4261 32.2163 42.9734 32.2163 43.5071 32.2163C43.5071 31.4127 43.5071 30.6392 43.5071 29.8557C42.9734 29.8557 42.4536 29.8557 41.8923 29.8557C41.8923 30.6694 41.8923 31.4429 41.8923 32.2163Z"/>
+            <path d="M38.6902 27.4852C39.2236 27.4852 39.7437 27.4852 40.2911 27.4852C40.2911 25.1045 40.2911 22.754 40.2911 20.3834C40.8387 20.3834 41.3586 20.3834 41.9059 20.3834C41.9059 18.0028 41.9059 15.6422 41.9059 13.2716C42.4535 13.2716 42.9598 13.2716 43.4799 13.2716C43.4799 9.31384 43.4799 5.38624 43.4799 1.41846C42.9462 1.41846 42.426 1.41846 41.8787 1.41846C41.8787 1.01666 41.8787 0.644997 41.8787 0.263288C40.2639 0.263288 38.6627 0.263288 37.0343 0.263288C37.0343 0.665086 37.0343 1.0468 37.0343 1.43856C36.4866 1.43856 35.9804 1.43856 35.4331 1.43856C35.4331 1.84035 35.4331 2.22206 35.4331 2.62386C34.8718 2.62386 34.352 2.62386 33.8182 2.62386C33.8182 3.41743 33.8182 4.19088 33.8182 4.98442C33.2706 4.98442 32.7508 4.98442 32.217 4.98442C32.217 5.38624 32.217 5.7579 32.217 6.15969C31.6697 6.15969 31.1495 6.15969 30.6022 6.15969C30.6022 6.9633 30.6022 7.73678 30.6022 8.53032C30.0548 8.53032 29.5484 8.53032 29.001 8.53032C29.001 9.32387 29.001 10.0973 29.001 10.8909C28.4399 10.8909 27.9199 10.8909 27.3999 10.8909C27.3999 10.8909 27.3999 10.8909 27.3999 10.8809C27.3999 10.8809 27.3999 10.8809 27.3862 10.8809C27.3862 7.72671 27.3862 4.5726 27.3862 1.39838C26.8251 1.39838 26.3051 1.39838 25.7577 1.39838C25.7577 0.996577 25.7577 0.624913 25.7577 0.243203C24.1428 0.243203 22.5417 0.243203 20.9132 0.243203C20.9132 0.645003 20.9132 1.02671 20.9132 1.41846C20.3657 1.41846 19.8594 1.41846 19.312 1.41846C19.312 1.82026 19.312 2.20197 19.312 2.59373C18.7646 2.59373 18.2583 2.59373 17.7109 2.59373C17.7109 3.38729 17.7109 4.16074 17.7109 4.96435C17.1498 4.96435 16.6298 4.96435 16.096 4.96435C16.096 5.36614 16.096 5.7378 16.096 6.13962C15.5486 6.13962 15.0286 6.13962 14.4812 6.13962C14.4812 6.9432 14.4812 7.71668 14.4812 8.51023C13.9338 8.51023 13.4274 8.51023 12.8801 8.51023C12.8801 9.3038 12.8801 10.0773 12.8801 10.8809C12.3189 10.8809 11.7989 10.8809 11.2652 10.8809C11.2652 11.6744 11.2652 12.4479 11.2652 13.2213C10.7178 13.2213 10.1978 13.2213 9.69142 13.2213C9.69142 12.036 9.69142 10.8608 9.69142 9.67546C10.2252 9.67546 10.7452 9.67546 11.2926 9.67546C11.2926 7.30483 11.2926 4.94425 11.2926 2.57364C11.84 2.57364 12.3463 2.57364 12.8801 2.57364C12.8801 1.78008 12.8801 1.00662 12.8801 0.233154C11.7989 0.233154 10.7452 0.233154 9.66405 0.233154C9.66405 0.62491 9.66405 1.00662 9.66405 1.40842C8.04924 1.40842 6.44809 1.40842 4.81956 1.40842C4.81956 1.82026 4.81956 2.20197 4.81956 2.59373C3.73843 2.59373 2.6847 2.59373 1.63095 2.59373C1.63095 2.99554 1.63095 3.37723 1.63095 3.77905C2.71206 3.77905 3.7658 3.77905 4.84693 3.77905C4.84693 4.18084 4.84693 4.5525 4.84693 4.95429C5.39432 4.95429 5.91438 4.95429 6.42072 4.95429C6.42072 5.7579 6.42072 6.53138 6.42072 7.32492C5.88698 7.32492 5.36696 7.32492 4.81956 7.32492C4.81956 9.69556 4.81956 12.0561 4.81956 14.4267C4.27217 14.4267 3.7658 14.4267 3.21841 14.4267C3.21841 16.7973 3.21841 19.1579 3.21841 21.5386C2.65733 21.5386 2.13729 21.5386 1.60358 21.5386C1.60358 23.9192 1.60358 26.2698 1.60358 28.6404C1.05618 28.6404 0.536146 28.6404 0.0161133 28.6404C0.0161133 31.0211 0.0161133 33.3817 0.0161133 35.7322C1.63095 35.7322 3.21841 35.7322 4.83325 35.7322C4.83325 34.1551 4.83325 32.5881 4.83325 30.9909C5.39432 30.9909 5.91438 30.9909 6.44809 30.9909C6.44809 29.0121 6.44809 27.0533 6.44809 25.0744C6.99548 25.0744 7.51551 25.0744 8.06293 25.0744C8.06293 23.4773 8.06293 21.9203 8.06293 20.3332C8.61032 20.3332 9.11666 20.3332 9.66405 20.3332C9.66405 19.1479 9.66405 17.9726 9.66405 16.7773C10.2252 16.7773 10.7452 16.7773 11.2789 16.7773C11.2789 15.9837 11.2789 15.2102 11.2789 14.4167C11.8263 14.4167 12.3463 14.4167 12.8937 14.4167C12.8937 13.6131 12.8937 12.8396 12.8937 12.0461C13.4411 12.0461 13.9475 12.0461 14.4949 12.0461C14.4949 11.2525 14.4949 10.479 14.4949 9.68549C15.0423 9.68549 15.5486 9.68549 16.096 9.68549C16.096 8.89195 16.096 8.11847 16.096 7.31489C16.6571 7.31489 17.1772 7.31489 17.7109 7.31489C17.7109 6.91307 17.7109 6.54141 17.7109 6.13962C18.2583 6.13962 18.7783 6.13962 19.3257 6.13962C19.3257 5.72777 19.3257 5.34605 19.3257 4.97439C20.4068 4.97439 21.4606 4.97439 22.5143 4.97439C22.5143 6.95327 22.5143 8.91205 22.5143 10.9009C21.9669 10.9009 21.4469 10.9009 20.9132 10.9009C20.9132 13.2816 20.9132 15.6321 20.9132 18.0027C20.3657 18.0027 19.8457 18.0027 19.2983 18.0027C19.2983 20.3834 19.2983 22.744 19.2983 25.1146C18.7509 25.1146 18.2446 25.1146 17.6972 25.1146C17.6972 27.4852 17.6972 29.8457 17.6972 32.2264C17.1361 32.2264 16.6161 32.2264 16.1097 32.2264C16.1097 33.4219 16.1097 34.587 16.1097 35.7523C17.7245 35.7523 19.3257 35.7523 20.9405 35.7523C20.9405 34.9688 20.9405 34.1954 20.9405 33.4018C21.4879 33.4018 22.008 33.4018 22.5554 33.4018C22.5554 31.0211 22.5554 28.6605 22.5554 26.2899C23.1028 26.2899 23.6091 26.2899 24.1565 26.2899C24.1565 24.7028 24.1565 23.1357 24.1565 21.5486C24.7176 21.5486 25.2376 21.5486 25.7713 21.5486C25.7713 19.9615 25.7713 18.4046 25.7713 16.8174C26.3188 16.8174 26.8388 16.8174 27.3725 16.8174C27.3725 16.0139 27.3725 15.2303 27.3725 14.4569C27.3725 14.4569 27.3725 14.4569 27.3862 14.4569C27.3862 14.4569 27.3862 14.4569 27.3862 14.4468C27.9199 14.4468 28.4399 14.4468 29.0147 14.4468C29.0147 13.6432 29.0147 12.8698 29.0147 12.0762C29.5621 12.0762 30.0684 12.0762 30.6158 12.0762C30.6158 11.2827 30.6158 10.5092 30.6158 9.70559C31.177 9.70559 31.6969 9.70559 32.2306 9.70559C32.2306 8.91202 32.2306 8.13857 32.2306 7.34502C32.778 7.34502 33.2981 7.34502 33.8318 7.34502C33.8318 6.9432 33.8318 6.57154 33.8318 6.16975C34.3792 6.16975 34.8993 6.16975 35.4466 6.16975C35.4466 5.7579 35.4466 5.37618 35.4466 5.00452C36.5277 5.00452 37.5816 5.00452 38.6352 5.00452C38.6352 6.97333 38.6352 8.94218 38.6352 10.921C38.1014 10.921 37.5816 10.921 37.0343 10.921C37.0343 13.3017 37.0343 15.6422 37.0343 18.0228C36.4866 18.0228 35.9668 18.0228 35.4192 18.0228C35.4192 20.7953 35.4192 23.5476 35.4192 26.32C34.8718 26.32 34.3656 26.32 33.8454 26.32C33.8454 29.4842 33.8454 32.6284 33.8454 35.8024C34.3792 35.8024 34.8993 35.8024 35.4466 35.8024C35.4466 36.2043 35.4466 36.5758 35.4466 36.9577C36.5277 36.9577 37.5816 36.9577 38.6763 36.9577C38.6763 36.556 38.6763 36.1842 38.6763 35.7825C39.2236 35.7825 39.7302 35.7825 40.2775 35.7825C40.2775 35.3806 40.2775 34.999 40.2775 34.5971C40.8387 34.5971 41.3586 34.5971 41.8651 34.5971C41.8651 33.7934 41.8651 33.0099 41.8651 32.2365C40.7976 32.2365 39.7302 32.2365 38.6763 32.2365C38.6902 30.6292 38.6902 29.0723 38.6902 27.4852Z"/>
+          </g>
+          <defs><clipPath id="dash_logo_clip"><rect width="132" height="37" fill="white"/></clipPath></defs>
+        </svg>
+        <div class="brand-text">
+          <h1>Bench Dashboard</h1>
+          <span class="tag">LLM-stack benchmark results</span>
+        </div>
+      </div>
+      <div class="header-meta">
+        <span id="meta-info">loading…</span>
+        <button class="refresh-btn" onclick="location.reload()" title="Reload to fetch the latest dashboard data">
+          ↻ Refresh
+        </button>
+      </div>
+    </header>
+
+    <div id="content"></div>
+
+    <footer class="bench-footer">
+      <span id="footer-info">Generated by <code>bench/build_dashboard.py</code></span>
+    </footer>
+  </div>
+
+  <!-- Data file (auto-generated; relative path so file:// works) -->
+  <script src="logs/dashboard-data.js" onerror="window.BENCH_DATA_MISSING=true"></script>
+
+  <!-- Charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+  <!-- Markdown -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+
+  <script>
+    // ---------- Cortex tokens as JS constants (for Chart.js canvas) ----------
+    const C = {
+      bg:          'oklch(0.1448 0 0)',
+      card:        'oklch(0.2134 0 0)',
+      fg:          'oklch(0.9851 0 0)',
+      fgMuted:     'oklch(0.7090 0 0)',
+      fgSubtle:    'oklch(0.5500 0 0)',
+      border:      'oklch(0.3407 0 0)',
+      accent:      'oklch(0.79 0.18 70.67)',
+      accentSoft:  'oklch(0.79 0.18 70.67 / 0.35)',
+      destructive: 'oklch(0.7022 0.1892 22.2279)',
+      destSoft:    'oklch(0.7022 0.1892 22.2279 / 0.35)',
+      neutral:     'oklch(0.5500 0 0)',
+      neutralSoft: 'oklch(0.45 0 0)',
+      warn:        'oklch(0.78 0.12 70)',
+      shadeA:      'oklch(0.79 0.18 70.67 / 0.85)',  // Phase A — accent-ish
+      shadeB:      'oklch(0.5500 0 0)',               // Phase B — neutral
+      shadeC:      'oklch(0.3407 0 0)',               // Step 3 — dim
+    };
+    const VERDICT_COLOR = {
+      GOOD: C.accent,
+      MIXED: C.neutral,
+      POOR: C.neutralSoft,
+      ERROR: C.destructive,
+      TIMED_OUT: C.destSoft,
+      UNKNOWN: C.border,
+    };
+    const VERDICT_ORDER = ['GOOD', 'MIXED', 'POOR', 'TIMED_OUT', 'ERROR', 'UNKNOWN'];
+
+    // ---------- chart defaults ----------
+    if (window.Chart) {
+      Chart.defaults.color = C.fgMuted;
+      Chart.defaults.borderColor = C.border;
+      Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+      Chart.defaults.font.size = 11;
+      Chart.defaults.plugins.legend.position = 'bottom';
+      Chart.defaults.plugins.legend.labels.usePointStyle = true;
+      Chart.defaults.plugins.legend.labels.boxWidth = 8;
+      Chart.defaults.plugins.legend.labels.padding = 12;
+    }
+
+    // ---------- helpers ----------
+    function el(tag, props = {}, children = []) {
+      const node = document.createElement(tag);
+      for (const k in props) {
+        if (k === 'class') node.className = props[k];
+        else if (k === 'html') node.innerHTML = props[k];
+        else if (k === 'text') node.textContent = props[k];
+        else if (k.startsWith('on') && typeof props[k] === 'function') node.addEventListener(k.slice(2).toLowerCase(), props[k]);
+        else node.setAttribute(k, props[k]);
+      }
+      const kids = Array.isArray(children) ? children : [children];
+      for (const c of kids) {
+        if (c == null) continue;
+        node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      }
+      return node;
+    }
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
+      catch { return iso; }
+    }
+    function fmtSec(s) {
+      if (s == null) return '—';
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      const r = s - m * 60;
+      return `${m}m ${r}s`;
+    }
+    function num(n, dp = 0) {
+      if (n == null || isNaN(n)) return '—';
+      return Number(n).toFixed(dp);
+    }
+    function esc(s) {
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    // ---------- main render ----------
+    document.addEventListener('DOMContentLoaded', () => {
+      const root = document.getElementById('content');
+      const meta = document.getElementById('meta-info');
+      const footer = document.getElementById('footer-info');
+      const data = window.BENCH_DATA;
+
+      // Data file missing entirely
+      if (window.BENCH_DATA_MISSING || !data) {
+        meta.textContent = 'no data file yet';
+        renderEmptyState(root, { missingDataFile: true });
+        footer.innerHTML = 'Generated by <code>bench/build_dashboard.py</code> — run a bench batch or <code>python bench/build_dashboard.py</code> to populate.';
+        return;
+      }
+
+      meta.textContent = data.has_data
+        ? `${data.total_runs} runs · ${data.total_batches} batches · generated ${fmtDate(data.generated_at)}`
+        : `no bench runs yet`;
+      footer.innerHTML =
+        `Generated by <code>bench/build_dashboard.py</code> at ${esc(fmtDate(data.generated_at))} · ` +
+        `${data.total_runs} runs across ${data.total_batches} batches.`;
+
+      // Live "running now" card — only when a batch is in flight
+      renderLiveCard(root, data);
+
+      if (!data.has_data) {
+        renderEmptyState(root, {});
+        return;
+      }
+
+      renderHero(root, data);
+      renderChartsRow(root, data);
+      renderHeatmap(root, data);
+      renderComboCards(root, data);
+      renderFindings(root, data);
+    });
+
+    // ---------- live "running now" card ----------
+    const PHASES = [
+      { id: 'A', label: 'Phase A · entity extraction' },
+      { id: 'B', label: 'Phase B · relationship analysis' },
+      { id: 'step_3', label: 'Step 3 · community detection' },
+      { id: 'done', label: 'wrapping up' },
+    ];
+    function renderLiveCard(root, data) {
+      const live = data.live;
+      if (!live || !live.active) return;
+      const startedAt = new Date(live.started_at);
+      const phaseStartedAt = new Date(live.phase_started_at || live.started_at);
+      const elapsedTotal = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+      const elapsedPhase = Math.max(0, Math.floor((Date.now() - phaseStartedAt.getTime()) / 1000));
+      const phaseLabel = (PHASES.find(p => p.id === live.phase) || PHASES[0]).label;
+      const s = live.stats || {};
+
+      const phaseChips = PHASES.slice(0, 3).flatMap((p, i, arr) => {
+        const reached = PHASES.findIndex(x => x.id === live.phase) >= i;
+        const isActive = p.id === live.phase;
+        const cls = isActive ? 'phase-chip active' : (reached ? 'phase-chip done' : 'phase-chip');
+        const chip = el('span', { class: cls, text: p.id === 'step_3' ? 'Step 3' : `Phase ${p.id}` });
+        if (i < arr.length - 1) return [chip, el('span', { class: 'phase-arrow', text: '→' })];
+        return [chip];
+      });
+
+      const events = live.recent_events || [];
+      const eventsList = events.length === 0
+        ? el('div', { class: 'live-empty-events', text: 'Waiting for first ingestion event…' })
+        : el('ul', { class: 'live-events-list' }, events.map(ev => {
+            const ts = (ev.ts || '').slice(11, 19); // HH:MM:SS
+            const kindClass = `ev-${ev.kind || 'info'}`;
+            return el('li', { class: kindClass }, [
+              el('span', { class: 'ev-ts', text: ts }),
+              el('span', { class: 'ev-text', text: ev.summary || ev.kind || '' }),
+            ]);
+          }));
+
+      const card = el('section', { class: 'bench-section' }, [
+        el('div', { class: 'live-card' }, [
+          el('div', { class: 'live-head' }, [
+            el('div', { class: 'live-title' }, [
+              el('span', { class: 'live-pulse', 'aria-hidden': 'true' }),
+              el('span', { class: 'live-label', text: 'LIVE' }),
+              el('span', { class: 'live-title-text', text:
+                `Combo ${live.combo_index || '?'} of ${live.combo_total || '?'} · ${live.combo_id || ''}` }),
+            ]),
+            el('div', { class: 'live-meta' }, [
+              el('div', { text: `Batch ${live.batch_id || '?'}` }),
+              el('div', { text: `Started ${fmtDate(live.started_at)} · ${fmtSec(elapsedTotal)} elapsed` }),
+            ]),
+          ]),
+          el('div', { class: 'live-phase-row' }, [
+            ...phaseChips,
+            el('span', {
+              class: 'phase-chip active',
+              style: 'margin-left: 12px;',
+              text: `${phaseLabel} · ${fmtSec(elapsedPhase)} in phase`,
+            }),
+          ]),
+          el('div', { class: 'live-stats-row' }, [
+            statBox('Documents', `${s.completed_count || 0} / ${s.document_count || 0}`),
+            statBox('Entities', num(s.entity_count)),
+            statBox('Relationships', num(s.relationship_count)),
+            statBox('Communities', num(s.community_count)),
+            statBox('Chunks', num(s.chunk_count)),
+          ]),
+          el('div', { class: 'live-events-card' }, [
+            el('h4', { text: `Recent events (${events.length})` }),
+            eventsList,
+          ]),
+        ]),
+      ]);
+      root.appendChild(card);
+    }
+
+    // ---------- empty state ----------
+    function renderEmptyState(root, { missingDataFile } = {}) {
+      const node = el('div', { class: 'empty-state' }, [
+        el('h1', { text: 'No bench runs yet' }),
+        el('p', {
+          html: missingDataFile
+            ? 'No <code>logs/dashboard-data.js</code> found. Either no bench batch has been run, ' +
+              'or you need to run <code>python bench/build_dashboard.py</code> to regenerate the data file.'
+            : 'Check the <a href="README.md" target="_blank">README</a> to understand how to use ' +
+              'the bench harness, then come back to this page when your first runs are done.',
+        }),
+        el('div', { class: 'preview-list' }, [
+          el('h3', { text: 'Once data lands, this page will show' }),
+          el('ul', {}, [
+            el('li', { text: 'Latest batch summary with verdict breakdown' }),
+            el('li', { text: 'Verdict distribution across all runs (donut chart)' }),
+            el('li', { text: 'Entity-to-relationship ratio (ERR) per combo' }),
+            el('li', { text: 'Phase A / Phase B / Step 3 timing breakdown' }),
+            el('li', { text: 'Failure-signal heatmap (empty content, format misses, timeouts, etc.)' }),
+            el('li', { text: 'Per-combo detail cards with model trio + LLM observations' }),
+            el('li', { text: 'Cross-run findings from the end-of-batch LLM review (runs against your configured primary model)' }),
+          ]),
+        ]),
+      ]);
+      root.appendChild(node);
+    }
+
+    // ---------- hero ----------
+    function renderHero(root, data) {
+      const latest = data.latest_batch || {};
+      const verdicts = latest.verdicts || {};
+      const runIds = latest.run_ids || [];
+      const batchRuns = data.runs.filter(r => latest.run_ids && latest.run_ids.includes(r.run_id));
+      const totalSec = batchRuns.reduce((s, r) => s + (r.duration_total_sec || 0), 0);
+      const totalEntities = batchRuns.reduce((s, r) => s + (r.entities || 0), 0);
+      const totalRels = batchRuns.reduce((s, r) => s + (r.relationships_total || 0), 0);
+
+      const chips = VERDICT_ORDER.filter(v => verdicts[v]).map(v =>
+        el('span', { class: `chip ${v}` }, [
+          el('span', { class: 'dot' }),
+          el('span', { text: `${v} · ${verdicts[v]}` }),
+        ])
+      );
+
+      const hero = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Latest batch' }),
+        el('div', { class: 'hero' }, [
+          el('div', { class: 'hero-main' }, [
+            el('h2', { class: 'mono', text: latest.batch_id || 'unknown' }),
+            el('p', { class: 'hero-sub', text:
+              `${runIds.length} combo${runIds.length === 1 ? '' : 's'} · `
+              + `${fmtSec(totalSec)} total wall time · ${totalEntities} entities · ${totalRels} relationships`
+            }),
+            el('div', { class: 'verdict-chips' }, chips),
+          ]),
+          el('div', { class: 'hero-stats' }, [
+            statBox('Runs', runIds.length),
+            statBox('Wall time', fmtSec(totalSec)),
+            statBox('Avg ERR', avgErr(batchRuns)),
+          ]),
+        ]),
+      ]);
+      root.appendChild(hero);
+    }
+    function statBox(label, value) {
+      return el('div', { class: 'stat' }, [
+        el('div', { class: 'label', text: label }),
+        el('div', { class: 'value', text: String(value) }),
+      ]);
+    }
+    function avgErr(runs) {
+      if (!runs.length) return '—';
+      const sum = runs.reduce((s, r) => s + (r.err || 0), 0);
+      return (sum / runs.length).toFixed(2);
+    }
+
+    // ---------- charts row ----------
+    function renderChartsRow(root, data) {
+      const wrap = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Distribution & comparison' }),
+        el('div', { class: 'chart-row' }, [
+          chartCard('Verdicts across all runs', `${data.total_runs} total · ${data.total_batches} batches`, 'verdictChart'),
+          chartCard('Entity–relationship ratio (ERR) per combo', 'Target = 1.0 (dotted line) · color = verdict', 'errChart', true),
+        ]),
+        el('div', { class: 'chart-row' }, [
+          chartCard('Phase timings per combo', 'Stacked: Phase A · Phase B · Step 3 (seconds)', 'phaseChart', true),
+        ]),
+      ]);
+      root.appendChild(wrap);
+
+      // Build charts
+      const runs = data.runs.slice().reverse(); // oldest first for left-to-right
+      buildVerdictDonut('verdictChart', data.verdict_counts || {});
+      buildErrBar('errChart', runs);
+      buildPhaseBar('phaseChart', runs);
+    }
+    function chartCard(title, sub, canvasId, tall = false) {
+      return el('div', { class: 'chart-card' }, [
+        el('h3', { text: title }),
+        el('p', { class: 'chart-sub', text: sub }),
+        el('div', { class: 'chart-canvas-wrap ' + (tall ? 'tall' : '') }, [
+          el('canvas', { id: canvasId }),
+        ]),
+      ]);
+    }
+    function buildVerdictDonut(canvasId, counts) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx || !window.Chart) return;
+      const labels = VERDICT_ORDER.filter(v => counts[v]);
+      const values = labels.map(v => counts[v]);
+      const colors = labels.map(v => VERDICT_COLOR[v]);
+      new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: colors,
+            borderColor: C.bg,
+            borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '60%',
+          plugins: {
+            legend: { position: 'right' },
+          },
+        },
+      });
+    }
+    function buildErrBar(canvasId, runs) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx || !window.Chart) return;
+      const labels = runs.map(r => r.combo_id || r.run_id || '?');
+      const values = runs.map(r => r.err || 0);
+      const colors = runs.map(r => VERDICT_COLOR[r.verdict] || C.neutral);
+
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'ERR',
+            data: values,
+            backgroundColor: colors,
+            borderRadius: 4,
+            maxBarThickness: 36,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (c) => `ERR ${c.raw.toFixed(2)}`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              grid: { color: C.border, drawBorder: false },
+              ticks: { color: C.fgMuted },
+            },
+            y: {
+              grid: { display: false },
+              ticks: { color: C.fg, font: { family: 'JetBrains Mono, monospace' } },
+            },
+          },
+        },
+        plugins: [{
+          id: 'errTargetLine',
+          afterDraw(chart) {
+            const { ctx: cctx, chartArea, scales } = chart;
+            const x = scales.x.getPixelForValue(1.0);
+            cctx.save();
+            cctx.strokeStyle = C.accent;
+            cctx.setLineDash([4, 4]);
+            cctx.lineWidth = 1;
+            cctx.beginPath();
+            cctx.moveTo(x, chartArea.top);
+            cctx.lineTo(x, chartArea.bottom);
+            cctx.stroke();
+            cctx.restore();
+          },
+        }],
+      });
+    }
+    function buildPhaseBar(canvasId, runs) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx || !window.Chart) return;
+      const labels = runs.map(r => r.combo_id || r.run_id || '?');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Phase A · entity extraction',     data: runs.map(r => r.phase_a_sec || 0), backgroundColor: C.shadeA, borderRadius: 4 },
+            { label: 'Phase B · relationship analysis', data: runs.map(r => r.phase_b_sec || 0), backgroundColor: C.shadeB, borderRadius: 4 },
+            { label: 'Step 3 · community detection',    data: runs.map(r => r.step_3_sec  || 0), backgroundColor: C.shadeC, borderRadius: 4 },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { color: C.fg, font: { family: 'JetBrains Mono, monospace' } } },
+            y: { stacked: true, grid: { color: C.border, drawBorder: false }, ticks: { color: C.fgMuted, callback: (v) => fmtSec(v) } },
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (c) => `${c.dataset.label}: ${fmtSec(c.raw)}`,
+                footer: (items) => {
+                  const total = items.reduce((s, it) => s + it.raw, 0);
+                  return `Total: ${fmtSec(total)}`;
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    // ---------- failure heatmap ----------
+    function renderHeatmap(root, data) {
+      const SIGNALS = [
+        { key: 'empty_content_length', label: 'empty (length)' },
+        { key: 'empty_content_stop',   label: 'empty (stop)' },
+        { key: 'candidate_scan_empty', label: 'scan empty' },
+        { key: 'zero_pair_scans',      label: 'zero-pair scans' },
+        { key: 'gleaning_passes',      label: 'gleaning' },
+        { key: 'extraction_timeouts',  label: 'timeouts' },
+        { key: 'community_parse_fallback', label: 'json parse fallback' },
+      ];
+      const wrap = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Failure-signal heatmap' }),
+        el('div', { class: 'heatmap-card' }, [
+          el('table', { class: 'heatmap' }, [
+            (() => {
+              const thead = el('thead');
+              const tr = el('tr');
+              tr.appendChild(el('th', { text: 'Combo' }));
+              for (const s of SIGNALS) tr.appendChild(el('th', { text: s.label }));
+              thead.appendChild(tr);
+              return thead;
+            })(),
+            (() => {
+              const tbody = el('tbody');
+              for (const r of data.runs) {
+                const tr = el('tr');
+                tr.appendChild(el('td', { class: 'combo-cell', text: r.combo_id || r.run_id || '?' }));
+                for (const s of SIGNALS) {
+                  const v = r[s.key] || 0;
+                  const cls = v === 0 ? 'zero' : (v < 5 ? 'low' : 'high');
+                  tr.appendChild(el('td', { class: 'signal-cell ' + cls, text: String(v) }));
+                }
+                tbody.appendChild(tr);
+              }
+              return tbody;
+            })(),
+          ]),
+        ]),
+      ]);
+      root.appendChild(wrap);
+    }
+
+    // ---------- per-combo detail cards ----------
+    function renderComboCards(root, data) {
+      const wrap = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Per-combo detail' }),
+        el('div', { class: 'combo-grid' }, data.runs.map(comboCard)),
+      ]);
+      root.appendChild(wrap);
+    }
+    function comboCard(r) {
+      const v = r.verdict || 'UNKNOWN';
+      const card = el('div', { class: 'combo-card' }, [
+        el('div', { class: 'combo-head' }, [
+          el('div', {}, [
+            el('h3', { class: 'combo-id', text: r.combo_id || r.run_id || '?' }),
+            el('p', { class: 'combo-batch', text: r.batch_id || '' }),
+          ]),
+          el('span', { class: `chip ${v}` }, [
+            el('span', { class: 'dot' }),
+            el('span', { text: v }),
+          ]),
+        ]),
+        el('div', { class: 'model-trio' }, [
+          el('span', { class: 'tier', text: 'primary' }),
+          el('span', { class: 'model', text: r.primary_model || '—' }),
+          el('span', { class: 'tier', text: 'extraction' }),
+          el('span', { class: 'model', text: r.extraction_model || '—' }),
+          el('span', { class: 'tier', text: 'relationship' }),
+          el('span', { class: 'model', text: r.relationship_model || '—' }),
+        ]),
+        el('div', { class: 'combo-stats' }, [
+          miniStat('Entities', num(r.entities)),
+          miniStat('Rels', num(r.relationships_total)),
+          miniStat('ERR', num(r.err, 2)),
+          miniStat('Wall', fmtSec(r.duration_total_sec)),
+        ]),
+        analysisDetails(r),
+      ]);
+      return card;
+    }
+    function miniStat(label, value) {
+      return el('div', { class: 'mini-stat' }, [
+        el('div', { class: 'label', text: label }),
+        el('div', { class: 'value', text: String(value) }),
+      ]);
+    }
+    function analysisDetails(r) {
+      const blocks = [];
+      const add = (label, text) => {
+        if (!text || text === '<pending LLM review>') return;
+        blocks.push(el('h4', { text: label }));
+        blocks.push(el('pre', { text: String(text) }));
+      };
+      add('Observations', r.observations);
+      add('Failure patterns', r.failure_patterns);
+      add('Performance', r.performance_notes);
+      add('Recommendation', r.recommendation);
+      add('vs previous run', r.vs_previous_run);
+      add('Issue notes', r.issue_notes);
+      if (blocks.length === 0) {
+        blocks.push(el('p', { class: 'placeholder', text: 'No analysis fields yet — LLM review may still be pending.' }));
+      }
+      return el('details', { class: 'analysis' }, [
+        el('summary', { text: 'Analysis & observations' }),
+        el('div', { class: 'analysis-block' }, blocks),
+      ]);
+    }
+
+    // ---------- findings markdown ----------
+    function renderFindings(root, data) {
+      const md = (data.latest_batch && data.latest_batch.findings_md) || '';
+      if (!md.trim()) return; // no findings yet
+      const html = window.marked ? window.marked.parse(md) : esc(md);
+      const wrap = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Cross-run findings (LLM)' }),
+        el('div', { class: 'findings-card' }, [
+          el('div', { class: 'findings-md', html }),
+        ]),
+      ]);
+      root.appendChild(wrap);
+    }
+  </script>
+</body>
+</html>

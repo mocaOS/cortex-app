@@ -1,0 +1,95 @@
+# Benchmark combinations for the LLM-stack orchestrator.
+#
+# Each combo references model IDs from models.yaml. The orchestrator resolves
+# them to full model dicts (model_id + base_url + api_key + context_length +
+# optional family/reasoning_capable metadata) before recreating the backend.
+#
+# Required fields per combo:
+#   id            — unique slug, used in file names and the --only filter
+#   primary       — model ID from models.yaml (Q&A / researcher tier)
+#   extraction    — model ID from models.yaml (entity extraction tier)
+#   relationship  — model ID from models.yaml (relationship analysis tier)
+#
+# Optional per-combo overrides:
+#   extraction_reasoning_mode    — off | minimal | auto | low | medium | high. Default: off
+#   relationship_reasoning_mode  — same values. Default: off
+#   default_reasoning_mode       — same values. Default: auto
+#   note                         — free-form human comment
+#
+# The 12-combo matrix below comes from the Venice catalog audit
+# (see /home/reneil1337/.claude/plans/analyze-the-ability-for-snoopy-map-agent-a0ba173a77674c818.md).
+# Edit, reorder, comment out, or add combos freely.
+
+combos:
+  - id: 01-mistral-x2
+    primary: mistral-24b-venice
+    extraction: mistral-24b-venice
+    relationship: mistral-24b-venice
+    note: "Baseline: cheap dense 24B both tiers. Sets the floor."
+
+  - id: 02-mistral-qwen235-instruct
+    primary: minimax-m27-venice
+    extraction: mistral-24b-venice
+    relationship: qwen3-235b-instruct-venice
+    note: "Cheap dense extractor + best non-reasoning MoE workhorse. Price/quality sweet spot."
+
+  - id: 03-qwen9b-qwen235-instruct
+    primary: minimax-m27-venice
+    extraction: qwen3-9b-venice
+    relationship: qwen3-235b-instruct-venice
+    note: "Tiny 9B Qwen extractor (thinking off) vs big Qwen relationship. Is small enough?"
+
+  - id: 04-venice-uncensored-qwen235
+    primary: minimax-m27-venice
+    extraction: venice-uncensored-1-2
+    relationship: qwen3-235b-instruct-venice
+    note: "Uncensored finetune for extraction; does it still hit XML format?"
+
+  - id: 05-gemma27-llama70
+    primary: minimax-m27-venice
+    extraction: google-gemma-27b-venice
+    relationship: llama-3-3-70b-venice
+    note: "Pure dense, no-reasoning across two families (Gemma + Llama)."
+
+  - id: 06-qwen80-x2
+    primary: minimax-m27-venice
+    extraction: qwen3-next-80b-venice
+    relationship: qwen3-next-80b-venice
+    note: "Single 80B dense both tiers. Does bigger dense beat split-tier?"
+
+  - id: 07-qwen235-instruct-x2
+    primary: minimax-m27-venice
+    extraction: qwen3-235b-instruct-venice
+    relationship: qwen3-235b-instruct-venice
+    note: "Single 235B MoE instruct both tiers. Same-family non-reasoning ceiling."
+
+  - id: 08-qwen235-instruct-vs-thinking-suppressed
+    primary: minimax-m27-venice
+    extraction: qwen3-235b-instruct-venice
+    relationship: qwen3-235b-thinking-venice
+    note: "A/B: thinking SKU with disable_thinking=true. Does suppression match the instruct sibling?"
+
+  - id: 09-qwen235-thinking-on
+    primary: minimax-m27-venice
+    extraction: qwen3-235b-instruct-venice
+    relationship: qwen3-235b-thinking-venice
+    relationship_reasoning_mode: auto    # keep thinking ON for the stress test
+    note: "Stress test: confirms reasoning HURTS relationship XML even on the same base model."
+
+  - id: 10-mistral-hermes405b
+    primary: minimax-m27-venice
+    extraction: mistral-24b-venice
+    relationship: hermes-3-llama-405b-venice
+    note: "Does a 405B dense beat a 235B MoE for relationships at similar effective scale?"
+
+  - id: 11-qwen35-a3b-qwen235-instruct
+    primary: minimax-m27-venice
+    extraction: qwen3-35b-a3b-venice
+    relationship: qwen3-235b-instruct-venice
+    note: "MoE 3B-active extractor (fast/cheap) + dense MoE relationship. Run 3 mixed; does splitting help?"
+
+  - id: 12-gptoss120b-qwen235-instruct
+    primary: minimax-m27-venice
+    extraction: gpt-oss-120b-venice
+    relationship: qwen3-235b-instruct-venice
+    note: "Cheapest reasoning-capable extractor ($0.07/M) with disable_thinking. Can gpt-oss drive XML?"
