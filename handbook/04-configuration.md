@@ -93,15 +93,15 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7        # primary / agentic (196K window)
+OPENAI_MODEL=minimax-m27        # primary / agentic (196K window)
 OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M2.7's full input window
 
-GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b    # extraction + (inherited) relationship (256K window)
+GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B's full input window; relationship_max_context inherits
 
-VISION_MODEL=google-gemma-3-27b-it         # image analysis (does NOT inherit from extraction)
+VISION_MODEL=qwen3-6-27b              # image analysis (does NOT inherit from extraction)
 
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B    # text embedding model (native 4096, MRL 32–4096)
+EMBEDDING_MODEL=text-embedding-qwen3-8b    # text embedding model (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
 # Output budgets + all other knobs cascade through defaults
 ```

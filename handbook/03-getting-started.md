@@ -30,19 +30,19 @@ cp .env.example .env
 > ```env
 > # Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
 > OPENAI_API_KEY=
-> OPENAI_API_BASE=
-> OPENAI_MODEL=MiniMaxAI/MiniMax-M2.7
+> OPENAI_API_BASE=https://api.venice.ai/api/v1
+> OPENAI_MODEL=minimax-m27
 > OPENAI_MAX_CONTEXT=196608
 >
 > # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
-> GRAPH_EXTRACTION_MODEL=qwen/qwen3-7-27b
+> GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 > GRAPH_EXTRACTION_MAX_CONTEXT=256000
 >
 > # Vision — image analysis (does NOT inherit; api_base/api_key inherit from OPENAI_*)
-> VISION_MODEL=google-gemma-3-27b-it
+> VISION_MODEL=qwen3-6-27b
 >
 > # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
-> EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+> EMBEDDING_MODEL=text-embedding-qwen3-8b
 > EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
 > ```
 >
