@@ -56,5 +56,20 @@ scripts/
 documents
 !frontend/**/documents
 
+# Bench harness — input docs, run outputs, and locally-edited config stay out of git.
+# The orchestrator code and .yaml.example templates ARE tracked.
+# NOTE: `!bench/logs/` overrides the broader `logs/` rule above so we can keep
+# the directory present with a .gitkeep while ignoring its contents.
+!bench/logs/
+bench/files/*
+!bench/files/.gitkeep
+bench/logs/*
+!bench/logs/.gitkeep
+bench/backups/*
+!bench/backups/.gitkeep
+bench/models.yaml
+bench/combos.yaml
+bench/__pycache__/
+
 # Skills *.zip
 library.zip

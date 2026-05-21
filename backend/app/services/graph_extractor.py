@@ -16,6 +16,11 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
 from app.services.llm_config import get_llm_config, get_extraction_llm_config, get_relationship_llm_config, is_turbo_mode_active
+from app.services.reasoning_config import (
+    ReasoningMode,
+    safe_chat_completion,
+    safe_chat_completion_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -484,6 +489,54 @@ class GraphExtractor:
         """Check if graph extraction is available."""
         return self.client is not None
     
+    @property
+    def _extraction_reasoning_mode(self) -> ReasoningMode:
+        """Reasoning mode applied to extraction-side LLM calls."""
+        return ReasoningMode.parse(self.settings.extraction_reasoning_mode)
+
+    @property
+    def _relationship_reasoning_mode(self) -> ReasoningMode:
+        """Reasoning mode applied to relationship-side LLM calls."""
+        return ReasoningMode.parse(self.settings.relationship_reasoning_mode)
+
+    async def _async_safe_completion(
+        self,
+        client,
+        *,
+        model: str,
+        mode: ReasoningMode,
+        **kwargs,
+    ):
+        """Async chat.completions.create wrapped with reasoning kwargs + fallback."""
+        base_url = str(client.base_url) if getattr(client, "base_url", None) else ""
+        return await safe_chat_completion(
+            client.chat.completions.create,
+            base_url=base_url,
+            model=model,
+            reasoning_mode=mode,
+            overrides=self.settings.parsed_reasoning_overrides,
+            **kwargs,
+        )
+
+    def _sync_safe_completion(
+        self,
+        client,
+        *,
+        model: str,
+        mode: ReasoningMode,
+        **kwargs,
+    ):
+        """Sync chat.completions.create wrapped with reasoning kwargs + fallback."""
+        base_url = str(client.base_url) if getattr(client, "base_url", None) else ""
+        return safe_chat_completion_sync(
+            client.chat.completions.create,
+            base_url=base_url,
+            model=model,
+            reasoning_mode=mode,
+            overrides=self.settings.parsed_reasoning_overrides,
+            **kwargs,
+        )
+
     def _extract_response_content(self, response) -> Optional[str]:
         """Extract usable text content from an LLM response.
 
@@ -756,8 +809,10 @@ class GraphExtractor:
         )
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._sync_safe_completion(
+                self.client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
@@ -765,7 +820,7 @@ class GraphExtractor:
                 temperature=0.1,
                 max_tokens=3000,
             )
-            
+
             content = self._extract_response_content(response)
             if not content:
                 return ExtractionResult()
@@ -947,8 +1002,10 @@ class GraphExtractor:
         )
         
         try:
-            response = await self.async_client.chat.completions.create(
+            response = await self._async_safe_completion(
+                self.async_client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
@@ -956,9 +1013,9 @@ class GraphExtractor:
                 temperature=0.1,
                 max_tokens=3000,
             )
-            
+
             content = self._extract_response_content(response)
-            
+
             # Parse response (reuse existing parsing logic)
             xml_entities = self._extract_xml_entities(content)
             xml_relationships = self._extract_xml_relationships(content)
@@ -1063,8 +1120,10 @@ class GraphExtractor:
             return []
         
         try:
-            response = await self.async_client.chat.completions.create(
+            response = await self._async_safe_completion(
+                self.async_client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
                     {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
@@ -1072,26 +1131,26 @@ class GraphExtractor:
                 temperature=0,
                 max_tokens=500,
             )
-            
+
             content = self._extract_response_content(response)
             if not content:
                 return []
-            
+
             # Try XML parsing first
             entities = self._extract_xml_entity_names(content)
-            
+
             # Fall back to JSON parsing
             if not entities:
                 data = self._extract_json_from_response(content)
                 entities = [str(e).strip() for e in data.get("entities", []) if e]
-            
+
             logger.info(f"Extracted {len(entities)} entities from query: {entities}")
             return entities
-            
+
         except Exception as e:
             logger.error(f"Error extracting entities from query: {e}")
             return []
-    
+
     async def generate_document_summary_async(self, document: str) -> str:
         """
         Async version of generate_document_summary using extraction client.
@@ -1103,8 +1162,10 @@ class GraphExtractor:
         model = self.extraction_model_name
 
         try:
-            response = await client.chat.completions.create(
+            response = await self._async_safe_completion(
+                client,
                 model=model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
                     {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
@@ -1138,8 +1199,10 @@ class GraphExtractor:
             return []
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._sync_safe_completion(
+                self.client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
                     {"role": "user", "content": QUERY_ENTITY_PROMPT.format(query=query)}
@@ -1147,26 +1210,26 @@ class GraphExtractor:
                 temperature=0,
                 max_tokens=500,
             )
-            
+
             content = self._extract_response_content(response)
             if not content:
                 return []
 
             # Try XML parsing first
             entities = self._extract_xml_entity_names(content)
-            
+
             # Fall back to JSON parsing
             if not entities:
                 data = self._extract_json_from_response(content)
                 entities = [str(e).strip() for e in data.get("entities", []) if e]
-            
+
             logger.info(f"Extracted {len(entities)} entities from query: {entities}")
             return entities
-            
+
         except Exception as e:
             logger.error(f"Error extracting entities from query: {e}")
             return []
-    
+
     def generate_document_summary(self, document: str) -> str:
         """
         Generate a document summary for context in extraction.
@@ -1182,8 +1245,10 @@ class GraphExtractor:
             return ""
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._sync_safe_completion(
+                self.client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You are a document summarization assistant."},
                     {"role": "user", "content": SUMMARY_PROMPT.format(document=document[:10000])}
@@ -1191,7 +1256,7 @@ class GraphExtractor:
                 temperature=0.3,
                 max_tokens=1000,
             )
-            
+
             content = self._extract_response_content(response)
             if not content:
                 return ""
@@ -1234,8 +1299,10 @@ class GraphExtractor:
         ]) if relationships else "No relationships found."
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._sync_safe_completion(
+                self.client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You are an entity description enrichment assistant."},
                     {"role": "user", "content": ENTITY_DESCRIPTION_PROMPT.format(
@@ -1312,8 +1379,10 @@ Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just 
 Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
-            response = client.chat.completions.create(
+            response = self._sync_safe_completion(
+                client,
                 model=model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
                     {"role": "user", "content": prompt},
@@ -1416,7 +1485,7 @@ Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}""
         except Exception as e:
             logger.error(f"Error generating community summary: {e}")
             return {"name": None, "summary": None}
-    
+
     async def generate_community_summary_async(
         self,
         entities: List[dict],
@@ -1453,8 +1522,10 @@ Respond with ONLY a JSON object. No thinking, no analysis, no explanation. Just 
 Format: {{"name": "Short Community Name", "summary": "2-4 sentence summary."}}"""
         
         try:
-            response = await client.chat.completions.create(
+            response = await self._async_safe_completion(
+                client,
                 model=model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You are a knowledge graph builder. Your task is to create a concise name and summary for a community of related entities and relationships.\n\nOutput ONLY a valid JSON object with exactly two keys: \"name\" and \"summary\". No other text, no explanations, no markdown, no chain-of-thought."},
                     {"role": "user", "content": prompt},
@@ -1575,8 +1646,10 @@ Types present: {', '.join(entity_types)}
 Respond with ONLY the community name, nothing else."""
         
         try:
-            response = self.client.chat.completions.create(
+            response = self._sync_safe_completion(
+                self.client,
                 model=self.current_model,
+                mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You name knowledge graph communities. Respond with only the name."},
                     {"role": "user", "content": prompt}
@@ -1755,8 +1828,10 @@ Respond with ONLY the community name, nothing else."""
             )
 
             try:
-                response = await client.chat.completions.create(
+                response = await self._async_safe_completion(
+                    client,
                     model=model,
+                    mode=self._extraction_reasoning_mode,
                     messages=[
                         {"role": "system", "content": ENTITY_EXTRACTION_SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
@@ -1875,8 +1950,10 @@ Respond with ONLY the community name, nothing else."""
         entity_name_set = {e.get("name", "").lower(): e.get("name", "") for e in entities}
 
         try:
-            response = await client.chat.completions.create(
+            response = await self._async_safe_completion(
+                client,
                 model=model,
+                mode=self._relationship_reasoning_mode,
                 messages=[
                     {"role": "system", "content": CANDIDATE_SCAN_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -1937,8 +2014,10 @@ Respond with ONLY the community name, nothing else."""
                 )
 
                 try:
-                    gleaning_response = await client.chat.completions.create(
+                    gleaning_response = await self._async_safe_completion(
+                        client,
                         model=model,
+                        mode=self._relationship_reasoning_mode,
                         messages=[
                             {"role": "system", "content": CANDIDATE_SCAN_SYSTEM_PROMPT},
                             {"role": "user", "content": gleaning_prompt},
@@ -2046,8 +2125,10 @@ Extract relationships supported by the text above:"""
                 reraise=True,
             )
             async def _call_llm():
-                return await client.chat.completions.create(
+                return await self._async_safe_completion(
+                    client,
                     model=model,
+                    mode=self._relationship_reasoning_mode,
                     messages=[
                         {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
@@ -2177,8 +2258,10 @@ Extract relationships supported by the text above:"""
         entity_name_set = {e.get("name", "").lower() for e in focused_entities}
 
         try:
-            response = await client.chat.completions.create(
+            response = await self._async_safe_completion(
+                client,
                 model=model,
+                mode=self._relationship_reasoning_mode,
                 messages=[
                     {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},

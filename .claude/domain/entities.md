@@ -2,6 +2,8 @@
 
 Entity extraction, resolution, deduplication, merging, editing, and search.
 
+> **Reasoning control:** all entity-extraction-tier LLM calls (extraction, summaries, community names, entity enrichment) run under `EXTRACTION_REASONING_MODE` (default `off`). Helper at `backend/app/services/reasoning_config.py` suppresses thinking on reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1) via provider-correct kwargs. No-op for pure instruct models. See [`.claude/environment.md`](../environment.md).
+
 ## Fuzzy Resolution
 
 Entity extraction is per-document (Phase A) with fuzzy resolution:

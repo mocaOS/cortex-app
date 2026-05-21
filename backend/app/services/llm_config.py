@@ -6,9 +6,10 @@ based on whether Turbo Mode is enabled (running Compute3 GPU instance).
 
 import logging
 from typing import Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.config import get_settings
+from app.services.reasoning_config import ReasoningMode
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class LLMConfig:
     base_url: str
     model: str
     is_turbo: bool = False
+    reasoning_mode: ReasoningMode = ReasoningMode.AUTO
 
 
 # Cache for active turbo mode state (updated by compute3_service)
@@ -82,27 +84,30 @@ def get_llm_config(fast_mode: bool = False) -> LLMConfig:
         LLMConfig with api_key, base_url, model, and is_turbo flag
     """
     settings = get_settings()
-    
+    default_mode = ReasoningMode.parse(settings.default_reasoning_mode)
+
     # Check if turbo mode is active
     if _turbo_state["active"] and _turbo_state["base_url"]:
         # Use the auth token fetched from Compute3 API
         api_key = _turbo_state["api_key"] or settings.compute3_api_key
-        
+
         return LLMConfig(
             api_key=api_key,
             base_url=_turbo_state["base_url"],
             model=settings.compute3_model,
             is_turbo=True,
+            reasoning_mode=default_mode,
         )
-    
+
     # Use default OpenAI settings, with optional fast mode model
     model = settings.fast_mode_model if fast_mode else settings.openai_model
-    
+
     return LLMConfig(
         api_key=settings.openai_api_key,
         base_url=settings.openai_api_base,
         model=model,
         is_turbo=False,
+        reasoning_mode=default_mode,
     )
 
 
@@ -114,6 +119,7 @@ def get_extraction_llm_config() -> LLMConfig:
     Otherwise falls back to dedicated extraction config, then main OpenAI config.
     """
     settings = get_settings()
+    extraction_mode = ReasoningMode.parse(settings.extraction_reasoning_mode)
 
     # Turbo mode ALWAYS overrides — even if dedicated extraction endpoint is set
     if _turbo_state["active"] and _turbo_state["base_url"]:
@@ -123,6 +129,7 @@ def get_extraction_llm_config() -> LLMConfig:
             base_url=_turbo_state["base_url"],
             model=settings.compute3_model,
             is_turbo=True,
+            reasoning_mode=extraction_mode,
         )
 
     # Use dedicated extraction config (properties fall back to main config if empty)
@@ -131,6 +138,7 @@ def get_extraction_llm_config() -> LLMConfig:
         base_url=settings.extraction_api_base,
         model=settings.extraction_model,
         is_turbo=False,
+        reasoning_mode=extraction_mode,
     )
 
 
@@ -142,6 +150,7 @@ def get_relationship_llm_config() -> LLMConfig:
     Turbo mode takes priority when active.
     """
     settings = get_settings()
+    relationship_mode = ReasoningMode.parse(settings.relationship_reasoning_mode)
 
     if _turbo_state["active"] and _turbo_state["base_url"]:
         api_key = _turbo_state["api_key"] or settings.compute3_api_key
@@ -150,6 +159,7 @@ def get_relationship_llm_config() -> LLMConfig:
             base_url=_turbo_state["base_url"],
             model=settings.compute3_model,
             is_turbo=True,
+            reasoning_mode=relationship_mode,
         )
 
     return LLMConfig(
@@ -157,6 +167,7 @@ def get_relationship_llm_config() -> LLMConfig:
         base_url=settings.rel_extraction_api_base,
         model=settings.rel_extraction_model,
         is_turbo=False,
+        reasoning_mode=relationship_mode,
     )
 
 

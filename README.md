@@ -159,6 +159,13 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
 RELATIONSHIP_MAX_CONTEXT=198000              # must match RELATIONSHIP_EXTRACTION_MODEL context window
 
+# Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
+# off | minimal | auto | low | medium | high. No-op for pure instruct models.
+EXTRACTION_REASONING_MODE=off                # extraction, summaries, communities
+RELATIONSHIP_REASONING_MODE=off              # candidate scan + relationship extraction
+DEFAULT_REASONING_MODE=auto                  # Q&A / researcher agent (stays AUTO)
+# REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom:minimal  # escape hatch for novel models
+
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=
 VISION_MODEL_API_BASE=                       # defaults to OPENAI_API_BASE
@@ -664,6 +671,10 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `RELATIONSHIP_EXTRACTION_MODEL` | Model for all relationship discovery (instruction-following recommended, e.g. OpenAI GPT OSS 120B; defaults to `GRAPH_EXTRACTION_MODEL`) | No | - |
 | `RELATIONSHIP_EXTRACTION_API_BASE` | API base for relationship model (defaults to `GRAPH_EXTRACTION_API_BASE`) | No | - |
 | `RELATIONSHIP_EXTRACTION_API_KEY` | API key for relationship model (defaults to `GRAPH_EXTRACTION_API_KEY`) | No | - |
+| `EXTRACTION_REASONING_MODE` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high`. No-op for pure instruct models | No | `off` |
+| `RELATIONSHIP_REASONING_MODE` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above | No | `off` |
+| `DEFAULT_REASONING_MODE` | Reasoning mode for Q&A path (researcher agent stays on AUTO to preserve parallel tool calls) | No | `auto` |
+| `REASONING_MODEL_OVERRIDES` | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `20` |
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |

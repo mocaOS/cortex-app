@@ -46,6 +46,28 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | `false` | Automatically run relationship analysis after batch document processing completes. |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | `false` | Automatically run community detection after relationship analysis completes. |
 
+## Reasoning Control (ingestion pipelines)
+
+Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M2) be used for ingestion while forcing their thinking OFF. Provider is auto-detected from `base_url`; model family is parsed from the model name. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3. Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for `off`).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EXTRACTION_REASONING_MODE` | `off` | Reasoning mode for entity extraction, document summaries, community summarization, community naming, entity enrichment, and query-side entity extraction. |
+| `RELATIONSHIP_REASONING_MODE` | `off` | Reasoning mode for candidate-pair scan (Phase 1), gleaning pass, per-chunk relationship extraction, and batch relationship analysis (Phase 2). |
+| `DEFAULT_REASONING_MODE` | `auto` | Reasoning mode for the Q&A path. Researcher agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI. |
+| `REASONING_MODEL_OVERRIDES` | empty | Per-model override for novel models the heuristics get wrong. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom-llm:minimal`. |
+
+### Handling new model releases
+
+The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8` routes the same as `gpt-5.1`). For new majors or models the heuristic misclassifies, set `REASONING_MODEL_OVERRIDES`. If the API rejects the param at runtime, the wrapper strips it on retry, logs a warning, and caches the (base_url, model) pair so subsequent calls skip the param upfront — one wasted call per model on first run, then nothing.
+
+### Caveats
+
+- `gpt-5-pro` is hard-pinned to `reasoning_effort=high` by OpenAI. OFF is silently ignored; a one-time WARN is logged.
+- `gpt-5-codex` doesn't accept `minimal`; auto-downgraded to `low`.
+- Anthropic Opus 4.7+ uses adaptive thinking — manual `thinking` returns 400, so the helper omits the param. Reasoning may still occur regardless of mode.
+- OpenRouter `exclude:true` does NOT save tokens (model still reasons and bills you); we use `effort:"none"`/`"minimal"` instead.
+
 ## Embedding Configuration
 
 | Variable | Default | Description |

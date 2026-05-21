@@ -20,6 +20,7 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | [`.claude/domain/rag-pipeline.md`](.claude/domain/rag-pipeline.md) | Researcher/writer agents, tools, speed/quality modes, hybrid search |
 | [`.claude/domain/skills.md`](.claude/domain/skills.md) | AgentSkills standard, auto-activation, http_request, config wizard |
 | [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
+| [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
 
 ## File-Path Routing
 
@@ -53,6 +54,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `design-system/**` | `design-system.md` |
 | `documentation/**`, `handbook/**` | `maintenance.md` |
 | `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
+| `bench/**` | `bench.md` |
 
 ## Priority
 

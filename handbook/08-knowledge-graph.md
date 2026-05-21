@@ -2,6 +2,10 @@
 
 The Knowledge Graph is the Library's most powerful feature. It transforms your documents from isolated files into a connected web of knowledge — enabling multi-hop reasoning, relationship discovery, and more accurate answers than simple vector search alone.
 
+## Using Reasoning Models for Ingestion
+
+You can point `GRAPH_EXTRACTION_MODEL` and `RELATIONSHIP_EXTRACTION_MODEL` at modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M2) without their reasoning hurting extraction quality. Cortex ships with `EXTRACTION_REASONING_MODE=off` and `RELATIONSHIP_REASONING_MODE=off` by default, which forces thinking OFF on these models via provider-correct request shapes (OpenAI, OpenRouter, Venice, Anthropic, vLLM/Compute3 all handled). Pure instruct models like Mistral Small 24B see no change. To revert to provider defaults, set the modes to `auto`. See [Chapter 4 — Reasoning Control (ingestion pipelines)](04-configuration.md#reasoning-control-ingestion-pipelines) for the full env-var set, override hatch, and caveats.
+
 ## The Three-Step Pipeline
 
 Building the knowledge graph is a three-step process, managed from the **Knowledge Graph** page (Manage > Knowledge Graph at `/extract`).

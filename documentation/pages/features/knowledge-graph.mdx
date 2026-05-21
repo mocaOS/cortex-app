@@ -450,7 +450,21 @@ ENTITY_SIMILARITY_THRESHOLD=0.85
 # RELATIONSHIP_MAX_PER_ENTITY=50        # Soft cap on relationships per entity (0 = no cap)
 # AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH=false
 # AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
+
+# Reasoning Control — lets you use reasoning-capable models for ingestion
+# (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, etc.) with their thinking
+# forced OFF. Reasoning hurts structured extraction (drift, hidden-token
+# cost, latency, malformed JSON). No-op for pure instruct models.
+# Values: off | minimal | auto | low | medium | high
+EXTRACTION_REASONING_MODE=off    # extraction + summaries + communities
+RELATIONSHIP_REASONING_MODE=off  # candidate scan + relationship extraction
+DEFAULT_REASONING_MODE=auto      # Q&A / researcher agent (stays AUTO)
+# REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom:minimal  # escape hatch
 ```
+
+**Reasoning across providers.** Cortex auto-detects provider from `base_url` (OpenAI, OpenRouter, Venice, Anthropic, vLLM/Compute3) and model family by regex on the model string, then injects the right kwargs: `reasoning_effort` for OpenAI direct, `extra_body.reasoning.effort` for OpenRouter, `extra_body.venice_parameters.disable_thinking` for Venice, `extra_body.thinking={type:disabled}` for Anthropic, `extra_body.chat_template_kwargs.enable_thinking=false` for vLLM/Compute3 (Qwen3-style). New minor releases route automatically via regex (e.g. `gpt-5.8` works like `gpt-5.1`). For models the heuristic misclassifies, use `REASONING_MODEL_OVERRIDES`. Runtime fallback: if a model rejects the param with a 400, the wrapper strips it on retry and caches the model so subsequent calls skip the param.
+
+**Caveats.** `gpt-5-pro` is hard-pinned to `high` by OpenAI (OFF is logged + ignored). `gpt-5-codex` auto-downgrades `minimal`→`low`. Anthropic Opus 4.7+ uses adaptive thinking (helper omits `thinking`). OpenRouter `exclude:true` does NOT save tokens; we use `effort:"none"`. The researcher/Q&A agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI.
 
 ## Recommended Workflow
 

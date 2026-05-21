@@ -193,6 +193,35 @@ discovery:
 # AUTO_COMMUNITY_DETECTION_AFTER_BATCH=false
 ```
 
+### Reasoning Control for ingestion
+
+Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M2) be used for ingestion while suppressing their thinking. Cortex auto-detects the provider from `base_url` and the model family from the model name — works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3.
+
+Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for OFF).
+
+```bash
+# Default OFF: skips reasoning on entity extraction, summaries, communities,
+# entity enrichment, query-entity extraction. No-op for pure instruct models.
+EXTRACTION_REASONING_MODE=off
+
+# Default OFF: skips reasoning on candidate scan, gleaning pass, per-chunk
+# and batch relationship extraction.
+RELATIONSHIP_REASONING_MODE=off
+
+# Default AUTO: the Q&A / researcher path stays on the provider default.
+# reasoning_effort=minimal breaks parallel tool calls on OpenAI, so don't
+# force it OFF here.
+DEFAULT_REASONING_MODE=auto
+
+# Escape hatch for novel models the heuristics get wrong.
+# Format: "model1:mode1,model2:mode2"
+# REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom-llm:minimal
+```
+
+**Forward compatibility.** Same-family minor releases route automatically — `gpt-5.8` works like `gpt-5.1`. For new majors (e.g. `gpt-6`) or models the heuristic misclassifies, set `REASONING_MODEL_OVERRIDES`. If the API rejects the param, the wrapper strips it on retry, logs a warning, and caches the model so future calls skip the param upfront.
+
+**Caveats.** `gpt-5-pro` is hard-pinned to `reasoning_effort=high` (OFF is silently ignored, one-time WARN). `gpt-5-codex` auto-downgrades `minimal`→`low`. Anthropic Opus 4.7+ uses adaptive thinking — manual `thinking` returns 400, so the helper omits the param. OpenRouter `exclude:true` does NOT save tokens; we use `effort:"none"` instead.
+
 ### Semantic Entity Resolution
 
 ```bash
@@ -453,6 +482,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `RELATIONSHIP_MAX_PER_ENTITY` | No | `50` | Soft cap on relationships per entity (0 = no cap) |
 | `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` | No | `false` | Auto-analyze after batch processing |
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
+| `EXTRACTION_REASONING_MODE` | No | `off` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high` |
+| `RELATIONSHIP_REASONING_MODE` | No | `off` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above |
+| `DEFAULT_REASONING_MODE` | No | `auto` | Reasoning mode for Q&A path (researcher agent stays AUTO to preserve parallel tool calls) |
+| `REASONING_MODEL_OVERRIDES` | No | empty | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |

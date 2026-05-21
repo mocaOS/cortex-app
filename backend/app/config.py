@@ -149,6 +149,18 @@ class Settings(BaseSettings):
     relationship_extraction_api_key: str = Field(
         default=""
     )  # API key for relationship extraction model (defaults to extraction API key if empty)
+
+    # Reasoning Control for ingestion pipelines
+    # Values: off | minimal | auto | low | medium | high
+    # Defaults: extraction/relationship OFF (reasoning hurts structured extraction);
+    # default mode AUTO (don't inject anything for the general Q&A path).
+    default_reasoning_mode: str = Field(default="auto")
+    extraction_reasoning_mode: str = Field(default="off")
+    relationship_reasoning_mode: str = Field(default="off")
+    # Per-model override escape hatch for novel models the heuristics get wrong.
+    # Format: "model1:mode1,model2:mode2". Example: "gpt-5.8:none,custom-llm:minimal"
+    reasoning_model_overrides: str = Field(default="")
+
     concurrent_relations: int = Field(
         default=3
     )  # Number of per-chunk relationship extractions to run concurrently per document
@@ -434,6 +446,22 @@ class Settings(BaseSettings):
     def entity_embed_model(self) -> str:
         """Get the model to use for entity embeddings."""
         return self.entity_embedding_model or self.embedding_model
+
+    @property
+    def parsed_reasoning_overrides(self) -> dict:
+        """Parse REASONING_MODEL_OVERRIDES once and cache on the instance.
+
+        Returns a dict mapping lowercased model name -> ReasoningMode.
+        """
+        cached = self.__dict__.get("_parsed_reasoning_overrides")
+        if cached is not None:
+            return cached
+        # Import here to avoid circular import at module load
+        from app.services.reasoning_config import parse_overrides
+
+        parsed = parse_overrides(self.reasoning_model_overrides)
+        self.__dict__["_parsed_reasoning_overrides"] = parsed
+        return parsed
 
     @model_validator(mode="before")
     @classmethod
