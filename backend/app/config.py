@@ -152,11 +152,13 @@ class Settings(BaseSettings):
 
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
-    # Defaults: extraction/relationship OFF (reasoning hurts structured extraction);
-    # default mode AUTO (don't inject anything for the general Q&A path).
+    # Defaults: extraction/relationship/vision OFF (reasoning hurts structured
+    # extraction and image-description tasks); default mode AUTO (don't inject
+    # anything for the general Q&A path).
     default_reasoning_mode: str = Field(default="auto")
     extraction_reasoning_mode: str = Field(default="off")
     relationship_reasoning_mode: str = Field(default="off")
+    vision_reasoning_mode: str = Field(default="off")
     # Per-model override escape hatch for novel models the heuristics get wrong.
     # Format: "model1:mode1,model2:mode2". Example: "gpt-5.8:none,custom-llm:minimal"
     reasoning_model_overrides: str = Field(default="")

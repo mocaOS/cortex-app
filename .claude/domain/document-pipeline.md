@@ -53,6 +53,7 @@ Runs asynchronously after text processing completes:
 - Progress tracked per-document via `image_progress_current`/`image_progress_total`/`image_progress_message` properties
 - Image chunks created with type `image_analysis` and `chunk_index` 1000+
 - Graph extraction runs on image content if enabled
+- Reasoning is suppressed on capable multimodal models via `VISION_REASONING_MODE` (default `off`). `vision_analyzer.py` uses raw httpx, so it merges `flatten_reasoning_body()` output into the `/chat/completions` JSON body and falls back once on 400, marking the model via `mark_reasoning_unsupported`. Lets you point both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` at e.g. Qwen3-VL-27B with one endpoint. See [`.claude/environment.md`](../environment.md#reasoning-control-ingestion).
 
 ### Frontend Image Analysis Awareness
 

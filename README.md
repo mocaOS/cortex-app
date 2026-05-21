@@ -163,6 +163,7 @@ RELATIONSHIP_MAX_CONTEXT=198000              # must match RELATIONSHIP_EXTRACTIO
 # off | minimal | auto | low | medium | high. No-op for pure instruct models.
 EXTRACTION_REASONING_MODE=off                # extraction, summaries, communities
 RELATIONSHIP_REASONING_MODE=off              # candidate scan + relationship extraction
+VISION_REASONING_MODE=off                    # vision-model image descriptions
 DEFAULT_REASONING_MODE=auto                  # Q&A / researcher agent (stays AUTO)
 # REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom:minimal  # escape hatch for novel models
 
@@ -673,6 +674,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `RELATIONSHIP_EXTRACTION_API_KEY` | API key for relationship model (defaults to `GRAPH_EXTRACTION_API_KEY`) | No | - |
 | `EXTRACTION_REASONING_MODE` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high`. No-op for pure instruct models | No | `off` |
 | `RELATIONSHIP_REASONING_MODE` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above | No | `off` |
+| `VISION_REASONING_MODE` | Force reasoning OFF on the vision-model image-description call. Same values as above | No | `off` |
 | `DEFAULT_REASONING_MODE` | Reasoning mode for Q&A path (researcher agent stays on AUTO to preserve parallel tool calls) | No | `auto` |
 | `REASONING_MODEL_OVERRIDES` | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |

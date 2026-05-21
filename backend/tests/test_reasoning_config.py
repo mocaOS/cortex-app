@@ -23,7 +23,10 @@ from app.services.reasoning_config import (
     _reset_caches_for_tests,
     build_reasoning_kwargs,
     classify_backend,
+    flatten_reasoning_body,
+    is_reasoning_unsupported,
     is_unsupported_reasoning_error,
+    mark_reasoning_unsupported,
     merge_kwargs,
     parse_model_family,
     parse_overrides,
@@ -611,3 +614,83 @@ def test_relationship_mode_default_is_off():
     from app.config import get_settings
 
     assert get_settings().relationship_reasoning_mode == "off"
+
+
+def test_vision_mode_default_is_off():
+    from app.config import get_settings
+
+    assert get_settings().vision_reasoning_mode == "off"
+
+
+# ---------------------------------------------------------------------------
+# flatten_reasoning_body — raw-HTTP body merger (used by vision_analyzer)
+# ---------------------------------------------------------------------------
+
+def test_flatten_reasoning_body_empty():
+    assert flatten_reasoning_body({}) == {}
+    assert flatten_reasoning_body(None) == {}  # type: ignore[arg-type]
+
+
+def test_flatten_reasoning_body_top_level_passes_through():
+    """OpenAI direct: reasoning_effort stays at top level."""
+    assert flatten_reasoning_body({"reasoning_effort": "none"}) == {
+        "reasoning_effort": "none"
+    }
+
+
+def test_flatten_reasoning_body_extra_body_unwrapped():
+    """vLLM/Qwen3: extra_body contents merge into top-level body."""
+    sdk = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    assert flatten_reasoning_body(sdk) == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+
+
+def test_flatten_reasoning_body_openrouter_shape():
+    sdk = {"extra_body": {"reasoning": {"effort": "none"}}}
+    assert flatten_reasoning_body(sdk) == {"reasoning": {"effort": "none"}}
+
+
+def test_flatten_reasoning_body_venice_shape():
+    sdk = {"extra_body": {"venice_parameters": {"disable_thinking": True}}}
+    assert flatten_reasoning_body(sdk) == {
+        "venice_parameters": {"disable_thinking": True}
+    }
+
+
+def test_flatten_reasoning_body_mixed_top_level_and_extra_body():
+    """Pathological but defined: top-level + extra_body both unwrap into one dict."""
+    sdk = {
+        "reasoning_effort": "none",
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
+    assert flatten_reasoning_body(sdk) == {
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unsupported-model cache helpers (used by vision_analyzer's manual retry)
+# ---------------------------------------------------------------------------
+
+def test_mark_and_check_reasoning_unsupported_roundtrip():
+    base_url = "https://my-vision-endpoint.example.com/v1"
+    model = "qwen3-vl-27b"
+    assert not is_reasoning_unsupported(base_url, model)
+    mark_reasoning_unsupported(base_url, model)
+    assert is_reasoning_unsupported(base_url, model)
+
+
+def test_is_reasoning_unsupported_is_case_insensitive():
+    mark_reasoning_unsupported("https://Foo.example.com/v1", "MyModel")
+    assert is_reasoning_unsupported("https://foo.example.com/v1", "mymodel")
+    assert is_reasoning_unsupported("https://FOO.EXAMPLE.COM/v1", "MYMODEL")
+
+
+def test_unsupported_cache_isolated_between_tests():
+    """Autouse fixture resets caches, so a marked model from a previous test
+    doesn't leak into this one."""
+    assert not is_reasoning_unsupported(
+        "https://my-vision-endpoint.example.com/v1", "qwen3-vl-27b"
+    )

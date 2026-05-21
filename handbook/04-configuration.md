@@ -54,6 +54,7 @@ Reasoning hurts structured extraction (drift, hidden-token cost, latency, malfor
 |----------|---------|-------------|
 | `EXTRACTION_REASONING_MODE` | `off` | Reasoning mode for entity extraction, document summaries, community summarization, community naming, entity enrichment, and query-side entity extraction. |
 | `RELATIONSHIP_REASONING_MODE` | `off` | Reasoning mode for candidate-pair scan (Phase 1), gleaning pass, per-chunk relationship extraction, and batch relationship analysis (Phase 2). |
+| `VISION_REASONING_MODE` | `off` | Reasoning mode for the vision-model image-description call. Lets a reasoning multimodal model (e.g. Qwen3-VL-27B) be used as `VISION_MODEL` without `<think>` tokens leaking into descriptions. |
 | `DEFAULT_REASONING_MODE` | `auto` | Reasoning mode for the Q&A path. Researcher agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI. |
 | `REASONING_MODEL_OVERRIDES` | empty | Per-model override for novel models the heuristics get wrong. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom-llm:minimal`. |
 
@@ -184,6 +185,7 @@ See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installin
 | `VISION_MODEL_API_BASE` | Same as `OPENAI_API_BASE` | API base URL for the vision model. |
 | `VISION_MODEL_API_KEY` | Same as `OPENAI_API_KEY` | API key for the vision model. |
 | `VISION_MAX_CONCURRENT` | `3` | Max concurrent vision API calls system-wide. Controls the global semaphore. |
+| `VISION_REASONING_MODE` | `off` | Reasoning mode applied to the vision-model call (see [Reasoning Control](#reasoning-control-ingestion-pipelines) for the value set). Off by default so reasoning multimodal models (Qwen3-VL, GLM-V) don't emit `<think>` blocks in image descriptions. |
 
 ## Reasoning and UX Configuration
 

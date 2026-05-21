@@ -23,6 +23,14 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from PIL import Image
 
 from app.config import get_settings
+from app.services.reasoning_config import (
+    ReasoningMode,
+    build_reasoning_kwargs,
+    flatten_reasoning_body,
+    is_reasoning_unsupported,
+    is_unsupported_reasoning_error,
+    mark_reasoning_unsupported,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +304,20 @@ class VisionAnalyzer:
             "max_tokens": 4096,
         }
 
+        # Suppress reasoning on capable vision models (e.g. Qwen3-VL-27B) so
+        # image descriptions don't include <think> tokens or burn budget on CoT.
+        # No-op for pure instruct vision models (LLaVA, GPT-4o w/o reasoning).
+        reasoning_mode = ReasoningMode.parse(self.settings.vision_reasoning_mode)
+        send_reasoning = not is_reasoning_unsupported(base_url, model)
+        if send_reasoning:
+            sdk_kwargs = build_reasoning_kwargs(
+                base_url=base_url,
+                model=model,
+                mode=reasoning_mode,
+                overrides=self.settings.parsed_reasoning_overrides,
+            )
+            payload.update(flatten_reasoning_body(sdk_kwargs))
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -316,6 +338,31 @@ class VisionAnalyzer:
                     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                     logger.info(f"Successfully analyzed image with vision model: {model}")
                     return content
+
+                # If the endpoint rejected our reasoning params, strip them and
+                # retry on the next loop iteration (no backoff sleep). One
+                # attempt is consumed but max_retries=3 leaves plenty of slack.
+                # Cache the (base_url, model) so future calls skip the params.
+                if (
+                    response.status_code == 400
+                    and send_reasoning
+                    and is_unsupported_reasoning_error(Exception(response.text))
+                ):
+                    logger.warning(
+                        f"Vision model rejected reasoning params (model={model}): "
+                        f"{response.text[:200]}. Retrying without them and caching."
+                    )
+                    mark_reasoning_unsupported(base_url, model)
+                    for k in (
+                        "reasoning_effort",
+                        "reasoning",
+                        "thinking",
+                        "chat_template_kwargs",
+                        "venice_parameters",
+                    ):
+                        payload.pop(k, None)
+                    send_reasoning = False
+                    continue  # skip the backoff sleep below and re-POST
 
                 last_error = f"HTTP {response.status_code}: {response.text[:200]}"
                 logger.warning(

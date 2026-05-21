@@ -388,6 +388,53 @@ def is_unsupported_reasoning_error(exc: Exception) -> bool:
     return any(tok in msg for tok in _REASONING_ERR_TOKENS)
 
 
+def flatten_reasoning_body(reasoning_kwargs: dict) -> dict:
+    """Flatten OpenAI-SDK-style reasoning kwargs into a raw JSON body dict.
+
+    ``build_reasoning_kwargs`` returns kwargs shaped for the OpenAI Python SDK:
+    top-level fields (e.g. ``reasoning_effort``) plus an ``extra_body`` dict
+    whose contents the SDK splices into the HTTP body. Callers that POST raw
+    JSON (vision_analyzer uses httpx) need both layers merged into one dict
+    they can splat onto the payload. Pass the result through ``dict.update`` or
+    ``payload | flatten_reasoning_body(...)``.
+
+    Example::
+
+        kw = build_reasoning_kwargs(base_url, model, ReasoningMode.OFF)
+        # → {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        body = flatten_reasoning_body(kw)
+        # → {"chat_template_kwargs": {"enable_thinking": False}}
+    """
+    if not reasoning_kwargs:
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in reasoning_kwargs.items():
+        if k == "extra_body" and isinstance(v, dict):
+            for ek, ev in v.items():
+                out[ek] = ev
+        else:
+            out[k] = v
+    return out
+
+
+def is_reasoning_unsupported(base_url: str, model: str) -> bool:
+    """Has this (base_url, model) been marked as rejecting reasoning params?"""
+    key = ((base_url or "").lower(), (model or "").lower())
+    return key in _unsupported_reasoning_models
+
+
+def mark_reasoning_unsupported(base_url: str, model: str) -> None:
+    """Cache that this (base_url, model) rejects reasoning params.
+
+    Subsequent ``build_reasoning_kwargs`` calls still return the params (the
+    cache lives in the safe_chat_completion wrappers), but callers that drive
+    their own retry loop (e.g. vision_analyzer, which uses raw httpx) can use
+    this to skip reasoning kwargs upfront after a one-time 400.
+    """
+    key = ((base_url or "").lower(), (model or "").lower())
+    _unsupported_reasoning_models.add(key)
+
+
 def _strip_reasoning_kwargs(kwargs: dict) -> dict:
     """Remove reasoning-related fields from request kwargs."""
     out = {k: v for k, v in kwargs.items() if k not in ("reasoning_effort", "thinking")}

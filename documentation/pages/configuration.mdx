@@ -208,6 +208,11 @@ EXTRACTION_REASONING_MODE=off
 # and batch relationship extraction.
 RELATIONSHIP_REASONING_MODE=off
 
+# Default OFF: skips reasoning on the vision-model image-description call.
+# Lets a reasoning multimodal model (e.g. Qwen3-VL-27B) be used as VISION_MODEL
+# without <think> tokens leaking into image descriptions.
+VISION_REASONING_MODE=off
+
 # Default AUTO: the Q&A / researcher path stays on the provider default.
 # reasoning_effort=minimal breaks parallel tool calls on OpenAI, so don't
 # force it OFF here.
@@ -380,6 +385,7 @@ VISION_MODEL_API_KEY=sk-your-api-key-here
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | API endpoint for vision model |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | API key for vision model |
 | `VISION_MAX_CONCURRENT` | No | `3` | Max concurrent vision API calls system-wide. Increase for faster image-heavy document processing |
+| `VISION_REASONING_MODE` | No | `off` | Reasoning mode for the vision-model call. Same value set as the ingestion modes — see [Reasoning Control for ingestion](#reasoning-control-for-ingestion). Lets you use reasoning multimodal models (Qwen3-VL, GLM-V) as `VISION_MODEL` without `<think>` tokens in image descriptions |
 
 When no vision model is configured, Docling's built-in image description (SmolDocling) is used automatically. See [Image Analysis Guide](/guides/image-analysis) for details.
 
@@ -484,6 +490,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` | No | `false` | Auto-detect communities after analysis |
 | `EXTRACTION_REASONING_MODE` | No | `off` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high` |
 | `RELATIONSHIP_REASONING_MODE` | No | `off` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above |
+| `VISION_REASONING_MODE` | No | `off` | Force reasoning OFF on the vision model's image-description call. Same values as above |
 | `DEFAULT_REASONING_MODE` | No | `auto` | Reasoning mode for Q&A path (researcher agent stays AUTO to preserve parallel tool calls) |
 | `REASONING_MODEL_OVERRIDES` | No | empty | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
