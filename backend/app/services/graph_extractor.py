@@ -1738,12 +1738,60 @@ Respond with ONLY the community name, nothing else."""
             if self.settings.embedding_send_dimensions:
                 embed_kwargs["dimensions"] = self.settings.embedding_dimension
             response = await self._async_embed_client.embeddings.create(**embed_kwargs)
-            
+
             return response.data[0].embedding
-            
+
         except Exception as e:
             logger.warning(f"Failed to generate entity embedding: {e}")
             return None
+
+    async def generate_entity_embeddings_batch_async(
+        self,
+        entities: List[Entity],
+        batch_size: int = 64,
+    ) -> List[Optional[List[float]]]:
+        """Embed many entities in batched HTTP calls.
+
+        Returns a list aligned with the input. Entries are `None` when the call
+        fails or no API key is configured, so callers can fall back per-entity
+        (e.g. to Levenshtein resolution) without aborting the whole document.
+        """
+        if not entities:
+            return []
+        if not self.settings.embed_api_key:
+            return [None] * len(entities)
+
+        if self._async_embed_client is None:
+            self._async_embed_client = AsyncOpenAI(
+                api_key=self.settings.embed_api_key,
+                base_url=self.settings.embed_api_base,
+                timeout=120.0,
+                max_retries=2,
+            )
+
+        texts = [
+            f"{e.name} ({e.type}): {e.description}" if e.description else f"{e.name} ({e.type})"
+            for e in entities
+        ]
+        results: List[Optional[List[float]]] = [None] * len(entities)
+
+        for batch_start in range(0, len(texts), batch_size):
+            batch = texts[batch_start:batch_start + batch_size]
+            try:
+                embed_kwargs = dict(model=self.settings.entity_embed_model, input=batch)
+                if self.settings.embedding_send_dimensions:
+                    embed_kwargs["dimensions"] = self.settings.embedding_dimension
+                response = await self._async_embed_client.embeddings.create(**embed_kwargs)
+                # OpenAI guarantees response.data preserves input order
+                for i, item in enumerate(response.data):
+                    results[batch_start + i] = item.embedding
+            except Exception as e:
+                logger.warning(
+                    f"Batch entity embedding failed (batch_start={batch_start}, "
+                    f"size={len(batch)}): {e}. These entities will fall back to Levenshtein."
+                )
+
+        return results
 
     # =========================================================================
     # Phase A: Per-Document Entity Extraction

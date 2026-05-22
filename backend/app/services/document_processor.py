@@ -1275,6 +1275,36 @@ class DocumentProcessor:
                     max_tokens=self.settings.extraction_max_context,
                 )
 
+                # Decide dedup strategy up-front so we can pre-batch embeddings
+                # for the whole document (one HTTP call) instead of one per entity.
+                use_embedding_dedup = (
+                    self.settings.enable_semantic_entity_resolution
+                    and self.graph_extractor.async_extraction_client is not None
+                )
+
+                entity_embeddings: List[Optional[List[float]]] = []
+                if use_embedding_dedup and entities:
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.update_document_progress,
+                            doc_id,
+                            65,
+                            100,
+                            f"Embedding {len(entities)} entities for semantic dedup...",
+                        ),
+                    )
+                    try:
+                        entity_embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
+                            entities
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Document {doc_id}: batch entity embedding failed ({e}); "
+                            f"falling back to Levenshtein for all entities"
+                        )
+                        entity_embeddings = [None] * len(entities)
+
                 await loop.run_in_executor(
                     _get_processing_executor(),
                     functools.partial(
@@ -1286,53 +1316,30 @@ class DocumentProcessor:
                     ),
                 )
 
-                # Store entities with provenance and fuzzy deduplication.
-                # Uses embedding-based semantic dedup when available (catches
-                # "Museum of Crypto Art" ↔ "MOCA"), falls back to Levenshtein.
-                use_embedding_dedup = (
-                    self.settings.enable_semantic_entity_resolution
-                    and self.graph_extractor.async_extraction_client is not None
-                )
-
                 # Track original → canonical name mapping for relationship extraction
                 entity_canonical_map: dict[str, str] = {}
+                # Update the "Storing N/total" message at most ~10 times to avoid
+                # flooding Neo4j with progress writes.
+                store_progress_interval = max(1, len(entities) // 10) if entities else 1
 
-                for entity in entities:
+                for idx, entity in enumerate(entities):
                     self._check_cancellation(doc_id)
 
-                    if use_embedding_dedup:
-                        try:
-                            embedding = await self.graph_extractor.generate_entity_embedding_async(
-                                entity.name, entity.type, entity.description
-                            )
-                        except Exception:
-                            embedding = None
+                    embedding = entity_embeddings[idx] if use_embedding_dedup and entity_embeddings else None
 
-                        if embedding:
-                            result = await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.store_entity_with_embedding,
-                                    entity,
-                                    chunk_id=None,
-                                    document_id=doc_id,
-                                    embedding=embedding,
-                                ),
-                            )
-                            canonical_name = result[0] if isinstance(result, tuple) else entity.name
-                            entity_canonical_map[entity.name.lower()] = canonical_name
-                        else:
-                            # Fallback to Levenshtein if embedding failed
-                            canonical_name = await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.store_entity_with_resolution,
-                                    entity,
-                                    document_id=doc_id,
-                                    similarity_threshold=0.85,
-                                ),
-                            )
-                            entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
+                    if embedding:
+                        result = await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.store_entity_with_embedding,
+                                entity,
+                                chunk_id=None,
+                                document_id=doc_id,
+                                embedding=embedding,
+                            ),
+                        )
+                        canonical_name = result[0] if isinstance(result, tuple) else entity.name
+                        entity_canonical_map[entity.name.lower()] = canonical_name
                     else:
                         canonical_name = await loop.run_in_executor(
                             _get_processing_executor(),
@@ -1346,6 +1353,28 @@ class DocumentProcessor:
                         entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
 
                     total_entities += 1
+
+                    if (
+                        idx == 0
+                        or (idx + 1) % store_progress_interval == 0
+                        or idx == len(entities) - 1
+                    ):
+                        # Progress band 70-85% reserved for entity storage;
+                        # 85% is the next phase ("Linking entities to chunks...").
+                        storage_progress = 70 + int((idx + 1) / max(1, len(entities)) * 14)
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.update_document_progress,
+                                doc_id,
+                                storage_progress,
+                                100,
+                                f"Storing entity {idx + 1}/{len(entities)}...",
+                            ),
+                        )
+
+                    if idx % 10 == 0:
+                        await asyncio.sleep(0)
 
                 await loop.run_in_executor(
                     _get_processing_executor(),
@@ -1434,11 +1463,21 @@ class DocumentProcessor:
                             tasks.append(_extract_from_chunk(cid, ents))
 
                     if tasks:
-                        results = await _asyncio.gather(*tasks, return_exceptions=True)
+                        # Stream results via as_completed so each chunk's relationships
+                        # land in Neo4j (and the visible counter ticks) the moment its
+                        # LLM call returns — instead of waiting for the entire batch
+                        # before any storage happens. Also offload the Neo4j write
+                        # via run_in_executor so it doesn't block the event loop
+                        # while other LLM tasks are still running concurrently.
                         failed_count = 0
-                        for result in results:
-                            if isinstance(result, Exception):
+                        completed_count = 0
+                        progress_interval = max(1, len(tasks) // 10)
+                        for coro in _asyncio.as_completed(tasks):
+                            try:
+                                result = await coro
+                            except Exception:
                                 failed_count += 1
+                                completed_count += 1
                                 continue
                             for rel in result:
                                 # Remap to canonical entity names from dedup
@@ -1448,15 +1487,35 @@ class DocumentProcessor:
                                 if key not in seen_rels:
                                     seen_rels.add(key)
                                     try:
-                                        stored = self.neo4j.store_relationship(
-                                            rel,
-                                            source_document_id=doc_id,
-                                            extraction_method="per_chunk",
+                                        stored = await loop.run_in_executor(
+                                            _get_processing_executor(),
+                                            functools.partial(
+                                                self.neo4j.store_relationship,
+                                                rel,
+                                                source_document_id=doc_id,
+                                                extraction_method="per_chunk",
+                                            ),
                                         )
                                         if stored:
                                             total_relationships += 1
                                     except Exception as e:
                                         logger.warning(f"Failed to store per-chunk relationship: {e}")
+                            completed_count += 1
+                            if (
+                                completed_count == 1
+                                or completed_count % progress_interval == 0
+                                or completed_count == len(tasks)
+                            ):
+                                await loop.run_in_executor(
+                                    _get_processing_executor(),
+                                    functools.partial(
+                                        self.neo4j.update_document_progress,
+                                        doc_id,
+                                        90,
+                                        100,
+                                        f"Extracting per-chunk relationships: {completed_count}/{len(tasks)} chunks ({total_relationships} found)...",
+                                    ),
+                                )
                         if failed_count:
                             logger.warning(f"Document {doc_id}: {failed_count}/{len(tasks)} per-chunk extractions failed")
 

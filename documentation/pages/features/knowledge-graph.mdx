@@ -50,6 +50,22 @@ flowchart TD
     G -.-> G1["Per-collection (relationship model)"]
 `} />
 
+## Generate Graph (One-Click 3-Step Pipeline)
+
+The **Knowledge Graph** page (`/extract`) exposes a single **Generate Graph** / **Regenerate Graph** button that runs all three steps — entity extraction, cross-document relationship analysis, and community detection — server-side as a chained background flow.
+
+Under the hood, the frontend issues one request:
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/reprocess?chain=relationship_analysis,community_detection" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"document_ids": [...]}'
+```
+
+The `chain` query parameter (also accepted on `/api/documents/process-pending` and `/api/graph/relationships/analyze`) tells the backend to automatically spawn the next pipeline step when each task finishes. Each step still produces its own task with its own `task_id`, `task_type`, and progress messages — Step 1's task is held in `running` state until background image analysis also completes, so the chain only advances when image-derived entities have landed.
+
+**Why this matters:** the full flow survives navigation away from the Knowledge Graph page, page reloads, and even closing the browser. The user can return at any time and the page re-attaches to whichever pipeline task is currently running. Plain single-step buttons ("Extract Entities", "Analyze Relationships", "Detect Communities") never auto-chain; only the Generate Graph flow sets the chain string.
+
 ## Entity Types
 
 Cortex extracts various entity types:

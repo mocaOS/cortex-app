@@ -88,18 +88,17 @@ export default function ExtractAnalyzePage() {
   useEffect(() => {
     fetchData();
 
-    // Check if a regeneration was in progress (survives hot-reloads/refreshes)
-    const savedStep = sessionStorage.getItem("regenerateStep");
-    if (savedStep) {
-      const step = parseInt(savedStep, 10);
-      if (step >= 1 && step <= 3) {
-        setIsRegenerating(true);
-        setRegenerateStep(step);
-        // The step runner useEffect will handle resuming
-        return;
-      } else {
-        sessionStorage.removeItem("regenerateStep");
-      }
+    // Check if a regeneration was in progress (survives navigation/reload).
+    // The chain observer useEffect picks up from here — it looks up whichever
+    // pipeline task is currently running on the backend and attaches the
+    // appropriate poller.
+    const regenActive = sessionStorage.getItem("regenerateActive");
+    if (regenActive === "true") {
+      const savedStep = sessionStorage.getItem("regenerateStep");
+      const step = savedStep ? parseInt(savedStep, 10) : 1;
+      setIsRegenerating(true);
+      setRegenerateStep(step >= 1 && step <= 3 ? step : 1);
+      return;
     }
 
     // Normal mount: check for individually running tasks (not part of regeneration)
@@ -215,29 +214,14 @@ export default function ExtractAnalyzePage() {
 
   // Auto-refresh stats while tasks are running or images are being analyzed
   useEffect(() => {
-    if (!analyzingRelationships && !detectingCommunities && !isExtractingEntities && !hasImageAnalysisInProgress) return;
+    if (!analyzingRelationships && !detectingCommunities && !isExtractingEntities && !hasImageAnalysisInProgress && !isRegenerating) return;
     const interval = setInterval(() => fetchData(true), 5000);
     return () => clearInterval(interval);
-  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, hasImageAnalysisInProgress, fetchData]);
+  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, hasImageAnalysisInProgress, isRegenerating, fetchData]);
 
-  // Advance the regeneration flow to the next step
-  const advanceRegenerateStep = useCallback((nextStep: number) => {
-    sessionStorage.removeItem("regenerateTaskId");
-    if (nextStep > 3) {
-      // Flow complete
-      sessionStorage.removeItem("regenerateStep");
-      sessionStorage.removeItem("regenerateStartedAt");
-      setIsRegenerating(false);
-      setRegenerateStep(0);
-      fetchData(true);
-    } else {
-      sessionStorage.setItem("regenerateStep", String(nextStep));
-      setRegenerateStep(nextStep);
-    }
-  }, [fetchData]);
-
-  // Abort the regeneration flow on failure
-  const abortRegeneration = useCallback(() => {
+  // End the regeneration flow (called when chain finishes or aborts).
+  const finishRegeneration = useCallback(() => {
+    sessionStorage.removeItem("regenerateActive");
     sessionStorage.removeItem("regenerateStep");
     sessionStorage.removeItem("regenerateStartedAt");
     sessionStorage.removeItem("regenerateTaskId");
@@ -245,6 +229,9 @@ export default function ExtractAnalyzePage() {
     setRegenerateStep(0);
     fetchData(true);
   }, [fetchData]);
+
+  // Backwards-compat alias used by polling functions on failure paths.
+  const abortRegeneration = finishRegeneration;
 
   const pollEntityTask = useCallback(async (taskId: string) => {
     activePollRef.current = { taskId, step: 1 };
@@ -262,17 +249,19 @@ export default function ExtractAnalyzePage() {
         const processed = result?.processed ?? 0;
         setEntityTaskMessage(`Entity extraction complete! ${processed} document${processed !== 1 ? "s" : ""} processed.`);
         await fetchData(true);
-        const isRegen = sessionStorage.getItem("regenerateStep") !== null;
+        // The chain-observer useEffect will detect the backend-spawned
+        // relationship_analysis task and pick it up — no frontend advance here.
         setTimeout(() => {
-          setEntityTaskMessage(null);
           setIsExtractingEntities(false);
-          if (isRegen) advanceRegenerateStep(2);
-        }, isRegen ? 1000 : 3000);
+          if (sessionStorage.getItem("regenerateActive") === null) {
+            setEntityTaskMessage(null);
+          }
+        }, 1500);
       } else if (status.status === "failed") {
         activePollRef.current = null;
         setEntityTaskMessage(`Failed: ${status.message}`);
         setIsExtractingEntities(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         setTimeout(() => pollEntityTask(taskId), 2000);
       }
@@ -282,13 +271,13 @@ export default function ExtractAnalyzePage() {
         activePollRef.current = null;
         setEntityTaskMessage(null);
         setIsExtractingEntities(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         // Retry with backoff
         setTimeout(() => pollEntityTask(taskId), 3000 * pollErrorCount.current);
       }
     }
-  }, [fetchData, advanceRegenerateStep, abortRegeneration]);
+  }, [fetchData, abortRegeneration]);
 
   const pollRelationshipTask = useCallback(async (taskId: string) => {
     activePollRef.current = { taskId, step: 2 };
@@ -313,18 +302,20 @@ export default function ExtractAnalyzePage() {
         setRelationshipTaskMessage(`Analysis complete! ${crossDocRels - initialRelCount.current} cross-document relationships discovered.`);
         setNewDocsSinceAnalysis(0);
         await fetchData(true);
-        const isRegen = sessionStorage.getItem("regenerateStep") !== null;
+        // The chain-observer useEffect will detect the backend-spawned
+        // community_detection task and pick it up — no frontend advance here.
         setTimeout(() => {
-          setRelationshipTaskMessage(null);
           setAnalyzingRelationships(false);
           setDiscoveredRelCount(0);
-          if (isRegen) advanceRegenerateStep(3);
-        }, isRegen ? 1000 : 3000);
+          if (sessionStorage.getItem("regenerateActive") === null) {
+            setRelationshipTaskMessage(null);
+          }
+        }, 1500);
       } else if (status.status === "failed") {
         activePollRef.current = null;
         setRelationshipTaskMessage(`Failed: ${status.message}`);
         setAnalyzingRelationships(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         setTimeout(() => pollRelationshipTask(taskId), 2000);
       }
@@ -334,13 +325,13 @@ export default function ExtractAnalyzePage() {
         activePollRef.current = null;
         setRelationshipTaskMessage(null);
         setAnalyzingRelationships(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         // Retry with backoff
         setTimeout(() => pollRelationshipTask(taskId), 3000 * pollErrorCount.current);
       }
     }
-  }, [fetchData, advanceRegenerateStep, abortRegeneration]);
+  }, [fetchData, abortRegeneration]);
 
   const handleAnalyzeRelationships = async (rebuild = false) => {
     try {
@@ -374,17 +365,18 @@ export default function ExtractAnalyzePage() {
         setCommunityTaskMessage(`Communities detected successfully! ${communityCount} communities found.`);
         setCommunitiesStale(false);
         await fetchData(true);
-        const isRegen = sessionStorage.getItem("regenerateStep") !== null;
+        const isRegen = sessionStorage.getItem("regenerateActive") !== null;
         setTimeout(() => {
           setCommunityTaskMessage(null);
           setDetectingCommunities(false);
-          if (isRegen) advanceRegenerateStep(4); // 4 = done
+          // Step 3 is the final step of the chain — end the regen flow here.
+          if (isRegen) finishRegeneration();
         }, isRegen ? 1000 : 3000);
       } else if (status.status === "failed") {
         activePollRef.current = null;
         setCommunityTaskMessage(`Failed: ${status.message}`);
         setDetectingCommunities(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         setTimeout(() => pollCommunityTask(taskId), 2000);
       }
@@ -394,13 +386,13 @@ export default function ExtractAnalyzePage() {
         activePollRef.current = null;
         setCommunityTaskMessage(null);
         setDetectingCommunities(false);
-        if (sessionStorage.getItem("regenerateStep") !== null) abortRegeneration();
+        if (sessionStorage.getItem("regenerateActive") !== null) abortRegeneration();
       } else {
         // Retry with backoff
         setTimeout(() => pollCommunityTask(taskId), 3000 * pollErrorCount.current);
       }
     }
-  }, [fetchData, advanceRegenerateStep, abortRegeneration]);
+  }, [fetchData, finishRegeneration, abortRegeneration]);
 
   // Keep poll function refs current and resume polling on tab visibility change.
   // Browsers throttle setTimeout in background tabs, so polls may stall during
@@ -454,131 +446,161 @@ export default function ExtractAnalyzePage() {
     }
   };
 
-  // Run a single step of the regeneration flow
-  // Start a specific regeneration step — saves task ID to sessionStorage for resume
-  const startStep = useCallback(async (step: number) => {
-    try {
-      if (step === 1) {
-        setIsExtractingEntities(true);
-        setEntityTaskMessage("Clearing existing graph data...");
-        try {
-          await api.deleteAllCommunities();
-          await api.deleteAllRelationships();
-          await api.deleteAllEntities();
-        } catch { /* may fail if nothing exists */ }
-        await fetchData(true);
-        const allDocIds = documents.map(d => d.id);
-        if (allDocIds.length > 0) {
-          setEntityTaskMessage("Processing all documents...");
-          const result = await api.reprocessDocuments(allDocIds);
-          if (result.task_id) {
-            const taskId = result.task_id;
-            sessionStorage.setItem("regenerateTaskId", taskId);
-            setTimeout(() => pollEntityTask(taskId), 1500);
-          } else {
-            setEntityTaskMessage(null);
-            setIsExtractingEntities(false);
-            advanceRegenerateStep(2);
-          }
-        } else {
-          setEntityTaskMessage(null);
-          setIsExtractingEntities(false);
-          advanceRegenerateStep(2);
-        }
-      } else if (step === 2) {
-        setAnalyzingRelationships(true);
-        setDiscoveredRelCount(0);
-        initialRelCount.current = 0;
-        setRelationshipTaskMessage("Starting relationship analysis...");
-        const result = await api.analyzeRelationships(undefined, "full", true);
-        sessionStorage.setItem("regenerateTaskId", result.task_id);
-        setTimeout(() => pollRelationshipTask(result.task_id), 1500);
-      } else if (step === 3) {
-        setDetectingCommunities(true);
-        setCommunityTaskMessage("Detecting communities...");
-        const result = await api.detectCommunities(3);
-        sessionStorage.setItem("regenerateTaskId", result.task_id);
-        setTimeout(() => pollCommunityTask(result.task_id), 1500);
-      }
-    } catch (error) {
-      console.error("Graph generation failed at step", step, error);
-      abortRegeneration();
-    }
-  }, [documents, fetchData, pollEntityTask, pollRelationshipTask, pollCommunityTask, advanceRegenerateStep, abortRegeneration]);
-
-  // Step runner: on regenerateStep change, check if we need to resume a task or start fresh.
-  // Uses task IDs saved in sessionStorage to reliably detect completed/running tasks.
+  // Chain observer: while a regeneration is active, poll for whichever
+  // pipeline task type is currently running on the backend and attach the
+  // appropriate poller. The backend chains Step 1 → 2 → 3 server-side, so
+  // we just observe — no advanceStep / no startStep / no per-step task IDs.
+  // This is what makes the flow survive navigation, browser close, and
+  // backend restarts (the only failure mode now is the backend itself
+  // losing in-memory state on reload, which we surface and clear).
+  const highestSeenStep = useRef(0);
+  const emptyPollCount = useRef(0);
+  const EMPTY_POLL_LIMIT = 10; // ~30s of no tasks → abort
   useEffect(() => {
-    if (!isRegenerating || regenerateStep === 0) return;
+    if (!isRegenerating) return;
     let cancelled = false;
 
-    const resumeOrStart = async () => {
+    // Restore highest step seen across reloads
+    const savedStep = sessionStorage.getItem("regenerateStep");
+    if (savedStep) {
+      const n = parseInt(savedStep, 10);
+      if (n > highestSeenStep.current) highestSeenStep.current = n;
+    }
+
+    const checkActive = async () => {
       if (cancelled) return;
-      const savedTaskId = sessionStorage.getItem("regenerateTaskId");
+      try {
+        const [b1, b2, rel, com] = await Promise.all([
+          api.listTasks("running", "batch_processing"),
+          api.listTasks("running", "reprocess_batch"),
+          api.listTasks("running", "relationship_analysis"),
+          api.listTasks("running", "community_detection"),
+        ]);
+        if (cancelled) return;
 
-      // If we have a saved task ID, check its status (resume scenario)
-      if (savedTaskId) {
-        try {
-          const status = await api.getTaskStatus(savedTaskId);
-          if (cancelled) return;
+        const batchTasks = [...(b1.tasks || []), ...(b2.tasks || [])];
+        const relTasks = rel.tasks || [];
+        const comTasks = com.tasks || [];
 
-          if (status.status === "running") {
-            // Task still running — resume polling
-            if (regenerateStep === 1) {
+        let activeStep = 0;
+        let activeTaskId: string | null = null;
+        if (batchTasks.length > 0) {
+          activeStep = 1;
+          activeTaskId = batchTasks[0].task_id;
+        } else if (relTasks.length > 0) {
+          activeStep = 2;
+          activeTaskId = relTasks[0].task_id;
+        } else if (comTasks.length > 0) {
+          activeStep = 3;
+          activeTaskId = comTasks[0].task_id;
+        }
+
+        if (activeStep > 0 && activeTaskId) {
+          emptyPollCount.current = 0;
+          if (activeStep > highestSeenStep.current) {
+            highestSeenStep.current = activeStep;
+          }
+          if (activeStep !== regenerateStep) {
+            setRegenerateStep(activeStep);
+            sessionStorage.setItem("regenerateStep", String(activeStep));
+          }
+          // Attach the appropriate poller if we aren't already polling this task
+          if (activePollRef.current?.taskId !== activeTaskId) {
+            if (activeStep === 1) {
               setIsExtractingEntities(true);
-              setEntityTaskMessage(status.message || "Entity extraction in progress...");
-              pollEntityTask(savedTaskId);
-            } else if (regenerateStep === 2) {
+              pollEntityTask(activeTaskId);
+            } else if (activeStep === 2) {
               setAnalyzingRelationships(true);
-              initialRelCount.current = 0;
-              setRelationshipTaskMessage(status.message || "Relationship analysis in progress...");
-              pollRelationshipTask(savedTaskId);
-            } else if (regenerateStep === 3) {
+              if (initialRelCount.current === 0) {
+                initialRelCount.current = (stats?.relationship_count ?? 0) - (stats?.per_chunk_relationship_count ?? 0);
+              }
+              pollRelationshipTask(activeTaskId);
+            } else if (activeStep === 3) {
               setDetectingCommunities(true);
-              setCommunityTaskMessage(status.message || "Community detection in progress...");
-              pollCommunityTask(savedTaskId);
+              pollCommunityTask(activeTaskId);
             }
+          }
+        } else {
+          // No pipeline task running. Either we're between steps (backend
+          // is about to spawn the next one — wait), or we're done, or
+          // backend lost state.
+          if (highestSeenStep.current >= 3) {
+            // Step 3 was seen and is now gone → chain complete
+            finishRegeneration();
             return;
-          } else if (status.status === "completed") {
-            // Task completed while we were away — advance to next step
-            sessionStorage.removeItem("regenerateTaskId");
-            await fetchData(true);
-            if (cancelled) return;
-            advanceRegenerateStep(regenerateStep + 1);
-            return;
-          } else if (status.status === "failed") {
-            // Task failed — abort
+          }
+          emptyPollCount.current += 1;
+          if (emptyPollCount.current >= EMPTY_POLL_LIMIT) {
+            // ~30s of nothing running → backend likely lost state (reload)
+            console.warn("Regen chain: no pipeline task observed for 30s, aborting");
             abortRegeneration();
             return;
           }
-        } catch {
-          // Task not found (expired from in-memory store) — fall through to start fresh
-          sessionStorage.removeItem("regenerateTaskId");
         }
+      } catch (err) {
+        // Transient network issue — try again on next tick
+        console.warn("Regen observer poll failed:", err);
       }
-
-      // No saved task or task expired — start the step fresh
-      if (cancelled) return;
-      startStep(regenerateStep);
     };
 
-    resumeOrStart();
-    return () => { cancelled = true; };
+    checkActive(); // immediate
+    const interval = setInterval(checkActive, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRegenerating, regenerateStep]);
+  }, [isRegenerating]);
 
-  const handleRegenerateGraph = () => {
+  const handleRegenerateGraph = async () => {
     const hasExistingGraph = (stats?.entity_count ?? 0) > 0;
     if (hasExistingGraph) {
       if (!confirm("CAREFUL! This action will reprocess all documents and rebuild the entire knowledge graph from scratch. Continue?")) return;
     }
 
-    // Clear any previous regeneration state and start fresh
-    sessionStorage.removeItem("regenerateTaskId");
+    // Clear any previous regen state and flag this run as active.
+    sessionStorage.removeItem("regenerateTaskId"); // legacy cleanup
+    sessionStorage.setItem("regenerateActive", "true");
     sessionStorage.setItem("regenerateStep", "1");
     sessionStorage.setItem("regenerateStartedAt", new Date().toISOString());
+    highestSeenStep.current = 1;
+    emptyPollCount.current = 0;
     setIsRegenerating(true);
     setRegenerateStep(1);
+
+    // Clear existing graph data, then kick off Step 1 with the backend chain.
+    setIsExtractingEntities(true);
+    setEntityTaskMessage("Clearing existing graph data...");
+    try {
+      await api.deleteAllCommunities();
+      await api.deleteAllRelationships();
+      await api.deleteAllEntities();
+    } catch { /* may fail if nothing exists */ }
+    await fetchData(true);
+
+    setEntityTaskMessage("Processing all documents...");
+    try {
+      const allDocIds = documents.map(d => d.id);
+      // The backend chain parameter is what makes this flow survive
+      // navigation/close — after Step 1's task finishes, the backend
+      // spawns Step 2's task on its own, and Step 3 after that.
+      const result = await api.reprocessDocuments(
+        allDocIds,
+        undefined,
+        "relationship_analysis,community_detection",
+      );
+      if (result.task_id) {
+        setTimeout(() => pollEntityTask(result.task_id!), 1500);
+      } else {
+        // No documents queued — the chain observer will detect Step 2
+        // when the backend spawns it (or time out if it doesn't).
+        setIsExtractingEntities(false);
+        setEntityTaskMessage(null);
+      }
+    } catch (error) {
+      console.error("Graph generation failed:", error);
+      abortRegeneration();
+    }
   };
 
   if (loading) {
@@ -677,7 +699,7 @@ export default function ExtractAnalyzePage() {
     <div className="py-6">
       {/* Generate Graph — primary action for empty instances */}
       {entityCount === 0 && !isRegenerating && (
-        <div className="mb-6">
+        <div className="mb-6 flex justify-end">
           <button
             onClick={handleRegenerateGraph}
             disabled={isExtractingEntities || analyzingRelationships || detectingCommunities || docCount === 0}
@@ -698,7 +720,6 @@ export default function ExtractAnalyzePage() {
       {isRegenerating && (
         <div className="mb-4 p-4 bg-accent/10 border border-accent/20 rounded-xl">
           <div className="flex items-center gap-3">
-            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground flex-shrink-0" />
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Generating Knowledge Graph</p>
               <p className="text-xs text-muted-foreground mt-0.5">

@@ -32,9 +32,15 @@ Triggered via "Extract Entities" on Knowledge Graph page or "Generate Graph" but
 - Entity type normalization (10 allowed types, fuzzy matched). See [`.claude/domain/entities.md`](entities.md#type-normalization).
 - Fuzzy entity-to-chunk linking
 
+### Entity Embedding & Storage
+
+When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, all entity embeddings for a document are generated in **one batched HTTP call** via `graph_extractor.generate_entity_embeddings_batch_async(entities, batch_size=64)` before the storage loop runs. Previous behavior was one HTTP call per entity (158 sequential calls observed at ~3-5s each → ~8-13 min); batched it's ~1-3 calls totalling a few seconds. Per-batch failures degrade to `None` in the aligned result list so the loop falls back to Levenshtein resolution for those entities — the document doesn't fail.
+
+The storage loop then iterates entities and emits a progress message every ~10% (`"Storing entity N/total..."` across progress 70-84%), so the UI no longer freezes on the same `"Storing X entities..."` string for the whole loop.
+
 ## Per-Chunk Relationship Extraction (during Phase A)
 
-Chunks with 2+ entities get an LLM call via the relationship model to extract relationships using chunk text as direct evidence. See [`.claude/domain/relationships.md`](relationships.md#per-chunk-extraction) for full details.
+Chunks with 2+ entities get an LLM call via the relationship model to extract relationships using chunk text as direct evidence. See [`.claude/domain/relationships.md`](relationships.md#per-chunk-extraction) for full details — including the streaming `asyncio.as_completed` pattern that stores each chunk's relationships live (counter ticks up in real time) instead of bulk-committing after the whole batch.
 
 - Concurrency controlled by `CONCURRENT_RELATIONS` (default 3)
 - Stored with `extraction_method='per_chunk'`
@@ -55,16 +61,16 @@ Runs asynchronously after text processing completes:
 - Graph extraction runs on image content if enabled
 - Reasoning is suppressed on capable multimodal models via `VISION_REASONING_MODE` (default `off`). `vision_analyzer.py` uses raw httpx, so it merges `flatten_reasoning_body()` output into the `/chat/completions` JSON body and falls back once on 400, marking the model via `mark_reasoning_unsupported`. Lets you point both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` at e.g. Qwen3-VL-27B with one endpoint. See [`.claude/environment.md`](../environment.md#reasoning-control-ingestion).
 
-### Frontend Image Analysis Awareness
+### Step 1 Gate on Image Analysis
 
-The Knowledge Graph page (Step 1) tracks documents with background image analysis in progress (completed text processing but `image_progress_current < image_progress_total`):
-- These docs are shown in a separate "Analyzing Images" tile with an aggregate progress bar
-- Step 1 stays "In Progress" until all images are analyzed
-- Auto-refresh polls every 5 seconds to keep progress updated
-- Step 2/3 remain blocked until image analysis completes
+`_run_batch_processing_task` in `backend/app/main.py` calls `_wait_for_image_analysis_complete()` after text processing finishes. That helper polls Neo4j every 3 s for any document with `processing_status == "completed" AND image_progress_current < image_progress_total`, updating the task's progress message with `"... — analyzing images: N/total across K document(s)..."` until none remain. Only then does `complete_task` run, which lets the backend chain advance to Step 2.
+
+Frontend display in Step 1:
+- Documents still analyzing images are shown in a separate "Analyzing Images" tile with an aggregate progress bar
 - The "Processed" count in the summary grid only includes `fullyCompletedDocs` (completed AND images done)
+- Step 1's UI status follows the backend task state — "In Progress" until the task completes
 
-See [`.claude/domain/knowledge-graph-ui.md`](knowledge-graph-ui.md) for the full 3-step pipeline UI.
+See [`.claude/domain/knowledge-graph-ui.md`](knowledge-graph-ui.md) for the full 3-step pipeline UI and chain semantics.
 
 ## Subsequent Pipeline Steps
 

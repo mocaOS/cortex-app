@@ -417,6 +417,77 @@ def cleanup_old_tasks(max_age_hours: int = 24) -> int:
 
 
 # =============================================================================
+# Pipeline Chain Orchestration
+# =============================================================================
+#
+# Backend-side chaining for the "Generate Graph" flow on the /extract page.
+# A request can pass `chain=relationship_analysis,community_detection` to have
+# the backend automatically spawn each subsequent pipeline step as its own
+# task when the prior step's task completes. This lets the full 3-step flow
+# survive the user navigating away or closing the browser.
+#
+# Each chained step still has its own task_id / task_type / progress message
+# so the UI can clearly indicate "Step N in progress" — unlike the deleted
+# AUTO_*_AFTER_BATCH flags which hid all three phases inside Step 1's task.
+
+_ALLOWED_CHAIN_STEPS = {"relationship_analysis", "community_detection"}
+
+# Keep strong refs so spawned chain tasks aren't garbage-collected mid-flight.
+_chain_tasks: set = set()
+
+
+def _parse_chain(chain: Optional[str]) -> Optional[List[str]]:
+    """Parse comma-separated chain string into a list of valid step names."""
+    if not chain:
+        return None
+    items = [x.strip() for x in chain.split(",") if x.strip()]
+    filtered = [x for x in items if x in _ALLOWED_CHAIN_STEPS]
+    return filtered or None
+
+
+def _spawn_chain_task(coro) -> asyncio.Task:
+    """Schedule a follow-up pipeline task and keep a strong reference to it."""
+    task = asyncio.create_task(coro)
+    _chain_tasks.add(task)
+    task.add_done_callback(_chain_tasks.discard)
+    return task
+
+
+async def _wait_for_image_analysis_complete(
+    task_id: str,
+    base_message: str,
+    poll_interval: float = 3.0,
+) -> None:
+    """Block until no documents have pending background image analysis.
+
+    Image analysis runs on a separate thread pool after a document's text
+    processing finishes (see document_processor._analyze_images_background_*).
+    Calling this from the batch_processing task keeps Step 1 in 'running'
+    state — and the chain on hold — until image entities have landed.
+    """
+    neo4j = get_neo4j_service()
+    while True:
+        all_docs = await asyncio.to_thread(neo4j.get_all_documents)
+        pending = [
+            d for d in all_docs
+            if d.get("processing_status") == "completed"
+            and (d.get("image_progress_total") or 0) > 0
+            and (d.get("image_progress_current") or 0) < (d.get("image_progress_total") or 0)
+        ]
+        if not pending:
+            return
+        total_imgs = sum(d.get("image_progress_total", 0) for d in pending)
+        done_imgs = sum(d.get("image_progress_current", 0) for d in pending)
+        update_task_progress(
+            task_id,
+            done_imgs,
+            total_imgs,
+            f"{base_message} — analyzing images: {done_imgs}/{total_imgs} across {len(pending)} document(s)...",
+        )
+        await asyncio.sleep(poll_interval)
+
+
+# =============================================================================
 # Task Status Endpoints
 # =============================================================================
 
@@ -1461,6 +1532,12 @@ async def reprocess_documents(
     request: ReprocessRequest,
     background_tasks: BackgroundTasks,
     concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently"),
+    chain: Optional[str] = Query(
+        default=None,
+        description="Comma-separated next pipeline steps to auto-run when this task finishes "
+                    "(allowed: 'relationship_analysis', 'community_detection'). Used by the "
+                    "Generate Graph flow to chain Steps 1 → 2 → 3 backend-side.",
+    ),
     auth: AuthResult = Depends(require_manage_permission)
 ):
     """
@@ -1531,18 +1608,21 @@ async def reprocess_documents(
             task.message = f"Queued {queued_count} documents for reprocessing..."
             task.progress_total = queued_count
             
-            # Schedule the background task
+            # Schedule the background task (with optional chain to Step 2/3)
+            parsed_chain = _parse_chain(chain)
             background_tasks.add_task(
                 _run_batch_processing_task,
                 task.task_id,
-                actual_concurrency
+                actual_concurrency,
+                parsed_chain,
             )
-            
+
             return {
                 "results": results,
                 "total_queued": queued_count,
                 "task_id": task.task_id,
                 "concurrency": actual_concurrency,
+                "chain": parsed_chain,
                 "message": f"Queued {queued_count} documents. Processing with concurrency={actual_concurrency}. Poll /api/tasks/{task.task_id} for progress."
             }
         else:
@@ -1588,35 +1668,66 @@ async def get_pending_documents(auth: AuthResult = Depends(require_read_permissi
 
 async def _run_batch_processing_task(
     task_id: str,
-    concurrency: int
+    concurrency: int,
+    chain: Optional[List[str]] = None,
 ) -> None:
-    """Background task for batch document processing with progress tracking."""
+    """Background task for batch document processing with progress tracking.
+
+    When `chain` includes 'relationship_analysis', a follow-up task is spawned
+    automatically once this step (including background image analysis) finishes.
+    Anything beyond the first chain item is passed to that follow-up so the
+    chain can continue (e.g. into 'community_detection').
+    """
     try:
         processor = get_document_processor()
         pending = processor.get_pending_documents()
         total = len(pending)
-        
+
         if total == 0:
+            # Still honour the image-analysis wait + chain — the user may have
+            # clicked "Generate Graph" on a fully-processed instance and want
+            # Steps 2 and 3 to run.
+            await _wait_for_image_analysis_complete(task_id, "No pending documents")
             complete_task(task_id, {
                 "processed": 0,
                 "failed": 0,
                 "total": 0,
                 "message": "No pending documents to process"
             })
-            return
-        
-        update_task_progress(task_id, 0, total, f"Starting processing of {total} documents...")
-        
-        def progress_callback(current: int, total: int, message: str):
-            update_task_progress(task_id, current, total, message)
-        
-        result = await processor.process_pending_documents(
-            concurrency=concurrency,
-            progress_callback=progress_callback
-        )
-        
-        complete_task(task_id, result)
-        
+        else:
+            update_task_progress(task_id, 0, total, f"Starting processing of {total} documents...")
+
+            def progress_callback(current: int, total: int, message: str):
+                update_task_progress(task_id, current, total, message)
+
+            result = await processor.process_pending_documents(
+                concurrency=concurrency,
+                progress_callback=progress_callback
+            )
+
+            # Hold Step 1's task in 'running' until background image analysis
+            # also finishes — that's what the user sees as "Step 1 In Progress".
+            await _wait_for_image_analysis_complete(task_id, "Text processing complete")
+
+            complete_task(task_id, result)
+
+        # Chain: spawn relationship analysis as the next step's own task.
+        if chain and chain[0] == "relationship_analysis":
+            remaining_chain = chain[1:]
+            rel_task = create_task("relationship_analysis")
+            rel_task.message = "Starting deep relationship analysis..."
+            _spawn_chain_task(_run_relationship_analysis_task(
+                rel_task.task_id,
+                collection_id=None,
+                scope="full",
+                rebuild=True,
+                chain=remaining_chain,
+            ))
+            logger.info(
+                f"Chained: spawned relationship_analysis task {rel_task.task_id} "
+                f"(remaining chain={remaining_chain})"
+            )
+
     except Exception as e:
         logger.error(f"Error in batch processing task {task_id}: {e}")
         fail_task(task_id, str(e))
@@ -1626,6 +1737,11 @@ async def _run_batch_processing_task(
 async def process_pending_documents(
     background_tasks: BackgroundTasks,
     concurrency: Optional[int] = Query(default=None, ge=1, le=50, description="Number of documents to process concurrently (defaults to BATCH_PROCESSING_CONCURRENCY env var)"),
+    chain: Optional[str] = Query(
+        default=None,
+        description="Comma-separated next pipeline steps to auto-run when this task finishes "
+                    "(allowed: 'relationship_analysis', 'community_detection').",
+    ),
     auth: AuthResult = Depends(require_manage_permission)
 ):
     """
@@ -1657,18 +1773,21 @@ async def process_pending_documents(
         task.message = f"Queued {len(pending)} documents for processing..."
         task.progress_total = len(pending)
         
-        # Schedule the background task
+        # Schedule the background task (with optional chain to Step 2/3)
+        parsed_chain = _parse_chain(chain)
         background_tasks.add_task(
             _run_batch_processing_task,
             task.task_id,
-            actual_concurrency
+            actual_concurrency,
+            parsed_chain,
         )
-        
+
         return {
             "task_id": task.task_id,
             "status": task.status,
             "pending_count": len(pending),
             "concurrency": actual_concurrency,
+            "chain": parsed_chain,
             "message": f"Started processing {len(pending)} documents. Poll /api/tasks/{task.task_id} for progress."
         }
     except Exception as e:
@@ -2877,8 +2996,13 @@ async def _run_relationship_analysis_task(
     collection_id: Optional[str],
     scope: str,
     rebuild: bool = False,
+    chain: Optional[List[str]] = None,
 ) -> None:
-    """Background task for relationship analysis with progress tracking."""
+    """Background task for relationship analysis with progress tracking.
+
+    When `chain` includes 'community_detection', a follow-up community-detection
+    task is spawned automatically once this step finishes.
+    """
     try:
         processor = get_document_processor()
         neo4j = get_neo4j_service()
@@ -2900,30 +3024,41 @@ async def _run_relationship_analysis_task(
                 "entities_analyzed": 0,
                 "message": "No entities found to analyze",
             })
-            return
+        else:
+            update_task_progress(
+                task_id, 0, total,
+                f"Analyzing relationships between {total} entities...",
+            )
 
-        update_task_progress(
-            task_id, 0, total,
-            f"Analyzing relationships between {total} entities...",
-        )
+            def progress_cb(current, total_count, msg):
+                update_task_progress(task_id, current, total_count, msg)
 
-        def progress_cb(current, total_count, msg):
-            update_task_progress(task_id, current, total_count, msg)
+            result = await processor.analyze_collection_relationships(
+                collection_id=collection_id,
+                scope=scope,
+                progress_callback=progress_cb,
+                rebuild=rebuild,
+            )
 
-        result = await processor.analyze_collection_relationships(
-            collection_id=collection_id,
-            scope=scope,
-            progress_callback=progress_cb,
-            rebuild=rebuild,
-        )
+            # Persist the analysis timestamp
+            from datetime import datetime, timezone
+            await asyncio.to_thread(
+                neo4j.set_meta, "last_relationship_analysis_at", datetime.now(timezone.utc).isoformat()
+            )
 
-        # Persist the analysis timestamp
-        from datetime import datetime, timezone
-        await asyncio.to_thread(
-            neo4j.set_meta, "last_relationship_analysis_at", datetime.now(timezone.utc).isoformat()
-        )
+            complete_task(task_id, result)
 
-        complete_task(task_id, result)
+        # Chain: spawn community detection as the next step's own task.
+        if chain and chain[0] == "community_detection":
+            settings = get_settings()
+            com_task = create_task("community_detection")
+            com_task.message = "Starting community detection..."
+            _spawn_chain_task(_run_community_detection_task(
+                com_task.task_id,
+                min_size=settings.min_community_size,
+                collection_id=collection_id,
+            ))
+            logger.info(f"Chained: spawned community_detection task {com_task.task_id}")
 
     except Exception as e:
         logger.error(f"Error in relationship analysis task {task_id}: {e}")
@@ -2941,6 +3076,11 @@ async def analyze_relationships(
     ),
     rebuild: bool = Query(
         default=False, description="Delete all existing relationships before analysis"
+    ),
+    chain: Optional[str] = Query(
+        default=None,
+        description="Comma-separated next pipeline steps to auto-run when this task finishes "
+                    "(allowed: 'community_detection').",
     ),
     auth: AuthResult = Depends(require_manage_permission)
 ):
@@ -2964,17 +3104,20 @@ async def analyze_relationships(
         task = create_task("relationship_analysis")
         task.message = "Starting relationship analysis..." if not rebuild else "Starting full rebuild..."
 
+        parsed_chain = _parse_chain(chain)
         background_tasks.add_task(
             _run_relationship_analysis_task,
             task.task_id,
             collection_id,
             scope,
             rebuild,
+            parsed_chain,
         )
 
         return {
             "task_id": task.task_id,
             "status": task.status,
+            "chain": parsed_chain,
             "message": f"Relationship analysis started. Poll /api/tasks/{task.task_id} for progress.",
             "tip": "Run POST /api/graph/communities/detect after this completes for community detection.",
         }

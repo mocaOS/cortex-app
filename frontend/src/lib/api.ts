@@ -292,8 +292,12 @@ class ApiClient {
    * 
    * @param documentIds - Array of document IDs to reprocess
    * @param concurrency - Optional concurrency limit (defaults to server config)
+   * @param chain - Optional comma-separated next pipeline steps for the
+   *   backend to auto-run when batch processing finishes (e.g.
+   *   "relationship_analysis,community_detection"). Used by the Generate
+   *   Graph flow to survive UI navigation/close.
    */
-  async reprocessDocuments(documentIds: string[], concurrency?: number): Promise<{
+  async reprocessDocuments(documentIds: string[], concurrency?: number, chain?: string): Promise<{
     results: Array<{
       document_id: string;
       status: string;
@@ -302,11 +306,13 @@ class ApiClient {
     total_queued: number;
     task_id?: string;
     concurrency?: number;
+    chain?: string[] | null;
     message: string;
   }> {
     const params = new URLSearchParams();
     if (concurrency) params.set("concurrency", String(concurrency));
-    
+    if (chain) params.set("chain", chain);
+
     const queryString = params.toString();
     const url = `/api/documents/reprocess${queryString ? `?${queryString}` : ""}`;
     

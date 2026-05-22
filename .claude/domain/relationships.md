@@ -20,6 +20,10 @@ During Phase A (document processing), after entity extraction and chunk linking,
 - Uses tenacity retry with exponential backoff (4 attempts, 2-30s wait) for rate limit errors
 - This provides high-confidence, evidence-grounded relationships before Phase B runs
 
+### Streaming Storage & Progress
+
+Results are consumed via `asyncio.as_completed`, not `asyncio.gather`. Each chunk's relationships land in Neo4j (and the live `relationship_count` stat ticks up) the moment its LLM call returns, instead of bulk-committing after the entire batch finishes. The storage call itself is offloaded via `loop.run_in_executor(...)` so it doesn't block the event loop while other concurrent LLM tasks are still in flight. The progress message updates ~10× across the phase (`"Extracting per-chunk relationships: 44/442 chunks (118 found)..."`) so the UI no longer sits silently at 90% for minutes.
+
 ## Batch Analysis
 
 Per-collection (Phase B) with two-phase per-batch processing:

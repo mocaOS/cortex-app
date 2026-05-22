@@ -70,7 +70,6 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
 - **🔐 Collection-Scoped API Keys**: Restrict API keys to specific collections — one instance, multiple isolated tenants. Both `read` and `read+write` keys support collection scoping. Restricted keys automatically receive filtered results across all endpoints — documents, collections, graph entities, relationships, communities, stats, and search — using the 4-hop `Collection→Document→Chunk→Entity` pattern. Out-of-scope single-resource requests return 403. New collections require explicit access grants.
-- **🚀 Turbo Mode**: GPU-accelerated inference with Compute3 for faster processing
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
@@ -156,7 +155,7 @@ EMBEDDING_MODEL=text-embedding-qwen3-8b
 EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
 ```
 
-**Performance tuning (Venice-validated)** — pair these with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice / Compute3 / large vLLM endpoints, dial back for stock OpenAI or smaller hosts.
+**Performance tuning (Venice-validated)** — pair these with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice or large vLLM endpoints, dial back for stock OpenAI or smaller hosts.
 
 ```env
 BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
@@ -390,19 +389,6 @@ npm run dev
 |--------|----------|-------------|
 | POST | `/api/ask/stream/thinking` | Streaming RAG with visible reasoning |
 
-### Turbo Mode Endpoints (Compute3)
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/turbo/status` | Read | Get Turbo Mode availability and GPU job status |
-| GET | `/api/turbo/balance` | Admin | Get Compute3 account balance |
-| POST | `/api/turbo/start` | Admin | Start a GPU job for accelerated inference |
-| POST | `/api/turbo/stop` | Admin | Stop an active GPU job |
-| POST | `/api/turbo/extend` | Admin | Extend runtime of an active GPU job |
-| GET | `/api/turbo/jobs` | Admin | List all GPU jobs |
-| GET | `/api/turbo/jobs/{id}` | Admin | Get details of a specific job |
-| GET | `/api/turbo/jobs/{id}/logs` | Admin | Get logs from a GPU job |
-
 ### Admin Endpoints
 
 | Method | Endpoint | Description | Auth |
@@ -417,7 +403,7 @@ npm run dev
 | POST | `/api/admin/api-keys/{id}/revoke` | Revoke API key | Admin |
 | POST | `/api/admin/api-keys/{id}/activate` | Reactivate API key | Admin |
 
-> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search, view graph/stats) or `manage` (upload, delete, reprocess, run analysis) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance. Turbo Mode management (balance, start/stop/extend, job listing) requires the admin key. Collection-scoped keys automatically receive filtered results across all graph, entity, community, and stats endpoints using the 4-hop `Collection→Document→Chunk→Entity` pattern.
+> **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search, view graph/stats) or `manage` (upload, delete, reprocess, run analysis) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance. Collection-scoped keys automatically receive filtered results across all graph, entity, community, and stats endpoints using the 4-hop `Collection→Document→Chunk→Entity` pattern.
 
 ### Example: Search
 
@@ -638,20 +624,6 @@ curl -X POST http://localhost:8000/api/custom-input \
   }'
 ```
 
-### Example: Turbo Mode (GPU-Accelerated Inference)
-
-```bash
-# Check Turbo Mode status (requires read key or admin key)
-curl -H "X-API-Key: your-api-key" http://localhost:8000/api/turbo/status
-
-# Start a GPU job (requires admin key)
-curl -X POST "http://localhost:8000/api/turbo/start?runtime=3600" \
-  -H "X-API-Key: your-admin-key"
-
-# Check balance (requires admin key)
-curl -H "X-API-Key: your-admin-key" http://localhost:8000/api/turbo/balance
-```
-
 ### Example: Get Graph Visualization
 
 ```bash
@@ -843,20 +815,6 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `NEXT_PUBLIC_API_URL` | Backend API URL | Yes | `http://localhost:8000` |
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | Cortex logo |
 | `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | Cortex theme |
-
-#### Compute3 Turbo Mode
-
-> ⚠️ **On hold — not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The vars below have no runtime effect today and the UI toggle is hidden when `COMPUTE3_API_KEY` is empty. Code kept against future activation; safe to leave all of these unset.
-
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `COMPUTE3_API_KEY` | Compute3 API key for GPU inference | No | - |
-| `COMPUTE3_API_BASE` | Compute3 API base URL | No | `https://api.compute3.ai` |
-| `COMPUTE3_GPU_TYPE` | GPU type to use (e.g., `h100`, `a100`) | No | `h100` |
-| `COMPUTE3_GPU_COUNT` | Number of GPUs to allocate | No | `4` |
-| `COMPUTE3_MODEL` | Model to run on GPU | No | `MiniMaxAI/MiniMax-M2.1` |
-| `COMPUTE3_DOCKER_IMAGE` | vLLM Docker image for inference | No | `vllm/vllm-openai:latest` |
-| `COMPUTE3_DEFAULT_RUNTIME` | Default GPU job runtime in seconds | No | `3600` |
 
 ## 🔧 Configuration
 
@@ -1058,27 +1016,6 @@ The system includes protection against prompt injection attacks that attempt to:
 - Configurable strict mode (block) vs soft mode (sanitize)
 
 Disable with `PROMPT_SECURITY=false` if not needed.
-
-## 🚀 Turbo Mode (Compute3)
-
-Turbo Mode enables GPU-accelerated inference using [Compute3](https://compute3.ai), providing faster response times for complex queries.
-
-**How it works:**
-1. Configure your Compute3 API key in `.env`
-2. Start a GPU job from the Turbo page or via API
-3. The system spins up a vLLM instance on dedicated GPUs
-4. All LLM requests are routed through the GPU-accelerated endpoint
-5. Stop the job when done to save costs
-
-**Requirements:**
-- Compute3 account with API key
-- Sufficient balance for GPU rental
-
-**Supported GPUs:**
-- H100 (recommended for larger models)
-- A100
-
-The header shows a Turbo Mode status indicator when configured (green when ready, yellow when warming up). Turbo Mode settings are accessible from the Settings page.
 
 ## 🛠️ Tech Stack
 

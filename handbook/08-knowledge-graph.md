@@ -158,7 +158,12 @@ The Knowledge Graph page provides two convenience buttons:
   5. Relationship analysis (rebuild mode)
   6. Community detection
 - Requires confirmation dialog
-- Flow state persisted to sessionStorage with task IDs for resume on page reload
+
+**Backend-orchestrated chain.** When either button is clicked, the frontend issues a single `POST /api/documents/reprocess?chain=relationship_analysis,community_detection` call and then just observes. The backend runs Step 1 as its own task, holds it in `running` state until background image analysis also finishes, then automatically spawns Step 2's task; Step 2 in turn spawns Step 3. Each step keeps its own `task_id` so the UI clearly shows "Step N in progress" with the right progress message.
+
+This means the flow **survives any UI state**: navigate to another page, refresh, close the browser entirely — when you come back to the Knowledge Graph page, an observer detects whichever pipeline task is currently running on the backend and reattaches to it. The chain only aborts if the backend itself loses in-memory state (e.g. a backend restart), in which case the page surfaces an error after ~30 s of no observable task.
+
+Manual single-step buttons ("Extract Entities", "Analyze Relationships", "Detect Communities") do **not** pass the chain parameter, so they only run their own step — useful for incremental updates without re-running the full pipeline.
 
 ## Staleness Detection
 
