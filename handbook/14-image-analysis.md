@@ -125,6 +125,10 @@ If `ENABLE_GRAPH_EXTRACTION=true`, the Library runs entity extraction on image d
 - Diagrams mentioning technologies extract Technology entities
 - All image-derived entities are linked to the image chunk and integrated into the knowledge graph
 
+### Embedding-based dedup across text & images
+
+When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` (default), image-derived entities are batch-embedded and stored through the same embedding-first dedup path as text entities. This means an "MOCA" entity extracted from an image caption can merge with an existing "Museum of Crypto Art" entity already in the graph from text content — even though string similarity (Levenshtein 85%) would not catch that match. Both surfaces populate the single `entity_embedding` vector index, so cross-source deduplication "just works" at write time. With the flag off, both surfaces fall back to Levenshtein 85% only.
+
 ## Progress Tracking
 
 ### Per-Document Progress

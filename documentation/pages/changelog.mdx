@@ -7,6 +7,27 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## May 22, 2026
+
+### Image entities now use the same embedding-based dedup as text entities
+
+Previously, entities extracted from image descriptions always went through fuzzy-only Levenshtein 85% deduplication, even with `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` enabled. Text entities benefited from embedding-first dedup (catching "MOCA" ↔ "Museum of Crypto Art"); image entities did not. This left a cross-source dedup gap — an "MOCA" entity extracted from a chart caption couldn't merge with an existing "Museum of Crypto Art" text entity.
+
+- `backend/app/services/neo4j_service.py:store_graph_extraction()` gains an optional `entity_embeddings` parameter. When provided **and** the semantic resolution flag is on, each entity routes through `store_entity_with_embedding()` (embedding-first vector match, Levenshtein fallback for typos). Otherwise it falls back to the existing fuzzy-only path — no behavior change for callers that don't pass embeddings.
+- `backend/app/services/document_processor.py:process_single_image()` now batch-embeds each image's extracted entities via `generate_entity_embeddings_batch_async()` before storing, mirroring what the per-document text path has been doing. One `embeddings` call per image-with-entities (typically &lt;10 names, very cheap). On embedding failure, the image still stores via Levenshtein with a logged warning — never aborts the document.
+- Image-derived entities now populate the same `entity_embedding` Neo4j vector index that text entities populate. Cross-source duplicates collapse at write time; the `/deduplicate` page's manual workflow becomes more effective because semantic matches happen during ingestion instead of being deferred. Verified end-to-end: a test document with 32 images stored 190 image entities, **100% carrying 4096-dim embeddings**, zero fallback warnings.
+- Docs updated: `.claude/domain/entities.md`, `.claude/domain/document-pipeline.md`, `handbook/13-deduplication.md`, `handbook/14-image-analysis.md`, `documentation/pages/features/knowledge-graph.mdx`.
+
+### One-click Generate Graph from /documents
+
+Clicking **Generate Graph** on the Documents page previously navigated to `/extract` and then required a second click to actually start the pipeline. The button now appends `?autostart=1`; the Knowledge Graph page detects the param on mount, waits for its initial data fetch, fires `handleRegenerateGraph()` exactly once, and `router.replace`s the URL clean so a refresh won't re-fire.
+
+- `frontend/src/components/DocumentList.tsx` — `router.push("/extract?autostart=1")` instead of plain `/extract`.
+- `frontend/src/app/extract/page.tsx` — new `useEffect` reads `useSearchParams().get("autostart")`, guards via a `hasAutoStarted` ref, fires once when `loading === false && documents.length > 0 && !isRegenerating`.
+- Trigger code stays in one place on the destination page; the documents page just emits the intent via query param. The destructive-action confirm dialog inside `handleRegenerateGraph` is preserved — auto-start does not bypass it when entities already exist.
+
+---
+
 ## May 21, 2026
 
 ### Reasoning Suppression Control (Provider-Agnostic)

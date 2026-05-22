@@ -156,6 +156,15 @@ models:
 
   # ---------------- Venice — additional Qwen models -------------------------
 
+  qwen3-7-max-venice:
+    model_id: qwen-3-7-max
+    base_url: https://api.venice.ai/api/v1
+    api_key_env: OPENAI_API_KEY
+    context_length: 1000000
+    family: qwen
+    reasoning_capable: true
+    note: "Qwen3.7 Max — newest Qwen flagship on Venice. 1M ctx, $3.125/$9.375. NO response_schema (XML via prompt only)."
+
   qwen3-6-plus-venice:
     model_id: qwen-3-6-plus
     base_url: https://api.venice.ai/api/v1
@@ -429,6 +438,15 @@ models:
     reasoning_capable: true
     note: "Claude Sonnet 4.6 via Venice. 1M ctx. $3.6/$18 — expensive but mid-cost Anthropic."
 
+  claude-sonnet-4-5-venice:
+    model_id: claude-sonnet-4-5
+    base_url: https://api.venice.ai/api/v1
+    api_key_env: OPENAI_API_KEY
+    context_length: 198000
+    family: anthropic_claude
+    reasoning_capable: true
+    note: "Claude Sonnet 4.5 via Venice. Older SKU, 198K ctx. $3.75/$18.75 — slightly pricier than 4.6 with smaller ctx."
+
   claude-opus-4-7-venice:
     model_id: claude-opus-4-7
     base_url: https://api.venice.ai/api/v1
@@ -437,6 +455,24 @@ models:
     family: anthropic_claude
     reasoning_capable: true
     note: "Claude Opus 4.7 via Venice. 1M ctx. $6/$30. Note: Opus 4.7+ uses adaptive thinking; manual thinking control rejected."
+
+  claude-opus-4-6-venice:
+    model_id: claude-opus-4-6
+    base_url: https://api.venice.ai/api/v1
+    api_key_env: OPENAI_API_KEY
+    context_length: 1000000
+    family: anthropic_claude
+    reasoning_capable: true
+    note: "Claude Opus 4.6 via Venice. 1M ctx. $6/$30 — same price as 4.7 but older SKU."
+
+  claude-opus-4-5-venice:
+    model_id: claude-opus-4-5
+    base_url: https://api.venice.ai/api/v1
+    api_key_env: OPENAI_API_KEY
+    context_length: 198000
+    family: anthropic_claude
+    reasoning_capable: true
+    note: "Claude Opus 4.5 via Venice. Older Opus SKU, 198K ctx. $6/$30."
 
   # --- OpenAI GPT-5 family (proprietary) ------------------------------------
 
@@ -507,6 +543,15 @@ models:
     reasoning_capable: true
     note: "Gemini 3 Flash Preview. $0.7/$3.75."
 
+  gemini-3-5-flash-venice:
+    model_id: gemini-3-5-flash
+    base_url: https://api.venice.ai/api/v1
+    api_key_env: OPENAI_API_KEY
+    context_length: 1000000
+    family: google_gemini
+    reasoning_capable: true
+    note: "Gemini 3.5 Flash — newer Flash GA SKU. 1M ctx, $1.8/$11. Pricier than 3-flash-preview; check before benchmarking."
+
   gemini-3-1-pro-venice:
     model_id: gemini-3-1-pro-preview
     base_url: https://api.venice.ai/api/v1
@@ -552,9 +597,10 @@ models:
   #   calling / no response_schema on most, 2-4x cost. Use the non-e2ee twin.
   # - Vision-only: qwen3-vl-235b-a22b, z-ai-glm-5v-turbo (Cortex extraction is text-only).
   # - grok-4-20-multi-agent: no function calling (silent degradation risk).
-  # - openai-gpt-5*-pro and *-fast tier (e.g. claude-opus-4-7-fast at $36/$180):
-  #   $5-15 per benchmark run. Add to this registry only if you have a
-  #   specific A/B in mind and the budget is approved.
+  # - *-fast tier (claude-opus-4-7-fast, claude-opus-4-6-fast at $36/$180):
+  #   ~6x the base Opus price. Add only with a specific A/B and approved budget.
+  # - *-pro tier (openai-gpt-54-pro, openai-gpt-55-pro at $37.5/$225): a single
+  #   bench run can cost $50+. Reserved for budgeted comparisons only.
   # - Codex-specific variants (openai-gpt-52-codex, openai-gpt-53-codex): coder
   #   instruction tuning; not relevant to KG extraction.
   # ============================================================================

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/components/layout/AuthProvider";
 import type { Document, Stats } from "@/types";
@@ -25,6 +26,10 @@ import { cn } from "@/lib/utils";
 type StepStatus = "pending" | "in_progress" | "complete";
 
 export default function ExtractAnalyzePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const hasAutoStarted = useRef(false);
+
   const [stats, setStats] = useState<Stats | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -602,6 +607,23 @@ export default function ExtractAnalyzePage() {
       abortRegeneration();
     }
   };
+
+  // Auto-trigger graph generation when navigated here with ?autostart=1
+  // (e.g. from the "Generate Graph" button on /documents). Fires exactly once
+  // per arrival; the URL param is stripped immediately so a refresh won't
+  // re-fire. Respects the same preconditions as the manual button (docs must
+  // be loaded and present, no run already in progress).
+  useEffect(() => {
+    if (hasAutoStarted.current) return;
+    if (searchParams.get("autostart") !== "1") return;
+    if (loading) return;
+    if (documents.length === 0) return;
+    if (isRegenerating) return;
+    hasAutoStarted.current = true;
+    router.replace("/extract", { scroll: false });
+    handleRegenerateGraph();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, loading, documents.length, isRegenerating, router]);
 
   if (loading) {
     return (

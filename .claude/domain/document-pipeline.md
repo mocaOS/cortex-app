@@ -58,7 +58,7 @@ Runs asynchronously after text processing completes:
 - Gated by a configurable semaphore — `VISION_MAX_CONCURRENT` (default 3, controls semaphore + thread pool sizing)
 - Progress tracked per-document via `image_progress_current`/`image_progress_total`/`image_progress_message` properties
 - Image chunks created with type `image_analysis` and `chunk_index` 1000+
-- Graph extraction runs on image content if enabled
+- Graph extraction runs on image content if enabled. When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, each image's extracted entities are batch-embedded (one `generate_entity_embeddings_batch_async()` call per image) before `store_graph_extraction()`, so they flow through `store_entity_with_embedding()` and land in the same `entity_embedding` vector index that text entities populate. The image and text surfaces now share one dedup signal — see [`entities.md`](entities.md#fuzzy-resolution).
 - Reasoning is suppressed on capable multimodal models via `VISION_REASONING_MODE` (default `off`). `vision_analyzer.py` uses raw httpx, so it merges `flatten_reasoning_body()` output into the `/chat/completions` JSON body and falls back once on 400, marking the model via `mark_reasoning_unsupported`. Lets you point both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` at e.g. Qwen3-VL-27B with one endpoint. See [`.claude/environment.md`](../environment.md#reasoning-control-ingestion).
 
 ### Step 1 Gate on Image Analysis

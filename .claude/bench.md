@@ -12,7 +12,7 @@ Operator drops `.md` docs into `bench/files/`, picks combos in `bench/combos.yam
 
 | File | Status | Content |
 |---|---|---|
-| `bench/models.yaml.example` | **committed** | Public template — the curated model registry (currently 53 entries spanning Venice's open-weight matrix + proprietary passthroughs). Safe to edit and PR. |
+| `bench/models.yaml.example` | **committed** | Public template — the curated model registry (currently 58 entries spanning Venice's open-weight matrix + proprietary passthroughs). Safe to edit and PR. |
 | `bench/models.yaml` | **gitignored** | Operator's local copy. Edit freely — including pasting literal `api_key:` values. Auto-created from `.example` on first run. |
 | `bench/combos.yaml.example` | **committed** | 12-combo curated matrix from the Venice catalog audit. |
 | `bench/combos.yaml` | **gitignored** | Operator's active combo list. Seeded with 3 session replays + a qwen3-6-27b test. |

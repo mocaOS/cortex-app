@@ -26,7 +26,7 @@ Extracts entities from each document's chunks using an LLM. The UI shows entity 
    </entity>
    ```
 4. The response is parsed, entity types are normalized to the 10 allowed types (rapidfuzz matching, 75% threshold, fallback to "Concept")
-5. Entity resolution merges similar names using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as fallback. "OpenAI" and "Open AI" become a single entity with aliases.
+5. Entity resolution merges similar names using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as fallback. "OpenAI" and "Open AI" become a single entity with aliases. This applies symmetrically to entities extracted from text **and** from image descriptions — both surfaces feed the same `entity_embedding` vector index.
 6. Entities are linked to the chunks that mention them via fuzzy substring matching (`partial_ratio >= 85%`)
 7. **Per-chunk relationship extraction**: Chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. Entity names in per-chunk relationships are automatically mapped to their canonical (dedup-resolved) names before storage, ensuring relationships reference the correct merged entities. Self-referential relationships (where source and target are the same entity) are automatically filtered out. These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 8. Entity provenance is tracked — each entity records which documents it was extracted from
@@ -162,6 +162,8 @@ The Knowledge Graph page provides two convenience buttons:
 **Backend-orchestrated chain.** When either button is clicked, the frontend issues a single `POST /api/documents/reprocess?chain=relationship_analysis,community_detection` call and then just observes. The backend runs Step 1 as its own task, holds it in `running` state until background image analysis also finishes, then automatically spawns Step 2's task; Step 2 in turn spawns Step 3. Each step keeps its own `task_id` so the UI clearly shows "Step N in progress" with the right progress message.
 
 This means the flow **survives any UI state**: navigate to another page, refresh, close the browser entirely — when you come back to the Knowledge Graph page, an observer detects whichever pipeline task is currently running on the backend and reattaches to it. The chain only aborts if the backend itself loses in-memory state (e.g. a backend restart), in which case the page surfaces an error after ~30 s of no observable task.
+
+**One-click start from Documents.** The Documents page's "Generate Graph" banner button no longer just navigates — it sends you to `/extract?autostart=1`, and the Knowledge Graph page auto-runs the same chain on arrival (waits for its data fetch, then fires once). The URL is stripped to plain `/extract` immediately so a refresh won't re-fire. If you already have an existing graph, the destructive-action confirm dialog still appears.
 
 Manual single-step buttons ("Extract Entities", "Analyze Relationships", "Detect Communities") do **not** pass the chain parameter, so they only run their own step — useful for incremental updates without re-running the full pipeline.
 

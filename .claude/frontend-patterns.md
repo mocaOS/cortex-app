@@ -40,6 +40,10 @@ Filter dropdowns: Collection, Status, Source. Source filter auto-shown when docu
 
 Bulk action toolbar: Select All, Reprocess, Download (ZIP), Move to Collection, Delete. See [`.claude/domain/admin-features.md`](domain/admin-features.md#bulk-download) for download implementation details.
 
+## Cross-page Action Auto-Start (`?autostart=1`)
+
+The Documents page's "Generate Graph" button uses a query-param handshake instead of duplicating the trigger logic. It calls `router.push("/extract?autostart=1")`; the target page reads `useSearchParams().get("autostart")` inside a one-shot `useEffect`, waits for its own data to load, calls the existing handler once, then `router.replace`s the URL clean so a refresh doesn't refire. Source of truth for the trigger stays on the destination page — easy to evolve without touching every caller. Used in `frontend/src/app/extract/page.tsx` (consumes) and `frontend/src/components/DocumentList.tsx` (emits). See [`.claude/domain/knowledge-graph-ui.md`](domain/knowledge-graph-ui.md#cross-page-auto-start-autostart1) for the destination-side guards.
+
 ## Stats Bar
 
 4 KPI cards: Documents, Entities, Relations, Communities. Refreshes every 5 seconds. Hidden on Settings page (`/admin`).

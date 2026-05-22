@@ -259,6 +259,8 @@ flowchart LR
 
 When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` (default), entity resolution uses **embedding-based vector similarity** via Neo4j's vector index to catch semantic matches that string similarity misses (e.g., "Museum of Crypto Art" and "MOCA"). Levenshtein string matching is used as a fallback.
 
+This applies symmetrically to entities extracted from text **and** from image descriptions. The image-analysis pipeline now batch-embeds each image's extracted entities (one `embeddings` call per image, gracefully falling back to Levenshtein on failure) before storing them — so the same `entity_embedding` vector index covers both surfaces and cross-source duplicates (e.g. an "MOCA" entity from an image caption and a "Museum of Crypto Art" entity from text) collapse at write time.
+
 Configuration:
 
 ```bash
@@ -412,7 +414,7 @@ The button label changes to "Regenerate Graph" when a graph already exists. When
 
 The pipeline is resilient to page refreshes — progress is persisted via `sessionStorage` with a saved task ID (`regenerateTaskId`) for the active step's backend task. On resume, the step runner checks the saved task's status: **running** → resume polling, **completed** → advance to the next step, **failed** → abort, **not found** → start fresh. This explicit task-based approach eliminates false step-skipping that could occur from stale data. Each step also tracks staleness via persisted timestamps, ensuring users are always guided to keep the knowledge graph up to date.
 
-The **Documents** page also provides a **"Generate Graph"** button that navigates to the Knowledge Graph page to start the pipeline.
+The **Documents** page also provides a **"Generate Graph"** button. It navigates to the Knowledge Graph page **and auto-starts the pipeline on arrival** — one click on Documents, no second click needed. The button appends `?autostart=1` to the destination URL; the Knowledge Graph page detects the flag, waits for its initial data fetch, fires the chain once, and clears the URL parameter so a refresh doesn't re-trigger. The destructive-action confirmation dialog still appears if you already have entities in the graph.
 
 The **Explore** section provides an interactive graph visualization (Knowledge Graph tab) plus read-only browsers for Entities, Relationships, and Communities:
 

@@ -1,6 +1,6 @@
 # Chapter 13: Entity Deduplication
 
-Despite automatic fuzzy resolution during entity extraction (85% Levenshtein threshold), some duplicates slip through — entities with different name formats, abbreviations, or multilingual variants. The Deduplication feature provides a post-extraction review-and-merge workflow.
+Despite automatic resolution during entity extraction — embedding-based semantic match plus Levenshtein 85% fallback, applied symmetrically to text-extracted and image-extracted entities — some duplicates still slip through. Multilingual variants, abbreviations the embedding model didn't bridge, and naming conventions that diverge from the document context are typical examples. The Deduplication feature provides a post-extraction review-and-merge workflow.
 
 ## Why Deduplication Matters
 

@@ -810,7 +810,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
             </div>
           ) : (
             <button
-              onClick={() => router.push("/extract")}
+              onClick={() => router.push("/extract?autostart=1")}
               className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />

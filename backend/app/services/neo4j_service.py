@@ -1158,9 +1158,17 @@ class Neo4jService:
         extraction: ExtractionResult,
         source_document_id: str = None,
         extraction_method: str = "per_document",
+        entity_embeddings: Optional[List[Optional[List[float]]]] = None,
     ) -> dict:
         """
         Store all entities and relationships from an extraction result.
+
+        When `entity_embeddings` is provided (aligned with `extraction.entities`)
+        AND `enable_semantic_entity_resolution` is true, each non-None embedding
+        routes through `store_entity_with_embedding` (embedding-first dedup with
+        Levenshtein fallback). Otherwise entities fall back to fuzzy-only
+        `store_entity_with_resolution`. This keeps the image pipeline in sync
+        with the per-document text-entity path.
 
         Returns:
             Dict with counts of stored entities and relationships
@@ -1168,15 +1176,29 @@ class Neo4jService:
         entity_count = 0
         relationship_count = 0
 
-        # Store entities with fuzzy resolution (same dedup as text entities)
-        for entity in extraction.entities:
+        use_semantic = self.settings.enable_semantic_entity_resolution
+
+        for idx, entity in enumerate(extraction.entities):
             try:
-                self.store_entity_with_resolution(
-                    entity,
-                    chunk_id=chunk_id,
-                    document_id=source_document_id,
-                    similarity_threshold=0.85,
+                embedding = (
+                    entity_embeddings[idx]
+                    if entity_embeddings is not None and idx < len(entity_embeddings)
+                    else None
                 )
+                if embedding and use_semantic:
+                    self.store_entity_with_embedding(
+                        entity,
+                        chunk_id=chunk_id,
+                        document_id=source_document_id,
+                        embedding=embedding,
+                    )
+                else:
+                    self.store_entity_with_resolution(
+                        entity,
+                        chunk_id=chunk_id,
+                        document_id=source_document_id,
+                        similarity_threshold=0.85,
+                    )
                 entity_count += 1
             except Exception as e:
                 logger.warning(f"Failed to store entity {entity.name}: {e}")

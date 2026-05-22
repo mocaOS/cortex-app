@@ -25,6 +25,10 @@ Each step has an "Inspect" button linking to the relevant Explore tab.
 
 Cleanup order on click: `deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()` → `reprocessDocuments(ids, chain="relationship_analysis,community_detection")`. After the delete-and-kick-off, the **backend** drives the chain — see below.
 
+### Cross-page auto-start (`?autostart=1`)
+
+The Documents page's "Generate Graph" banner button (`DocumentList.tsx`) navigates to `/extract?autostart=1` instead of plain `/extract`. A one-shot `useEffect` on the Knowledge Graph page (`extract/page.tsx`) detects the param, waits for the initial data fetch + `documents.length > 0`, calls `handleRegenerateGraph()` once, and `router.replace("/extract")`s the URL so a refresh won't re-fire. A `hasAutoStarted` ref guards against double-fires within the same mount. The destructive-action confirm dialog inside `handleRegenerateGraph` still appears when entities already exist — the auto-trigger doesn't bypass it.
+
 ## Backend-Orchestrated Chain
 
 The full pipeline is orchestrated server-side via a `chain` query param on `/api/documents/reprocess` (also accepted on `/api/documents/process-pending` and `/api/graph/relationships/analyze`). When `_run_batch_processing_task` finishes (text + per-chunk relationships + image analysis), it spawns `_run_relationship_analysis_task` with the remaining chain; that task in turn spawns `_run_community_detection_task`. Each step keeps its own `task_id` / `task_type` / progress message so the UI accurately shows "Step N in progress."

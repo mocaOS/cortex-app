@@ -2008,6 +2008,26 @@ class DocumentProcessor:
                             image_content
                         )
                         if extraction and (extraction.entities or extraction.relationships):
+                            # Mirror the text-entity path: batch-embed extracted
+                            # entities so image entities also get embedding-first
+                            # dedup when ENABLE_SEMANTIC_ENTITY_RESOLUTION=true.
+                            entity_embeddings: Optional[List[Optional[List[float]]]] = None
+                            if (
+                                self.settings.enable_semantic_entity_resolution
+                                and extraction.entities
+                                and self.graph_extractor.async_extraction_client is not None
+                            ):
+                                try:
+                                    entity_embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
+                                        extraction.entities
+                                    )
+                                except Exception as embed_err:
+                                    logger.warning(
+                                        f"Document {doc_id}: image entity batch "
+                                        f"embedding failed for image {idx + 1} "
+                                        f"({embed_err}); falling back to Levenshtein"
+                                    )
+                                    entity_embeddings = None
                             await loop.run_in_executor(
                                 img_executor,
                                 functools.partial(
@@ -2016,6 +2036,7 @@ class DocumentProcessor:
                                     extraction,
                                     source_document_id=doc_id,
                                     extraction_method="per_chunk",
+                                    entity_embeddings=entity_embeddings,
                                 ),
                             )
                             if extraction.entities:
