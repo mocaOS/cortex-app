@@ -731,7 +731,7 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `ENABLE_AGENT_RESEARCH` | Use agent pipeline for deep research mode (set `false` for legacy) | No | `true` |
 | `ENABLE_AGENT_CHAT` | Use agent pipeline for standard chat mode (required for skill usage in chat) | No | `true` |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `5` |
-| `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `10` |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `8` |
 | `WRITER_MAX_TOKENS_SPEED` | Max output tokens for chat answers | No | `1200` |
 | `WRITER_MAX_TOKENS_QUALITY` | Max output tokens for deep research answers | No | `4000` |
 

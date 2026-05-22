@@ -113,7 +113,7 @@ VISION_MAX_CONCURRENT=5           # system-wide vision semaphore (default 3)
 
 ## Agent Configuration
 
-- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 10) — agent loop iteration caps
+- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
 - `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
 
 ## Skills Configuration

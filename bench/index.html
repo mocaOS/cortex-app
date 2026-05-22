@@ -583,6 +583,50 @@
       font-size: 12px;
     }
 
+    /* ---------- Q+A retrieval block (per-combo card) ---------- */
+    .qa-details {
+      margin-top: 12px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+    }
+    .qa-details > summary {
+      cursor: pointer;
+      color: var(--fg-muted);
+      font-weight: 500;
+      padding: 6px 0;
+    }
+    .qa-details[open] > summary { color: var(--fg); }
+    .qa-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 8px 0;
+    }
+    .qa-row {
+      display: grid;
+      grid-template-columns: 160px 110px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .qa-mode { color: var(--fg); font-weight: 500; }
+    .qa-meta { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+    .qa-dims { display: flex; gap: 6px; flex-wrap: wrap; }
+    .qa-dim {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+    }
+    .qa-summary {
+      margin: 8px 0 0;
+      color: var(--fg-muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
     /* ---------- findings markdown ---------- */
     .findings-card {
       background: var(--card);
@@ -831,6 +875,7 @@
       renderHeatmap(root, data);
       renderComboCards(root, data);
       renderFindings(root, data);
+      renderQAFindings(root, data);
     });
 
     // ---------- live "running now" card ----------
@@ -838,6 +883,8 @@
       { id: 'A', label: 'Phase A · entity extraction' },
       { id: 'B', label: 'Phase B · relationship analysis' },
       { id: 'step_3', label: 'Step 3 · community detection' },
+      { id: 'qa_speed', label: 'Q+A · speed (chat)' },
+      { id: 'qa_quality', label: 'Q+A · quality (deep research)' },
       { id: 'done', label: 'wrapping up' },
     ];
     function renderLiveCard(root, data) {
@@ -1216,9 +1263,45 @@
           miniStat('ERR', num(r.err, 2)),
           miniStat('Wall', fmtSec(r.duration_total_sec)),
         ]),
+        qaBlock(r),
         analysisDetails(r),
       ]);
       return card;
+    }
+    function qaBlock(r) {
+      // Skip when Q+A wasn't run for this combo.
+      if (!r || !r.qa_questions_count) return el('span', { style: 'display:none' });
+      const modes = [
+        { key: 'speed',   label: 'Speed (chat)' },
+        { key: 'quality', label: 'Quality (deep research)' },
+      ];
+      const dims = ['faithfulness', 'completeness', 'groundedness', 'conciseness'];
+      const rows = modes
+        .filter(m => (r[`qa_${m.key}_answered`] || 0) + (r[`qa_${m.key}_errors`] || 0) > 0)
+        .map(m => {
+          const dimCells = dims.map(d =>
+            el('span', { class: 'qa-dim', text: `${d[0].toUpperCase()}${num(r[`qa_${m.key}_${d}`], 2)}` })
+          );
+          const lat = r[`qa_${m.key}_avg_latency_ms`] || 0;
+          const ans = r[`qa_${m.key}_answered`] || 0;
+          const errs = r[`qa_${m.key}_errors`] || 0;
+          return el('div', { class: 'qa-row' }, [
+            el('span', { class: 'qa-mode', text: m.label }),
+            el('span', { class: 'qa-meta', text: `${ans}/${ans + errs}q · ${Math.round(lat / 1000)}s avg` }),
+            el('span', { class: 'qa-dims' }, dimCells),
+          ]);
+        });
+      if (rows.length === 0) return el('span', { style: 'display:none' });
+      return el('details', { class: 'qa-details' }, [
+        el('summary', { text: `Q+A retrieval (${r.qa_questions_count} questions)` }),
+        el('div', { class: 'qa-rows' }, rows),
+        r.qa_speed_summary
+          ? el('p', { class: 'qa-summary', text: `Speed: ${r.qa_speed_summary}` })
+          : el('span', { style: 'display:none' }),
+        r.qa_quality_summary
+          ? el('p', { class: 'qa-summary', text: `Quality: ${r.qa_quality_summary}` })
+          : el('span', { style: 'display:none' }),
+      ]);
     }
     function miniStat(label, value) {
       return el('div', { class: 'mini-stat' }, [
@@ -1255,6 +1338,18 @@
       const html = window.marked ? window.marked.parse(md) : esc(md);
       const wrap = el('section', { class: 'bench-section' }, [
         el('h2', { class: 'section-title', text: 'Cross-run findings (LLM)' }),
+        el('div', { class: 'findings-card' }, [
+          el('div', { class: 'findings-md', html }),
+        ]),
+      ]);
+      root.appendChild(wrap);
+    }
+    function renderQAFindings(root, data) {
+      const md = (data.latest_batch && data.latest_batch.qa_findings_md) || '';
+      if (!md.trim()) return;
+      const html = window.marked ? window.marked.parse(md) : esc(md);
+      const wrap = el('section', { class: 'bench-section' }, [
+        el('h2', { class: 'section-title', text: 'Q+A retrieval findings' }),
         el('div', { class: 'findings-card' }, [
           el('div', { class: 'findings-md', html }),
         ]),

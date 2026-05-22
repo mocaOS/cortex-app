@@ -26,11 +26,10 @@ Output contract (the model must return JSON matching this shape):
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Optional
 
-import httpx
+from _llm_io import chat_completion, parse_json_response
 
 
 _SYSTEM_PROMPT = """You are reviewing benchmark runs of Cortex, a knowledge-graph
@@ -97,27 +96,10 @@ _KEEP_FIELDS = (
     "performance_notes", "recommendation",
 )
 
-_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
-
 
 def _compact(runs: list[dict]) -> list[dict]:
     """Drop fields the reviewer doesn't need to keep the prompt small."""
     return [{k: r.get(k) for k in _KEEP_FIELDS} for r in runs]
-
-
-def _strip_thinking_and_fences(text: str) -> str:
-    """Remove `<think>...</think>` blocks AND a wrapping ```json fence
-    that a reasoning-style model may emit despite instructions."""
-    cleaned = _THINK_BLOCK_RE.sub("", text).strip()
-    if cleaned.startswith("```"):
-        # Drop the opening fence line (```json or just ```)
-        first_nl = cleaned.find("\n")
-        if first_nl >= 0:
-            cleaned = cleaned[first_nl + 1:]
-        # Drop the trailing fence
-        if cleaned.rstrip().endswith("```"):
-            cleaned = cleaned.rsplit("```", 1)[0]
-    return cleaned.strip()
 
 
 async def review_batch(
@@ -127,7 +109,7 @@ async def review_batch(
     base_url: str,
     model: str,
     log_windows: Optional[dict[str, str]] = None,
-    max_output_tokens: int = 8000,
+    max_output_tokens: int = 12000,
     temperature: float = 0.3,
     timeout_s: float = 600.0,
 ) -> dict:
@@ -139,12 +121,6 @@ async def review_batch(
     Raises:
         RuntimeError if config is incomplete or the response can't be parsed.
     """
-    if not (api_key and base_url and model):
-        raise RuntimeError(
-            "Primary model config incomplete — need OPENAI_API_KEY, "
-            "OPENAI_API_BASE, and OPENAI_MODEL all set in .env."
-        )
-
     user_payload: dict = {"runs": _compact(runs)}
     if log_windows:
         user_payload["log_tails"] = log_windows
@@ -157,69 +133,20 @@ async def review_batch(
         + "\n```"
     )
 
-    body = {
-        "model": model,
-        "messages": [
+    text = await chat_completion(
+        [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
-        # Hint at JSON output. Providers that don't recognise this just ignore it
-        # — and the 400-retry path below drops it if the server rejects.
-        "response_format": {"type": "json_object"},
-    }
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        max_tokens=max_output_tokens,
+        temperature=temperature,
+        timeout_s=timeout_s,
+    )
 
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    async def _post(payload: dict) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            return await client.post(url, json=payload, headers=headers)
-
-    try:
-        r = await _post(body)
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"LLM review request failed: {exc}") from exc
-
-    # Some providers (or models) reject `response_format`. Retry without it.
-    if r.status_code == 400 and "response_format" in body:
-        body.pop("response_format", None)
-        try:
-            r = await _post(body)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"LLM review retry failed: {exc}") from exc
-
-    if r.status_code != 200:
-        raise RuntimeError(
-            f"LLM review HTTP {r.status_code} from {url}: {r.text[:500]}"
-        )
-
-    try:
-        payload = r.json()
-        text = payload["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f"LLM review response malformed: {r.text[:500]}"
-        ) from exc
-
-    cleaned = _strip_thinking_and_fences(text)
-    if not cleaned:
-        raise RuntimeError(
-            "LLM review returned empty content after stripping <think> blocks. "
-            f"Raw (first 500 chars): {text[:500]}"
-        )
-
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"LLM review did not return valid JSON ({exc}). "
-            f"Cleaned response (first 500 chars): {cleaned[:500]}"
-        ) from exc
+    parsed = parse_json_response(text)
 
     if "runs" not in parsed or "code_optimisation_findings" not in parsed:
         raise RuntimeError(

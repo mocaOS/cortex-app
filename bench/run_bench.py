@@ -59,9 +59,19 @@ COMBOS_PATH = BENCH_DIR / "combos.yaml"
 MODELS_PATH = BENCH_DIR / "models.yaml"
 CONTAINER_NAME = "cortex-backend"
 
-PER_COMBO_TIMEOUT_S = 30 * 60  # 30 min hard cap
+PER_COMBO_TIMEOUT_S = 75 * 60  # 75 min hard cap. Empirically: ingestion 15-20m
+                                # + qa_speed 8-10m + qa_quality 25-35m at 15
+                                # questions (mean ~120s/q in deep research mode).
+                                # 45 min was too tight — combo timed out mid
+                                # qa_quality and discarded the speed answers.
 PHASE_TIMEOUT_S = 25 * 60     # generous per-phase cap
 HEALTH_TIMEOUT_S = 120
+QA_BANK_DEFAULT_COUNT = 10
+QA_QUALITY_SUBSET_DEFAULT = 5  # Quality (deep research) mode is the slow arm
+                                # at ~60-180s per question. Subsetting to the
+                                # first N of the bank keeps total wall time
+                                # manageable without giving up the chat-mode
+                                # signal which is far cheaper per question.
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +357,19 @@ async def run_combo(
     batch_id: str,
     dry_run: bool = False,
     live: Optional[LiveState] = None,
+    qa_questions: Optional[list[dict]] = None,
+    qa_modes: tuple[str, ...] = ("speed", "quality"),
+    qa_quality_count: Optional[int] = None,
 ) -> dict:
     """Execute one combo end-to-end. Returns the run dict (heuristics applied).
 
     If `live` is provided, the function updates `live.phase` at each pipeline
-    transition (A → B → step_3 → done) so the periodic ticker reflects the
-    correct current phase in `bench/logs/.bench-live.json`.
+    transition (A → B → step_3 → qa_speed → qa_quality → done) so the periodic
+    ticker reflects the correct current phase in `bench/logs/.bench-live.json`.
+
+    If `qa_questions` is None or empty, the Q+A phases are skipped (qa_*
+    fields populated with zeros). The Q+A step is wrapped in try/except —
+    a Q+A failure never poisons the ingestion data already captured.
     """
     combo_id = combo["id"]
     run_id = f"{batch_id}_{combo_id}"
@@ -404,6 +421,8 @@ async def run_combo(
 
     errored = False
     timed_out = False
+    # Survives every exception path so the post-loop aggregator can read it.
+    qa_run_data: dict[str, list[dict]] = {"speed": [], "quality": []}
 
     try:
         # 1. Apply env, recreate container
@@ -443,10 +462,64 @@ async def run_combo(
             if "task_id" in step_3_task:
                 await cx.wait_task(step_3_task["task_id"], timeout_s=PHASE_TIMEOUT_S)
 
-            if live: live.set_phase("done")
-
-            # 8. Snapshot final stats
+            # 8. Snapshot final stats BEFORE Q+A so ingestion data is captured
+            # even if Q+A blows up.
             stats = await cx.stats()
+
+            # 9. Q+A phases — speed/chat mode then quality/deep-research mode.
+            # Wrapped in try/except: a Q+A failure must NOT discard the
+            # ingestion stats we just captured. On exception, qa_run_data
+            # stays empty and the run gets zeroed qa_* fields downstream.
+            if qa_questions:
+                try:
+                    from qa_evaluator import run_question_set, write_qa_run
+                    qa_runs_dir = LOGS_DIR / "qa-runs"
+                    for mode in qa_modes:
+                        if mode not in ("speed", "quality"):
+                            continue
+                        if live: live.set_phase(f"qa_{mode}")
+                        # Quality (deep research) mode is the slow arm; an
+                        # optional subset cap drops it to the first N of the
+                        # bank so the bench wall time stays manageable.
+                        mode_qs = qa_questions
+                        if (
+                            mode == "quality"
+                            and qa_quality_count
+                            and qa_quality_count > 0
+                            and qa_quality_count < len(qa_questions)
+                        ):
+                            mode_qs = qa_questions[:qa_quality_count]
+                            print(
+                                f"[qa:{mode}] using subset: first "
+                                f"{qa_quality_count}/{len(qa_questions)} questions.",
+                                file=sys.stderr,
+                            )
+                        answers = await run_question_set(cx, mode_qs, mode=mode)
+                        qa_run_data[mode] = answers
+                        # Persist after EACH mode so a per-combo timeout mid
+                        # qa_quality doesn't discard a fully-finished qa_speed.
+                        # The file is overwritten — the second write contains
+                        # the union of speed + quality.
+                        write_qa_run(
+                            run_id,
+                            questions=qa_questions,
+                            speed_answers=qa_run_data["speed"],
+                            quality_answers=qa_run_data["quality"],
+                            qa_runs_dir=qa_runs_dir,
+                        )
+                        _refresh_dashboard()
+                except Exception as qa_exc:  # noqa: BLE001
+                    print(
+                        f"[qa] phase failed for {combo_id}: {qa_exc} — "
+                        "ingestion data preserved, qa_* fields will be empty.",
+                        file=sys.stderr,
+                    )
+                    base_run["issue_notes"] = (
+                        (base_run.get("issue_notes") or "")
+                        + f" | qa phase failed: {type(qa_exc).__name__}: {qa_exc}"
+                    ).strip(" |")
+
+            if live: live.set_phase("done")
 
     except asyncio.TimeoutError:
         timed_out = True
@@ -514,6 +587,27 @@ async def run_combo(
         "phase_b_sec": log_signals.get("phase_b_sec") or 0,
         "step_3_sec": log_signals.get("step_3_sec") or 0,
     })
+
+    # 10b. Q+A aggregates (latency + answered/errors). Score columns are
+    # filled by the end-of-batch judge pass; populate them with 0.0 here so
+    # the .ods row is well-formed even when --skip-llm-review is set.
+    try:
+        from qa_evaluator import summarise_answers
+    except Exception:  # noqa: BLE001 — fallback for first-run import races
+        summarise_answers = None  # type: ignore[assignment]
+    base_run["qa_questions_count"] = len(qa_questions or [])
+    for mode in ("speed", "quality"):
+        answers = qa_run_data.get(mode, []) or []
+        if summarise_answers is not None:
+            agg = summarise_answers(answers)
+        else:
+            agg = {"answered": 0, "errors": 0, "avg_latency_ms": 0}
+        base_run[f"qa_{mode}_answered"] = agg["answered"]
+        base_run[f"qa_{mode}_errors"] = agg["errors"]
+        base_run[f"qa_{mode}_avg_latency_ms"] = agg["avg_latency_ms"]
+        for dim in ("faithfulness", "completeness", "groundedness", "conciseness"):
+            base_run[f"qa_{mode}_{dim}"] = 0.0
+        base_run[f"qa_{mode}_summary"] = ""
 
     # 11. Heuristic analysis fields
     apply_heuristics(base_run, errored=errored, timed_out=timed_out)
@@ -618,6 +712,10 @@ async def run_batch(
     skip_llm_review: bool = False,
     skip_safety_backup: bool = False,
     skip_live_progress: bool = False,
+    skip_qa_eval: bool = False,
+    qa_count: int = QA_BANK_DEFAULT_COUNT,
+    qa_modes: tuple[str, ...] = ("speed", "quality"),
+    qa_quality_count: int = QA_QUALITY_SUBSET_DEFAULT,
 ) -> None:
     batch_id = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M")
     print(f"[batch] starting batch {batch_id} with {len(combos)} combo(s)", file=sys.stderr)
@@ -656,6 +754,43 @@ async def run_batch(
     batch_log = LOGS_DIR / f"batch_log_{batch_id}.jsonl"
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Pre-batch question generation — ONE LLM call against the operator's
+    # primary model that produces a question bank reused across every combo.
+    # Cached under bench/logs/qa-bank-<batch_id>.json so re-running the same
+    # batch_id reuses the same questions. Failure here is non-fatal: we
+    # continue with qa_questions=None and per-combo Q+A becomes a no-op.
+    qa_questions: Optional[list[dict]] = None
+    if not dry_run and not skip_qa_eval and swapper is not None:
+        try:
+            from qa_evaluator import generate_question_bank
+            primary_cfg = swapper.primary_model_config()
+            if not (primary_cfg["model"] and primary_cfg["base_url"] and primary_cfg["api_key"]):
+                print(
+                    "[qa] OPENAI_* primary config missing in .env backup; "
+                    "skipping question generation.",
+                    file=sys.stderr,
+                )
+            else:
+                qa_bank_path = LOGS_DIR / f"qa-bank-{batch_id}.json"
+                print(
+                    f"[qa] generating question bank ({qa_count} questions) "
+                    f"using {primary_cfg['model']!r}…",
+                    file=sys.stderr,
+                )
+                qa_questions = await generate_question_bank(
+                    BENCH_FILES_DIR,
+                    primary_cfg,
+                    count=qa_count,
+                    cache_path=qa_bank_path,
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[qa] question generation failed: {exc} — "
+                "Q+A phases will be skipped for this batch.",
+                file=sys.stderr,
+            )
+            qa_questions = None
+
     # Refresh the dashboard once at batch start so a browser tab opened now
     # reflects the pre-batch state (or empty if nothing has ever run).
     _refresh_dashboard()
@@ -693,6 +828,9 @@ async def run_batch(
                             batch_id=batch_id,
                             dry_run=dry_run,
                             live=live,
+                            qa_questions=qa_questions,
+                            qa_modes=qa_modes,
+                            qa_quality_count=qa_quality_count,
                         ),
                         timeout=PER_COMBO_TIMEOUT_S,
                     )
@@ -726,6 +864,21 @@ async def run_batch(
                     "issue_notes": f"Combo timed out after {PER_COMBO_TIMEOUT_S}s.",
                 }
                 apply_heuristics(stub, timed_out=True)
+                # Persist the stub to disk so the dashboard / .ods reflects
+                # the timeout. Previously this row was in-memory only — the
+                # only trace of a timed-out combo was the stderr line.
+                try:
+                    stub_path = RUNS_DIR / f"{stub['run_id']}.json"
+                    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+                    stub_path.write_text(json.dumps(stub, indent=2), encoding="utf-8")
+                    subprocess.run(
+                        [sys.executable, str(ODS_BUILDER), str(stub_path)],
+                        check=False,
+                        cwd=ODS_BUILDER.parent,
+                    )
+                except Exception as persist_exc:  # noqa: BLE001
+                    print(f"[combo {combo['id']}] failed to persist timeout stub: "
+                          f"{persist_exc}", file=sys.stderr)
                 runs.append(stub)
                 continue
             runs.append(run)
@@ -793,6 +946,89 @@ async def run_batch(
                 print(f"[batch] LLM review failed: {exc}", file=sys.stderr)
                 traceback.print_exc()
 
+        # End-of-batch Q+A judge pass — independent of the LLM review above.
+        # Scores every (run × mode × question), aggregates per (run × mode),
+        # merges back into each run JSON, rebuilds .ods, writes findings md.
+        if (
+            runs
+            and not dry_run
+            and not skip_qa_eval
+            and qa_questions
+            and swapper is not None
+        ):
+            print(
+                f"\n[batch] running Q+A judge pass over {len(runs)} run(s)…",
+                file=sys.stderr,
+            )
+            try:
+                from qa_evaluator import (
+                    apply_qa_scores_to_runs,
+                    judge_answers,
+                    write_qa_findings_md,
+                )
+
+                # Reload raw answers from disk (the source of truth — written
+                # by run_combo step 9). Skips runs that didn't reach Q+A.
+                qa_runs_dir = LOGS_DIR / "qa-runs"
+                qa_by_run: dict[str, dict] = {}
+                for run in runs:
+                    rid = run.get("run_id", "")
+                    qa_file = qa_runs_dir / f"{rid}.json"
+                    if not qa_file.exists():
+                        continue
+                    try:
+                        qa_payload = json.loads(qa_file.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as exc:
+                        print(
+                            f"[qa] could not load {qa_file.name}: {exc}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    qa_by_run[rid] = {
+                        "speed": qa_payload.get("speed", []) or [],
+                        "quality": qa_payload.get("quality", []) or [],
+                    }
+
+                if not qa_by_run:
+                    print("[qa] no qa-runs files found — skipping judge pass.",
+                          file=sys.stderr)
+                else:
+                    primary_cfg = swapper.primary_model_config()
+                    print(
+                        f"[qa] judging with primary model {primary_cfg['model']!r} "
+                        f"at {primary_cfg['base_url']}",
+                        file=sys.stderr,
+                    )
+                    judge_output = await judge_answers(
+                        qa_by_run, qa_questions, primary_cfg
+                    )
+                    runs = apply_qa_scores_to_runs(
+                        runs,
+                        qa_by_run,
+                        judge_output,
+                        questions_count=len(qa_questions),
+                    )
+
+                    # Re-write each run JSON with merged Q+A scores.
+                    for run in runs:
+                        run_path = RUNS_DIR / f"{run['run_id']}.json"
+                        run_path.write_text(
+                            json.dumps(run, indent=2), encoding="utf-8"
+                        )
+
+                    # Rebuild the .ods (it now has the Q+A section columns).
+                    _rebuild_ods()
+
+                    qa_findings_path = LOGS_DIR / f"qa-findings-{batch_id}.md"
+                    write_qa_findings_md(runs, qa_findings_path)
+                    print(f"[qa] findings written to {qa_findings_path}",
+                          file=sys.stderr)
+
+                    _refresh_dashboard()
+            except Exception as exc:
+                print(f"[qa] judge pass failed: {exc}", file=sys.stderr)
+                traceback.print_exc()
+
     finally:
         if swapper:
             swapper.restore()
@@ -837,7 +1073,7 @@ class LiveState:
     combo_index: int
     combo_total: int
     started_at: str
-    phase: str = "A"                 # A | B | step_3 | done
+    phase: str = "A"                 # A | B | step_3 | qa_speed | qa_quality | done
     phase_started_at: str = ""
     primary_model: str = ""
     extraction_model: str = ""
@@ -1037,7 +1273,51 @@ def main():
             "but the in-flight 'Live now' card won't update during a combo."
         ),
     )
+    parser.add_argument(
+        "--skip-qa-eval",
+        action="store_true",
+        help=(
+            "Skip the Q+A retrieval evaluation entirely — no question bank "
+            "generated, no per-combo qa_speed/qa_quality phases, no judge "
+            "pass. The qa_* columns stay zeroed."
+        ),
+    )
+    parser.add_argument(
+        "--qa-count",
+        type=int,
+        default=QA_BANK_DEFAULT_COUNT,
+        help=(
+            f"Number of questions in the bank (default {QA_BANK_DEFAULT_COUNT}, "
+            "range 5–30). Ignored when --skip-qa-eval is set."
+        ),
+    )
+    parser.add_argument(
+        "--qa-modes",
+        default="speed,quality",
+        help=(
+            "Comma-separated list of Q+A modes to run per combo. "
+            "Choices: speed, quality. Default: speed,quality."
+        ),
+    )
+    parser.add_argument(
+        "--qa-quality-count",
+        type=int,
+        default=QA_QUALITY_SUBSET_DEFAULT,
+        help=(
+            f"Quality (deep research) mode runs on the first N questions of "
+            f"the bank instead of all of them (default {QA_QUALITY_SUBSET_DEFAULT}). "
+            "Quality mode is the slow arm (~60-180s/q); subsetting keeps wall "
+            "time bounded. Pass 0 to run quality on the full bank."
+        ),
+    )
     args = parser.parse_args()
+
+    qa_count = max(5, min(30, args.qa_count))
+    qa_quality_count = max(0, min(qa_count, args.qa_quality_count))
+    qa_modes = tuple(
+        m.strip() for m in args.qa_modes.split(",")
+        if m.strip() in ("speed", "quality")
+    ) or ("speed", "quality")
 
     # First-run UX: seed local YAMLs from .example templates if missing.
     ensure_local_configs()
@@ -1061,6 +1341,10 @@ def main():
                 skip_llm_review=args.skip_llm_review,
                 skip_safety_backup=args.no_safety_backup,
                 skip_live_progress=args.no_live,
+                skip_qa_eval=args.skip_qa_eval,
+                qa_count=qa_count,
+                qa_modes=qa_modes,
+                qa_quality_count=qa_quality_count,
             )
         )
     except BatchLockError as exc:

@@ -144,6 +144,8 @@ bench/
 ├── log_parser.py                   # docker logs → signal tally (committed)
 ├── heuristics.py                   # rule-based verdict / failure_patterns (committed)
 ├── llm_review.py                   # end-of-batch review pass — uses primary model (committed)
+├── qa_evaluator.py                 # Q+A retrieval eval — generate / run / judge (committed)
+├── _llm_io.py                      # shared chat_completion helper (committed)
 ├── test_heuristics.py              # sanity test for the heuristic decision tree (committed)
 ├── build_results_ods.py            # spreadsheet writer (committed)
 │
@@ -159,6 +161,9 @@ bench/
 └── logs/                           # machine-written outputs (all gitignored)
     ├── .gitkeep
     ├── runs/<batch_id>_<combo_id>.json
+    ├── qa-runs/<batch_id>_<combo_id>.json  # raw Q+A answers (speed + quality)
+    ├── qa-bank-<batch_id>.json     # generated question bank (reused per batch)
+    ├── qa-findings-<batch_id>.md   # Q+A cross-run summary
     ├── batch_log_<batch_id>.jsonl
     ├── findings_<batch_id>.md      # LLM cross-run analysis
     ├── .env.bak.<batch_id>         # env backup
@@ -220,6 +225,15 @@ python bench/run_bench.py --dry-run
 # Skip the Claude review pass at the end
 python bench/run_bench.py --skip-llm-review
 
+# Skip the Q+A retrieval evaluation (faster — ingestion only)
+python bench/run_bench.py --skip-qa-eval
+
+# Customise the Q+A bank (default 15 questions, both modes)
+python bench/run_bench.py --qa-count 20 --qa-modes speed,quality
+
+# Smoke-test the question generator alone (one LLM call, no Cortex needed)
+python bench/qa_evaluator.py --self-test
+
 # Validate models.yaml + combos.yaml + key resolution (no side effects)
 python bench/combo_resolver.py
 
@@ -251,15 +265,22 @@ python bench/test_heuristics.py
 7. **Drives Phase B** → polls `/api/tasks/{id}`.
 8. **Drives Step 3** → polls task.
 9. **Snapshots stats** via `/api/stats`.
-10. **Parses `docker logs`** over the combo's wall-clock window for signal
+10. **Q+A speed mode** → asks the shared question bank via `/api/ask`
+    (chat mode, `use_agentic=false`); logs answers, sources, latency.
+11. **Q+A quality mode** → same bank via `/api/ask` (`use_agentic=true`,
+    deep-research path); logs answers, sources, latency.
+12. **Parses `docker logs`** over the combo's wall-clock window for signal
     counts + phase timestamps.
-11. **Applies heuristic analysis** — verdict, failure_patterns,
+13. **Applies heuristic analysis** — verdict, failure_patterns,
     performance_notes, recommendation derived from `heuristics.py`.
-12. **Writes** `bench/logs/runs/<batch_id>_<combo_id>.json`.
-13. **Appends a row to** `bench/logs/llm-config-results.ods` via `build_results_ods.py`.
+14. **Writes** `bench/logs/runs/<batch_id>_<combo_id>.json` plus raw Q+A
+    answers at `bench/logs/qa-runs/<batch_id>_<combo_id>.json`.
+15. **Appends a row to** `bench/logs/llm-config-results.ods` via `build_results_ods.py`.
 
-Hard cap: **30 min wall-clock per combo**. Stalls and partial runs get a
-`verdict=TIMED_OUT` row with whatever data was captured.
+Hard cap: **75 min wall-clock per combo** (15-20 min ingestion + ~4 min
+qa_speed at 10 questions + ~10 min qa_quality at the 5-question subset,
+plus headroom). Stalls and partial runs get a persisted `verdict=TIMED_OUT`
+row plus whatever per-mode Q+A answers landed on disk before the cap.
 
 ## End-of-batch LLM review (one call total)
 
@@ -292,6 +313,52 @@ Skip with `--skip-llm-review` (the heuristic fields stay populated). The
 orchestrator also gracefully skips with a warning if the response can't be
 parsed as JSON — useful when your primary model is a reasoning model that
 doesn't always honour the JSON-output instruction.
+
+## Q+A retrieval evaluation
+
+Ingestion stats alone (entities, relationships, ERR, communities) don't tell
+you which combo produces a graph that actually **answers questions well**.
+The Q+A evaluation phase closes that loop.
+
+How it works:
+
+1. **Pre-batch question generation** — one LLM call against the operator's
+   primary model (same config source as the LLM review) reads `bench/files/`
+   and produces ~10 questions split across three buckets: factoid (single
+   doc), synthesis (multi-doc reasoning), thematic (broad concepts). Cached
+   at `bench/logs/qa-bank-<batch_id>.json` — re-running a batch with the
+   same `batch_id` reuses the cached bank.
+2. **Per-combo: speed mode** — every question is posted to `/api/ask` with
+   `use_agentic=false`. This is the chat path: hybrid search + reranking +
+   one writer pass. 90 s per-question timeout.
+3. **Per-combo: quality mode** — same bank, `use_agentic=true`. The full
+   researcher agent loop with tool calls (`knowledge_search`,
+   `community_search`, `entity_lookup`, `reasoning`). 300 s per-question
+   timeout (bumped from 180 s after a minimax-m27 run showed the researcher
+   loop genuinely needs >180 s on harder questions).
+4. **End-of-batch judge pass** — one LLM call across all (run × mode ×
+   question) tuples scores every answer on **faithfulness**, **completeness**,
+   **groundedness**, **conciseness** (1–5 each) plus a 2-sentence summary
+   per (run × mode). Aggregates land in the run JSON / `.ods`; raw per-
+   question detail stays in `bench/logs/qa-runs/<run_id>.json`. Cross-run
+   findings are written to `bench/logs/qa-findings-<batch_id>.md`.
+
+Flags:
+
+- `--skip-qa-eval` — skip the whole Q+A subsystem (no question gen, no
+  per-combo phases, no judge pass).
+- `--qa-count N` — override bank size (default 10, clamped to 5–30).
+- `--qa-modes speed,quality` — comma-separated modes to run.
+  Use `--qa-modes speed` to skip the slow deep-research arm.
+- `--qa-quality-count N` — quality (deep research) mode runs only the first
+  N of the bank (default 5). Quality mode is the slow arm at ~60-300 s/q;
+  subsetting keeps a 2-combo batch under ~90 min wall clock. Pass `0` to
+  run quality on the full bank.
+
+Same robustness rules as the LLM review: per-question errors get recorded
+and the loop continues; a whole-Q+A failure for a combo just zeroes that
+combo's `qa_*` fields without poisoning the ingestion data captured
+upstream.
 
 ## Adding a new model
 

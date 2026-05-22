@@ -53,6 +53,17 @@ def _load_latest_findings() -> str:
         return ""
 
 
+def _load_latest_qa_findings() -> str:
+    """Return the markdown body of the most recent qa-findings-*.md, or empty."""
+    candidates = sorted(LOGS_DIR.glob("qa-findings-*.md"), reverse=True)
+    if not candidates:
+        return ""
+    try:
+        return candidates[0].read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _load_live() -> Optional[dict]:
     """Return the current live-progress state, or None if no batch is active.
 
@@ -90,6 +101,7 @@ def build() -> dict:
     runs = _load_runs()
     sorted_batch_ids, by_batch = _group_by_batch(runs)
     latest_findings = _load_latest_findings()
+    latest_qa_findings = _load_latest_qa_findings()
     latest_batch: dict | None = None
     if sorted_batch_ids:
         bid = sorted_batch_ids[0]
@@ -98,6 +110,7 @@ def build() -> dict:
             "run_ids": [r.get("run_id") for r in by_batch[bid]],
             "verdicts": _count_verdicts(by_batch[bid]),
             "findings_md": latest_findings,
+            "qa_findings_md": latest_qa_findings,
         }
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),

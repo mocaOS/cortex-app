@@ -1153,7 +1153,7 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `ENABLE_AGENT_RESEARCH`: Use agent pipeline for deep research mode (default: `True`)
 - `ENABLE_AGENT_CHAT`: Use agent pipeline for standard chat mode (default: `True`)
 - `RESEARCHER_MAX_ITERATIONS_SPEED`: Max agent iterations for chat (default: `5`)
-- `RESEARCHER_MAX_ITERATIONS_QUALITY`: Max agent iterations for deep research (default: `10`)
+- `RESEARCHER_MAX_ITERATIONS_QUALITY`: Max agent iterations for deep research (default: `8`)
 - `WRITER_MAX_TOKENS_SPEED`: Max output tokens for chat answers (default: `1200`)
 - `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `4000`)
 

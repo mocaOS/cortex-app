@@ -210,6 +210,40 @@ class CortexClient:
             raise CortexError(f"GET /api/stats → {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    # ----- Q+A retrieval ----------------------------------------------------
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        use_agentic: bool,
+        top_k: int = 5,
+        use_graph: bool = True,
+        use_reranking: bool = True,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
+        """POST /api/ask (non-streaming) and return the parsed RAGResponse.
+
+        `timeout_s` overrides the client's default 600s ceiling for this single
+        call — pass a tighter value (e.g. 90s) for per-question caps in the
+        Q+A eval phase.
+        """
+        body = {
+            "question": question,
+            "top_k": top_k,
+            "use_graph": use_graph,
+            "use_reranking": use_reranking,
+            "use_agentic": use_agentic,
+        }
+        url = f"{self.base_url}/api/ask"
+        if timeout_s is not None:
+            r = await self._client.post(url, json=body, timeout=timeout_s)
+        else:
+            r = await self._client.post(url, json=body)
+        if r.status_code != 200:
+            raise CortexError(f"POST /api/ask → {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     # ----- library export (used for pre-batch safety backup) ----------------
 
     async def trigger_export(self) -> dict:

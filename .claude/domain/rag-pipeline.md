@@ -24,7 +24,7 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 
 ### Iteration Caps
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5)
-- `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 10)
+- `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8)
 
 ## Writer
 

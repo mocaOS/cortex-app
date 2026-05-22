@@ -45,6 +45,8 @@ This is the same dispatch table that backs Cortex's `EXTRACTION_REASONING_MODE` 
 | `bench/log_parser.py` | Pure function: `parse_logs(docker_log_text) → dict` with signal counts (empty_content_length, candidate_scan_empty, gleaning_passes, etc.) + phase A/B/3 timestamps. |
 | `bench/heuristics.py` | Pure function: `apply_heuristics(run_dict, errored=False, timed_out=False)` fills `verdict`, `failure_patterns`, `performance_notes`, `recommendation`. Family-aware (qwen / minimax / openai_gpt_oss get specific hints). |
 | `bench/llm_review.py` | One-shot Anthropic SDK call at end of batch. System prompt is `cache_control:ephemeral` for prompt caching. Returns per-run `observations`/`vs_previous_run` + a single top-level `code_optimisation_findings` markdown block. |
+| `bench/qa_evaluator.py` | Q+A retrieval evaluation. `generate_question_bank()` runs once per batch from `bench/files/`. `run_question_set(cx, q, mode=…)` posts to `/api/ask` (speed=non-agentic, quality=agentic). `judge_answers()` is one end-of-batch LLM call scoring every (run × mode × question) on faithfulness/completeness/groundedness/conciseness 1–5. `apply_qa_scores_to_runs()` merges aggregates back. |
+| `bench/_llm_io.py` | Shared `chat_completion()` helper + `parse_json_response()`. Lifted out of `llm_review.py` so `qa_evaluator.py` doesn't duplicate the `response_format` 400-retry + `<think>` block stripping. |
 | `bench/build_results_ods.py` | `odfpy`-based spreadsheet writer. Reads a flat-dict JSON, appends a row to `bench/logs/llm-config-results.ods` (or `$BENCH_ODS_PATH`). |
 | `bench/build_dashboard.py` | Idempotent aggregator. Scans `bench/logs/runs/*.json` + latest `findings_*.md` → emits `bench/logs/dashboard-data.js` declaring `window.BENCH_DATA = {…}`. Called by the orchestrator 3× per batch and runnable manually. |
 | `bench/index.html` | Static dashboard page. Cortex-branded inline CSS, Chart.js + marked.js via CDN. Loads `logs/dashboard-data.js` via a relative `<script>` tag (works under `file://` and `http://`). Empty state when no runs; otherwise renders hero, verdict donut, ERR bars, phase-timing stacks, failure heatmap, per-combo cards (with LLM observations), and cross-run findings markdown. |
@@ -62,13 +64,15 @@ In `bench/run_bench.py:run_combo()`:
 6. `POST /api/documents/process-pending` (Phase A) → poll `/api/stats` until all docs leave PENDING/PROCESSING.
 7. `POST /api/graph/relationships/analyze` (Phase B) → poll `/api/tasks/{id}` to completion.
 8. `POST /api/graph/communities/detect` (Step 3) → poll task.
-9. Snapshot `/api/stats`.
-10. `docker logs cortex-backend --since <combo_start_iso>` → `log_parser.parse_logs()` → signal counts + phase timings.
-11. `heuristics.apply_heuristics()` → verdict / failure_patterns / performance_notes / recommendation.
-12. Write `bench/logs/runs/<batch_id>_<combo_id>.json`.
-13. Subprocess `build_results_ods.py <json>` to append a row to the master `.ods`.
+9. Snapshot `/api/stats` **before Q+A** so ingestion data is captured even if Q+A blows up.
+10. Q+A speed mode (if `qa_questions` available) → loop the bank through `cx.ask(use_agentic=False)`; 90 s per-question timeout. Wrapped in try/except — Q+A failures NEVER discard the ingestion data just captured.
+11. Q+A quality mode → same bank through `cx.ask(use_agentic=True)`; 300 s per-question timeout (bumped from 180 s; minimax-m27 quality runs empirically need >180 s on harder questions when the researcher loop iterates several times).
+12. `docker logs cortex-backend --since <combo_start_iso>` → `log_parser.parse_logs()` → signal counts + phase timings.
+13. `heuristics.apply_heuristics()` → verdict / failure_patterns / performance_notes / recommendation.
+14. Write `bench/logs/runs/<batch_id>_<combo_id>.json` + raw Q+A answers at `bench/logs/qa-runs/<batch_id>_<combo_id>.json`.
+15. Subprocess `build_results_ods.py <json>` to append a row to the master `.ods` (now includes the Q+A Retrieval section — 17 columns).
 
-Hard cap: 30 min per combo (`asyncio.wait_for`). Stub `verdict=TIMED_OUT` row on overflow; batch continues. Any exception inside the combo sets `verdict=ERROR` with the traceback in `issue_notes`, restores `.env`, continues.
+Hard cap: 75 min per combo (`asyncio.wait_for`). Empirically: ingestion 15-20 min + qa_speed 3-4 min (10 questions) + qa_quality 8-12 min (5-question subset). The earlier 45-min cap timed out mid-qa_quality and discarded the speed-mode answers; bumping the cap + persisting qa-runs after EACH mode fixed both. Timeout stubs are now persisted to disk (previously in-memory only). Any exception inside the combo sets `verdict=ERROR` with the traceback in `issue_notes`, restores `.env`, continues.
 
 ## Dashboard data flow
 
@@ -166,13 +170,44 @@ Returns JSON: `{ "runs": { "<run_id>": { "observations": "...", "vs_previous_run
 
 Skip with `--skip-llm-review` — heuristic fields stay populated, free-form fields stay as placeholders.
 
+## Q+A retrieval evaluation
+
+Lives in `bench/qa_evaluator.py`. Closes the loop on ingestion-only scoring by exercising the full RAG path against the same corpus from each combo.
+
+**Three phases:**
+
+1. **Pre-batch question generation** (`generate_question_bank`) — one LLM call against the operator's primary model (same source as `llm_review.py`: `EnvSwapper.primary_model_config()` reading from the pre-batch `.env` backup). Reads every `.md` under `bench/files/` and emits 15 questions split into factoid / synthesis / thematic buckets. Cached at `bench/logs/qa-bank-<batch_id>.json`; re-running the same batch_id reuses it.
+
+2. **Per-combo evaluation** (`run_question_set`) — runs after Step 3 inside `run_combo`, in two phases:
+   - `qa_speed`: every question → `POST /api/ask` with `use_agentic=False`. Chat path. 90 s per-question timeout.
+   - `qa_quality`: same bank → `POST /api/ask` with `use_agentic=True`. Researcher agent loop. 300 s per-question timeout.
+   - Per-question errors are recorded (`error` field on the answer dict) and the loop continues. A whole-Q+A failure for a combo just zeroes its `qa_*` fields — ingestion stats already captured in step 9 are preserved.
+
+3. **End-of-batch judge pass** (`judge_answers`) — one LLM call across every (run × mode × question) tuple scoring each answer on **faithfulness / completeness / groundedness / conciseness** (1–5 each), plus a 2-sentence summary per (run × mode). `apply_qa_scores_to_runs()` merges aggregates back into each run JSON; raw per-question detail stays at `bench/logs/qa-runs/<run_id>.json`. Cross-run summary at `bench/logs/qa-findings-<batch_id>.md` highlights the top combo per dimension.
+
+**CLI:**
+
+| Flag | Effect |
+|---|---|
+| `--skip-qa-eval` | Skip all three phases entirely. `qa_*` columns stay zeroed. |
+| `--qa-count N` | Override bank size (default 10, clamped to 5–30). |
+| `--qa-modes speed,quality` | Comma-list of modes. Use `--qa-modes speed` to drop the slow deep-research arm. |
+| `--qa-quality-count N` | Quality mode runs only the first N of the bank (default 5). Quality is the slow arm at ~60-300 s/q. Pass 0 to run quality on the full bank. |
+
+**Run-JSON additions (17 columns surfaced in `.ods`):** `qa_questions_count`, `qa_speed_{answered,errors,avg_latency_ms,faithfulness,completeness,groundedness,conciseness,summary}`, and the matching `qa_quality_*` set.
+
+**Live-state phase names extended:** `A | B | step_3 | qa_speed | qa_quality | done` — the dashboard ticker picks these up automatically once `LiveState.phase` is updated by `run_combo`.
+
 ## Output paths
 
 All gitignored under `bench/logs/` or `bench/backups/`:
 
 | Path | Content |
 |---|---|
-| `bench/logs/runs/<batch_id>_<combo_id>.json` | Per-combo run record (stats + signals + heuristic + LLM review fields) |
+| `bench/logs/runs/<batch_id>_<combo_id>.json` | Per-combo run record (stats + signals + heuristic + LLM review + Q+A aggregate fields) |
+| `bench/logs/qa-runs/<batch_id>_<combo_id>.json` | Per-combo raw Q+A answers (speed + quality) with per-question scores after the judge pass |
+| `bench/logs/qa-bank-<batch_id>.json` | Generated question bank — one per batch, reused across all combos |
+| `bench/logs/qa-findings-<batch_id>.md` | Q+A cross-run summary (top combo per dimension + per-run summaries) |
 | `bench/logs/batch_log_<batch_id>.jsonl` | Per-event log (combo_started/completed events) |
 | `bench/logs/findings_<batch_id>.md` | LLM-generated cross-run findings (one per batch) |
 | `bench/logs/.env.bak.<batch_id>` | `.env` snapshot from batch start; auto-restored on exit |
@@ -238,6 +273,8 @@ python bench/run_bench.py --dry-run   # validates orchestrator without side effe
 - **Per-chunk relationship extraction logs nothing on success** — only on failure (`Per-chunk relationship extraction failed after retries`). Don't add success logs; the `/api/stats` `per_chunk_relationship_count` is the canonical post-run count.
 - **The `.ods` writer (`build_results_ods.py`) uses `odfpy`.** When adding columns to a run JSON, update both the section/column list in `build_results_ods.py:SECTIONS` AND the schema-aware fields in `bench/heuristics.py` / `bench/llm_review.py`.
 - **Adding a new combo with a model that's not in `models.yaml.example` yet?** Add the model to `models.yaml.example` first (committed), THEN add the combo. Otherwise new clones can't reproduce the combo.
+- **Q+A generation + judge use the operator's `OPENAI_*` config, NOT a combo's transient model.** Both calls go through `EnvSwapper.primary_model_config()` which reads from the pre-batch `.env` backup. This is intentional — the question bank must be FIXED across all combos for fair comparison, and the judge needs to score every combo on the same axis. Don't switch either call to read the live `.env` (it gets rewritten per combo).
+- **The Q+A phase runs AFTER stats snapshot, not before.** `run_combo` snapshots `/api/stats` at step 9 then runs Q+A at steps 10–11. This ordering is deliberate: ingestion data must persist even if Q+A blows up. Don't reorder.
 - **Do NOT mention `bench/` in `README.md`, `documentation/`, or `handbook/`.** Public docs are deferred. Keep changes scoped to `bench/`, this file, and the routing entry in `CLAUDE.md`.
 
 ## Cross-references

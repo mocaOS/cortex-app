@@ -61,6 +61,17 @@ SECTIONS = [
         "performance_notes", "quality_notes", "recommendation",
         "vs_previous_run",
     ]),
+    ("Q+A Retrieval", [
+        "qa_questions_count",
+        "qa_speed_answered", "qa_speed_errors", "qa_speed_avg_latency_ms",
+        "qa_speed_faithfulness", "qa_speed_completeness",
+        "qa_speed_groundedness", "qa_speed_conciseness",
+        "qa_speed_summary",
+        "qa_quality_answered", "qa_quality_errors", "qa_quality_avg_latency_ms",
+        "qa_quality_faithfulness", "qa_quality_completeness",
+        "qa_quality_groundedness", "qa_quality_conciseness",
+        "qa_quality_summary",
+    ]),
 ]
 
 ALL_COLUMNS: list[str] = [c for _, cols in SECTIONS for c in cols]
@@ -153,7 +164,7 @@ def _new_doc(path: Path) -> None:
         "reasoning_overrides", "primary_base", "extraction_base",
         "relationship_base", "observations", "failure_patterns",
         "performance_notes", "quality_notes", "recommendation",
-        "vs_previous_run",
+        "vs_previous_run", "qa_speed_summary", "qa_quality_summary",
     }
     for col in ALL_COLUMNS:
         tbl.addElement(TableColumn(

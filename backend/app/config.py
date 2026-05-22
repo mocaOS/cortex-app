@@ -294,7 +294,7 @@ class Settings(BaseSettings):
         default=5
     )  # Max agent loop iterations in speed/chat mode
     researcher_max_iterations_quality: int = Field(
-        default=10
+        default=8
     )  # Max agent loop iterations in quality/research mode
     writer_max_tokens_speed: int = Field(
         default=1200
