@@ -25,14 +25,14 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M2.7 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (DeepSeek-V4-Flash primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
 >
 > ```env
-> # Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+> # Primary — agentic Q&A / researcher (DeepSeek-V4-Flash: 1M context window)
 > OPENAI_API_KEY=
 > OPENAI_API_BASE=https://api.venice.ai/api/v1
-> OPENAI_MODEL=minimax-m27
-> OPENAI_MAX_CONTEXT=196608
+> OPENAI_MODEL=deepseek-v4-flash
+> OPENAI_MAX_CONTEXT=1000000
 >
 > # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -43,16 +43,18 @@ cp .env.example .env
 >
 > # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
 > EMBEDDING_MODEL=text-embedding-qwen3-8b
-> EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+> EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+> # EMBEDDING_MAX_INPUT_TOKENS stays at default 8192 — Venice/OpenAI cap inputs at 8192 server-side.
+> # Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
 > ```
 >
 > **Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Safe on Venice / Compute3 / large vLLM endpoints; dial `CONCURRENT_EXTRACTIONS` down first if you're on stock OpenAI or a smaller host.
 >
 > ```env
-> BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
-> CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3)
-> CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
-> VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+> BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
+> CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3)
+> CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
+> VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 > ```
 >
 > You still need to set `NEO4J_PASSWORD` and the `ADMIN_*` / `SESSION_SECRET` block from Step 2 (those are infrastructure, not part of the LLM stack choice). Requires a provider hosting both models (OpenRouter, self-hosted vLLM, Compute3, etc.).

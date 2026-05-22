@@ -825,12 +825,16 @@ class SystemConfigResponse(BaseModel):
     vision_api_base: str = Field(..., description="Vision model API base URL")
     vision_max_concurrent: int = Field(..., description="Max concurrent vision API calls")
     vision_max_output_tokens: int = Field(..., description="Output budget for vision-model image descriptions")
+    vision_min_image_side: int = Field(..., description="Skip vision-API call below this many pixels on the shorter side")
+    vision_max_image_side: int = Field(..., description="Downscale-cap on the longer side before base64 encode")
+    vision_jpeg_quality: int = Field(..., description="JPEG quality for opaque images (PNG kept for alpha)")
 
     # Embedding Configuration
     embedding_model: str = Field(..., description="Embedding model")
     embedding_dimension: int = Field(..., description="Embedding vector dimension")
     embedding_api_base: str = Field(..., description="Embedding API base URL")
     embedding_send_dimensions: bool = Field(..., description="Whether dimensions param is sent to embedding API")
+    embedding_max_input_tokens: int = Field(..., description="Per-input token cap before sending to the embeddings endpoint")
     use_openai_embeddings: bool = Field(..., description="Whether OpenAI embeddings are enabled")
 
     # Upload Configuration

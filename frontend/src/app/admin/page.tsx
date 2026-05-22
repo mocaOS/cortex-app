@@ -467,7 +467,7 @@ export default function AdminPage() {
                       <ConfigItem label="API Base" value={config.extraction_api_base} tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Inherits OPENAI_MAX_CONTEXT when GRAPH_EXTRACTION_MAX_CONTEXT is 0 (GRAPH_EXTRACTION_MAX_CONTEXT)" />
                       <ConfigItem label="Output Tokens" value={config.extraction_max_output_tokens.toLocaleString()} tooltip="Output budget for entity-extraction LLM calls. Inherits OPENAI_MAX_OUTPUT_TOKENS when EXTRACTION_MAX_OUTPUT_TOKENS is 0 (EXTRACTION_MAX_OUTPUT_TOKENS)" />
-                      <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the extraction pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
+                      <ConfigItem label="Concurrent Extractions" value={config.concurrent_extractions} tooltip="How many chunks are extracted in parallel per document. Thread pool size for entity-extraction LLM calls (CONCURRENT_EXTRACTIONS)" />
                     </div>
 
                     {/* Relationship Model */}
@@ -476,11 +476,11 @@ export default function AdminPage() {
                       <p className="text-muted-foreground text-xs mb-2">Used for all relationship discovery (Step 1 per-chunk and Step 2 batch analysis). Separate rate limit from entity extraction. Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model.</p>
                       <ConfigItem label="Model" value={config.relationship_model} tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.relationship_api_base} tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
-                      <ConfigItem label="Concurrency" value={config.concurrent_relations} tooltip="How many per-chunk relationship extractions run in parallel per document (CONCURRENT_RELATIONS)" />
                       <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max input context tokens for Phase 2 batch analysis. Inherits extraction → primary when RELATIONSHIP_MAX_CONTEXT is 0 (RELATIONSHIP_MAX_CONTEXT)" />
                       <ConfigItem label="Output Tokens (per-chunk)" value={config.relationship_max_output_tokens.toLocaleString()} tooltip="Output budget for per-chunk + candidate-scan calls. Inherits extraction → primary when RELATIONSHIP_MAX_OUTPUT_TOKENS is 0 (RELATIONSHIP_MAX_OUTPUT_TOKENS)" />
                       <ConfigItem label="Output Tokens (batch)" value={config.relationship_batch_max_output_tokens.toLocaleString()} tooltip="Output budget for Phase 2 batch analysis — standalone, NOT in the inheritance chain. Batches process hundreds of entity pairs per call (RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS)" />
-                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Number of relationship analysis batches processed concurrently in Step 2. Higher values speed up analysis but increase API load (PARALLEL_RELATIONSHIP_BATCHES)" />
+                      <ConfigItem label="Concurrent Relations" value={config.concurrent_relations} tooltip="Phase 1 — per-chunk relationship extraction during document ingestion. Within a single document, this many chunks have their relationships extracted in parallel (the rest queue behind a per-doc semaphore). High frequency, small payloads. Example: a 50-chunk doc at 4 means 4 chunks process at once, 46 wait. This is NOT the same as 'Parallel Batches' below — that one runs in a separate post-ingestion phase (CONCURRENT_RELATIONS)" />
+                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Phase 2 — cross-document batch analysis that runs AFTER all documents finish ingesting. Cortex takes the full entity graph, groups candidate entity pairs into batches (hundreds of pairs per batch), and asks the LLM about each batch in a single call. This knob controls how many of those big batch calls run concurrently. Low frequency, large payloads. This is NOT the same as 'Concurrent Relations' above — different phase, different work unit (PARALLEL_RELATIONSHIP_BATCHES)" />
                     </div>
 
                     {/* Vision Model */}
@@ -492,6 +492,9 @@ export default function AdminPage() {
                         <ConfigItem label="API Base" value={config.vision_api_base} tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
                         <ConfigItem label="Output Tokens" value={config.vision_max_output_tokens.toLocaleString()} tooltip="Output budget for vision-model image descriptions. Inherits relationship → extraction → primary when VISION_MAX_OUTPUT_TOKENS is 0 (VISION_MAX_OUTPUT_TOKENS)" />
                         <ConfigItem label="Max Concurrent" value={config.vision_max_concurrent} tooltip="System-wide cap on concurrent vision API calls. Controls how many images are analyzed in parallel across all documents (VISION_MAX_CONCURRENT)" />
+                        <ConfigItem label="Min Image Side" value={`${config.vision_min_image_side} px`} tooltip="Skip the vision API call for images smaller than this on either side. PDFs expose bullets, icons, and separators as Docling PictureItems; hosted vision APIs reject sub-64px images with HTTP 400 'did not pass validation checks'. Below the threshold Cortex falls back to Docling's built-in description. Set 0 to disable (VISION_MIN_IMAGE_SIDE)" />
+                        <ConfigItem label="Max Image Side" value={`${config.vision_max_image_side} px`} tooltip="Downscale images so the longer side fits this many pixels before the base64 encode. Cortex renders PDF pages at 2× DPI (~2400×1700) — without this cap the base64 payload bloats and some providers tokenize it as text, blowing past context windows. 1568 matches Claude's recommended max side. Set 0 to disable downscaling (VISION_MAX_IMAGE_SIDE)" />
+                        <ConfigItem label="JPEG Quality" value={config.vision_jpeg_quality} tooltip="JPEG quality (1–95) when encoding opaque images for the vision API. 85 is visually near-lossless at ~5–10× smaller than PNG. RGBA images still use PNG to preserve alpha (VISION_JPEG_QUALITY)" />
                       </div>
                     )}
 
@@ -502,6 +505,7 @@ export default function AdminPage() {
                       <ConfigItem label="Model" value={config.embedding_model} tooltip="Model used to generate vector embeddings for chunks and entities (EMBEDDING_MODEL)" />
                       <ConfigItem label="Dimension" value={config.embedding_dimension} tooltip="Output dimension of the embedding vectors. Must match the model's supported dimensions (EMBEDDING_DIMENSION)" />
                       <ConfigItem label="API Base" value={config.embedding_api_base} tooltip="API endpoint for the embedding model. Defaults to primary API base if not set (EMBEDDING_API_BASE)" />
+                      <ConfigItem label="Max Input Tokens" value={config.embedding_max_input_tokens.toLocaleString()} tooltip="Per-input token cap before sending to the embeddings endpoint. Inputs longer than this are char-truncated client-side (~2.8 chars/token) to avoid HTTP 400 'Input text exceeds the maximum token limit' rejections. Raise for longer-context models e.g. text-embedding-qwen3-8b → 32768 (EMBEDDING_MAX_INPUT_TOKENS)" />
                     </div>
                   </ConfigSection>
 
@@ -534,7 +538,6 @@ export default function AdminPage() {
                   <ConfigSection title="Knowledge Graph" icon={Network} isOpen={openSections.has("graph")} onToggle={() => toggleSection("graph")}>
                     <ConfigItem label="Graph Extraction" value={config.enable_graph_extraction} type="boolean" />
                     <ConfigItem label="Max Graph Hops" value={config.max_graph_hops} />
-                    <ConfigItem label="Concurrent Extractions" value={config.concurrent_extractions} tooltip="Thread pool size for entity extraction LLM calls within each document (CONCURRENT_EXTRACTIONS)" />
                     <ConfigItem label="Community Detection" value={config.enable_community_detection} type="boolean" />
                     <ConfigItem label="Min Community Size" value={config.min_community_size} />
                     <ConfigItem label="Max Communities" value={config.max_communities} />

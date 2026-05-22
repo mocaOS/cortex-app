@@ -137,11 +137,11 @@ Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community su
 **Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
 
 ```env
-# Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+# Primary — agentic Q&A / researcher (DeepSeek-V4-Flash: 1M context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m27
-OPENAI_MAX_CONTEXT=196608
+OPENAI_MODEL=deepseek-v4-flash
+OPENAI_MAX_CONTEXT=1000000
 
 # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -152,16 +152,18 @@ VISION_MODEL=qwen3-6-27b
 
 # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
 EMBEDDING_MODEL=text-embedding-qwen3-8b
-EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+# EMBEDDING_MAX_INPUT_TOKENS defaults to 8192 — Venice/OpenAI cap inputs at 8192 server-side.
+# Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
 ```
 
 **Performance tuning (Venice-validated)** — pair these with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice or large vLLM endpoints, dial back for stock OpenAI or smaller hosts.
 
 ```env
-BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
-CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3 — biggest multiplier)
-CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3 — biggest multiplier)
+CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 ```
 
 Or configure each tier explicitly:

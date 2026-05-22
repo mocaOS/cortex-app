@@ -4384,7 +4384,8 @@ class Neo4jService:
                 result = session.run("""
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)
                     WHERE col.id IN $allowed_collection_ids
-                    WITH count(DISTINCT d) as doc_count,
+                    WITH DISTINCT d
+                    WITH count(d) as doc_count,
                          sum(coalesce(d.file_size, 0)) as total_size
 
                     OPTIONAL MATCH (col2:Collection)-[:CONTAINS]->(d2:Document)-[:HAS_CHUNK]->(c:Chunk)
@@ -4420,10 +4421,16 @@ class Neo4jService:
                            per_chunk_rel_count
                 """, allowed_collection_ids=allowed_collection_ids)
             else:
+                # NOTE: total_size MUST be aggregated before any OPTIONAL MATCH that
+                # fans rows out (e.g. HAS_CHUNK), or sum(d.file_size) gets multiplied
+                # by the per-doc chunk count and yields nonsense totals (~70× inflation
+                # for typical corpora).
                 result = session.run("""
                 MATCH (d:Document)
-                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                WITH count(DISTINCT d) as doc_count, count(c) as chunk_count, sum(coalesce(d.file_size, 0)) as total_size
+                WITH count(d) as doc_count, sum(coalesce(d.file_size, 0)) as total_size
+
+                OPTIONAL MATCH (:Document)-[:HAS_CHUNK]->(c:Chunk)
+                WITH doc_count, total_size, count(c) as chunk_count
 
                 OPTIONAL MATCH (e:Entity)
                 WITH doc_count, chunk_count, total_size, count(e) as entity_count

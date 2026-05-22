@@ -79,6 +79,15 @@ class Settings(BaseSettings):
             "vision_max_output_tokens_raw", "VISION_MAX_OUTPUT_TOKENS"
         ),
     )
+    vision_min_image_side: int = Field(
+        default=64
+    )  # Skip vision-model analysis for images where min(width, height) is below this many pixels. PDFs often expose bullets/icons/separators as PictureItems; Venice (and most hosted vision APIs) reject sub-64px images with HTTP 400 "did not pass validation checks". Set 0 to disable the pre-filter and let the API decide.
+    vision_max_image_side: int = Field(
+        default=1568
+    )  # Downscale images so the longer side fits this many pixels before sending to the vision model. Cortex extracts PDF pages at 2× DPI (2400×1700 typical) — without downscaling the base64 payload bloats into hundreds of KB. Customers on providers that tokenize the base64 payload as text (some LiteLLM/vLLM wrappers) saw 184K-token vision inputs blow past 192K context windows. 1568 matches Claude's recommended max side: high enough for OCR-grade text legibility, low enough to keep payloads under ~700 KB JPEG. Set 0 to disable downscaling.
+    vision_jpeg_quality: int = Field(
+        default=85
+    )  # JPEG quality (1-95) used when encoding non-transparent images for the vision API. 85 is the standard quality/size sweet spot — visually near-lossless for documents while ~5–10× smaller than PNG. PNG is still used automatically for images with an alpha channel (RGBA mode).
 
     # Upload Configuration
     upload_dir: str = Field(default="./uploads")
@@ -147,6 +156,9 @@ class Settings(BaseSettings):
     embedding_api_key: str = Field(
         default=""
     )  # API key for embeddings (defaults to openai_api_key if empty)
+    embedding_max_input_tokens: int = Field(
+        default=8192
+    )  # Per-input token cap before sending to embeddings endpoint. Raise for models with longer context (e.g. text-embedding-qwen3-8b supports 32768). Oversized inputs are truncated client-side to avoid 400 "Input text exceeds the maximum token limit" errors.
 
     # Chunking Configuration
     chunk_size: int = Field(default=500)

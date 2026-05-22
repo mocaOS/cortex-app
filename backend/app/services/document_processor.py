@@ -103,6 +103,124 @@ def _clean_image_placeholders(text: str) -> str:
     return cleaned.strip()
 
 
+# Conservative chars-per-token ratio for BPE-family embedding models.
+# English averages ~4.0; markdown/code with heavy punctuation lands closer to 3.0;
+# CJK content is denser still. 2.8 is a deliberately conservative single value:
+# accepts ~30% over-truncation on plain English in exchange for never overshooting
+# the server cap. The trade is worth it — losing a few % of a chunk's tail is
+# negligible vs losing the entire embedding to an HTTP 400.
+_EMBED_CHARS_PER_TOKEN = 2.8
+
+
+def _truncate_for_embedding(docs, max_tokens: int):
+    """Truncate Haystack Document content client-side to stay under the embed API's token cap.
+
+    The OpenAI-compatible embeddings endpoints reject inputs over their model-specific
+    limit with HTTP 400 ("Input text exceeds the maximum token limit of N tokens"),
+    losing the whole chunk's embedding. This guard truncates by an approximate char
+    budget so the call still succeeds with a (slightly) shorter input.
+
+    With `_enforce_embed_token_cap` running ahead of this guard, truncation should fire
+    essentially never — kept as a belt-and-suspenders safety net.
+    """
+    if max_tokens <= 0:
+        return docs
+    char_budget = int(max_tokens * _EMBED_CHARS_PER_TOKEN)
+    truncated = 0
+    for d in docs:
+        content = getattr(d, "content", None)
+        if content and len(content) > char_budget:
+            d.content = content[:char_budget]
+            truncated += 1
+    if truncated:
+        logger.warning(
+            f"Truncated {truncated} input(s) to ~{max_tokens} tokens "
+            f"({char_budget} chars) before embedding"
+        )
+    return docs
+
+
+def _split_to_budget(text: str, char_budget: int) -> List[str]:
+    """Recursively split text into pieces <= char_budget chars.
+
+    Walks a separator hierarchy (paragraph → line → sentence → space → hard char slice)
+    and greedily merges adjacent fragments back together, recursing into any single
+    fragment that still exceeds the budget. Final hard-slice fallback handles content
+    with no whitespace at all (e.g. a 50K-char unbroken token blob).
+    """
+    if len(text) <= char_budget:
+        return [text]
+    for sep in ("\n\n", "\n", ". ", " ", ""):
+        if sep == "":
+            # Last resort — hard char slice. Guaranteed to terminate.
+            return [text[i : i + char_budget] for i in range(0, len(text), char_budget)]
+        parts = text.split(sep)
+        if len(parts) == 1:
+            continue  # separator not present in text
+        pieces: List[str] = []
+        current = ""
+        for p in parts:
+            candidate = (current + sep + p) if current else p
+            if len(candidate) <= char_budget:
+                current = candidate
+            else:
+                if current:
+                    pieces.append(current)
+                if len(p) > char_budget:
+                    # Single fragment still too big — recurse with finer separators
+                    pieces.extend(_split_to_budget(p, char_budget))
+                    current = ""
+                else:
+                    current = p
+        if current:
+            pieces.append(current)
+        return pieces
+    return [text]  # unreachable, satisfies type checker
+
+
+def _enforce_embed_token_cap(docs, max_tokens: int):
+    """Sub-split any chunk that exceeds the embed token budget into safe pieces.
+
+    Runs before `_truncate_for_embedding` so the embed API call always sees safe inputs
+    AND no content is lost (truncation drops tail bytes). New sub-chunks preserve the
+    parent's `meta` dict so downstream chunk-storage logic doesn't need to know they
+    were split. `chunk_index` is assigned later by the storage loop's `enumerate`, so
+    the extra pieces just slot into the index sequence naturally.
+
+    Use case: a Docling-extracted markdown table or a custom-input paste with no
+    sentence boundaries can produce a single chunk that exceeds the embed cap.
+    Without this pass, that chunk either errors (LiteLLM-style ContextWindowExceeded)
+    or gets its tail silently truncated. With it, the chunk gets cleanly subdivided
+    along the best available boundary.
+    """
+    if max_tokens <= 0:
+        return docs
+    char_budget = int(max_tokens * _EMBED_CHARS_PER_TOKEN)
+    over_budget = [(i, d) for i, d in enumerate(docs) if len(getattr(d, "content", "") or "") > char_budget]
+    if not over_budget:
+        return docs
+
+    from haystack import Document as HaystackDocument
+
+    result: list = []
+    extra_pieces = 0
+    for d in docs:
+        content = getattr(d, "content", None) or ""
+        if len(content) <= char_budget:
+            result.append(d)
+            continue
+        meta = dict(getattr(d, "meta", {}) or {})
+        pieces = _split_to_budget(content, char_budget)
+        for piece in pieces:
+            result.append(HaystackDocument(content=piece, meta=dict(meta)))
+        extra_pieces += len(pieces) - 1
+    logger.info(
+        f"Sub-split {len(over_budget)} oversize chunk(s) into {len(over_budget) + extra_pieces} "
+        f"pieces to fit embed token cap (~{max_tokens} tokens, {char_budget} chars)"
+    )
+    return result
+
+
 def _protect_urls(text: str) -> Tuple[str, dict]:
     """
     Replace URLs in text with placeholders to prevent splitting.
@@ -1109,6 +1227,12 @@ class DocumentProcessor:
                     chunk.content = _restore_urls(chunk.content, combined_url_map)
                 logger.debug(f"Restored URLs in {len(chunks)} chunks")
 
+            # Enforce embed-token cap after URL restoration (URLs can grow content).
+            # Splits any oversize chunk into safe pieces so the downstream embed call
+            # never trips ContextWindowExceeded errors on managed providers / litellm
+            # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
+            chunks = _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
+
             # Check for cancellation after chunking
             self._check_cancellation(doc_id)
 
@@ -1130,6 +1254,7 @@ class DocumentProcessor:
             self._check_cancellation(doc_id)
 
             # Generate embeddings (most CPU-intensive - run in thread pool)
+            _truncate_for_embedding(chunks, self.settings.embedding_max_input_tokens)
             embed_result = await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(self.embedder.run, documents=chunks),
@@ -1966,16 +2091,18 @@ class DocumentProcessor:
                     metadata=image_metadata,
                 )
 
+                image_doc = HaystackDocument(
+                    content=image_content,
+                    meta=image_chunk.metadata,
+                )
+                _truncate_for_embedding(
+                    [image_doc], self.settings.embedding_max_input_tokens
+                )
                 embed_result = await loop.run_in_executor(
                     img_executor,
                     functools.partial(
                         self.embedder.run,
-                        documents=[
-                            HaystackDocument(
-                                content=image_content,
-                                meta=image_chunk.metadata,
-                            )
-                        ],
+                        documents=[image_doc],
                     ),
                 )
                 embedded_docs = embed_result.get("documents", [])

@@ -9,6 +9,51 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## May 22, 2026
 
+### Image downscaling + JPEG recompression before vision API call
+
+PDF pages are rendered at 2× DPI for OCR-grade text legibility (`images_scale=2.0`), so a typical page becomes a ~2400×1700 PIL image. Encoded as PNG with our original `_pil_to_data_url`, that's several MB of base64 — and some hosted vision deployments (LiteLLM-wrapped vLLM, custom OpenAI-compatible endpoints) tokenize the base64 data-URL payload as *text* instead of using tile-based image accounting. One customer instance hit **184K input tokens against a 192K context cap** on a single image as a result.
+
+Two new env knobs in `backend/app/services/vision_analyzer._pil_to_data_url`:
+
+- `VISION_MAX_IMAGE_SIDE` (default `1568`) — caps the longer side via `Image.thumbnail` with Lanczos resampling, preserves aspect ratio, original PIL untouched. 1568 matches Claude's recommended max side: high enough for OCR text legibility, low enough to keep JPEG payloads under ~700 KB. Set 0 to disable.
+- `VISION_JPEG_QUALITY` (default `85`) — JPEG quality for opaque content. Images with alpha (mode `RGBA`) still go out as PNG; everything else uses JPEG with `optimize=True` for 5–10× smaller payloads at visually-near-lossless quality.
+
+Surfaced in the admin Settings page (LLM Configuration → Vision Model) and documented in `.env.example`, `.claude/environment.md`, and `handbook/14-image-analysis.md`.
+
+### Venice perf-tuning numbers recalibrated to verifiably-stable defaults
+
+The previously documented Venice tuning block (`BATCH_PROCESSING_CONCURRENCY=5`, `CONCURRENT_EXTRACTIONS=10`, `CONCURRENT_RELATIONS=5`, `VISION_MAX_CONCURRENT=5`) was too aggressive — a 52-doc ingestion run logged **1012 × HTTP 429 "Too Many Requests"** against Venice's embeddings endpoint (tripping their 20-failure / 30-second penalty), and **34 entity-dedup batches fell back to Levenshtein** because the rate-limit cascade killed embedding calls used for semantic resolution. Recalibrated to:
+
+```env
+BATCH_PROCESSING_CONCURRENCY=3
+CONCURRENT_EXTRACTIONS=4
+CONCURRENT_RELATIONS=4
+VISION_MAX_CONCURRENT=4
+```
+
+A subsequent 52-doc batch on the new values processed clean: **0 × 429s, 0 × Levenshtein fallbacks, 0 × event-loop block warnings, 52/52 succeeded**. Updated in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, `handbook/{03-getting-started.md, 04-configuration.md}` — eight locations total. The old values remain reasonable on bigger self-hosted vLLM endpoints where you control the rate-limit policy; they were just too hot for Venice's gateway.
+
+### Recommended stack switches to DeepSeek-V4-Flash + Qwen3-Embedding-8B native context
+
+The bench-validated primary moves from MiniMax-M2.7 (196K window, inlined `<think>` issues on Venice for relationship-tier calls) to DeepSeek-V4-Flash (1M window). The recommended block in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` now reads `OPENAI_MODEL=deepseek-v4-flash` / `OPENAI_MAX_CONTEXT=1000000`.
+
+### `EMBEDDING_MAX_INPUT_TOKENS` env var + post-chunker token-cap sub-splitter
+
+New env knob `EMBEDDING_MAX_INPUT_TOKENS` (default `8192`) — matches the cap Venice and OpenAI enforce at the API gateway (8192 regardless of the underlying model's native context). Two-layer protection now sits between the chunker and the embed call:
+
+1. **Sub-splitter** — `_enforce_embed_token_cap` in `backend/app/services/document_processor.py` walks the chunker output after URL restoration. Any chunk exceeding `EMBEDDING_MAX_INPUT_TOKENS × ~2.8 chars/token` gets recursively split (paragraph → line → sentence → space → hard char slice) into safe pieces with the parent's `meta` preserved. Zero content loss; new pieces slot into `chunk_index` via the existing `enumerate` loop. Catches Docling-extracted tables and custom-input pastes without sentence boundaries — the exact inputs that previously emitted single oversize chunks.
+2. **Truncation safety net** — `_truncate_for_embedding` (~2.8 chars/token, deliberately conservative for markdown/code/CJK) runs immediately before each `OpenAIDocumentEmbedder.run()` call as belt-and-suspenders. With the sub-splitter in front, it should fire essentially never on normal docs.
+
+Together they stop the `HTTP 400 "Input text exceeds the maximum token limit of N tokens"` (OpenAI-direct) and `litellm.ContextWindowExceededError` (proxied) failures that silently dropped embeddings. Self-hosted vLLM users running Qwen3-Embedding-8B can lift the cap to 32768 to use the model's full native context; managed-provider users should leave the default.
+
+### `VISION_MIN_IMAGE_SIDE` skips sub-threshold images before the vision call
+
+Default `64`. PDFs expose ~10–40 px bullets, icons, and dingbats as Docling `PictureItem`s; Venice (and most hosted vision APIs) reject any image with a side under ~64 px as `HTTP 400 "Supplied image did not pass validation checks"`. Direct API probing confirmed the cutoff: 31×31, 32×32, 48×48, 56×56 all fail; 64×64 passes. Cortex now short-circuits in `vision_analyzer.analyze_image_with_vision_model` when `min(width, height) < VISION_MIN_IMAGE_SIDE` — saves API spend, eliminates the 3-retry cascade per tiny image, and removes the noisy fallback storage entries from the graph. Set 0 to disable. Format (PNG vs JPEG) was *not* the cause — both behave identically.
+
+### Stats endpoint no longer multiplies file_size by chunk count
+
+`GET /api/stats` was reporting `total_size` ~70× larger than reality (23 GB shown for a 320 MB corpus). Root cause in `neo4j_service.py:get_stats`: the unscoped query did `MATCH (d:Document) OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk) WITH … sum(d.file_size)`, fanning out one row per chunk so each document's `file_size` was summed once per chunk per doc. Fixed by hoisting the `total_size` aggregation before the chunk join. The scoped (per-collection) variant got a matching `WITH DISTINCT d` defensive fix in case docs appear in multiple collections.
+
 ### Image entities now use the same embedding-based dedup as text entities
 
 Previously, entities extracted from image descriptions always went through fuzzy-only Levenshtein 85% deduplication, even with `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` enabled. Text entities benefited from embedding-first dedup (catching "MOCA" ↔ "Museum of Crypto Art"); image entities did not. This left a cross-source dedup gap — an "MOCA" entity extracted from a chart caption couldn't merge with an existing "Museum of Crypto Art" text entity.

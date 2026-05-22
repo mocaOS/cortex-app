@@ -91,8 +91,8 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=minimax-m27        # primary / agentic (196K window)
-OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M2.7's full input window
+OPENAI_MODEL=deepseek-v4-flash        # primary / agentic (1M window)
+OPENAI_MAX_CONTEXT=1000000                 # unlock DeepSeek-V4-Flash's full input window
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B's full input window; relationship_max_context inherits
@@ -101,18 +101,20 @@ VISION_MODEL=qwen3-6-27b              # image analysis (does NOT inherit from ex
 
 EMBEDDING_MODEL=text-embedding-qwen3-8b    # text embedding model (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-# Output budgets + all other knobs cascade through defaults
+# Output budgets + all other knobs cascade through defaults. EMBEDDING_MAX_INPUT_TOKENS stays at
+# default 8192 — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of model.
+# Self-hosted vLLM users running Qwen3-Embedding-8B can lift to 32768.
 ```
 
-Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting MiniMax-M2.7 and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware.
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting DeepSeek-V4-Flash and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
 **Performance tuning (Venice-validated)** — bench-validated against Venice as the LLM provider, paired with the recommended stack above. Cranks ingestion throughput at the cost of much higher peak concurrency:
 
 ```bash
-BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
-CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3 — biggest multiplier)
-CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3 — biggest multiplier)
+CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 ```
 
 **Compounding behavior.** `BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs because they're *per-document* limits — each in-flight document can run its own pool of extraction / relationship threads. `VISION_MAX_CONCURRENT` is a global semaphore and does *not* compound. The pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual concurrent in-flight calls stays meaningfully below the worst-case theoretical product — you won't see the full multiplication hit a single provider at one moment.

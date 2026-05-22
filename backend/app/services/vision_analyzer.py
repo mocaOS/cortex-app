@@ -195,12 +195,15 @@ class VisionAnalyzer:
         logger.info(f"Extracted {len(extracted_images)} images from document")
         return extracted_images
 
-    def _pil_to_base64(self, pil_image: Image.Image, format: str = "PNG") -> str:
+    def _pil_to_base64(
+        self, pil_image: Image.Image, format: str = "PNG", quality: int = 85
+    ) -> str:
         """Convert PIL image to base64 string.
 
         Args:
             pil_image: PIL Image object
             format: Image format (PNG, JPEG, etc.)
+            quality: JPEG quality (1-95). Ignored for PNG.
 
         Returns:
             Base64 encoded image string
@@ -208,15 +211,26 @@ class VisionAnalyzer:
         buffer = io.BytesIO()
 
         # Convert to RGB if necessary (for JPEG compatibility)
-        if pil_image.mode in ("RGBA", "LA", "P"):
+        if format == "JPEG" and pil_image.mode in ("RGBA", "LA", "P"):
             pil_image = pil_image.convert("RGB")
 
-        pil_image.save(buffer, format=format)
+        save_kwargs: dict = {"format": format}
+        if format == "JPEG":
+            # `optimize=True` recomputes Huffman tables for a small extra size win.
+            save_kwargs["quality"] = quality
+            save_kwargs["optimize"] = True
+        pil_image.save(buffer, **save_kwargs)
         image_data = buffer.getvalue()
         return base64.b64encode(image_data).decode("utf-8")
 
     def _pil_to_data_url(self, pil_image: Image.Image) -> str:
         """Convert PIL image to data URL format.
+
+        Pre-encodes a max-side cap and JPEG-by-default for opaque images. Without
+        this, full-resolution PDF page renders (2400×1700 at images_scale=2.0)
+        produce multi-MB PNGs that some hosted/proxied vision deployments tokenize
+        as raw base64 — bloating "input tokens" into the hundreds of thousands and
+        tripping context-window limits.
 
         Args:
             pil_image: PIL Image object
@@ -224,11 +238,28 @@ class VisionAnalyzer:
         Returns:
             Data URL string (data:image/...;base64,...)
         """
-        # Determine format and MIME type
-        format = "PNG" if pil_image.mode == "RGBA" else "JPEG"
-        mime_type = "image/png" if format == "PNG" else "image/jpeg"
+        # Downscale so the longer side fits within vision_max_image_side.
+        # `Image.thumbnail` is in-place and preserves aspect ratio, so we copy
+        # first to avoid mutating the caller's image (it may be used downstream
+        # for storage, captions, etc).
+        max_side = self.settings.vision_max_image_side
+        if max_side > 0 and max(pil_image.size) > max_side:
+            pil_image = pil_image.copy()
+            pil_image.thumbnail((max_side, max_side), Image.LANCZOS)
 
-        base64_data = self._pil_to_base64(pil_image, format)
+        # Use PNG only when the image actually has an alpha channel that matters;
+        # otherwise JPEG with optimized Huffman yields 5–10× smaller payloads at
+        # visually-near-lossless quality 85.
+        if pil_image.mode == "RGBA":
+            format = "PNG"
+            mime_type = "image/png"
+        else:
+            format = "JPEG"
+            mime_type = "image/jpeg"
+
+        base64_data = self._pil_to_base64(
+            pil_image, format, quality=self.settings.vision_jpeg_quality
+        )
         return f"data:{mime_type};base64,{base64_data}"
 
     def _get_http_client(self) -> httpx.AsyncClient:
@@ -272,6 +303,21 @@ class VisionAnalyzer:
         if not api_key:
             logger.error("No API key available for vision model")
             return None
+
+        # Skip sub-threshold images: PDF bullets, icons, and separators are
+        # extracted as PictureItems by Docling but get rejected by hosted vision
+        # APIs (Venice returns HTTP 400 "did not pass validation checks" for any
+        # side under ~64 px). Empirically these images carry no useful semantic
+        # content anyway — sending them just burns budget on 3 doomed retries.
+        min_side = self.settings.vision_min_image_side
+        if min_side > 0:
+            w, h = pil_image.size
+            if min(w, h) < min_side:
+                logger.info(
+                    f"Skipping vision analysis: image too small ({w}x{h}, "
+                    f"min side {min_side}). Caller will fall back to Docling description."
+                )
+                return None
 
         analysis_prompt = prompt or (
             "Analyze this image in detail for document retrieval purposes. "

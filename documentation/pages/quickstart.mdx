@@ -52,11 +52,11 @@ Cortex uses LLMs for Q&A, entity extraction, relationship extraction, image unde
 **Recommended Minimal Stack** — bench-validated 2-model setup. Fill in two API values and you're done; relationship + vision inherit from the extraction model, output budgets cascade automatically.
 
 ```bash
-# Primary — agentic Q&A / researcher (MiniMax-M2.7: 196K context window)
+# Primary — agentic Q&A / researcher (DeepSeek-V4-Flash: 1M context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m27
-OPENAI_MAX_CONTEXT=196608
+OPENAI_MODEL=deepseek-v4-flash
+OPENAI_MAX_CONTEXT=1000000
 
 # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -67,16 +67,18 @@ VISION_MODEL=qwen3-6-27b
 
 # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
 EMBEDDING_MODEL=text-embedding-qwen3-8b
-EMBEDDING_DIMENSION=4096   # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
+# EMBEDDING_MAX_INPUT_TOKENS stays at default 8192 — Venice/OpenAI cap inputs at 8192 server-side.
+# Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
 ```
 
 **Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice / Compute3 / large vLLM endpoints. Dial back for stock OpenAI or smaller hosts.
 
 ```bash
-BATCH_PROCESSING_CONCURRENCY=5    # docs processed in parallel (default 2)
-CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3)
-CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=5           # system-wide vision-API semaphore (default 3)
+BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
+CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3)
+CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 ```
 
 Or configure each tier independently:

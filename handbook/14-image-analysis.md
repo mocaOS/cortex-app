@@ -54,6 +54,25 @@ VISION_MAX_CONCURRENT=3   # Max concurrent vision API calls system-wide
 
 This controls a global asyncio Semaphore shared across all documents. Increase for faster throughput; decrease to respect API rate limits.
 
+### Small-Image Pre-Filter
+
+```env
+VISION_MIN_IMAGE_SIDE=64   # Skip vision-API call below this many pixels (set 0 to disable)
+```
+
+PDFs commonly expose ~10–40 px bullets, icons, dingbats, and separator glyphs as Docling `PictureItem`s. Hosted vision APIs reject these as too small — Venice returns `HTTP 400 "Supplied image did not pass validation checks"` for anything below ~64 px on either side, and our retry policy then burns three doomed requests per tiny image. Cortex skips the API call when `min(width, height) < VISION_MIN_IMAGE_SIDE` and falls back to Docling's description (or "no description available"), saving API spend without losing meaningful content — these sub-threshold images carry no semantic value.
+
+### Image Downscaling & Compression
+
+```env
+VISION_MAX_IMAGE_SIDE=1568   # Cap on the longer side before base64 encode (set 0 to disable)
+VISION_JPEG_QUALITY=85       # JPEG quality for opaque images (PNG kept for alpha)
+```
+
+Cortex renders PDF pages at 2× DPI for OCR-grade text legibility (`images_scale=2.0` in Docling). A typical page becomes a 2400×1700 PIL image — encoded as PNG, that's several MB. Some hosted vision deployments (especially LiteLLM-wrapped or custom vLLM endpoints) tokenize the base64 data-URL payload as *text*, so a multi-MB image counts as hundreds of thousands of input tokens and blows past the model's context window. One customer instance hit 184K input tokens against a 192K cap from a single image.
+
+Cortex resizes images so the longer side fits `VISION_MAX_IMAGE_SIDE` (default 1568, matching Claude's recommended max side) using Lanczos resampling — preserves aspect ratio and stays sharp enough for text OCR. Opaque images go out as JPEG at `VISION_JPEG_QUALITY=85` (5–10× smaller than PNG, visually near-lossless for documents); images with alpha channels stay PNG. The resize is non-destructive: Cortex stores the original unmodified.
+
 ## Image Extraction
 
 Images are extracted during Docling conversion from:

@@ -3898,12 +3898,16 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         vision_api_base=settings.vision_model_api_base or settings.openai_api_base,
         vision_max_concurrent=settings.vision_max_concurrent,
         vision_max_output_tokens=settings.vision_max_output_tokens,
+        vision_min_image_side=settings.vision_min_image_side,
+        vision_max_image_side=settings.vision_max_image_side,
+        vision_jpeg_quality=settings.vision_jpeg_quality,
 
         # Embedding Configuration
         embedding_model=settings.embedding_model,
         embedding_dimension=settings.embedding_dimension,
         embedding_api_base=settings.embed_api_base,
         embedding_send_dimensions=settings.embedding_send_dimensions,
+        embedding_max_input_tokens=settings.embedding_max_input_tokens,
         use_openai_embeddings=settings.use_openai_embeddings,
         
         # Upload Configuration

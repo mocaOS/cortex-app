@@ -65,6 +65,9 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 - `VISION_MAX_CONCURRENT` (default: 3) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing)
 - `VISION_REASONING_MODE` (default: `off`) — see [Reasoning Control (ingestion)](#reasoning-control-ingestion). Suppresses `<think>` output on reasoning multimodal models (Qwen3-VL, GLM-V, etc.) so image descriptions stay clean.
 - `VISION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → `EXTRACTION_MAX_OUTPUT_TOKENS` → `OPENAI_MAX_OUTPUT_TOKENS`) — output budget for the vision-model image-description call (`vision_analyzer.py:304`).
+- `VISION_MIN_IMAGE_SIDE` (default: 64) — minimum image side (pixels) before `analyze_image_with_vision_model` calls the API. PDFs expose bullets/icons/separators as `PictureItem`s; hosted vision APIs reject sub-64px images (Venice returns HTTP 400 *"Supplied image did not pass validation checks"*). Below the threshold Cortex skips the call and lets `process_single_image` fall back to Docling's description (or "no description available"). Set 0 to disable the pre-filter.
+- `VISION_MAX_IMAGE_SIDE` (default: 1568) — downscale-cap on the longer side before the base64 data-URL encode in `vision_analyzer._pil_to_data_url`. Cortex renders PDF pages at 2× DPI (typical 2400×1700) — without downscaling the base64 blob bloats into hundreds of KB. Some providers (custom LiteLLM/vLLM deployments) tokenize the base64 payload as text and overflow context windows (one customer hit 184K input tokens against a 192K cap). 1568 matches Claude's recommended max side: OCR-grade legible while keeping JPEG payloads under ~700 KB. Resize uses Lanczos and preserves aspect ratio via `Image.thumbnail`. Set 0 to disable downscaling.
+- `VISION_JPEG_QUALITY` (default: 85) — JPEG quality (1–95) used in `_pil_to_base64` for opaque images. 85 is the visually-near-lossless sweet spot at ~5–10× smaller than PNG. Images with alpha (mode `RGBA`) still use PNG.
 
 ## Budget Fallback Chain
 
@@ -76,23 +79,25 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 Recommended minimal config when running a 3-tier stack:
 ```env
-OPENAI_MODEL=minimax-m27      # primary / agentic (196K window)
-OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M2.7 full input window
+OPENAI_MODEL=deepseek-v4-flash      # primary / agentic (1M window)
+OPENAI_MAX_CONTEXT=1000000               # unlock DeepSeek-V4-Flash full input window
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.7-27B full input window; relationship_max_context inherits
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
 EMBEDDING_MODEL=text-embedding-qwen3-8b  # text embedding (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                 # native; Neo4j 5.26 (default) supports 4096-dim vector indexes
-# Output budgets cascade automatically
+# Output budgets cascade automatically. EMBEDDING_MAX_INPUT_TOKENS stays at default
+# 8192 — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of
+# the model's native window. Self-hosted vLLM users can lift to 32768.
 ```
 Both `*_MAX_CONTEXT` overrides are required — the conservative default (32768) doesn't match either model's actual input window.
 
 Companion performance-tuning block (Venice-validated; pair with the stack above to maximize ingestion throughput):
 ```env
-BATCH_PROCESSING_CONCURRENCY=5    # docs in parallel (default 2)
-CONCURRENT_EXTRACTIONS=10         # entity-extraction threads per doc (default 3) — biggest multiplier
-CONCURRENT_RELATIONS=5            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=5           # system-wide vision semaphore (default 3)
+BATCH_PROCESSING_CONCURRENCY=3    # docs in parallel (default 2)
+CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3) — biggest multiplier
+CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 ```
 `BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / Compute3 / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
 
@@ -104,6 +109,7 @@ VISION_MAX_CONCURRENT=5           # system-wide vision semaphore (default 3)
 
 - `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `USE_OPENAI_EMBEDDINGS` — embedding config
 - `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
+- `EMBEDDING_MAX_INPUT_TOKENS` (default: 8192) — per-input token cap before sending to the embeddings endpoint. Oversized inputs are char-truncated client-side (~2.8 chars/token, deliberately conservative to handle markdown/code/CJK content without overshooting the server cap) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* errors. **Keep at 8192 for managed providers** — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of the underlying model's native window. Only lift (e.g. to 32768 for Qwen3-Embedding-8B) on self-hosted vLLM where you control the deployment. Applied in `app/services/document_processor.py:_truncate_for_embedding`.
 
 ## Feature Flags
 

@@ -685,12 +685,16 @@ export interface SystemConfig {
   vision_api_base: string;
   vision_max_concurrent: number;
   vision_max_output_tokens: number;
+  vision_min_image_side: number;
+  vision_max_image_side: number;
+  vision_jpeg_quality: number;
 
   // Embedding Configuration
   embedding_model: string;
   embedding_dimension: number;
   embedding_api_base: string;
   embedding_send_dimensions: boolean;
+  embedding_max_input_tokens: number;
   use_openai_embeddings: boolean;
 
   // Upload Configuration
