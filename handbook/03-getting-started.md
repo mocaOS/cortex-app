@@ -25,14 +25,14 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (DeepSeek-V4-Flash primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M27 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
 >
 > ```env
-> # Primary — agentic Q&A / researcher (DeepSeek-V4-Flash: 1M context window)
+> # Primary — agentic Q&A / researcher (MiniMax-M27: 192K context window)
 > OPENAI_API_KEY=
 > OPENAI_API_BASE=https://api.venice.ai/api/v1
-> OPENAI_MODEL=deepseek-v4-flash
-> OPENAI_MAX_CONTEXT=1000000
+> OPENAI_MODEL=minimax-m27
+> OPENAI_MAX_CONTEXT=196608
 >
 > # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b

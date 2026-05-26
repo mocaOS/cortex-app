@@ -137,11 +137,11 @@ Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community su
 **Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
 
 ```env
-# Primary — agentic Q&A / researcher (DeepSeek-V4-Flash: 1M context window)
+# Primary — agentic Q&A / researcher (MiniMax-M27: 192K context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=deepseek-v4-flash
-OPENAI_MAX_CONTEXT=1000000
+OPENAI_MODEL=minimax-m27
+OPENAI_MAX_CONTEXT=196608
 
 # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -197,7 +197,7 @@ OPENAI_MAX_CONTEXT=32768                     # primary input context; sub-tiers 
 
 # Context budgets — only override when sub-tier model has bigger window than primary
 GRAPH_EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=198000              # must match RELATIONSHIP_EXTRACTION_MODEL context window
+RELATIONSHIP_MAX_CONTEXT=196608              # must match RELATIONSHIP_EXTRACTION_MODEL context window
 
 # Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
 # off | minimal | auto | low | medium | high. No-op for pure instruct models.

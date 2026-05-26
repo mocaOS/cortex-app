@@ -79,8 +79,8 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 Recommended minimal config when running a 3-tier stack:
 ```env
-OPENAI_MODEL=deepseek-v4-flash      # primary / agentic (1M window)
-OPENAI_MAX_CONTEXT=1000000               # unlock DeepSeek-V4-Flash full input window
+OPENAI_MODEL=minimax-m27            # primary / agentic (192K window)
+OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M27 full input window
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.7-27B full input window; relationship_max_context inherits
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)

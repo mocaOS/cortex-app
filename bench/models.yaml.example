@@ -140,7 +140,7 @@ models:
     model_id: minimax-m27
     base_url: https://api.venice.ai/api/v1
     api_key_env: OPENAI_API_KEY
-    context_length: 198000
+    context_length: 196608
     family: minimax
     reasoning_capable: true
     note: "Strong reasoning model for Q&A. AVOID for ingestion tiers — inlines <think> despite disable_thinking."
@@ -149,7 +149,7 @@ models:
     model_id: minimax-m25
     base_url: https://api.venice.ai/api/v1
     api_key_env: OPENAI_API_KEY
-    context_length: 198000
+    context_length: 196608
     family: minimax
     reasoning_capable: true
     note: "Older MiniMax MoE. Cheaper ($0.34/$1.19) but same inlined-thinking caveat as m27. No response_schema."
