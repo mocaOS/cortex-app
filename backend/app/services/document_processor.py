@@ -2466,13 +2466,17 @@ class QueryProcessor:
         Uses Reciprocal Rank Fusion (RRF) for better results.
         Optionally scoped to a specific collection or list of collections.
 
+        Embed + Neo4j calls are I/O-bound and synchronous, so they run in threads.
+        Without this, three parallel `graph_search_async` calls from the researcher
+        serialize on the loop and produce multi-second event-loop blocks.
+
         Returns:
             Dict with 'results', 'graph_context', and search metadata
         """
-        # Generate query embedding
-        query_embedding = self.embed_query(query)
+        # Generate query embedding (HTTPS call → run in thread)
+        query_embedding = await asyncio.to_thread(self.embed_query, query)
 
-        # Extract entities from the query (async to not block event loop)
+        # Extract entities from the query (already async)
         query_entities = []
         if self.graph_extractor.is_available:
             query_entities = (
@@ -2481,7 +2485,8 @@ class QueryProcessor:
 
         # Use hybrid search with RRF if enabled
         if use_hybrid_rrf and self.settings.enable_hybrid_search:
-            hybrid_result = self.neo4j.hybrid_search_rrf(
+            hybrid_result = await asyncio.to_thread(
+                self.neo4j.hybrid_search_rrf,
                 query_embedding=query_embedding,
                 query_text=query,
                 entity_names=query_entities,
@@ -2503,7 +2508,8 @@ class QueryProcessor:
             }
         else:
             # Legacy hybrid search — no collection filter available here, falls back to full scan
-            result = self.neo4j.hybrid_search(
+            result = await asyncio.to_thread(
+                self.neo4j.hybrid_search,
                 query_embedding=query_embedding,
                 entity_names=query_entities,
                 top_k=top_k,

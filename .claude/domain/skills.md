@@ -34,8 +34,10 @@ All enabled skills are loaded at researcher agent session start:
 
 Built-in `http_request` tool defined in `research_prompts.py`, executed in `researcher_agent.py` — **no `headers` parameter** (auth is server-side).
 
-### Server-Side Auth Injection
-`_execute_http_request` merges all activated skill configs, builds HTTP headers from `auth_header` fields in each skill's config schema (e.g., `"Authorization: Bearer API_TOKEN"` → header with actual value from config.json), and calls the API via httpx.
+### Server-Side Auth Injection (hostname-scoped)
+`http_request` builds HTTP headers from `auth_header` fields in each activated skill's config schema (e.g., `"Authorization: Bearer API_TOKEN"` → header with actual value from config.json), then calls the API via httpx. Headers are **scoped by hostname**: only skills whose known hostname matches the request URL contribute headers. Without this, two skills that both set `Authorization` would silently overwrite each other.
+
+A skill's known hostnames are derived from (a) the LLM-extracted `base_url` stored on the Neo4j Skill node, and (b) any URL-shaped value in its `config.json` (e.g. `*_BASE_URL` config variables). When no skill matches the request host, falls back to skills with no URL hint and logs a warning if more than one such skill could collide on header names.
 
 ### Variable Substitution
 `_substitute_variables()` handles `${VAR}` and bare `VAR` patterns in URLs, resolving from skill config values first then `SKILL_*` env vars.
@@ -49,7 +51,7 @@ Successful API responses are stored as sources (without chunk_id) for the writer
 ## Config Wizard (Setup)
 
 ### LLM Analysis
-`POST /api/admin/skills/{id}/analyze` sends SKILL.md body to the primary LLM which returns a JSON array of `SkillConfigVariable` objects (name, description, required, type, auth_header). Schema cached on the Neo4j `Skill` node as `config_schema`.
+`POST /api/admin/skills/{id}/analyze` sends SKILL.md body to the primary LLM which returns `{variables: [...], base_url: string|null}`. Each variable: name, description, required, type, optional auth_header. Schema cached on the Neo4j `Skill` node as `config_schema`; `base_url` cached on the same node (auto-extracted, never user-edited — used to scope auth headers when the skill has no URL config variable).
 
 ### Config Endpoints
 - `GET /api/admin/skills/{id}/config` — schema + masked values

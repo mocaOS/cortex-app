@@ -553,6 +553,7 @@ export interface SkillConfigVariable {
   description: string;
   required: boolean;
   type: "secret" | "text";
+  auth_header?: string;
 }
 
 export interface SkillConfigSchema {
@@ -564,6 +565,7 @@ export interface SkillConfigResponse {
   skill_id: string;
   schema: SkillConfigVariable[] | null;
   values: Record<string, string>;
+  base_url?: string | null;
 }
 
 // =============================================================================

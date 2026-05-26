@@ -7,7 +7,7 @@ Two-stage researcher/writer pipeline for answering questions. See [`.claude/doma
 Uses OpenAI function-calling to iteratively gather information via tools:
 
 ### Tools
-- `knowledge_search` — hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking
+- `knowledge_search` — hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking. The async path (`graph_search_async`) wraps the sync embed + Neo4j Bolt calls in `asyncio.to_thread` so `asyncio.gather` of N parallel searches actually runs concurrently in the threadpool instead of serializing on the event loop.
 - `community_search` — search community summaries
 - `entity_lookup` — find specific entities
 - `reasoning` — available in quality mode always, or speed mode when skills are active

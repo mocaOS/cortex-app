@@ -22,8 +22,15 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download sentence-transformers model during build
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# Deterministic HF cache location, independent of container user.
+# Mount a volume here in production to keep the cache across container restarts.
+ENV HF_HOME=/app/.cache/huggingface
+
+# Pre-download sentence-transformers + cross-encoder during build so a cold image
+# (no cache volume) still works without a runtime HF download.
+RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); \
+CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 # Copy application code
 COPY . .

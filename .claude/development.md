@@ -31,6 +31,10 @@ npm run lint       # ESLint
 
 Requires Neo4j 5.15+ with APOC plugin (this repo ships 5.26 in all compose files — 4096-dim vector indexes supported, native fit for Qwen3-Embedding-8B). In Docker this is preconfigured. For local dev, set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` env vars. See [`.claude/environment.md`](environment.md) for all env vars.
 
+## HuggingFace Model Cache
+
+The cross-encoder reranker and sentence-transformer embedder are downloaded from HF on first use. To avoid re-downloading on every container restart, a named `hf_cache` volume is mounted at `/app/.cache/huggingface` in all compose files (`docker-compose.yml`, `docker-compose.prod.yml`, `coolify/`, `dokploy/`). The Dockerfiles set `ENV HF_HOME=/app/.cache/huggingface` and pre-download both models at build time as a fallback when no volume is mounted. The reranker is also pre-warmed during the FastAPI lifespan startup (via `asyncio.to_thread`) so the first Q+A doesn't pay the load cost on the request path.
+
 ## Deployment
 
 ### Coolify

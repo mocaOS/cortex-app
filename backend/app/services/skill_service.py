@@ -712,11 +712,25 @@ class SkillService:
         neo4j = self._get_neo4j()
         neo4j.update_skill(skill_id, {"config_schema": json.dumps(schema)})
 
-    async def analyze_skill_config(self, skill_id: str) -> List[dict]:
-        """Use the primary LLM to extract required config variables from SKILL.md.
+    def get_skill_base_url(self, skill_id: str) -> Optional[str]:
+        """Return the API base URL the skill talks to, used to scope auth headers."""
+        neo4j = self._get_neo4j()
+        node = neo4j.get_skill(skill_id)
+        if not node:
+            return None
+        return node.get("base_url") or None
 
-        Sends the skill body to the LLM, which returns a JSON array of variable
-        definitions. The schema is cached in the Neo4j node for future use.
+    def save_skill_base_url(self, skill_id: str, base_url: Optional[str]) -> None:
+        """Persist the skill's API base URL. Empty/None clears it."""
+        neo4j = self._get_neo4j()
+        neo4j.update_skill(skill_id, {"base_url": (base_url or "").strip() or None})
+
+    async def analyze_skill_config(self, skill_id: str) -> Dict[str, Any]:
+        """Use the primary LLM to extract config schema + API base URL from SKILL.md.
+
+        Returns {"variables": [...], "base_url": "https://..."} and caches both on
+        the Neo4j node. base_url is used by researcher_agent to scope auth headers
+        so multiple installed skills can't overwrite each other's Authorization.
         """
         from openai import AsyncOpenAI
         from app.config import get_settings
@@ -728,7 +742,8 @@ class SkillService:
         body = detail.get("body", "")
         if not body:
             self.save_skill_config_schema(skill_id, [])
-            return []
+            self.save_skill_base_url(skill_id, None)
+            return {"variables": [], "base_url": None}
 
         settings = get_settings()
         client = AsyncOpenAI(
@@ -737,23 +752,29 @@ class SkillService:
         )
 
         system_prompt = (
-            "Analyze the following skill documentation and extract any configuration "
-            "variables that a user would need to provide for this skill to work. "
-            "Look for API tokens, authentication credentials, base URLs, API keys, "
-            "or any placeholders the user must fill in.\n\n"
-            "Return a JSON array of objects with these fields:\n"
-            '- "name": variable name in SCREAMING_SNAKE_CASE (e.g. API_TOKEN)\n'
-            '- "description": one-sentence explanation of what this variable is and where to find it\n'
-            '- "required": boolean, true if the skill cannot function without it\n'
-            '- "type": "secret" for tokens/passwords/API keys, "text" for URLs/identifiers\n'
-            '- "auth_header": (only for auth tokens/keys) the exact HTTP header to set, '
-            'using the variable name as placeholder. Examples: '
+            "Analyze the following skill documentation and extract:\n"
+            "1. Configuration variables the user must provide (API tokens, IDs, etc.)\n"
+            "2. The skill's API base URL (scheme + host, no path), if it calls an HTTP API.\n\n"
+            "Return a JSON object with exactly these two keys:\n"
+            '- "base_url": the origin of the API the skill calls, e.g. '
+            '"https://api.example.com" (no trailing slash, no path). null if '
+            "the skill does not call an HTTP API, or if the URL is held by a "
+            "config variable (then leave base_url null and the variable carries it).\n"
+            '- "variables": array of variable definitions. Each entry has:\n'
+            '  - "name": SCREAMING_SNAKE_CASE (e.g. API_TOKEN)\n'
+            '  - "description": one sentence; where to find the value\n'
+            '  - "required": boolean\n'
+            '  - "type": "secret" for tokens/keys, "text" for URLs/identifiers\n'
+            '  - "auth_header": (only for auth tokens) the literal HTTP header, '
+            'with the variable name as placeholder. Examples: '
             '"Authorization: Bearer API_TOKEN", "X-API-Key: API_KEY". '
-            "Omit this field for non-auth variables.\n\n"
-            "Return an empty array [] if no configuration is needed.\n"
-            "Return ONLY the JSON array, no markdown fences or explanation."
+            "Omit for non-auth variables.\n\n"
+            'Return {"base_url": null, "variables": []} if nothing is needed.\n'
+            "Return ONLY the JSON object, no markdown fences or explanation."
         )
 
+        schema: List[dict] = []
+        base_url: Optional[str] = None
         try:
             response = await client.chat.completions.create(
                 model=settings.openai_model,
@@ -764,22 +785,27 @@ class SkillService:
                 temperature=0,
                 max_tokens=1000,
             )
-            raw = response.choices[0].message.content or "[]"
-            # Strip markdown code fences if present
+            raw = response.choices[0].message.content or "{}"
             raw = raw.strip()
             if raw.startswith("```"):
                 raw = re.sub(r"^```\w*\n?", "", raw)
                 raw = re.sub(r"\n?```$", "", raw)
                 raw = raw.strip()
-            schema = json.loads(raw)
-            if not isinstance(schema, list):
-                schema = []
+            parsed = json.loads(raw)
+            # Back-compat: older prompt returned a bare array
+            if isinstance(parsed, list):
+                schema = parsed
+            elif isinstance(parsed, dict):
+                schema = parsed.get("variables") or []
+                base_url = parsed.get("base_url") or None
+                if not isinstance(schema, list):
+                    schema = []
         except Exception as e:
             logger.warning(f"LLM analysis failed for skill '{skill_id}': {e}")
-            schema = []
 
         self.save_skill_config_schema(skill_id, schema)
-        return schema
+        self.save_skill_base_url(skill_id, base_url)
+        return {"variables": schema, "base_url": base_url}
 
     # -----------------------------------------------------------------
     # Helpers
@@ -833,6 +859,7 @@ class SkillService:
             "tool_count": len(tool_names),
             "tool_names": tool_names,
             "config_status": config_status,
+            "base_url": node.get("base_url") or None,
         }
 
 

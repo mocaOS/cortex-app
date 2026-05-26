@@ -132,10 +132,11 @@ There is no `headers` parameter. Authentication headers are built and injected s
 
 ### How Auth Injection Works
 
-1. When the agent calls `http_request`, the server iterates over all activated skills' config schemas
-2. For each schema variable that has an `auth_header` field (e.g., `"Authorization: Bearer API_TOKEN"`), it looks up the corresponding value from `config.json`
-3. The placeholder in the `auth_header` template is replaced with the actual value
-4. The resulting headers are added to the outgoing HTTP request
+1. When the agent calls `http_request`, the server figures out which activated skills are allowed to authenticate against the request URL — only skills whose known hostname matches the URL's host. A skill's hostname comes from either the `base_url` auto-extracted from its SKILL.md or from any URL-shaped value in its `config.json` (e.g. `*_BASE_URL`).
+2. For each matching skill, the server iterates the schema's `auth_header` fields (e.g., `"Authorization: Bearer API_TOKEN"`), looks up the corresponding value from `config.json`, and substitutes the placeholder.
+3. The resulting headers are added to the outgoing HTTP request.
+
+This hostname scoping is what prevents two installed skills that both define `Authorization` headers (e.g. one using `Bearer`, another using `Token token=`) from silently overwriting each other.
 
 The LLM never sees API keys, tokens, or auth headers. Lines in the SKILL.md that mention token replacement or ask the user to provide credentials are stripped before injection into the system prompt.
 
@@ -152,8 +153,8 @@ Skills that interact with external APIs typically need configuration — API key
 
 ### How It Works
 
-1. **LLM analysis** — After installation, the primary LLM analyzes the SKILL.md body to extract required configuration variables (API tokens, URLs, etc.). The LLM returns a JSON schema with variable names, descriptions, types, and `auth_header` templates.
-2. **Schema caching** — The extracted schema is stored on the Neo4j `Skill` node as `config_schema` (JSON string). This avoids re-analyzing on every page load.
+1. **LLM analysis** — After installation, the primary LLM analyzes the SKILL.md body to extract required configuration variables (API tokens, URLs, etc.) and the skill's API base URL (when hardcoded in the docs). The LLM returns both the variable schema and the `base_url`.
+2. **Schema caching** — The extracted schema is stored on the Neo4j `Skill` node as `config_schema` (JSON string) alongside `base_url`. This avoids re-analyzing on every page load. `base_url` is used to scope auth headers by hostname — never shown to the user; it's an internal anchor.
 3. **Setup wizard modal** — When the user opens configuration (or when schema has not yet been analyzed), a modal presents each variable with a labeled input field. Secret-type variables get masked input with show/hide toggle.
 4. **Config persistence** — Values are saved to `config.json` in the skill's directory. Secret values are masked (`********`) in API responses; submitting the mask preserves the existing value.
 

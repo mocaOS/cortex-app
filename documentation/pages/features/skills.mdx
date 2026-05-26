@@ -72,6 +72,8 @@ When skills are active, the agent gains access to a built-in `http_request` tool
 
 **Server-side authentication**: The server reads the `auth_header` templates from each skill's config schema, substitutes the stored credential values, and injects the resulting headers into the outgoing request. The LLM never handles tokens — it just specifies the method and URL from the skill's documentation.
 
+**Hostname-scoped auth**: When multiple skills are installed, the server only applies a skill's auth headers if the request URL matches that skill's known hostname (derived from its `base_url` extracted automatically from SKILL.md, or from any URL-shaped config value like `*_BASE_URL`). This prevents two skills that both define `Authorization` headers from silently overwriting each other.
+
 ## On-Demand Activation
 
 In addition to auto-activation, the agent retains `activate_skill` and `list_skills` tools for activating additional skills mid-conversation. This is a fallback mechanism — in practice, all enabled skills are pre-loaded at session start.

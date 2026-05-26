@@ -302,12 +302,14 @@ async def _run_researcher_loop(
                             _skill_service.load_skill_for_activation(sid)
                         )
                         config_schema = _skill_service.get_skill_config_schema(sid) or []
+                        base_url = _skill_service.get_skill_base_url(sid)
                         activated_skills[sid] = {
                             "instructions": instr,
                             "tool_defs": t_defs,
                             "tool_map": t_map,
                             "config": skill_config,
                             "config_schema": config_schema,
+                            "base_url": base_url,
                         }
                     except Exception as e:
                         logger.warning(f"Failed to auto-activate skill '{sid}': {e}")
@@ -613,10 +615,55 @@ async def _run_researcher_loop(
                 if body:
                     body = _substitute_variables(body, _merged_configs)
 
-                # Build headers server-side from config schemas.
+                # Build headers server-side from config schemas, scoped by hostname.
                 # The LLM never provides headers — auth is fully automatic.
+                #
+                # Two skills that both set `Authorization` will overwrite each other
+                # unless we constrain which skill's credentials apply to which host.
+                # Hostnames are derived from whatever the skill already knows: the
+                # LLM-extracted `base_url` for skills with hardcoded URLs, or any
+                # URL-shaped config value (e.g. *_BASE_URL) for skills where the user
+                # supplies the host. No extra UI input required.
+                from urllib.parse import urlparse
+                req_host = (urlparse(url).hostname or "").lower()
+
+                def _skill_hosts(skill_data) -> set:
+                    hosts = set()
+                    bu = skill_data.get("base_url")
+                    if bu:
+                        h = (urlparse(bu).hostname or "").lower()
+                        if h:
+                            hosts.add(h)
+                    for v in (skill_data.get("config") or {}).values():
+                        if isinstance(v, str) and v.startswith(("http://", "https://")):
+                            h = (urlparse(v).hostname or "").lower()
+                            if h:
+                                hosts.add(h)
+                    return hosts
+
+                # Prefer skills whose known hostnames include the request host.
+                # Fall back to skills with no hostname info so freshly installed skills
+                # (LLM analyzer didn't extract a URL, no URL config var) still work.
+                matching_skills = [
+                    s for s in activated_skills.values() if req_host in _skill_hosts(s)
+                ]
+                if matching_skills:
+                    auth_sources = matching_skills
+                else:
+                    auth_sources = [
+                        s for s in activated_skills.values() if not _skill_hosts(s)
+                    ]
+                    if len(auth_sources) > 1:
+                        logger.warning(
+                            "http_request: %d activated skills lack any URL hint "
+                            "(no base_url, no URL config value) — auth headers may "
+                            "collide on shared header names (e.g. Authorization) "
+                            "when sent to %s.",
+                            len(auth_sources), req_host,
+                        )
+
                 headers = {}
-                for skill_data in activated_skills.values():
+                for skill_data in auth_sources:
                     for var_def in (skill_data.get("config_schema") or []):
                         auth_tmpl = var_def.get("auth_header", "")
                         var_name = var_def.get("name", "")
@@ -705,11 +752,15 @@ async def _run_researcher_loop(
                         instr, t_defs, t_map, skill_config = (
                             _skill_service.load_skill_for_activation(skill_name)
                         )
+                        config_schema = _skill_service.get_skill_config_schema(skill_name) or []
+                        base_url = _skill_service.get_skill_base_url(skill_name)
                         activated_skills[skill_name] = {
                             "instructions": instr,
                             "tool_defs": t_defs,
                             "tool_map": t_map,
                             "config": skill_config,
+                            "config_schema": config_schema,
+                            "base_url": base_url,
                         }
                         # Rebuild merged activation state
                         activated_instructions = "\n\n".join(

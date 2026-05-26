@@ -206,8 +206,15 @@ async def lifespan(app: FastAPI):
     # Warm up processors
     try:
         get_document_processor()
-        get_query_processor()
+        query_processor = get_query_processor()
         logger.info("Processors initialized")
+
+        # Pre-warm the cross-encoder reranker so the first Q+A request doesn't
+        # pay the cold-start cost (HF model download + weight load can take
+        # 10–30s and was previously blocking the event loop mid-request).
+        # Runs in a thread because sentence_transformers init does sync I/O + CPU.
+        if settings.enable_reranking:
+            await asyncio.to_thread(lambda: query_processor.reranker)
     except Exception as e:
         logger.warning(f"Could not initialize processors: {e}")
     
@@ -4069,12 +4076,16 @@ async def discover_skills(auth: AuthResult = Depends(require_admin)):
 
 @app.post("/api/admin/skills/{skill_id}/analyze")
 async def analyze_skill_config(skill_id: str, auth: AuthResult = Depends(require_admin)):
-    """Analyze a skill's SKILL.md with the primary LLM to extract required config variables."""
+    """Analyze a skill's SKILL.md with the primary LLM to extract config + API base URL."""
     from app.services.skill_service import get_skill_service
     skill_service = get_skill_service()
     try:
-        variables = await skill_service.analyze_skill_config(skill_id)
-        return {"skill_id": skill_id, "variables": variables}
+        result = await skill_service.analyze_skill_config(skill_id)
+        return {
+            "skill_id": skill_id,
+            "variables": result.get("variables", []),
+            "base_url": result.get("base_url"),
+        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -4084,11 +4095,12 @@ async def analyze_skill_config(skill_id: str, auth: AuthResult = Depends(require
 
 @app.get("/api/admin/skills/{skill_id}/config")
 async def get_skill_config(skill_id: str, auth: AuthResult = Depends(require_admin)):
-    """Get a skill's configuration schema and current values (secrets masked)."""
+    """Get a skill's configuration schema, base URL, and current values (secrets masked)."""
     from app.services.skill_service import get_skill_service
     skill_service = get_skill_service()
     schema = skill_service.get_skill_config_schema(skill_id)
     values = skill_service.get_skill_config(skill_id)
+    base_url = skill_service.get_skill_base_url(skill_id)
 
     # Mask secret values
     masked_values = {}
@@ -4101,7 +4113,12 @@ async def get_skill_config(skill_id: str, auth: AuthResult = Depends(require_adm
         else:
             masked_values[k] = v
 
-    return {"skill_id": skill_id, "schema": schema, "values": masked_values}
+    return {
+        "skill_id": skill_id,
+        "schema": schema,
+        "values": masked_values,
+        "base_url": base_url,
+    }
 
 
 @app.put("/api/admin/skills/{skill_id}/config")

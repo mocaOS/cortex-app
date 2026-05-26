@@ -38,6 +38,9 @@ services:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs
       - skills_data:/app/.agents/skills
+      # Persist HuggingFace model cache (cross-encoder reranker, embeddings)
+      # across container restarts so we don't re-download ~80MB of models each time.
+      - hf_cache:/app/.cache/huggingface
     depends_on:
       neo4j:
         condition: service_healthy
@@ -89,3 +92,4 @@ volumes:
   uploads_data:
   custom_inputs_data:
   skills_data:
+  hf_cache:
