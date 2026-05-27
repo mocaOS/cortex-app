@@ -131,6 +131,7 @@ See [`.claude/domain/skills.md`](domain/skills.md) for the full Agent Skills sys
 - `ENABLE_SKILL_SCRIPTS` (default: false) — allow skills to execute local scripts (security-sensitive, opt-in)
 - `SKILL_SCRIPT_TIMEOUT` (default: 30) — timeout in seconds for skill script execution
 - `SKILL_HTTP_TIMEOUT` (default: 15) — timeout in seconds for skill HTTP tool calls
+- `SKILL_HTTP_INSECURE_HOSTS` (default: empty) — comma-separated hostnames for which the skill `http_request` tool skips TLS verification (opt-in, for self-hosted skill APIs with self-signed certs, e.g. `zammad.internal,helpdesk.local`). Empty = verify all hosts (secure default). Scoped per-host, never global
 - `MAX_SKILL_TOOLS` (default: 10) — max total skill-provided tools injected into researcher agent
 - `MAX_SKILL_INSTRUCTIONS_TOKENS` (default: 4000) — approximate token budget for skill instruction injection
 

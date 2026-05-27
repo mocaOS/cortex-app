@@ -333,6 +333,11 @@ class Settings(BaseSettings):
     skill_http_timeout: int = Field(
         default=15
     )  # Timeout in seconds for skill HTTP tool calls
+    skill_http_insecure_hosts: str = Field(
+        default=""
+    )  # Comma-separated hostnames for which skill http_request skips TLS
+    # verification (opt-in, for self-signed certs on self-hosted skill APIs).
+    # Empty = verify all hosts (secure default). Scoped per-host, never global.
     max_skill_tools: int = Field(
         default=10
     )  # Max total skill-provided tools injected into researcher agent

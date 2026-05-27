@@ -395,9 +395,26 @@ async def _run_researcher_loop(
 
         if not assistant_message.tool_calls:
             if iteration == 0 and bool(skill_catalog):
-                # First iteration with skills active but model didn't call tools —
-                # retry with tool_choice="required" to force tool usage
-                logger.warning(f"Model skipped tools on iteration 1 with skills active, retrying with required...")
+                # First iteration with skills active but model didn't call tools.
+                # Try to force a tool call. tool_choice="required" works on some
+                # providers but 500s on others (e.g. Venice/minimax) — when it
+                # fails or yields no tool call, fall back to a corrective system
+                # nudge + tool_choice="auto", which is supported everywhere.
+                logger.warning(
+                    "Model skipped tools on iteration 1 with skills active; forcing a tool call..."
+                )
+                nudge = {
+                    "role": "system",
+                    "content": (
+                        "You replied with prose but did not call a tool. If the user's "
+                        "request maps to an active skill (for example, creating a ticket), "
+                        "you MUST call the appropriate tool now (e.g. http_request) using "
+                        "the exact url and body described in the skill instructions. "
+                        "Do not reply with prose."
+                    ),
+                }
+                retry_msg = None
+                # 1) Best-effort: tool_choice="required" (some providers support it).
                 try:
                     response = await client.chat.completions.create(
                         model=llm_config.model,
@@ -406,9 +423,27 @@ async def _run_researcher_loop(
                         tool_choice="required",
                         temperature=0.2,
                     )
-                    assistant_message = response.choices[0].message
-                except Exception:
-                    pass
+                    retry_msg = response.choices[0].message
+                except Exception as e:
+                    logger.warning(
+                        f"tool_choice=required unsupported/failed ({e}); "
+                        "falling back to nudge + tool_choice=auto"
+                    )
+                # 2) Fallback: corrective nudge + tool_choice="auto".
+                if retry_msg is None or not retry_msg.tool_calls:
+                    try:
+                        response = await client.chat.completions.create(
+                            model=llm_config.model,
+                            messages=messages + [nudge],
+                            tools=tools,
+                            tool_choice="auto",
+                            temperature=0.2,
+                        )
+                        retry_msg = response.choices[0].message
+                    except Exception as e:
+                        logger.warning(f"nudge + auto retry failed: {e}")
+                if retry_msg is not None:
+                    assistant_message = retry_msg
             elif not assistant_message.content:
                 # Empty response — retry once (model flakiness)
                 logger.warning(f"Empty LLM response on iteration {iteration + 1}, retrying...")
@@ -676,21 +711,53 @@ async def _run_researcher_loop(
                 if body and "Content-Type" not in headers:
                     headers["Content-Type"] = "application/json"
 
+                _has_auth = any(h.lower() == "authorization" for h in headers)
                 logger.info(
                     f"http_request: {method} {url} | "
-                    f"auth={'yes' if any(h.lower() == 'authorization' for h in headers) else 'none'} | "
+                    f"auth={'yes' if _has_auth else 'none'} | "
                     f"ct={headers.get('Content-Type', 'none')} | "
                     f"body_len={len(body) if body else 0}"
                 )
+
+                # Surface the common "model guessed the wrong host" failure: no auth
+                # was attached even though an active skill knows a real host. Usually
+                # means the model wrote a literal/hallucinated URL instead of the
+                # ${BASE_URL} placeholder, so the request host matched no skill.
+                if not _has_auth:
+                    _known_hosts = sorted(
+                        {h for s in activated_skills.values() for h in _skill_hosts(s)}
+                    )
+                    if _known_hosts:
+                        logger.warning(
+                            "http_request: auth=none for host '%s' but active skills "
+                            "have configured host(s) %s — the model likely wrote a "
+                            "literal/guessed URL instead of the ${BASE_URL} placeholder. "
+                            "No credentials were attached.",
+                            req_host, _known_hosts,
+                        )
 
                 yield {
                     "type": "thinking",
                     "content": f"Calling {method} {url}",
                 }
 
+                # TLS verification is on by default. A self-hosted skill API with a
+                # self-signed cert can be allowlisted per-host via SKILL_HTTP_INSECURE_HOSTS.
+                _insecure_hosts = {
+                    h.strip().lower()
+                    for h in (getattr(settings, "skill_http_insecure_hosts", "") or "").split(",")
+                    if h.strip()
+                }
+                _verify_tls = req_host not in _insecure_hosts
+                if not _verify_tls:
+                    logger.warning(
+                        "http_request: TLS verification DISABLED for host '%s' "
+                        "(listed in SKILL_HTTP_INSECURE_HOSTS).", req_host,
+                    )
+
                 try:
                     async with httpx.AsyncClient(
-                        timeout=15, follow_redirects=True
+                        timeout=15, follow_redirects=True, verify=_verify_tls
                     ) as http_client:
                         resp = await http_client.request(
                             method,
@@ -1215,11 +1282,13 @@ def _substitute_variables(value: str, skill_configs: dict = None) -> str:
     2. SKILL_* environment variables (backward compatibility)
     """
     configs = skill_configs or {}
+    replaced = set()
 
     # Pass 1: Replace ${VAR} patterns
     def _placeholder_replacer(match):
         var_name = match.group(1)
         if var_name in configs:
+            replaced.add(var_name)
             return configs[var_name]
         if var_name.startswith("SKILL_"):
             return os.environ.get(var_name, "")
@@ -1227,11 +1296,16 @@ def _substitute_variables(value: str, skill_configs: dict = None) -> str:
 
     result = re.sub(r"\$\{([A-Z_][A-Z0-9_]*)\}", _placeholder_replacer, value)
 
-    # Pass 2: Replace bare config key names that appear as standalone words.
-    # Only replace if the key name is all-uppercase (to avoid false positives)
-    # and the value hasn't already been substituted in pass 1.
+    # Pass 2: Replace bare config key names that appear as standalone words
+    # (e.g. the model wrote `ZAMMAD_GROUP_NAME` instead of `${ZAMMAD_GROUP_NAME}`).
+    # Only for all-uppercase keys (avoids false positives) and only for keys NOT
+    # already handled in pass 1. We must NOT skip a key just because its value
+    # coincidentally appears elsewhere in the text — that would leave the bare
+    # placeholder un-substituted (e.g. group value "Users" appearing in the body).
     for key, val in configs.items():
-        if key == key.upper() and len(key) >= 3 and key in result and val not in result:
-            result = re.sub(r'\b' + re.escape(key) + r'\b', val, result)
+        if key in replaced:
+            continue
+        if key == key.upper() and len(key) >= 3 and re.search(r"\b" + re.escape(key) + r"\b", result):
+            result = re.sub(r"\b" + re.escape(key) + r"\b", val, result)
 
     return result

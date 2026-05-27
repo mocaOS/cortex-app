@@ -40,7 +40,13 @@ Built-in `http_request` tool defined in `research_prompts.py`, executed in `rese
 A skill's known hostnames are derived from (a) the LLM-extracted `base_url` stored on the Neo4j Skill node, and (b) any URL-shaped value in its `config.json` (e.g. `*_BASE_URL` config variables). When no skill matches the request host, falls back to skills with no URL hint and logs a warning if more than one such skill could collide on header names.
 
 ### Variable Substitution
-`_substitute_variables()` handles `${VAR}` and bare `VAR` patterns in URLs, resolving from skill config values first then `SKILL_*` env vars.
+`_substitute_variables()` handles `${VAR}` and bare `VAR` patterns in URLs/bodies, resolving from skill config values first then `SKILL_*` env vars. Pass 1 replaces `${VAR}`; pass 2 replaces bare uppercase `KEY` tokens **only for keys not already substituted in pass 1** (tracked via a `replaced` set). It must not skip a bare key just because its value coincidentally appears elsewhere in the text — otherwise placeholders like `ZAMMAD_GROUP_NAME` leak through literally when the value (e.g. `Users`) shows up in the body.
+
+### TLS Verification
+The `http_request` httpx client verifies TLS by default. Hosts listed in `SKILL_HTTP_INSECURE_HOSTS` (comma-separated) skip verification — opt-in, per-host, for self-hosted skill APIs with self-signed certs. See [`.claude/environment.md`](../environment.md#skills-configuration).
+
+### Forcing a tool call (reliability)
+On iteration 0 with skills active, if the model replies with prose instead of calling a tool, the agent first tries `tool_choice="required"`, then **falls back to a corrective system nudge + `tool_choice="auto"`** if `required` errors (some providers, e.g. Venice/minimax, return HTTP 500 on forced tool choice) or yields no tool call. Without the fallback, skill actions (e.g. a ticket POST) silently never fire on prose-first turns.
 
 ### Response Truncation
 `_truncate_response()` intelligently truncates large JSON API responses by progressively slimming array items (truncating string values, flattening nested objects, compacting lists) before falling back to item-level truncation.
