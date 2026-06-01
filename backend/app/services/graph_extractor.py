@@ -181,6 +181,26 @@ Output ONLY the XML format:
 </entities>"""
 
 
+# Batched query entity extraction prompt (one LLM call for several queries)
+QUERY_ENTITY_BATCH_PROMPT = """Extract entity names from each of the following questions. Focus on specific named entities like people, organizations, technologies, concepts, places, etc.
+
+Process each question independently. Return one <query> block per question, in the SAME ORDER as given, preserving the index number. If a question has no clear named entities, return an empty <query> block.
+
+Questions:
+{numbered_queries}
+
+Output ONLY the XML format, one block per question, in order:
+<queries>
+<query index="1">
+<entity>entity_name</entity>
+<entity>entity_name</entity>
+</query>
+<query index="2">
+<entity>entity_name</entity>
+</query>
+</queries>"""
+
+
 # =============================================================================
 # Entity-Only Extraction Prompt (Phase A - per-document extraction)
 # =============================================================================
@@ -725,9 +745,47 @@ class GraphExtractor:
         pattern = r'<entity>([^<]+)</entity>'
         matches = re.findall(pattern, content, re.IGNORECASE)
         entities = [m.strip() for m in matches if m.strip()]
-        
+
         return entities
-    
+
+    def _extract_xml_grouped_entity_names(
+        self, content: str, num_queries: int
+    ) -> List[List[str]]:
+        """Parse batched output: <queries><query index="i">...<entity>...</query></queries>.
+
+        Returns a list of length num_queries (index-aligned with the input queries).
+        Robust to: missing index attrs (falls back to positional order of <query>
+        blocks), fewer/more blocks than num_queries, duplicate/out-of-range indices.
+        Returns all-empty lists when no <query> blocks are found (caller may then
+        try a JSON fallback).
+        """
+        result: List[List[str]] = [[] for _ in range(num_queries)]
+        blocks = re.findall(
+            r'<query\b([^>]*)>(.*?)</query>', content, re.IGNORECASE | re.DOTALL
+        )
+        if not blocks:
+            return result
+
+        for positional_i, (attrs, body) in enumerate(blocks):
+            target = positional_i
+            m = re.search(r'index\s*=\s*["\']?(\d+)', attrs, re.IGNORECASE)
+            if m:
+                idx = int(m.group(1)) - 1  # 1-based -> 0-based
+                if 0 <= idx < num_queries:
+                    target = idx
+            if 0 <= target < num_queries:
+                ents = [
+                    e.strip()
+                    for e in re.findall(r'<entity>([^<]+)</entity>', body, re.IGNORECASE)
+                    if e.strip()
+                ]
+                # de-dup within a query, preserve order
+                seen = set()
+                result[target] = [
+                    e for e in ents if not (e in seen or seen.add(e))
+                ]
+        return result
+
     def _extract_json_from_response(self, content: str) -> dict:
         """
         Extract JSON from LLM response, handling various formats.
@@ -1123,14 +1181,25 @@ class GraphExtractor:
     async def extract_entities_from_query_async(self, query: str) -> List[str]:
         """
         Async version of extract_entities_from_query using AsyncOpenAI.
+
+        Uses the extraction tier (cheaper/faster model + minimized reasoning),
+        mirroring document-side extraction — this is a trivial parse task that
+        does not need the primary model.
         """
-        if not self.async_client:
+        client = self.async_extraction_client or self.async_client
+        if not client:
             return []
-        
+
+        model = (
+            self.extraction_model_name
+            if self.async_extraction_client
+            else self.current_model
+        )
+
         try:
             response = await self._async_safe_completion(
-                self.async_client,
-                model=self.current_model,
+                client,
+                model=model,
                 mode=self._extraction_reasoning_mode,
                 messages=[
                     {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified."},
@@ -1158,6 +1227,94 @@ class GraphExtractor:
         except Exception as e:
             logger.error(f"Error extracting entities from query: {e}")
             return []
+
+    async def extract_entities_from_queries_async(
+        self, queries: List[str]
+    ) -> List[List[str]]:
+        """
+        Batched async entity extraction: ONE LLM call covering all queries.
+
+        Returns a list index-aligned with `queries`; each element is that query's
+        list of entity names. Uses the extraction tier (model + client) with
+        minimized reasoning, mirroring document-side extraction.
+
+        Graceful degradation: on any error / parse failure returns [[] for _ in
+        queries] so hybrid search still runs on vector + keyword.
+        """
+        if not queries:
+            return []
+
+        # Singleton: reuse the (extraction-tier) single-query path — keeps the
+        # existing log line and avoids the grouping prompt for the common case.
+        if len(queries) == 1:
+            return [await self.extract_entities_from_query_async(queries[0])]
+
+        client = self.async_extraction_client or self.async_client
+        if not client:
+            return [[] for _ in queries]
+
+        model = (
+            self.extraction_model_name
+            if self.async_extraction_client
+            else self.current_model
+        )
+
+        try:
+            numbered = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(queries))
+            response = await self._async_safe_completion(
+                client,
+                model=model,
+                mode=self._extraction_reasoning_mode,
+                messages=[
+                    {"role": "system", "content": "You extract entity names from questions. Respond with ONLY XML format as specified, one <query> block per question in order."},
+                    {"role": "user", "content": QUERY_ENTITY_BATCH_PROMPT.format(numbered_queries=numbered)},
+                ],
+                temperature=0,
+                max_tokens=200 * len(queries),
+            )
+
+            content = self._extract_response_content(response)
+            if not content:
+                logger.warning(
+                    "Batched query extraction returned empty content; "
+                    "degrading to no graph entities"
+                )
+                return [[] for _ in queries]
+
+            grouped = self._extract_xml_grouped_entity_names(content, len(queries))
+
+            # JSON fallback if XML produced nothing at all
+            if not any(grouped):
+                data = self._extract_json_from_response(content)
+                qlist = None
+                if isinstance(data, dict):
+                    qlist = data.get("queries")
+                elif isinstance(data, list):
+                    qlist = data
+                if qlist:
+                    tmp: List[List[str]] = [[] for _ in queries]
+                    for pos, item in enumerate(qlist):
+                        if isinstance(item, dict):
+                            idx = int(item.get("index", pos + 1)) - 1
+                            ents = item.get("entities", [])
+                        else:
+                            idx, ents = pos, (item or [])
+                        if 0 <= idx < len(queries):
+                            tmp[idx] = [str(e).strip() for e in ents if e]
+                    grouped = tmp
+
+            total = sum(len(g) for g in grouped)
+            logger.info(
+                f"Batch-extracted {total} entities across {len(queries)} queries: {grouped}"
+            )
+            return grouped
+
+        except Exception as e:
+            logger.warning(
+                f"Batched query entity extraction failed ({e}); "
+                f"degrading to no graph entities for {len(queries)} queries"
+            )
+            return [[] for _ in queries]
 
     async def generate_document_summary_async(self, document: str) -> str:
         """

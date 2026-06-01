@@ -203,13 +203,42 @@ async def _execute_knowledge_search(
     """
     queries = queries[:3]  # Cap at 3 queries
 
+    # Batch the per-query helper calls when enabled: instead of every
+    # graph_search_async extracting entities + embedding on its own (one LLM call
+    # + one embedding call PER query), do ONE batched entity-extraction call and
+    # ONE batched embedding call upfront, then hand each query its precomputed
+    # results. Falls back to the per-query path on any failure or when disabled.
+    per_query_entities: List[Optional[List[str]]] = [None] * len(queries)
+    per_query_embeddings: List[Optional[List[float]]] = [None] * len(queries)
+    if settings.enable_batched_query_extraction and queries:
+        try:
+            embed_task = asyncio.to_thread(processor.embed_queries, list(queries))
+            if processor.graph_extractor.is_available:
+                per_query_entities, per_query_embeddings = await asyncio.gather(
+                    processor.graph_extractor.extract_entities_from_queries_async(
+                        list(queries)
+                    ),
+                    embed_task,
+                )
+            else:
+                per_query_embeddings = await embed_task
+                per_query_entities = [[] for _ in queries]
+        except Exception as e:
+            logger.warning(
+                f"Batched query pre-processing failed ({e}); falling back to per-query"
+            )
+            per_query_entities = [None] * len(queries)
+            per_query_embeddings = [None] * len(queries)
+
     # Execute all queries in parallel
     tasks = [
         processor.graph_search_async(
             q, top_k=5, use_hybrid_rrf=True, collection_id=collection_id,
-            allowed_collection_ids=allowed_collection_ids
+            allowed_collection_ids=allowed_collection_ids,
+            precomputed_entities=per_query_entities[i],
+            precomputed_embedding=per_query_embeddings[i],
         )
-        for q in queries
+        for i, q in enumerate(queries)
     ]
     search_results = await asyncio.gather(*tasks, return_exceptions=True)
 

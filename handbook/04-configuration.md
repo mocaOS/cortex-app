@@ -180,6 +180,7 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 | `ENABLE_RERANKING` | `true` | Enable cross-encoder re-ranking for improved precision. |
 | `RERANKING_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model for re-ranking. |
 | `ENABLE_HYBRID_SEARCH` | `true` | Enable hybrid (vector + keyword + graph) search. |
+| `ENABLE_BATCHED_QUERY_EXTRACTION` | `true` | Batch a search's queries into one entity-extraction call + one embedding call (instead of one each per query) to cut LLM/embedding round-trips during research. |
 | `VECTOR_WEIGHT` | `0.5` | Weight for vector search in RRF fusion. |
 | `KEYWORD_WEIGHT` | `0.3` | Weight for keyword search in RRF fusion. |
 | `GRAPH_WEIGHT` | `0.2` | Weight for graph context in RRF fusion. |

@@ -15,7 +15,7 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
 ## Extraction LLM
 
-- `GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY` — Extraction model for entity extraction and community summarization. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to primary model equivalents.
+- `GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY` — Extraction model for entity extraction, community summarization, and query-side entity extraction (RAG search). Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to primary model equivalents.
 - `GRAPH_EXTRACTION_MAX_CONTEXT` (default: 0 = inherit `OPENAI_MAX_CONTEXT` = 32768) — input context budget for entity extraction batching. Override when extraction model has bigger window than primary.
 - `EXTRACTION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS` = 8000) — output budget for entity-extraction LLM calls (`graph_extractor.py:821/1014/1840`). The inherited 8000 already accommodates Qwen3-family verbose XML; override only if you want to constrain or expand that tier specifically.
 
@@ -116,6 +116,7 @@ VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 - `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
 - `ENABLE_SEMANTIC_ENTITY_RESOLUTION` (default: true) — use embedding-based vector similarity for entity dedup during storage (catches semantic matches like "Museum of Crypto Art" / "MOCA" that Levenshtein misses; falls back to Levenshtein)
 - `ENABLE_AGENT_RESEARCH` (default: true), `ENABLE_AGENT_CHAT` (default: true) — agent-based research pipeline flags
+- `ENABLE_BATCHED_QUERY_EXTRACTION` (default: true) — in `_execute_knowledge_search`, collapse a `knowledge_search`'s up-to-3 queries into ONE batched entity-extraction LLM call + ONE batched embedding call (instead of one each per query). Off → legacy per-query path (still extraction-tier). Query-side entity extraction always runs on the extraction tier (`GRAPH_EXTRACTION_MODEL` + minimized reasoning), not the primary model.
 
 ## Agent Configuration
 

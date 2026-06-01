@@ -2312,16 +2312,31 @@ class QueryProcessor:
             if self.settings.embedding_send_dimensions:
                 text_embedder_kwargs["dimensions"] = self.settings.embedding_dimension
             self.text_embedder = OpenAITextEmbedder(**text_embedder_kwargs)
+            # Batch-capable embedder for embedding several queries in one call,
+            # configured IDENTICALLY to text_embedder so query vectors stay
+            # comparable with stored document vectors.
+            from haystack.components.embedders import OpenAIDocumentEmbedder
+
+            self.batch_embedder = OpenAIDocumentEmbedder(
+                **text_embedder_kwargs, progress_bar=False
+            )
             logger.info(
                 f"Using OpenAI text embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})"
             )
         else:
-            from haystack.components.embedders import SentenceTransformersTextEmbedder
+            from haystack.components.embedders import (
+                SentenceTransformersTextEmbedder,
+                SentenceTransformersDocumentEmbedder,
+            )
 
             self.text_embedder = SentenceTransformersTextEmbedder(
                 model="sentence-transformers/all-MiniLM-L6-v2"
             )
             self.text_embedder.warm_up()
+            self.batch_embedder = SentenceTransformersDocumentEmbedder(
+                model="sentence-transformers/all-MiniLM-L6-v2", progress_bar=False
+            )
+            self.batch_embedder.warm_up()
             logger.info("Using SentenceTransformers text embeddings")
 
         logger.info(
@@ -2393,6 +2408,20 @@ class QueryProcessor:
         result = self.text_embedder.run(text=query)
         return result["embedding"]
 
+    def embed_queries(self, queries: list[str]) -> list[list[float]]:
+        """Embed several queries in ONE batched call (order preserved).
+
+        Uses batch_embedder, which is configured identically to text_embedder,
+        so the resulting vectors are comparable with stored document vectors.
+        """
+        if not queries:
+            return []
+        from haystack import Document
+
+        docs = [Document(content=q) for q in queries]
+        result = self.batch_embedder.run(documents=docs)
+        return [doc.embedding for doc in result["documents"]]
+
     def search(
         self,
         query: str,
@@ -2460,6 +2489,8 @@ class QueryProcessor:
         use_hybrid_rrf: bool = True,
         collection_id: Optional[str] = None,
         allowed_collection_ids: Optional[List[str]] = None,
+        precomputed_entities: Optional[List[str]] = None,
+        precomputed_embedding: Optional[List[float]] = None,
     ) -> dict:
         """
         Perform hybrid search combining vector similarity, keyword search, and graph traversal.
@@ -2473,15 +2504,25 @@ class QueryProcessor:
         Returns:
             Dict with 'results', 'graph_context', and search metadata
         """
-        # Generate query embedding (HTTPS call → run in thread)
-        query_embedding = await asyncio.to_thread(self.embed_query, query)
+        # Query embedding. Use the caller's precomputed vector when provided
+        # (e.g. the researcher batches all queries into one embedding call);
+        # otherwise embed on demand (HTTPS call → run in thread).
+        if precomputed_embedding is not None:
+            query_embedding = precomputed_embedding
+        else:
+            query_embedding = await asyncio.to_thread(self.embed_query, query)
 
-        # Extract entities from the query (already async)
-        query_entities = []
-        if self.graph_extractor.is_available:
+        # Entities for graph traversal. When the caller has already extracted them
+        # (e.g. the researcher batches all queries into ONE LLM call), use those and
+        # skip the per-query extraction call. Otherwise extract on demand.
+        if precomputed_entities is not None:
+            query_entities = precomputed_entities
+        elif self.graph_extractor.is_available:
             query_entities = (
                 await self.graph_extractor.extract_entities_from_query_async(query)
             )
+        else:
+            query_entities = []
 
         # Use hybrid search with RRF if enabled
         if use_hybrid_rrf and self.settings.enable_hybrid_search:

@@ -680,7 +680,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
-| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction + community summarization (instruction-following recommended, e.g. Mistral Small 24B, Ministral 14B; defaults to `OPENAI_MODEL`) | No | - |
+| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction, community summarization, and query-side entity extraction during RAG search (instruction-following recommended, e.g. Mistral Small 24B, Ministral 14B; defaults to `OPENAI_MODEL`) | No | - |
 | `GRAPH_EXTRACTION_API_BASE` | API base for extraction model (defaults to `OPENAI_API_BASE`) | No | - |
 | `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No | - |
 | `RELATIONSHIP_EXTRACTION_MODEL` | Model for all relationship discovery (instruction-following recommended, e.g. OpenAI GPT OSS 120B; defaults to `GRAPH_EXTRACTION_MODEL`) | No | - |
@@ -709,6 +709,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `ENABLE_RERANKING` | Enable cross-encoder re-ranking | No | `true` |
 | `RERANKING_MODEL` | Cross-encoder model for re-ranking | No | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `ENABLE_HYBRID_SEARCH` | Enable hybrid (vector + keyword) search | No | `true` |
+| `ENABLE_BATCHED_QUERY_EXTRACTION` | Batch a search's queries into one entity-extraction + one embedding call (vs one each per query) | No | `true` |
 | `VECTOR_WEIGHT` | Weight for vector search in RRF | No | `0.5` |
 | `KEYWORD_WEIGHT` | Weight for keyword search in RRF | No | `0.3` |
 | `GRAPH_WEIGHT` | Weight for graph context in RRF | No | `0.2` |

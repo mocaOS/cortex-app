@@ -115,7 +115,8 @@ PROCESSING_THREAD_WORKERS=4
 # Enable/disable graph extraction
 ENABLE_GRAPH_EXTRACTION=true
 
-# Model for entity extraction and community summarization (defaults to OPENAI_MODEL)
+# Model for entity extraction, community summarization, and query-side entity
+# extraction during RAG search (defaults to OPENAI_MODEL)
 # Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
 # Also handles community summarization for consistent structured output
 # GRAPH_EXTRACTION_MODEL=gpt-4o-mini
@@ -330,6 +331,10 @@ ENABLE_HYBRID_SEARCH=true
 VECTOR_WEIGHT=0.5
 KEYWORD_WEIGHT=0.3
 GRAPH_WEIGHT=0.2
+
+# Batch a search's queries into one entity-extraction + one embedding call
+# (instead of one each per query) to cut round-trips during deep research.
+ENABLE_BATCHED_QUERY_EXTRACTION=true
 ```
 
 ### Re-ranking

@@ -286,6 +286,9 @@ class Settings(BaseSettings):
     enable_hybrid_search: bool = Field(
         default=True
     )  # Enable hybrid (vector + keyword) search
+    enable_batched_query_extraction: bool = Field(
+        default=True
+    )  # Batch a knowledge_search's queries into ONE entity-extraction + ONE embedding call
     vector_weight: float = Field(default=0.5)  # Weight for vector search in hybrid
     keyword_weight: float = Field(default=0.3)  # Weight for keyword search in hybrid
     graph_weight: float = Field(default=0.2)  # Weight for graph context in hybrid

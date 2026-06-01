@@ -7,7 +7,7 @@ Two-stage researcher/writer pipeline for answering questions. See [`.claude/doma
 Uses OpenAI function-calling to iteratively gather information via tools:
 
 ### Tools
-- `knowledge_search` — hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking. The async path (`graph_search_async`) wraps the sync embed + Neo4j Bolt calls in `asyncio.to_thread` so `asyncio.gather` of N parallel searches actually runs concurrently in the threadpool instead of serializing on the event loop.
+- `knowledge_search` — hybrid RRF: vector 0.5 + fulltext 0.3 + graph 0.2, with cross-encoder reranking. The async path (`graph_search_async`) wraps the sync embed + Neo4j Bolt calls in `asyncio.to_thread` so `asyncio.gather` of N parallel searches actually runs concurrently in the threadpool instead of serializing on the event loop. **Batched preprocessing** (`ENABLE_BATCHED_QUERY_EXTRACTION`, default on): `_execute_knowledge_search` does ONE query-entity-extraction LLM call + ONE embedding call for all of a search's (≤3) queries upfront, then passes each query its `precomputed_entities`/`precomputed_embedding` into `graph_search_async` (which skips its per-query extract/embed). Query-side entity extraction runs on the extraction tier (`GRAPH_EXTRACTION_MODEL` + minimized reasoning via `extract_entities_from_queries_async`), not the primary model. Falls back to the per-query path on failure or when the flag is off.
 - `community_search` — search community summaries
 - `entity_lookup` — find specific entities
 - `reasoning` — available in quality mode always, or speed mode when skills are active
