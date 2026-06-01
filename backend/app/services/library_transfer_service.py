@@ -1,6 +1,7 @@
 """Library export/import service for full knowledge graph + document transfer."""
 
 import os
+import io
 import json
 import logging
 import shutil
@@ -34,6 +35,74 @@ def _serialize_value(val):
 def _serialize_record(record: dict) -> dict:
     """Serialize a Neo4j record dict to JSON-safe dict."""
     return {k: _serialize_value(v) for k, v in record.items()}
+
+
+def _write_ndjson(zf: zipfile.ZipFile, filename: str, records) -> int:
+    """Stream records into a zip entry as NDJSON, one JSON object per line.
+
+    `records` is any iterable of dicts. Only a single serialized line is held in
+    memory at a time, so embedding-heavy data (chunks, entities) never accumulates
+    into a giant list + join copy — the original cause of export OOM kills.
+
+    Passing a string filename inherits the archive's compression (ZIP_DEFLATED);
+    force_zip64 keeps large entries valid. Returns the number of records written.
+    """
+    count = 0
+    with zf.open(filename, "w", force_zip64=True) as fh:
+        for record in records:
+            fh.write((json.dumps(_serialize_record(record)) + "\n").encode("utf-8"))
+            count += 1
+    return count
+
+
+def _iter_ndjson(zf: zipfile.ZipFile, filename: str):
+    """Yield parsed records from a zip NDJSON entry one line at a time.
+
+    Reads through a streaming TextIOWrapper over the decompressed entry, so the
+    whole file is never held in memory — the import-side mirror of _write_ndjson.
+    Missing entries yield nothing.
+    """
+    if filename not in zf.namelist():
+        return
+    with zf.open(filename, "r") as raw:
+        text = io.TextIOWrapper(raw, encoding="utf-8")
+        for line in text:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def _iter_ndjson_batches(zf: zipfile.ZipFile, filename: str, batch_size: int):
+    """Yield records from a zip NDJSON entry in lists of up to batch_size.
+
+    Only one batch is held in memory at a time, so embedding-heavy entries
+    (chunks, entities) stream into batched inserts without buffering the file.
+    """
+    batch = []
+    for record in _iter_ndjson(zf, filename):
+        batch.append(record)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _count_ndjson(zf: zipfile.ZipFile, filename: str) -> int:
+    """Count non-blank lines in a zip NDJSON entry without parsing or buffering.
+
+    Used for pre-import plan-limit guards so a 20K-entity archive isn't loaded
+    into RAM (with embeddings) just to call len() on it.
+    """
+    if filename not in zf.namelist():
+        return 0
+    count = 0
+    with zf.open(filename, "r") as raw:
+        text = io.TextIOWrapper(raw, encoding="utf-8")
+        for line in text:
+            if line.strip():
+                count += 1
+    return count
 
 
 class LibraryTransferService:
@@ -87,103 +156,115 @@ class LibraryTransferService:
                 update_progress(task_id, step, total_steps, "Writing manifest...")
                 zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
-                # 2. Documents
+                batch_size = 500
+
+                # 2. Documents — kept as a list (small, no embeddings) because the
+                #    file-packaging step below needs file_path/id for every doc.
                 step += 1
                 update_progress(task_id, step, total_steps, f"Exporting {stats_dict['document_count']} documents...")
                 documents = self.neo4j.export_all_documents()
-                lines = [json.dumps(_serialize_record(d)) for d in documents]
-                zf.writestr("documents.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "documents.ndjson", documents)
 
-                # 3. Chunks (batched)
+                # 3. Chunks (batched + streamed — carry embeddings, the heaviest payload)
                 step += 1
                 chunk_count = self.neo4j.export_chunk_count()
                 update_progress(task_id, step, total_steps, f"Exporting {chunk_count} chunks...")
-                chunk_lines = []
-                batch_size = 500
-                offset = 0
-                while True:
-                    batch = self.neo4j.export_all_chunks_batched(batch_size=batch_size, skip=offset)
-                    if not batch:
-                        break
-                    for item in batch:
-                        record = {
-                            "chunk": _serialize_record(item["chunk"]),
-                            "document_id": item["document_id"],
-                        }
-                        chunk_lines.append(json.dumps(record))
-                    offset += batch_size
-                    update_progress(task_id, step, total_steps, f"Exporting chunks ({min(offset, chunk_count)}/{chunk_count})...")
-                zf.writestr("chunks.ndjson", "\n".join(chunk_lines) + "\n" if chunk_lines else "")
 
-                # 4. Entities
-                step += 1
-                update_progress(task_id, step, total_steps, f"Exporting {stats_dict['entity_count']} entities...")
-                entities = self.neo4j.export_all_entities()
-                lines = [json.dumps(_serialize_record(e)) for e in entities]
-                zf.writestr("entities.ndjson", "\n".join(lines) + "\n" if lines else "")
+                def _chunk_records():
+                    offset = 0
+                    written = 0
+                    while True:
+                        batch = self.neo4j.export_all_chunks_batched(batch_size=batch_size, skip=offset)
+                        if not batch:
+                            break
+                        for item in batch:
+                            yield {"chunk": item["chunk"], "document_id": item["document_id"]}
+                        written += len(batch)
+                        offset += batch_size
+                        update_progress(task_id, step, total_steps, f"Exporting chunks ({min(written, chunk_count)}/{chunk_count})...")
 
-                # 5. Relationships
+                _write_ndjson(zf, "chunks.ndjson", _chunk_records())
+
+                # 4. Entities (batched + streamed — also carry embeddings)
                 step += 1
-                update_progress(task_id, step, total_steps, f"Exporting {stats_dict['relationship_count']} relationships...")
-                relationships = self.neo4j.export_all_entity_relationships()
-                lines = [json.dumps(_serialize_record(r)) for r in relationships]
-                zf.writestr("relationships.ndjson", "\n".join(lines) + "\n" if lines else "")
+                entity_count = self.neo4j.export_entity_count()
+                update_progress(task_id, step, total_steps, f"Exporting {entity_count} entities...")
+
+                def _entity_records():
+                    offset = 0
+                    written = 0
+                    while True:
+                        batch = self.neo4j.export_all_entities_batched(batch_size=batch_size, skip=offset)
+                        if not batch:
+                            break
+                        for entity in batch:
+                            yield entity
+                        written += len(batch)
+                        offset += batch_size
+                        update_progress(task_id, step, total_steps, f"Exporting entities ({min(written, entity_count)}/{entity_count})...")
+
+                _write_ndjson(zf, "entities.ndjson", _entity_records())
+
+                # 5. Relationships (batched + streamed)
+                step += 1
+                relationship_count = self.neo4j.export_relationship_count()
+                update_progress(task_id, step, total_steps, f"Exporting {relationship_count} relationships...")
+
+                def _relationship_records():
+                    offset = 0
+                    written = 0
+                    while True:
+                        batch = self.neo4j.export_all_entity_relationships_batched(batch_size=batch_size, skip=offset)
+                        if not batch:
+                            break
+                        for rel in batch:
+                            yield rel
+                        written += len(batch)
+                        offset += batch_size
+                        update_progress(task_id, step, total_steps, f"Exporting relationships ({min(written, relationship_count)}/{relationship_count})...")
+
+                _write_ndjson(zf, "relationships.ndjson", _relationship_records())
 
                 # 6. Communities
                 step += 1
                 update_progress(task_id, step, total_steps, f"Exporting {stats_dict['community_count']} communities...")
-                communities = self.neo4j.export_all_communities()
-                lines = [json.dumps(_serialize_record(c)) for c in communities]
-                zf.writestr("communities.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "communities.ndjson", self.neo4j.export_all_communities())
 
                 # 7. Community members
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting community memberships...")
-                community_members = self.neo4j.export_community_members()
-                lines = [json.dumps(_serialize_record(m)) for m in community_members]
-                zf.writestr("community_members.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "community_members.ndjson", self.neo4j.export_community_members())
 
                 # 8. Collections
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting collections...")
-                collections = self.neo4j.export_all_collections()
-                lines = [json.dumps(_serialize_record(c)) for c in collections]
-                zf.writestr("collections.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "collections.ndjson", self.neo4j.export_all_collections())
 
                 # 9. Collection members
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting collection memberships...")
-                collection_members = self.neo4j.export_collection_members()
-                lines = [json.dumps(_serialize_record(m)) for m in collection_members]
-                zf.writestr("collection_members.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "collection_members.ndjson", self.neo4j.export_collection_members())
 
                 # 10. Chunk mentions
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting chunk-entity links...")
-                mentions = self.neo4j.export_all_chunk_mentions()
-                lines = [json.dumps(_serialize_record(m)) for m in mentions]
-                zf.writestr("chunk_mentions.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "chunk_mentions.ndjson", self.neo4j.export_all_chunk_mentions())
 
                 # 11. Merge history
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting merge history...")
-                merge_history = self.neo4j.export_all_merge_history()
-                lines = [json.dumps(_serialize_record(h)) for h in merge_history]
-                zf.writestr("merge_history.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "merge_history.ndjson", self.neo4j.export_all_merge_history())
 
                 # 12. System meta
                 step += 1
                 update_progress(task_id, step, total_steps, "Exporting system metadata...")
-                system_meta = self.neo4j.export_all_system_meta()
-                lines = [json.dumps(_serialize_record(m)) for m in system_meta]
-                zf.writestr("system_meta.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "system_meta.ndjson", self.neo4j.export_all_system_meta())
 
                 # 13. Skills (nodes + files)
                 step += 1
                 skills = self.neo4j.export_all_skills()
                 update_progress(task_id, step, total_steps, f"Exporting {len(skills)} skills...")
-                lines = [json.dumps(_serialize_record(s)) for s in skills]
-                zf.writestr("skills.ndjson", "\n".join(lines) + "\n" if lines else "")
+                _write_ndjson(zf, "skills.ndjson", skills)
                 # Bundle skill directories (SKILL.md, tools.json, etc.)
                 for skill in skills:
                     skill_dir = Path(skill.get("directory_path", ""))
@@ -274,11 +355,11 @@ class LibraryTransferService:
 
                 # Enforce MAX_FILES before any destructive action (e.g. replace-mode reset).
                 if self.settings.max_files > 0:
-                    incoming_documents = read_ndjson("documents.ndjson")
-                    if len(incoming_documents) > self.settings.max_files:
+                    incoming_doc_count = _count_ndjson(zf, "documents.ndjson")
+                    if incoming_doc_count > self.settings.max_files:
                         fail_task_fn(
                             task_id,
-                            f"File limit reached: import would add {len(incoming_documents)} documents, "
+                            f"File limit reached: import would add {incoming_doc_count} documents, "
                             f"exceeding your plan limit ({self.settings.max_files}). "
                             f"Upgrade your plan or use a smaller export."
                         )
@@ -286,11 +367,11 @@ class LibraryTransferService:
 
                 # Enforce MAX_ENTITIES before any destructive action.
                 if self.settings.max_entities > 0:
-                    incoming_entities = read_ndjson("entities.ndjson")
-                    if len(incoming_entities) > self.settings.max_entities:
+                    incoming_entity_count = _count_ndjson(zf, "entities.ndjson")
+                    if incoming_entity_count > self.settings.max_entities:
                         fail_task_fn(
                             task_id,
-                            f"Entity limit reached: import would add {len(incoming_entities)} entities, "
+                            f"Entity limit reached: import would add {incoming_entity_count} entities, "
                             f"exceeding your plan limit ({self.settings.max_entities}). "
                             f"Upgrade your plan or use a smaller export."
                         )
@@ -387,51 +468,63 @@ class LibraryTransferService:
                         shutil.copyfileobj(src, dst)
                     files_imported += 1
 
-                # 8. Import chunks (batched)
+                # Manifest stats drive progress totals so we never pre-read the
+                # heavy NDJSON files just to count them.
+                manifest_stats = manifest.get("stats", {})
+
+                # 8. Import chunks (streamed in batches — carry embeddings)
                 step += 1
-                chunks = read_ndjson("chunks.ndjson")
+                chunk_total = manifest_stats.get("chunk_count", 0)
+                update_progress(task_id, step, total_steps, f"Importing {chunk_total} chunks...")
                 chunks_imported = 0
                 batch_size = 500
-                for i in range(0, len(chunks), batch_size):
-                    batch = chunks[i:i + batch_size]
+                processed = 0
+                for batch in _iter_ndjson_batches(zf, "chunks.ndjson", batch_size):
+                    chunks_imported += self.neo4j.import_chunks_batch(batch)
+                    processed += len(batch)
                     update_progress(
                         task_id, step, total_steps,
-                        f"Importing chunks ({min(i + batch_size, len(chunks))}/{len(chunks)})..."
+                        f"Importing chunks ({processed}/{chunk_total or processed})..."
                     )
-                    chunks_imported += self.neo4j.import_chunks_batch(batch)
 
-                # 9. Import entities
+                # 9. Import entities (streamed in batches — carry embeddings)
                 step += 1
-                entities = read_ndjson("entities.ndjson")
-                update_progress(task_id, step, total_steps, f"Importing {len(entities)} entities...")
+                entity_total = manifest_stats.get("entity_count", 0)
+                update_progress(task_id, step, total_steps, f"Importing {entity_total} entities...")
                 entities_imported = 0
-                if entities:
-                    # Batch entities in groups of 500 to avoid memory issues
-                    for i in range(0, len(entities), 500):
-                        batch = entities[i:i + 500]
-                        entities_imported += self.neo4j.import_entities_batch(batch)
+                processed = 0
+                for batch in _iter_ndjson_batches(zf, "entities.ndjson", batch_size):
+                    entities_imported += self.neo4j.import_entities_batch(batch)
+                    processed += len(batch)
+                    update_progress(
+                        task_id, step, total_steps,
+                        f"Importing entities ({processed}/{entity_total or processed})..."
+                    )
 
-                # 10. Import chunk mentions
+                # 10. Import chunk mentions (streamed in batches)
                 step += 1
-                mentions = read_ndjson("chunk_mentions.ndjson")
-                update_progress(task_id, step, total_steps, f"Importing {len(mentions)} chunk-entity links...")
+                update_progress(task_id, step, total_steps, "Importing chunk-entity links...")
                 mentions_imported = 0
-                if mentions:
-                    for i in range(0, len(mentions), 500):
-                        batch = mentions[i:i + 500]
-                        mentions_imported += self.neo4j.import_chunk_mentions_batch(batch)
+                for batch in _iter_ndjson_batches(zf, "chunk_mentions.ndjson", batch_size):
+                    mentions_imported += self.neo4j.import_chunk_mentions_batch(batch)
+                    update_progress(
+                        task_id, step, total_steps,
+                        f"Importing chunk-entity links ({mentions_imported} imported)..."
+                    )
 
-                # 11. Import relationships
+                # 11. Import relationships (streamed one at a time)
                 step += 1
-                relationships = read_ndjson("relationships.ndjson")
-                update_progress(task_id, step, total_steps, f"Importing {len(relationships)} relationships...")
+                rel_total = manifest_stats.get("relationship_count", 0)
+                update_progress(task_id, step, total_steps, f"Importing {rel_total} relationships...")
                 rels_imported = 0
-                for idx, rel in enumerate(relationships):
+                idx = 0
+                for rel in _iter_ndjson(zf, "relationships.ndjson"):
                     if idx % 100 == 0 and idx > 0:
                         update_progress(
                             task_id, step, total_steps,
-                            f"Importing relationships ({idx}/{len(relationships)})..."
+                            f"Importing relationships ({idx}/{rel_total or idx})..."
                         )
+                    idx += 1
                     props = {
                         "description": rel.get("description", ""),
                         "weight": rel.get("weight", 5.0),

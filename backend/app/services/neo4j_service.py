@@ -5449,6 +5449,27 @@ class Neo4jService:
             result = session.run("MATCH (e:Entity) RETURN e{.*} as entity")
             return [record["entity"] for record in result]
 
+    def export_entity_count(self) -> int:
+        """Get total entity count for batched export progress tracking."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (e:Entity) RETURN count(e) as cnt")
+            return result.single()["cnt"]
+
+    def export_all_entities_batched(self, batch_size: int = 500, skip: int = 0) -> list:
+        """Get entities in batches (includes embeddings) for streaming export.
+
+        Entity name is the unique key, so ORDER BY e.name gives a stable
+        pagination order across SKIP/LIMIT windows.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                RETURN e{.*} as entity
+                ORDER BY e.name
+                SKIP $skip LIMIT $batch_size
+            """, skip=skip, batch_size=batch_size)
+            return [record["entity"] for record in result]
+
     def export_all_entity_relationships(self) -> list:
         """Get all Entity-Entity relationships with type and properties."""
         with self.driver.session() as session:
@@ -5461,6 +5482,33 @@ class Neo4jService:
                        r.source_document_id as source_document_id,
                        r.extracted_at as extracted_at
             """)
+            return [dict(record) for record in result]
+
+    def export_relationship_count(self) -> int:
+        """Get total Entity-Entity relationship count for batched export progress."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (:Entity)-[r]->(:Entity) RETURN count(r) as cnt")
+            return result.single()["cnt"]
+
+    def export_all_entity_relationships_batched(self, batch_size: int = 500, skip: int = 0) -> list:
+        """Get Entity-Entity relationships in batches for streaming export.
+
+        Ordered by elementId(r) — unique and stable within a read snapshot — so
+        parallel edges between the same pair can't be skipped or duplicated across
+        SKIP/LIMIT windows.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r]->(t:Entity)
+                RETURN s.name as source, t.name as target, type(r) as rel_type,
+                       r.description as description, r.weight as weight,
+                       r.confidence as confidence,
+                       r.extraction_method as extraction_method,
+                       r.source_document_id as source_document_id,
+                       r.extracted_at as extracted_at
+                ORDER BY elementId(r)
+                SKIP $skip LIMIT $batch_size
+            """, skip=skip, batch_size=batch_size)
             return [dict(record) for record in result]
 
     def export_all_communities(self) -> list:

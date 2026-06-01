@@ -25,12 +25,16 @@ Full instance migration via Settings page → Data Management section.
 
 Download via `GET /api/admin/export/{task_id}/download` streams the ZIP in 1MB chunks.
 
+**Memory-safe streaming (`_write_ndjson`)**: each NDJSON entry is written one JSON line at a time via `zf.open(name, "w", force_zip64=True)` — nothing is buffered beyond a single line. The embedding-heavy payloads (chunks **and** entities both carry vectors) are pulled in 500-row batches from Neo4j and streamed straight into the zip, so peak RAM is ~one batch regardless of corpus size. Batched query methods: `export_chunk_count`/`export_all_chunks_batched` (ORDER BY `c.id`), `export_entity_count`/`export_all_entities_batched` (ORDER BY `e.name`, the unique key), `export_relationship_count`/`export_all_entity_relationships_batched` (ORDER BY `elementId(r)` for stable SKIP/LIMIT pagination). **Do not reintroduce the `lines = [...]; "\n".join(lines)` pattern** — it held the full payload twice and OOM-killed the container on large instances (the kernel OOM killer then took Neo4j and the redeploy down with it; no logs survive a SIGKILL). Documents stay a full list because the `files/` packaging step needs every doc's `file_path`/`id`, but they carry no embeddings.
+
 ### Import
 `POST /api/admin/import` accepts multipart ZIP upload with `mode` query param:
 - `clean` — requires empty instance (default)
 - `replace` — auto-wipes via system reset first
 
 Runs as background task (`library_import` task type). Validates manifest, checks embedding model/dimension compatibility (warns on mismatch), remaps file paths to target instance directories, restores all nodes and edges including dynamic APOC relationship types.
+
+**Memory-safe streaming (mirror of export)**: the heavy NDJSON sections are streamed from the zip rather than `zf.read()`-ing the whole file. `_iter_ndjson` reads via an `io.TextIOWrapper` over the decompressed entry one line at a time; `_iter_ndjson_batches` groups those into batch lists feeding the existing `import_*_batch` inserts (chunks, entities, chunk mentions); relationships stream one-at-a-time through `_iter_ndjson`. Peak RAM is ~one batch. The pre-import plan-limit guards (`MAX_FILES`, `MAX_ENTITIES`) use `_count_ndjson`, which counts non-blank lines without parsing or buffering — previously these loaded the entire 20K-entity-with-embeddings file into RAM just to call `len()`. Progress totals come from `manifest.stats` so no extra pre-read pass is needed. **Documents stay materialized via the small-file `read_ndjson`** because step 6 mutates each doc (path remap) and step 7 reuses the list to copy files; documents carry no embeddings. Small sections (collections, communities, members, merge history, system meta, skills) also keep `read_ndjson` — they're tiny and some are reused.
 
 ### Concurrency Guard
 Prevents simultaneous export/import operations (409 if one already running).
