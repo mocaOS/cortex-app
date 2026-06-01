@@ -82,6 +82,10 @@ services:
       neo4j:
         condition: service_healthy
     restart: unless-stopped
+    # Hard memory ceiling so a runaway (e.g. a large export/import) self-OOMs in
+    # its cgroup and restarts, instead of exhausting the host and letting the
+    # kernel OOM-killer take Neo4j down with it. Tune per host via BACKEND_MEM_LIMIT.
+    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

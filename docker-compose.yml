@@ -2,6 +2,7 @@ services:
   neo4j:
     image: neo4j:5.26-community
     container_name: cortex-neo4j
+    restart: unless-stopped
     environment:
       - NEO4J_AUTH=neo4j/${SERVICE_PASSWORD_NEO4J:-bW3qnJ63dltJPIoMz054Bzn4uDsPGDVH}
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
@@ -24,6 +25,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: cortex-backend
+    restart: unless-stopped
+    # Hard memory ceiling: a runaway (e.g. a large export/import) self-OOMs inside
+    # its cgroup and restarts cleanly, instead of exhausting the host and letting
+    # the kernel OOM-killer pick Neo4j as the victim. Keep comfortably above normal
+    # steady-state (~2G with the cross-encoder + embedder loaded). Tune per host.
+    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     env_file:
       - .env
     environment:
@@ -52,6 +59,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: cortex-frontend
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
     env_file:
       - .env
     environment:
