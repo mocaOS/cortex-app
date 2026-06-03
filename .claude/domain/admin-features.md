@@ -2,6 +2,8 @@
 
 System administration: reset, library transfer, bulk download, and API key management.
 
+> Git connections (connect/sync/orphaned-review on the Settings page, `/api/integrations/git/*`) are documented separately in [`git-integration.md`](git-integration.md).
+
 ## System Reset
 
 `POST /api/admin/reset` — Admin-only endpoint with selective deletion options (documents, uploaded files, custom inputs, collections, API keys).

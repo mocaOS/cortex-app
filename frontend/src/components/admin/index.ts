@@ -6,3 +6,4 @@ export { UsageLineChart, EndpointBreakdownChart, EndpointBarChart } from "./Usag
 export { LibraryTransferSection } from "./LibraryTransferSection";
 export { SkillsManager } from "./SkillsManager";
 export { SkillConfigModal } from "./SkillConfigModal";
+export { GitIntegrations } from "./GitIntegrations";

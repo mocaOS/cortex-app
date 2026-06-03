@@ -96,6 +96,7 @@ const config: ZudokuConfig = {
             "/features/collections",
             "/features/communities",
             "/features/skills",
+            "/features/git-integration",
             "/features/turbo-mode",
           ],
         },

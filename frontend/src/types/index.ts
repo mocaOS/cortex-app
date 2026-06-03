@@ -761,4 +761,89 @@ export interface SystemConfig {
   enable_skills: boolean;
   enable_skill_scripts: boolean;
   max_skill_tools: number;
+
+  // Git Integration
+  enable_git_integration: boolean;
+}
+
+// =============================================================================
+// Git Integration
+// =============================================================================
+
+export type GitVendor = "github" | "gitlab" | "gitea";
+export type GitAccessLevel = "read" | "read_write";
+
+export interface GitConnection {
+  id: string;
+  vendor: GitVendor;
+  base_url?: string | null;
+  repo_owner: string;
+  repo_name: string;
+  pat_masked: string;
+  access_level: GitAccessLevel;
+  branch?: string | null;
+  default_branch?: string | null;
+  include_globs: string[];
+  exclude_globs: string[];
+  wiki_enabled: boolean;
+  collection_id?: string | null;
+  sync_interval_minutes: number;
+  last_synced_sha?: string | null;
+  last_synced_at?: string | null;
+  next_sync_due?: string | null;
+  sync_status?: string | null;
+  created_at?: string | null;
+}
+
+export interface GitConnectionCreate {
+  vendor: GitVendor;
+  base_url?: string | null;
+  repo_owner: string;
+  repo_name: string;
+  pat: string;
+  access_level: GitAccessLevel;
+  branch?: string | null;
+  include_globs: string[];
+  exclude_globs: string[];
+  wiki_enabled: boolean;
+  collection_id?: string | null;
+  sync_interval_minutes: number;
+}
+
+export interface GitConnectionUpdate {
+  pat?: string;
+  access_level?: GitAccessLevel;
+  branch?: string | null;
+  include_globs?: string[];
+  exclude_globs?: string[];
+  wiki_enabled?: boolean;
+  collection_id?: string | null;
+  sync_interval_minutes?: number;
+}
+
+export interface GitVerifyResponse {
+  valid: boolean;
+  login?: string | null;
+  message?: string | null;
+}
+
+export interface GitRepoBrowseItem {
+  owner: string;
+  name: string;
+  full_name: string;
+  default_branch?: string | null;
+  private: boolean;
+  web_url?: string | null;
+}
+
+export interface GitSyncTriggerResponse {
+  task_id: string;
+  connection_id: string;
+  message: string;
+}
+
+export interface GitOrphanedDocument {
+  id: string;
+  filename: string;
+  git_path: string;
 }

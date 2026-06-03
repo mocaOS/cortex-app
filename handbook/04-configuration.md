@@ -225,6 +225,21 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 
 See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installing, configuring, and creating skills.
 
+## Git Integration Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_GIT_INTEGRATION` | `false` | Master switch for the git repo connector. When disabled, the Git Integration card, endpoints, scheduler, and agent `git_repo` tool are all inactive. |
+| `GIT_WORK_DIR` | `./git_repos` | Directory holding per-connection clone working copies (a cache; the graph is the source of truth). Must be writable — mount a volume in production. |
+| `GIT_CLONE_DEPTH` | `1` | Shallow-clone depth. Raise only if you need deeper history; sync self-heals via full-tree reconcile regardless. |
+| `GIT_MAX_REPO_SIZE_MB` | `500` | Abort a sync if the cloned repo exceeds this size. `0` = unlimited. |
+| `GIT_SYNC_MAX_FILE_SIZE_MB` | `5` | Skip individual files larger than this during sync. `0` = no per-file limit. |
+| `GIT_SYNC_POLL_INTERVAL` | `5` | Minutes between scheduler ticks that check connections due for a scheduled sync. |
+| `GIT_HTTP_TIMEOUT` | `30` | Timeout in seconds for git provider REST API calls. |
+| `GIT_HTTP_INSECURE_HOSTS` | _(empty)_ | Comma-separated hostnames for which git REST calls and clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts. |
+
+The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22-git-integration.md) for the full feature guide.
+
 ## Community Detection Configuration
 
 | Variable | Default | Description |

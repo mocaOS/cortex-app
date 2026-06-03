@@ -1331,6 +1331,81 @@ class ApiClient {
       body: JSON.stringify({ values }),
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Git Integration (admin only)
+  // ---------------------------------------------------------------------------
+
+  async listGitConnections(): Promise<import("@/types").GitConnection[]> {
+    return this.request("/api/integrations/git/connections");
+  }
+
+  async getGitConnection(id: string): Promise<import("@/types").GitConnection> {
+    return this.request(`/api/integrations/git/connections/${encodeURIComponent(id)}`);
+  }
+
+  async createGitConnection(
+    data: import("@/types").GitConnectionCreate,
+  ): Promise<import("@/types").GitConnection> {
+    return this.request("/api/integrations/git/connections", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateGitConnection(
+    id: string,
+    data: import("@/types").GitConnectionUpdate,
+  ): Promise<import("@/types").GitConnection> {
+    return this.request(`/api/integrations/git/connections/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGitConnection(
+    id: string,
+    purgeDocuments = false,
+  ): Promise<{ message: string; documents_purged: number }> {
+    return this.request(
+      `/api/integrations/git/connections/${encodeURIComponent(id)}?purge_documents=${purgeDocuments}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async verifyGitCredentials(
+    vendor: import("@/types").GitVendor,
+    pat: string,
+    baseUrl?: string | null,
+  ): Promise<import("@/types").GitVerifyResponse> {
+    return this.request("/api/integrations/git/verify", {
+      method: "POST",
+      body: JSON.stringify({ vendor, pat, base_url: baseUrl || null }),
+    });
+  }
+
+  async browseGitRepos(
+    vendor: import("@/types").GitVendor,
+    pat: string,
+    baseUrl?: string | null,
+    page = 1,
+  ): Promise<import("@/types").GitRepoBrowseItem[]> {
+    const params = new URLSearchParams({ vendor, pat, page: String(page) });
+    if (baseUrl) params.set("base_url", baseUrl);
+    return this.request(`/api/integrations/git/browse?${params}`);
+  }
+
+  async syncGitConnection(id: string): Promise<import("@/types").GitSyncTriggerResponse> {
+    return this.request(`/api/integrations/git/connections/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+    });
+  }
+
+  async getGitOrphanedDocuments(
+    id: string,
+  ): Promise<{ documents: import("@/types").GitOrphanedDocument[] }> {
+    return this.request(`/api/integrations/git/connections/${encodeURIComponent(id)}/orphaned`);
+  }
 }
 
 export const api = new ApiClient();

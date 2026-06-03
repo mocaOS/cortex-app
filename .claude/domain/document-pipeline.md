@@ -13,6 +13,10 @@ Full pipeline from upload to graph storage. See [`.claude/domain/relationships.m
 
 Documents are converted via Docling (PDF, DOCX, PPTX, etc.). The `docling_worker.py` runs as a separate process for CPU-bound ML inference, OCR, and table structure recognition with memory optimizations for large documents. Images are extracted during this phase for later vision analysis.
 
+### Raw-text/code fast path
+
+`_process_document` branches **before** the Docling step: files whose extension is in `RAW_TEXT_EXTENSIONS` (code like `.py/.ts/.go` + markup `.md/.rst/.txt`) are read directly via `_read_raw_text_file` and skip Docling entirely — running Docling on source code is wasteful. Code is wrapped in a fenced block with a language hint (`_LANG_BY_EXT`) plus a filename heading; markdown/text pass through verbatim. Everything after (splitter, embedding, graph extraction) is shared. This path is what the [git connector](git-integration.md) uses for repo files and wiki pages. `store_file_only`/`process_file` accept an optional `git_provenance` dict that sets the document's git provenance fields.
+
 ## Chunking
 
 Converted text is split into chunks controlled by:

@@ -438,6 +438,40 @@ DEFAULT_COLLECTION=default
 
 ---
 
+## Git Integration
+
+Connect GitHub, GitLab, and Gitea repositories as a knowledge source and (optionally) let the agent open pull requests. See the [Git Integration feature guide](/features/git-integration) for the full walkthrough.
+
+```bash
+# Master switch (connector, endpoints, scheduler, agent git_repo tool)
+ENABLE_GIT_INTEGRATION=true
+
+# Where clone working copies are cached (mount a volume in production)
+GIT_WORK_DIR=/data/git_repos
+
+# Shallow-clone depth
+GIT_CLONE_DEPTH=1
+
+# Abort a sync above this repo size (0 = unlimited)
+GIT_MAX_REPO_SIZE_MB=500
+
+# Skip individual files larger than this (0 = no limit)
+GIT_SYNC_MAX_FILE_SIZE_MB=5
+
+# Minutes between scheduled-sync checks
+GIT_SYNC_POLL_INTERVAL=5
+
+# Timeout (seconds) for git provider REST calls
+GIT_HTTP_TIMEOUT=30
+
+# Comma-separated hosts allowed to skip TLS verification (self-hosted self-signed)
+GIT_HTTP_INSECURE_HOSTS=
+```
+
+The backend image bundles the `git` binary. Connections are created and managed from **Settings → Git Integration** (admin only); the personal access token is stored server-side and never exposed to the agent.
+
+---
+
 ## Vision Model Configuration
 
 Configure image analysis capabilities:

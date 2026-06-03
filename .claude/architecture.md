@@ -28,6 +28,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/research_prompts.py` — Prompt templates and tool definitions for researcher/writer agents. See [`.claude/domain/rag-pipeline.md`](domain/rag-pipeline.md)
 - `services/library_transfer_service.py` — Full library export/import. See [`.claude/domain/admin-features.md`](domain/admin-features.md)
 - `services/skill_service.py` — Agent Skills integration. See [`.claude/domain/skills.md`](domain/skills.md)
+- `services/git_connector_service.py` + `services/git_providers/` — Git connector (GitHub/GitLab/Gitea): incremental clone+diff sync into the pipeline, provider abstraction, agent `git_repo` write tool. See [`.claude/domain/git-integration.md`](domain/git-integration.md)
 - `services/llm_config.py` — LLM configuration utility (Turbo Mode support, extraction/relationship model config). See [`.claude/domain/relationships.md`](domain/relationships.md)
 
 ## Frontend (`frontend/src/`)

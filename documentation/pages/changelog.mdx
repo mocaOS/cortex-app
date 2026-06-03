@@ -7,6 +7,33 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 3, 2026
+
+### Git integration — connect GitHub, GitLab & Gitea repositories as a living knowledge source
+
+Cortex can now connect directly to git repositories and keep their knowledge in sync. This is a major capability expansion: a connected repo becomes a **first-class, bidirectional interface** — Cortex ingests the repo's files and wiki into the knowledge graph (read), and the research agent can act on the repo by opening pull requests (read/write). Works with **GitHub, GitLab, and Gitea** (including self-hosted) behind a single provider abstraction. Enable with `ENABLE_GIT_INTEGRATION=true`.
+
+**Two surfaces, one connection.** Each connection carries an `access_level`:
+
+- **Read** → ingestion. Cortex clones the repo and feeds matching files (and optionally the wiki) through the normal pipeline — chunking, embedding, entity/relationship extraction — so repo content is searchable and shows up in the graph alongside your other documents.
+- **Read/write** → the agent gains a `git_repo` tool. It can read live file contents and **propose changes as pull requests**. Writes *always* land on a fresh `cortex/agent-*` branch and open a PR/MR for human review — never a direct push to the default branch. Write actions are rejected server-side on read-only connections, so the toggle is a hard guarantee.
+
+**Incremental, versioning-aware sync.** Re-syncing doesn't re-ingest everything. Cortex stores the last-synced commit and runs `git diff --name-status -M` to classify each change — **Added** (new document), **Modified** (re-extract in place), **Deleted** (flag the document for review, never auto-delete), **Renamed** (remap the path). If history was rewritten (force-push) or the filters changed, it self-heals by falling back to a full-tree reconcile that compares every file's blob SHA to what's stored. Documents carry git provenance (`git_connection_id`, `git_path`, `git_blob_sha`, `git_commit_sha`) so the sync key is the repo path, not a filename. After a sync that changed anything, the graph is flagged stale so you know to re-run relationship analysis and community detection.
+
+**Curated "documents only" default.** New connections default to ingesting **`.pdf` and `.md` files only** — a single checkbox in the connect form, checked by default. Uncheck it to reveal custom include/exclude globs (gitignore-style). Code files (`.py`, `.ts`, `.go`, …) and markdown ingest through a new Docling-free **fast path** (running Docling on source code is wasteful); PDFs and Office documents route through Docling as usual. Images and audio are deliberately excluded from repo sync so a connection never OCRs every logo.
+
+**Manual + scheduled.** Sync on demand with a "Sync now" button, or set a per-connection interval and a background poller keeps the repo current. No webhooks required (no public endpoint needed). GitHub wikis are cloned via `repo.wiki.git`; GitLab/Gitea wikis use their Wikis API.
+
+**Setup UX.** A new **Git Integration** card on the Settings page walks you through it: pick a provider, paste a personal access token, and an inline, vendor-specific guide tells you exactly which token to create (always recommending the least-privilege option) with a direct link to the right settings page. "Test" verifies the token, then you pick the repo, access level, and (optionally) advanced filters. Existing connections are fully editable — access level, branch, schedule, globs, wiki, and token rotation.
+
+**Credentials.** Single-tenant, personal-access-token per connection. The token is injected server-side into every git and API call — the agent/LLM never sees it — masked in all API responses, scrubbed from logs and errors, and never persisted in `.git/config`.
+
+**Bonus correctness fix (applies to all documents).** While building the sync's re-extraction path we fixed a pre-existing bug: relationships carry a `source_document_id` but previously survived reprocess/delete unless an endpoint entity became fully orphaned, leaving stale `RELATES_TO` edges. A new `delete_relationships_by_source_document` now runs in `delete_document_chunks` and `delete_document`, so reprocessing or deleting **any** document (uploads and custom inputs included) cleans up its relationships.
+
+New env vars: `ENABLE_GIT_INTEGRATION`, `GIT_WORK_DIR`, `GIT_CLONE_DEPTH`, `GIT_MAX_REPO_SIZE_MB`, `GIT_SYNC_MAX_FILE_SIZE_MB`, `GIT_SYNC_POLL_INTERVAL`, `GIT_HTTP_TIMEOUT`, `GIT_HTTP_INSECURE_HOSTS`. The backend image now bundles `git`; `pathspec` was added for glob matching. New endpoints under `/api/integrations/git/*` (admin-gated). New backend: `services/git_providers/` (GitHub/GitLab/Gitea adapters) and `services/git_connector_service.py`; new frontend: `components/admin/GitIntegrations.tsx`; new docs: `handbook/22-git-integration.md`, `documentation/pages/features/git-integration.mdx`, and `.claude/domain/git-integration.md`.
+
+---
+
 ## June 1, 2026
 
 ### Library export AND import stream to/from disk instead of buffering — fixes OOM crash on large instances

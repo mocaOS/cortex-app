@@ -210,6 +210,12 @@ class DocumentMetadata(BaseModel):
     image_progress_current: int = Field(default=0, description="Number of images analyzed so far")
     image_progress_total: int = Field(default=0, description="Total images to analyze")
     image_progress_message: str = Field(default="", description="Human-readable image analysis progress")
+    # Git provenance (set only for documents ingested from a git connection)
+    git_connection_id: Optional[str] = Field(default=None, description="ID of the GitConnection this document was synced from")
+    git_path: Optional[str] = Field(default=None, description="Repo-relative path of the source file (or wiki/<slug>)")
+    git_blob_sha: Optional[str] = Field(default=None, description="Git blob SHA of the source file at last sync")
+    git_commit_sha: Optional[str] = Field(default=None, description="Repo HEAD commit SHA at last sync")
+    git_sync_status: Optional[str] = Field(default=None, description="Git sync state: 'synced' or 'orphaned' (source file removed from repo)")
 
 
 class DocumentChunk(BaseModel):
@@ -728,6 +734,105 @@ class SkillConfigSaveRequest(BaseModel):
     values: dict = Field(..., description="Map of variable name to value")
 
 
+# =============================================================================
+# Git Integration (GitHub / GitLab / Gitea connector)
+# =============================================================================
+
+class GitVendor(str, Enum):
+    """Supported git hosting providers."""
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    GITEA = "gitea"
+
+
+class GitAccessLevel(str, Enum):
+    """Permission level for a git connection."""
+    READ = "read"            # ingest only; agent write actions rejected
+    READ_WRITE = "read_write"  # ingest + agent may create branches/commits/PRs
+
+
+class GitConnectionCreate(BaseModel):
+    """Request to create a git connection."""
+    vendor: GitVendor = Field(..., description="Git hosting provider")
+    base_url: Optional[str] = Field(default=None, description="API base URL for self-hosted GitLab/Gitea (omit for github.com/gitlab.com)")
+    repo_owner: str = Field(..., description="Repo owner / org / group (or GitLab namespace path)")
+    repo_name: str = Field(..., description="Repository name")
+    pat: str = Field(..., min_length=8, description="Personal access token used for clone + API")
+    access_level: GitAccessLevel = Field(default=GitAccessLevel.READ, description="read or read_write")
+    branch: Optional[str] = Field(default=None, description="Branch to sync (defaults to repo default branch)")
+    include_globs: List[str] = Field(default_factory=list, description="gitignore-style include patterns (empty = all files)")
+    exclude_globs: List[str] = Field(default_factory=list, description="gitignore-style exclude patterns")
+    wiki_enabled: bool = Field(default=False, description="Also ingest the repo wiki")
+    collection_id: Optional[str] = Field(default=None, description="Target collection for ingested documents")
+    sync_interval_minutes: int = Field(default=0, ge=0, description="Scheduled-sync interval in minutes (0 = manual only)")
+
+
+class GitConnectionUpdate(BaseModel):
+    """Partial update of a git connection. PAT is rotated only if provided."""
+    pat: Optional[str] = Field(default=None, min_length=8, description="New PAT (rotation); omit to keep existing")
+    access_level: Optional[GitAccessLevel] = None
+    branch: Optional[str] = None
+    include_globs: Optional[List[str]] = None
+    exclude_globs: Optional[List[str]] = None
+    wiki_enabled: Optional[bool] = None
+    collection_id: Optional[str] = None
+    sync_interval_minutes: Optional[int] = Field(default=None, ge=0)
+
+
+class GitConnectionResponse(BaseModel):
+    """Git connection for API responses. PAT is always masked."""
+    id: str
+    vendor: GitVendor
+    base_url: Optional[str] = None
+    repo_owner: str
+    repo_name: str
+    pat_masked: str = Field(..., description="Masked token, e.g. '••••abcd'")
+    access_level: GitAccessLevel
+    branch: Optional[str] = None
+    default_branch: Optional[str] = None
+    include_globs: List[str] = Field(default_factory=list)
+    exclude_globs: List[str] = Field(default_factory=list)
+    wiki_enabled: bool = False
+    collection_id: Optional[str] = None
+    sync_interval_minutes: int = 0
+    last_synced_sha: Optional[str] = None
+    last_synced_at: Optional[str] = None
+    next_sync_due: Optional[str] = None
+    sync_status: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class GitConnectionVerifyRequest(BaseModel):
+    """Validate a PAT against a provider before creating a connection."""
+    vendor: GitVendor
+    base_url: Optional[str] = None
+    pat: str = Field(..., min_length=8)
+
+
+class GitVerifyResponse(BaseModel):
+    """Result of a credential verification."""
+    valid: bool
+    login: Optional[str] = Field(default=None, description="Authenticated account/login")
+    message: Optional[str] = None
+
+
+class GitRepoBrowseItem(BaseModel):
+    """A repository the token can access, for the connection setup picker."""
+    owner: str
+    name: str
+    full_name: str
+    default_branch: Optional[str] = None
+    private: bool = False
+    web_url: Optional[str] = None
+
+
+class GitSyncTriggerResponse(BaseModel):
+    """Response from triggering a sync."""
+    task_id: str
+    connection_id: str
+    message: str
+
+
 class SystemResetRequest(BaseModel):
     """Request model for system reset with selective deletion options."""
     delete_documents: bool = Field(default=True, description="Delete all documents, chunks, entities, and communities")
@@ -899,6 +1004,9 @@ class SystemConfigResponse(BaseModel):
     enable_skills: bool = Field(default=False, description="Whether agent skills are enabled")
     enable_skill_scripts: bool = Field(default=False, description="Whether skill script execution is allowed")
     max_skill_tools: int = Field(default=10, description="Max skill tools in researcher agent")
+
+    # Git Integration
+    enable_git_integration: bool = Field(default=False, description="Whether the git repo connector is enabled")
 
     class Config:
         json_schema_extra = {

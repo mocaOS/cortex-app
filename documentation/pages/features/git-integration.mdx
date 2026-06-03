@@ -1,0 +1,105 @@
+---
+title: Git Integration
+description: Connect GitHub, GitLab, and Gitea repositories as a living knowledge source — ingest files and wikis into the graph, and let the agent open pull requests
+---
+
+Git Integration connects Cortex directly to your repositories. A connected repo becomes a **bidirectional interface**: Cortex ingests its files and wiki into the knowledge graph (read), and the research agent can act on it by opening pull requests (read/write). It works with **GitHub, GitLab, and Gitea**, including self-hosted instances.
+
+Enable it with `ENABLE_GIT_INTEGRATION=true`, then manage connections from **Settings → Git Integration**.
+
+## Overview
+
+Each connection has an **access level** that decides what Cortex can do:
+
+| Access level | What it enables |
+|---|---|
+| **Read-only** | Ingestion only — repo files and (optionally) the wiki flow into the knowledge graph, searchable alongside your other documents. |
+| **Read/write** | Ingestion **plus** the agent's `git_repo` tool — it can read live files and open pull requests with proposed changes. |
+
+A repo's content is chunked, embedded, and run through entity/relationship extraction exactly like uploaded documents — so once synced, it shows up in Search, Ask AI, the knowledge graph, and communities.
+
+## Connecting a repository
+
+1. Go to **Settings → Git Integration** and click **Connect repository**.
+2. Pick a **provider** (GitHub / GitLab / Gitea). For self-hosted GitLab/Gitea, fill in the API base URL.
+3. Paste a **personal access token**. The form shows an inline, vendor-specific guide telling you exactly which token to create — always the **least-privilege** option — with a direct link to the right settings page. Click **Test** to verify it.
+4. Enter the **owner/org** and **repository**.
+5. Choose the **access level**.
+6. Leave the default **"Only ingest `.pdf` and `.md` files"** checked, or uncheck it to set custom filters (see [Filtering](#filtering-what-gets-ingested)).
+7. Click **Connect**, then **Sync** to ingest.
+
+### Which token to create
+
+Cortex always recommends the most narrowly-scoped token that works:
+
+- **GitHub** — a **fine-grained personal access token** scoped to the one repo, with **Contents: Read-only** for ingestion. For read/write, add **Contents: Read and write** + **Pull requests: Read and write**. (To ingest a GitHub **wiki**, use a classic token with the `repo` scope — fine-grained tokens don't cover wikis.)
+- **GitLab** — a **Project Access Token** with role **Reporter** and scope `read_repository`. For merge requests, use role **Developer** with `api` + `write_repository`.
+- **Gitea** — a scoped personal access token with **Repository: Read**. For pull requests, **Repository: Read and Write** plus **Issue: Read and Write** (for PR comments).
+
+The token is stored server-side, masked in the UI (`••••abcd`), injected automatically into every git and API call, and never exposed to the agent or written into logs.
+
+## Filtering: what gets ingested
+
+By default, new connections ingest **`.pdf` and `.md` files only** — a sensible, safe default for documentation. Uncheck **"Only ingest .pdf and .md files"** to reveal **include** and **exclude** glob fields (gitignore-style patterns, comma-separated), for example:
+
+- Include: `src/**, docs/**`
+- Exclude: `**/node_modules/**, *.lock`
+
+Supported file types are text/code (`.py`, `.ts`, `.go`, `.md`, …) and documents (`.pdf`, `.docx`, `.pptx`, …). Code and markdown ingest through a fast path that skips Docling; PDFs and Office files route through Docling. Images and audio are **not** ingested from repos.
+
+## Incremental sync
+
+Re-syncing is incremental — Cortex does **not** re-ingest the whole repo each time. It records the last-synced commit and uses git history to classify what changed:
+
+| Change | What Cortex does |
+|---|---|
+| **Added** | Creates a new document |
+| **Modified** | Re-extracts that document in place (old chunks/relationships replaced) |
+| **Deleted** | Flags the document for review (never auto-deleted) |
+| **Renamed** | Remaps the document's path |
+
+If the branch was force-pushed or you change the filters, sync self-heals via a full-tree reconcile (comparing every file's content hash to what's stored). After any change, the graph is flagged **stale** so you know to re-run relationship analysis and community detection from the **Knowledge Graph** page.
+
+> Deleted files are **flagged, not removed.** Open a connection's details to review documents whose source file disappeared from the repo, then delete them from the Documents page if you no longer need them.
+
+## Keeping repos up to date
+
+- **Manual** — click **Sync** on a connection any time.
+- **Scheduled** — set an **Auto-sync** interval (minutes) under Advanced; a background poller re-syncs that connection on schedule. No webhooks or public endpoint required.
+
+## The agent's `git_repo` tool (read/write)
+
+When a connection is **read/write**, the research agent gains a `git_repo` tool with three actions:
+
+- **read_file** — fetch a file's current contents.
+- **propose_change** — open a pull request with edits.
+- **comment** — comment on an existing pull request.
+
+Safety is enforced in code, not just by prompt: every write creates a new `cortex/agent-…` branch and opens a **pull request for human review** — the agent never pushes to your default branch. On read-only connections, write actions are refused server-side.
+
+## Editing & removing connections
+
+Expand a connection to **Edit** it — change access level, branch, auto-sync interval, filters, wiki ingestion, or rotate the token. Toggling away from the `.pdf`/`.md` default when you have custom filters defined asks for confirmation first.
+
+**Delete** offers two options: keep the already-ingested documents, or purge them along with the connection.
+
+## Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENABLE_GIT_INTEGRATION` | `false` | Master switch for the connector |
+| `GIT_WORK_DIR` | `./git_repos` | Where clone working copies are cached (mount a volume in production) |
+| `GIT_CLONE_DEPTH` | `1` | Shallow-clone depth |
+| `GIT_MAX_REPO_SIZE_MB` | `500` | Abort sync above this repo size (0 = unlimited) |
+| `GIT_SYNC_MAX_FILE_SIZE_MB` | `5` | Skip files larger than this (0 = no limit) |
+| `GIT_SYNC_POLL_INTERVAL` | `5` | Minutes between scheduled-sync checks |
+| `GIT_HTTP_TIMEOUT` | `30` | Timeout (seconds) for provider API calls |
+| `GIT_HTTP_INSECURE_HOSTS` | _(empty)_ | Comma-separated hosts allowed to skip TLS verification (self-signed self-hosted) |
+
+The backend image bundles `git`; ensure `GIT_WORK_DIR` is writable.
+
+## See also
+
+- [Document Upload](/features/document-upload) — how ingested content flows through the pipeline
+- [Ask AI](/features/ask-ai) — querying ingested repo content
+- [Agent Skills](/features/skills) — the other way to extend the agent with external capabilities

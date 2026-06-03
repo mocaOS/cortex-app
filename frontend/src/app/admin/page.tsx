@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { PageTransition } from "@/components/layout";
-import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager } from "@/components/admin";
+import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LogOut,
@@ -251,6 +251,17 @@ export default function AdminPage() {
             transition={{ delay: 0.11 }}
           >
             <SkillsManager />
+          </motion.div>
+        )}
+
+        {/* Git Integration */}
+        {config?.enable_git_integration && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.115 }}
+          >
+            <GitIntegrations />
           </motion.div>
         )}
 

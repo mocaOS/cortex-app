@@ -889,6 +889,31 @@ class DocumentProcessor:
         ".xml",
     }
 
+    # Code + lightweight-markup files ingested as-is (no Docling conversion).
+    # Markdown/plaintext are handled here too — running Docling on them is wasteful.
+    RAW_TEXT_EXTENSIONS = {
+        ".md", ".mdx", ".markdown", ".rst", ".txt",
+        ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".kt",
+        ".rb", ".php", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".swift",
+        ".sh", ".bash", ".zsh", ".sql", ".yaml", ".yml", ".toml", ".ini",
+        ".cfg", ".json", ".env", ".dockerfile", ".tf", ".proto", ".graphql",
+        ".vue", ".svelte", ".scala", ".lua", ".r", ".m", ".pl",
+    }
+
+    # Map extensions to a Markdown code-fence language hint so the splitter and
+    # downstream entity extraction get clean, well-delimited text.
+    _LANG_BY_EXT = {
+        ".py": "python", ".ts": "typescript", ".tsx": "tsx", ".js": "javascript",
+        ".jsx": "jsx", ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin",
+        ".rb": "ruby", ".php": "php", ".c": "c", ".h": "c", ".cpp": "cpp",
+        ".hpp": "cpp", ".cc": "cpp", ".cs": "csharp", ".swift": "swift",
+        ".sh": "bash", ".bash": "bash", ".zsh": "bash", ".sql": "sql",
+        ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", ".ini": "ini",
+        ".cfg": "ini", ".json": "json", ".tf": "hcl", ".proto": "protobuf",
+        ".graphql": "graphql", ".vue": "vue", ".svelte": "svelte",
+        ".scala": "scala", ".lua": "lua", ".r": "r", ".pl": "perl",
+    }
+
     def _get_converter(self, file_type: str):
         """Get the appropriate converter for a file type.
 
@@ -898,6 +923,21 @@ class DocumentProcessor:
             return self.docling_converter
         return None
 
+    def _read_raw_text_file(self, file_path: str, ext: str) -> str:
+        """Read a code/markdown file as text for the Docling-free fast path.
+
+        Markdown/plaintext is returned verbatim; code is wrapped in a fenced
+        block with a language hint plus a filename heading so the splitter and
+        entity extraction get clean, well-delimited content.
+        """
+        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        lang = self._LANG_BY_EXT.get(ext)
+        if lang is None:
+            # Markdown / rst / txt — already prose-like, ingest as-is.
+            return content
+        name = Path(file_path).name
+        return f"# {name}\n\n```{lang}\n{content}\n```\n"
+
     async def store_file_only(
         self,
         file_path: str,
@@ -905,6 +945,7 @@ class DocumentProcessor:
         file_size: int,
         collection_id: Optional[str] = None,
         source: str = "upload",
+        git_provenance: Optional[dict] = None,
     ) -> str:
         """
         Store a file without processing it.
@@ -937,6 +978,11 @@ class DocumentProcessor:
             file_path=file_path,
             processing_status=ProcessingStatus.PENDING,
             source=source,
+            git_connection_id=(git_provenance or {}).get("git_connection_id"),
+            git_path=(git_provenance or {}).get("git_path"),
+            git_blob_sha=(git_provenance or {}).get("git_blob_sha"),
+            git_commit_sha=(git_provenance or {}).get("git_commit_sha"),
+            git_sync_status=(git_provenance or {}).get("git_sync_status"),
         )
 
         # Store document node (no processing yet)
@@ -956,6 +1002,7 @@ class DocumentProcessor:
         file_size: int,
         collection_id: Optional[str] = None,
         source: str = "upload",
+        git_provenance: Optional[dict] = None,
     ) -> str:
         """
         Process a file and store it in the knowledge base.
@@ -971,7 +1018,8 @@ class DocumentProcessor:
         """
         # First store the file
         doc_id = await self.store_file_only(
-            file_path, filename, file_size, collection_id, source=source
+            file_path, filename, file_size, collection_id, source=source,
+            git_provenance=git_provenance,
         )
 
         # Then start processing (with task tracking for cancellation support)
@@ -1126,18 +1174,29 @@ class DocumentProcessor:
             # Check for cancellation before conversion
             self._check_cancellation(doc_id)
 
-            # Verify the file type is supported before launching subprocess
-            if file_type.lower() not in self.DOCLING_EXTENSIONS:
+            # Choose conversion path. Code/markdown is ingested as-is (fast path);
+            # everything else goes through Docling.
+            ext = file_type.lower()
+            if ext in self.RAW_TEXT_EXTENSIONS:
+                use_vision = False
+                md_text = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(self._read_raw_text_file, file_path, ext),
+                )
+                if not md_text or not md_text.strip():
+                    raise ValueError("No content extracted from file")
+                filename = Path(file_path).name
+                conversion_result = {"markdown": md_text, "filename": filename, "images": []}
+            elif ext in self.DOCLING_EXTENSIONS:
+                use_vision = self.vision_analyzer.is_vision_model_available
+                conversion_result = await _convert_document_subprocess(file_path, use_vision)
+                md_text = conversion_result["markdown"]
+                if not md_text:
+                    raise ValueError("No content extracted from file")
+                filename = conversion_result.get("filename", Path(file_path).name)
+            else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
-            use_vision = self.vision_analyzer.is_vision_model_available
-            conversion_result = await _convert_document_subprocess(file_path, use_vision)
-
-            md_text = conversion_result["markdown"]
-            if not md_text:
-                raise ValueError("No content extracted from file")
-
-            filename = conversion_result.get("filename", Path(file_path).name)
             documents = [
                 HaystackDocument(
                     content=md_text,

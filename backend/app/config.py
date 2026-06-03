@@ -348,6 +348,35 @@ class Settings(BaseSettings):
         default=4000
     )  # Approx token budget for skill instruction injection into prompt
 
+    # ==========================================================================
+    # Git Integration (GitHub / GitLab / Gitea repo connector)
+    # ==========================================================================
+    enable_git_integration: bool = Field(
+        default=False
+    )  # Master switch for the git-repo connector (ingestion + agent git_repo tool)
+    git_work_dir: str = Field(
+        default="./git_repos"
+    )  # Directory holding per-connection clone working copies (cache, not source of truth)
+    git_clone_depth: int = Field(
+        default=1
+    )  # Shallow-clone depth. 1 = latest commit only (cheapest); raise if older history is needed for diffs
+    git_max_repo_size_mb: int = Field(
+        default=500
+    )  # Abort a sync if the cloned repo exceeds this size. 0 = unlimited
+    git_sync_max_file_size_mb: int = Field(
+        default=5
+    )  # Skip individual files larger than this during sync (binaries/assets). 0 = no per-file limit
+    git_sync_poll_interval: int = Field(
+        default=5
+    )  # Minutes between scheduler ticks that check connections due for a scheduled sync
+    git_http_timeout: int = Field(
+        default=30
+    )  # Timeout in seconds for git provider REST API calls (verify, list_repos, write ops)
+    git_http_insecure_hosts: str = Field(
+        default=""
+    )  # Comma-separated hostnames for which git REST calls AND clone TLS verification are skipped
+    # (opt-in, for self-signed certs on self-hosted GitLab/Gitea). Empty = verify all (secure default).
+
     # Chunking Configuration (enhanced)
     chunk_by: str = Field(default="sentence")  # "word" or "sentence" based splitting
     sentences_per_chunk: int = Field(

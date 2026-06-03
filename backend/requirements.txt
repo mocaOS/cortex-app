@@ -38,6 +38,7 @@ PyJWT>=2.8.0
 nltk>=3.9.1
 rapidfuzz>=3.0.0
 PyYAML>=6.0  # SKILL.md frontmatter parsing (agentskills.io)
+pathspec>=0.12.0  # gitignore-style include/exclude globs for the git connector
 
 # Testing
 pytest>=8.0.0

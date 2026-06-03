@@ -150,6 +150,66 @@ HTTP_REQUEST_TOOL = {
     },
 }
 
+GIT_REPO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "git_repo",
+        "description": (
+            "Read from or act on the connected git repository. "
+            "Actions: 'read_file' fetches a file's current contents; "
+            "'propose_change' opens a pull request with your edits; "
+            "'comment' adds a comment to an existing pull request. "
+            "Writes ALWAYS go onto a new branch and open a pull request for human "
+            "review — they never push to the default branch. Write actions are only "
+            "available when the connection is configured for read/write access. "
+            "Authentication is handled automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read_file", "propose_change", "comment"],
+                    "description": "The repository action to perform.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Repo-relative file path (for read_file).",
+                },
+                "files": {
+                    "type": "array",
+                    "description": "Files to create or update (for propose_change).",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["path", "content"],
+                    },
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Pull request title (for propose_change).",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "PR description (propose_change) or comment text (comment).",
+                },
+                "commit_message": {
+                    "type": "string",
+                    "description": "Commit message (for propose_change).",
+                },
+                "pr_number": {
+                    "type": "integer",
+                    "description": "Pull request / merge request number (for comment).",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+
 DONE_TOOL = {
     "type": "function",
     "function": {
@@ -239,28 +299,34 @@ def get_tools_with_skill_activation(
     mode: Literal["speed", "quality"],
     has_skills: bool = False,
     activated_skill_tools: List[dict] = None,
+    has_git: bool = False,
 ) -> List[dict]:
-    """Get tools for the given mode, with http_request if skills are active.
+    """Get tools for the given mode, adding http_request (skills) and/or git_repo.
 
     Skills are auto-activated at loop start, so the model just needs
-    http_request to call APIs described in the skill instructions.
-    activate_skill and list_skills are kept for on-demand activation of
-    additional skills mid-conversation.
+    http_request to call APIs described in the skill instructions. git_repo is
+    added whenever a git connection exists. When either external tool is active
+    in speed mode, the reasoning tool is added so the model can process large
+    responses before deciding the next step.
     """
     base = get_tools_for_mode(mode)
 
-    if not has_skills:
+    if not has_skills and not has_git:
         return base
 
     done = base[-1]  # always last
     core = base[:-1]
 
+    extra = []
+    if has_skills:
+        extra.append(HTTP_REQUEST_TOOL)
+    if has_git:
+        extra.append(GIT_REPO_TOOL)
+
     if mode == "quality" and core and core[0]["function"]["name"] == "reasoning":
-        result = [core[0], HTTP_REQUEST_TOOL] + core[1:]
+        result = [core[0]] + extra + core[1:]
     else:
-        # Speed mode with skills: add reasoning so the model can process
-        # large API responses before deciding the next step
-        result = [REASONING_TOOL, HTTP_REQUEST_TOOL] + core
+        result = [REASONING_TOOL] + extra + core
 
     # Append activated skill tools (if any — from tools.json, not used currently)
     if activated_skill_tools:

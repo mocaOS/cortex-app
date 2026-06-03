@@ -73,3 +73,9 @@ bench/__pycache__/
 
 # Skills *.zip
 library.zip
+# Git connector clone working copies
+backend/git_repos/
+git_repos/
+
+# Claude Code scheduled-tasks lock (machine-local state)
+.claude/scheduled_tasks.lock

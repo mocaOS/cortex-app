@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from typing import AsyncGenerator, Literal, Optional, List
 from dataclasses import dataclass, field
 
@@ -364,11 +365,28 @@ async def _run_researcher_loop(
         except Exception as e:
             logger.warning(f"Failed to load skill catalog: {e}")
 
+    # Git integration: load the primary connection (if any) so the git_repo tool
+    # is available. Writes are gated server-side on the connection's access_level.
+    git_connection = None
+    if getattr(settings, "enable_git_integration", False):
+        try:
+            from app.services.neo4j_service import get_neo4j_service as _get_neo4j
+            _conns = _get_neo4j().list_git_connections()
+            if _conns:
+                # Prefer a read/write connection so write actions are possible.
+                git_connection = next(
+                    (c for c in _conns if c.get("access_level") == "read_write"),
+                    _conns[0],
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load git connections: {e}")
+
     # Build tools list (rebuilt each iteration to include newly activated skill tools)
     tools = get_tools_with_skill_activation(
         mode,
         has_skills=bool(skill_catalog),
         activated_skill_tools=activated_tool_defs or None,
+        has_git=bool(git_connection),
     )
 
     # Build initial messages
@@ -400,6 +418,7 @@ async def _run_researcher_loop(
             mode,
             has_skills=bool(skill_catalog),
             activated_skill_tools=activated_tool_defs or None,
+            has_git=bool(git_connection),
         )
 
         try:
@@ -666,6 +685,90 @@ async def _run_researcher_loop(
                             "content": "No entities found.",
                         }
                     )
+
+            elif name == "git_repo":
+                git_action = (args.get("action") or "").strip()
+                if not git_connection:
+                    response_text = "Error: no git repository is connected."
+                else:
+                    from app.services.git_providers import get_provider, GitProviderError
+                    owner = git_connection["repo_owner"]
+                    repo = git_connection["repo_name"]
+                    provider = get_provider(
+                        git_connection["vendor"], git_connection["pat"],
+                        git_connection.get("base_url"),
+                    )
+                    base_branch = (
+                        git_connection.get("branch")
+                        or git_connection.get("default_branch")
+                        or "main"
+                    )
+                    write_actions = {"propose_change", "comment"}
+                    if git_action in write_actions and git_connection.get("access_level") != "read_write":
+                        # Hard, server-side enforcement of the read-only toggle.
+                        response_text = (
+                            "Error: this repository is connected read-only; "
+                            "write actions are not permitted."
+                        )
+                    else:
+                        yield {"type": "thinking", "content": f"git_repo: {git_action} on {owner}/{repo}"}
+                        try:
+                            if git_action == "read_file":
+                                content = await provider.get_file_content(
+                                    owner, repo, args.get("path", ""), base_branch,
+                                )
+                                response_text = _truncate_response(content)
+                            elif git_action == "propose_change":
+                                files = [
+                                    (f["path"], f.get("content", ""))
+                                    for f in (args.get("files") or [])
+                                    if f.get("path")
+                                ]
+                                if not files:
+                                    response_text = "Error: no files provided for propose_change."
+                                else:
+                                    # Invariant: always a fresh branch + PR, never a
+                                    # direct push to the default branch.
+                                    new_branch = f"cortex/agent-{uuid.uuid4().hex[:8]}"
+                                    await provider.create_branch(owner, repo, new_branch, base_branch)
+                                    await provider.commit_files(
+                                        owner, repo, new_branch, files,
+                                        args.get("commit_message") or "Update via Cortex agent",
+                                    )
+                                    pr = await provider.open_pull_request(
+                                        owner, repo, new_branch, base_branch,
+                                        args.get("title") or "Cortex agent change",
+                                        args.get("body") or "",
+                                    )
+                                    response_text = (
+                                        f"Opened pull request: {pr.url} "
+                                        f"(branch {new_branch} → {base_branch})"
+                                    )
+                            elif git_action == "comment":
+                                pr_number = args.get("pr_number")
+                                if pr_number is None:
+                                    response_text = "Error: pr_number is required for comment."
+                                else:
+                                    res = await provider.comment(
+                                        owner, repo, int(pr_number), args.get("body") or "",
+                                    )
+                                    response_text = (
+                                        f"Comment added to #{pr_number}"
+                                        + (f": {res.url}" if res.url else "")
+                                    )
+                            else:
+                                response_text = f"Error: unknown git action '{git_action}'."
+                        except GitProviderError as e:
+                            response_text = f"Error: {str(e)[:500]}"
+                        except Exception as e:
+                            response_text = f"Error: {str(e)[:500]}"
+                            logger.warning(f"git_repo {git_action} failed: {e}")
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": response_text,
+                })
 
             elif name == "http_request":
                 # Build merged config from all activated skills

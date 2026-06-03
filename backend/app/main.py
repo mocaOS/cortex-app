@@ -9,7 +9,7 @@ import glob
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
@@ -74,6 +74,14 @@ from app.models import (
     SkillUpdateRequest,
     SkillConfigSaveRequest,
     UpdateEntityRequest,
+    # Git integration models
+    GitConnectionCreate,
+    GitConnectionUpdate,
+    GitConnectionResponse,
+    GitConnectionVerifyRequest,
+    GitVerifyResponse,
+    GitRepoBrowseItem,
+    GitSyncTriggerResponse,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -203,6 +211,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Could not discover agent skills: {e}")
 
+    # Start the git scheduled-sync poller
+    git_scheduler_task = None
+    if settings.enable_git_integration:
+        os.makedirs(settings.git_work_dir, exist_ok=True)
+        git_scheduler_task = asyncio.create_task(_git_sync_scheduler())
+        logger.info("Git integration enabled; scheduled-sync poller started")
+
     # Warm up processors
     try:
         get_document_processor()
@@ -222,6 +237,8 @@ async def lifespan(app: FastAPI):
     
     # Cleanup
     watchdog_task.cancel()
+    if git_scheduler_task:
+        git_scheduler_task.cancel()
     neo4j.close()
     if _api_executor:
         _api_executor.shutdown(wait=False)
@@ -3979,6 +3996,9 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         enable_skills=settings.enable_skills,
         enable_skill_scripts=settings.enable_skill_scripts,
         max_skill_tools=settings.max_skill_tools,
+
+        # Git Integration
+        enable_git_integration=settings.enable_git_integration,
     )
 
 
@@ -4142,6 +4162,305 @@ async def save_skill_config(
         return {"message": "Configuration saved", "skill_id": skill_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# =============================================================================
+# Git Integration Endpoints (GitHub / GitLab / Gitea connector)
+# =============================================================================
+
+def _require_git_enabled():
+    if not get_settings().enable_git_integration:
+        raise HTTPException(status_code=404, detail="Git integration is disabled")
+
+
+def _mask_pat(pat: Optional[str]) -> str:
+    if not pat:
+        return "••••"
+    return "••••" + pat[-4:]
+
+
+def _git_conn_response(node: dict) -> GitConnectionResponse:
+    """Build a masked API response from a stored GitConnection node dict."""
+    return GitConnectionResponse(
+        id=node["id"],
+        vendor=node["vendor"],
+        base_url=node.get("base_url"),
+        repo_owner=node["repo_owner"],
+        repo_name=node["repo_name"],
+        pat_masked=node.get("pat_last4") and ("••••" + node["pat_last4"]) or _mask_pat(node.get("pat")),
+        access_level=node.get("access_level", "read"),
+        branch=node.get("branch"),
+        default_branch=node.get("default_branch"),
+        include_globs=node.get("include_globs", []) or [],
+        exclude_globs=node.get("exclude_globs", []) or [],
+        wiki_enabled=bool(node.get("wiki_enabled", False)),
+        collection_id=node.get("collection_id"),
+        sync_interval_minutes=int(node.get("sync_interval_minutes", 0) or 0),
+        last_synced_sha=node.get("last_synced_sha"),
+        last_synced_at=node.get("last_synced_at"),
+        next_sync_due=node.get("next_sync_due"),
+        sync_status=node.get("sync_status"),
+        created_at=node.get("created_at"),
+    )
+
+
+@app.post("/api/integrations/git/verify", response_model=GitVerifyResponse)
+async def verify_git_credentials(
+    request: GitConnectionVerifyRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Validate a PAT against the provider before creating a connection."""
+    _require_git_enabled()
+    from app.services.git_providers import get_provider, GitProviderError
+    try:
+        provider = get_provider(request.vendor.value, request.pat, request.base_url)
+        result = await provider.verify()
+        return GitVerifyResponse(valid=result.valid, login=result.login)
+    except GitProviderError as e:
+        return GitVerifyResponse(valid=False, message=str(e))
+    except Exception as e:
+        logger.warning(f"git verify failed: {e}")
+        return GitVerifyResponse(valid=False, message="Verification failed")
+
+
+@app.get("/api/integrations/git/browse", response_model=List[GitRepoBrowseItem])
+async def browse_git_repos(
+    vendor: str = Query(...),
+    pat: str = Query(...),
+    base_url: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    auth: AuthResult = Depends(require_admin),
+):
+    """List repositories the token can access, for the connection setup picker."""
+    _require_git_enabled()
+    from app.services.git_providers import get_provider, GitProviderError
+    try:
+        provider = get_provider(vendor, pat, base_url)
+        repos = await provider.list_repos(page=page)
+        return [
+            GitRepoBrowseItem(
+                owner=r.owner, name=r.name, full_name=r.full_name,
+                default_branch=r.default_branch, private=r.private, web_url=r.web_url,
+            )
+            for r in repos
+        ]
+    except (GitProviderError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/integrations/git/connections", response_model=GitConnectionResponse)
+async def create_git_connection(
+    request: GitConnectionCreate,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Create a git connection. Verifies the PAT and resolves the default branch first."""
+    _require_git_enabled()
+    from app.services.git_providers import get_provider, GitProviderError
+    neo4j = get_neo4j_service()
+    try:
+        provider = get_provider(request.vendor.value, request.pat, request.base_url)
+        verify = await provider.verify()
+        if not verify.valid:
+            raise HTTPException(status_code=400, detail="Invalid credentials")
+        default_branch = await provider.default_branch(request.repo_owner, request.repo_name)
+        if not default_branch:
+            raise HTTPException(status_code=404, detail="Repository not found or inaccessible")
+    except GitProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    connection_id = f"git_{uuid.uuid4().hex[:12]}"
+    props = {
+        "id": connection_id,
+        "vendor": request.vendor.value,
+        "base_url": request.base_url,
+        "repo_owner": request.repo_owner,
+        "repo_name": request.repo_name,
+        "pat": request.pat,
+        "pat_last4": request.pat[-4:],
+        "access_level": request.access_level.value,
+        "branch": request.branch or default_branch,
+        "default_branch": default_branch,
+        "include_globs": request.include_globs,
+        "exclude_globs": request.exclude_globs,
+        "wiki_enabled": request.wiki_enabled,
+        "collection_id": request.collection_id,
+        "sync_interval_minutes": request.sync_interval_minutes,
+        "last_synced_sha": None,
+        "last_synced_at": None,
+        "next_sync_due": None,
+        "sync_status": "never_synced",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    node = neo4j.create_git_connection(props)
+    return _git_conn_response(node)
+
+
+@app.get("/api/integrations/git/connections", response_model=List[GitConnectionResponse])
+async def list_git_connections(auth: AuthResult = Depends(require_admin)):
+    """List all git connections (PATs masked)."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    return [_git_conn_response(n) for n in neo4j.list_git_connections()]
+
+
+@app.get("/api/integrations/git/connections/{connection_id}", response_model=GitConnectionResponse)
+async def get_git_connection(connection_id: str, auth: AuthResult = Depends(require_admin)):
+    """Get a single git connection (PAT masked)."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    node = neo4j.get_git_connection(connection_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return _git_conn_response(node)
+
+
+@app.patch("/api/integrations/git/connections/{connection_id}", response_model=GitConnectionResponse)
+async def update_git_connection(
+    connection_id: str,
+    request: GitConnectionUpdate,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Update a git connection. PAT is rotated only when provided."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    existing = neo4j.get_git_connection(connection_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    props = {}
+    data = request.model_dump(exclude_unset=True)
+    if "pat" in data and data["pat"]:
+        props["pat"] = data["pat"]
+        props["pat_last4"] = data["pat"][-4:]
+    for key in ("branch", "include_globs", "exclude_globs", "wiki_enabled",
+                "collection_id", "sync_interval_minutes"):
+        if key in data:
+            props[key] = data[key]
+    if "access_level" in data and data["access_level"] is not None:
+        props["access_level"] = data["access_level"].value if hasattr(data["access_level"], "value") else data["access_level"]
+
+    node = neo4j.update_git_connection(connection_id, props)
+    return _git_conn_response(node)
+
+
+@app.delete("/api/integrations/git/connections/{connection_id}")
+async def delete_git_connection(
+    connection_id: str,
+    purge_documents: bool = Query(default=False, description="Also delete all documents ingested from this connection"),
+    auth: AuthResult = Depends(require_admin),
+):
+    """Delete a git connection. With purge_documents, also removes its ingested documents."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    existing = neo4j.get_git_connection(connection_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    purged = 0
+    if purge_documents:
+        for doc in neo4j.list_documents_for_git_connection(connection_id):
+            neo4j.delete_relationships_by_source_document(doc["id"])
+            neo4j.delete_document(doc["id"])
+            purged += 1
+
+    neo4j.delete_git_connection(connection_id)
+    return {"message": "Connection deleted", "connection_id": connection_id, "documents_purged": purged}
+
+
+async def _run_git_sync_task(connection_id: str, task_id: str):
+    """Background runner: sync a git connection, reporting progress to the task store."""
+    from app.services.git_connector_service import get_git_connector_service
+    service = get_git_connector_service()
+    update_task_progress(task_id, 0, 100, "Starting sync...")
+    try:
+        def progress(cur, total, msg):
+            update_task_progress(task_id, cur, total, msg)
+        result = await service.sync_connection(connection_id, task_id, progress=progress)
+        result["connection_id"] = connection_id
+        complete_task(task_id, result)
+    except Exception as e:
+        logger.error(f"git sync failed for {connection_id}: {e}")
+        fail_task(task_id, str(e))
+
+
+def _git_connection_has_active_sync(connection_id: str) -> bool:
+    for t in _task_store.values():
+        if (t.task_type == "git_repo_sync"
+                and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+                and (t.result or {}).get("connection_id") == connection_id):
+            return True
+    return False
+
+
+async def _git_sync_scheduler():
+    """Periodically trigger syncs for connections whose scheduled interval is due."""
+    settings = get_settings()
+    interval_s = max(1, int(settings.git_sync_poll_interval or 5)) * 60
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+            neo4j = get_neo4j_service()
+            now = datetime.now(timezone.utc)
+            for conn in neo4j.list_git_connections():
+                if int(conn.get("sync_interval_minutes") or 0) <= 0:
+                    continue
+                due = conn.get("next_sync_due")
+                is_due = True
+                if due:
+                    try:
+                        is_due = datetime.fromisoformat(due) <= now
+                    except (ValueError, TypeError):
+                        is_due = True
+                if not is_due:
+                    continue
+                cid = conn["id"]
+                if _git_connection_has_active_sync(cid):
+                    continue
+                task = create_task("git_repo_sync")
+                task.result = {"connection_id": cid}
+                asyncio.create_task(_run_git_sync_task(cid, task.task_id))
+                logger.info(f"Scheduled git sync started for connection {cid}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"git sync scheduler tick failed: {e}")
+
+
+@app.post("/api/integrations/git/connections/{connection_id}/sync", response_model=GitSyncTriggerResponse)
+async def sync_git_connection(
+    connection_id: str,
+    background_tasks: BackgroundTasks,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Trigger an incremental sync for a connection. Returns a task id to poll."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    conn = neo4j.get_git_connection(connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    # Guard against a concurrent in-flight sync for this connection.
+    for t in _task_store.values():
+        if (t.task_type == "git_repo_sync" and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+                and (t.result or {}).get("connection_id") == connection_id):
+            raise HTTPException(status_code=409, detail="A sync is already running for this connection")
+    task = create_task("git_repo_sync")
+    task.result = {"connection_id": connection_id}
+    background_tasks.add_task(_run_git_sync_task, connection_id, task.task_id)
+    return GitSyncTriggerResponse(
+        task_id=task.task_id, connection_id=connection_id, message="Sync started",
+    )
+
+
+@app.get("/api/integrations/git/connections/{connection_id}/orphaned")
+async def list_orphaned_git_documents(connection_id: str, auth: AuthResult = Depends(require_admin)):
+    """List documents whose source file was removed from the repo (flagged for review)."""
+    _require_git_enabled()
+    neo4j = get_neo4j_service()
+    if not neo4j.get_git_connection(connection_id):
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return {"documents": neo4j.list_orphaned_git_documents(connection_id)}
 
 
 # =============================================================================

@@ -136,6 +136,19 @@ See [`.claude/domain/skills.md`](domain/skills.md) for the full Agent Skills sys
 - `MAX_SKILL_TOOLS` (default: 10) — max total skill-provided tools injected into researcher agent
 - `MAX_SKILL_INSTRUCTIONS_TOKENS` (default: 4000) — approximate token budget for skill instruction injection
 
+## Git Integration
+
+See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the full connector. Requires `git` in the backend image and `pathspec` (both included).
+
+- `ENABLE_GIT_INTEGRATION` (default: false) — master switch for the git repo connector (ingestion endpoints, scheduled poller, agent `git_repo` tool)
+- `GIT_WORK_DIR` (default: `./git_repos`) — directory holding per-connection clone working copies (a cache; Neo4j provenance is the source of truth). Must be writable; mount a volume in production
+- `GIT_CLONE_DEPTH` (default: 1) — shallow-clone depth. Raise if older history is needed for cheap diffs (sync self-heals via full-tree reconcile otherwise)
+- `GIT_MAX_REPO_SIZE_MB` (default: 500) — abort a sync if the cloned repo exceeds this. 0 = unlimited
+- `GIT_SYNC_MAX_FILE_SIZE_MB` (default: 5) — skip individual files larger than this (binaries/assets). 0 = no per-file limit
+- `GIT_SYNC_POLL_INTERVAL` (default: 5) — minutes between scheduler ticks checking connections due for a scheduled sync (per-connection interval is `sync_interval_minutes`, 0 = manual only)
+- `GIT_HTTP_TIMEOUT` (default: 30) — timeout in seconds for git provider REST calls
+- `GIT_HTTP_INSECURE_HOSTS` (default: empty) — comma-separated hostnames for which git REST calls AND clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts (secure default)
+
 ## Auth
 
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth

@@ -238,6 +238,26 @@ class Neo4jService:
                 logger.warning(f"Skill constraint may already exist: {e}")
 
             # =================================================================
+            # Git integration constraints & indexes
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE CONSTRAINT git_connection_id IF NOT EXISTS
+                    FOR (g:GitConnection) REQUIRE g.id IS UNIQUE
+                """)
+            except Exception as e:
+                logger.warning(f"GitConnection constraint may already exist: {e}")
+            try:
+                # Keyed lookup for incremental sync: find the document for a
+                # given (connection, repo path) without relying on filename dedup.
+                session.run("""
+                    CREATE INDEX git_document_path IF NOT EXISTS
+                    FOR (d:Document) ON (d.git_connection_id, d.git_path)
+                """)
+            except Exception as e:
+                logger.warning(f"git_document_path index may already exist: {e}")
+
+            # =================================================================
             # Data migrations
             # =================================================================
             # Backfill source field on existing documents that don't have one
@@ -274,7 +294,12 @@ class Neo4jService:
                     d.progress_current = $progress_current,
                     d.progress_total = $progress_total,
                     d.progress_message = $progress_message,
-                    d.source = $source
+                    d.source = $source,
+                    d.git_connection_id = COALESCE($git_connection_id, d.git_connection_id),
+                    d.git_path = COALESCE($git_path, d.git_path),
+                    d.git_blob_sha = COALESCE($git_blob_sha, d.git_blob_sha),
+                    d.git_commit_sha = COALESCE($git_commit_sha, d.git_commit_sha),
+                    d.git_sync_status = COALESCE($git_sync_status, d.git_sync_status)
                 RETURN d.id as id
             """,
                 id=doc_id,
@@ -289,7 +314,12 @@ class Neo4jService:
                 progress_total=metadata.progress_total,
                 progress_message=metadata.progress_message,
                 error_message=metadata.error_message,
-                source=metadata.source
+                source=metadata.source,
+                git_connection_id=metadata.git_connection_id,
+                git_path=metadata.git_path,
+                git_blob_sha=metadata.git_blob_sha,
+                git_commit_sha=metadata.git_commit_sha,
+                git_sync_status=metadata.git_sync_status,
             )
             return result.single()["id"]
     
@@ -702,24 +732,34 @@ class Neo4jService:
             Dict with 'chunks_deleted' (int), 'orphaned_entities_removed' (int)
         """
         with self.driver.session() as session:
+            # Step 0: Remove relationships this document contributed. Edges carry
+            # source_document_id but survive entity-orphan cleanup when their
+            # endpoints persist via other documents — clear them explicitly so a
+            # reprocess does not leave stale relationships behind.
+            session.run("""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE r.source_document_id = $id
+                DELETE r
+            """, id=doc_id)
+
             # Step 1: Find entities that will become orphaned after deletion
             orphaned_result = session.run("""
                 MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                 WITH e, collect(DISTINCT c) as doc_chunks
-                
+
                 // Check if entity is mentioned by chunks from OTHER documents
                 OPTIONAL MATCH (other_chunk:Chunk)-[:MENTIONS]->(e)
                 WHERE NOT other_chunk IN doc_chunks
-                
+
                 WITH e, doc_chunks, collect(other_chunk) as other_chunks
                 WHERE size(other_chunks) = 0
-                
+
                 RETURN collect(e.name) as orphaned_entities
             """, id=doc_id)
-            
+
             orphaned_record = orphaned_result.single()
             orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
-            
+
             # Step 2: Delete orphaned entities
             orphaned_count = 0
             if orphaned_entities:
@@ -768,25 +808,34 @@ class Neo4jService:
             'orphaned_communities_removed' (int)
         """
         with self.driver.session() as session:
+            # Step 0: Remove relationships this document contributed (see note in
+            # delete_document_chunks) so deletion never leaves stale edges whose
+            # endpoint entities survive via other documents.
+            session.run("""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE r.source_document_id = $id
+                DELETE r
+            """, id=doc_id)
+
             # Step 1: Find entities that will become orphaned after deletion
             # These are entities ONLY mentioned by chunks of this document
             orphaned_result = session.run("""
                 MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                 WITH e, collect(DISTINCT c) as doc_chunks
-                
+
                 // Check if entity is mentioned by chunks from OTHER documents
                 OPTIONAL MATCH (other_chunk:Chunk)-[:MENTIONS]->(e)
                 WHERE NOT other_chunk IN doc_chunks
-                
+
                 WITH e, doc_chunks, collect(other_chunk) as other_chunks
                 WHERE size(other_chunks) = 0
-                
+
                 RETURN collect(e.name) as orphaned_entities
             """, id=doc_id)
-            
+
             orphaned_record = orphaned_result.single()
             orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
-            
+
             # Step 2: Delete orphaned entities (DETACH DELETE removes their relationships too)
             orphaned_entity_count = 0
             if orphaned_entities:
@@ -5847,6 +5896,150 @@ class Neo4jService:
                 RETURN count(s) as cnt
             """, skill_id=skill_id)
             return result.single()["cnt"] > 0
+
+    # =========================================================================
+    # Git Integration — connections & document provenance
+    # =========================================================================
+
+    def create_git_connection(self, props: dict) -> dict:
+        """Create a GitConnection node. `props` must include `id`."""
+        with self.driver.session() as session:
+            result = session.run("""
+                CREATE (g:GitConnection {id: $id})
+                SET g += $props
+                RETURN g
+            """, id=props["id"], props=props)
+            record = result.single()
+            return dict(record["g"]) if record else {}
+
+    def get_git_connection(self, connection_id: str) -> Optional[dict]:
+        """Get a single GitConnection (includes the raw PAT for internal use)."""
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (g:GitConnection {id: $id}) RETURN g",
+                id=connection_id,
+            )
+            record = result.single()
+            return dict(record["g"]) if record else None
+
+    def list_git_connections(self) -> list:
+        """List all GitConnection nodes."""
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (g:GitConnection) RETURN g ORDER BY g.created_at DESC"
+            )
+            return [dict(record["g"]) for record in result]
+
+    def update_git_connection(self, connection_id: str, props: dict) -> Optional[dict]:
+        """Update a GitConnection's properties (only keys present in `props`)."""
+        if not props:
+            return self.get_git_connection(connection_id)
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (g:GitConnection {id: $id})
+                SET g += $props
+                RETURN g
+            """, id=connection_id, props=props)
+            record = result.single()
+            return dict(record["g"]) if record else None
+
+    def delete_git_connection(self, connection_id: str) -> bool:
+        """Delete a GitConnection node (does not touch its documents)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (g:GitConnection {id: $id})
+                DETACH DELETE g
+                RETURN count(g) as cnt
+            """, id=connection_id)
+            return result.single()["cnt"] > 0
+
+    def set_git_connection_sync_state(self, connection_id: str, **state) -> None:
+        """Update sync bookkeeping (last_synced_sha/at, next_sync_due, sync_status, ...)."""
+        if not state:
+            return
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (g:GitConnection {id: $id})
+                SET g += $state
+            """, id=connection_id, state=state)
+
+    def find_git_document(self, connection_id: str, git_path: str) -> Optional[dict]:
+        """Find the document for a (connection, repo path) pair — the sync key."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {git_connection_id: $cid, git_path: $path})
+                RETURN d.id as id, d.git_blob_sha as git_blob_sha,
+                       d.filename as filename, d.git_sync_status as git_sync_status
+                LIMIT 1
+            """, cid=connection_id, path=git_path)
+            record = result.single()
+            return dict(record) if record else None
+
+    def set_document_git_provenance(
+        self, doc_id: str, *, blob_sha: str = None, commit_sha: str = None,
+        sync_status: str = None,
+    ) -> None:
+        """Update git provenance on an existing document (after reprocess/sync)."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.git_blob_sha = COALESCE($blob_sha, d.git_blob_sha),
+                    d.git_commit_sha = COALESCE($commit_sha, d.git_commit_sha),
+                    d.git_sync_status = COALESCE($sync_status, d.git_sync_status)
+            """, id=doc_id, blob_sha=blob_sha, commit_sha=commit_sha, sync_status=sync_status)
+
+    def mark_git_document_orphaned(self, doc_id: str) -> None:
+        """Flag a document whose source file was removed from the repo, for user review."""
+        with self.driver.session() as session:
+            session.run(
+                "MATCH (d:Document {id: $id}) SET d.git_sync_status = 'orphaned'",
+                id=doc_id,
+            )
+
+    def remap_git_document(self, doc_id: str, new_path: str, new_filename: str) -> None:
+        """Update a document's repo path/filename after a rename, clearing orphaned state."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.git_path = $new_path,
+                    d.filename = $new_filename,
+                    d.git_sync_status = 'synced'
+            """, id=doc_id, new_path=new_path, new_filename=new_filename)
+
+    def list_documents_for_git_connection(self, connection_id: str) -> list:
+        """List all documents ingested from a given git connection."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {git_connection_id: $cid})
+                RETURN d.id as id, d.git_path as git_path, d.filename as filename
+            """, cid=connection_id)
+            return [dict(record) for record in result]
+
+    def list_orphaned_git_documents(self, connection_id: str) -> list:
+        """List documents from a connection whose source file was removed (flagged for review)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {git_connection_id: $cid, git_sync_status: 'orphaned'})
+                RETURN d.id as id, d.filename as filename, d.git_path as git_path
+                ORDER BY d.git_path
+            """, cid=connection_id)
+            return [dict(record) for record in result]
+
+    def delete_relationships_by_source_document(self, doc_id: str) -> int:
+        """Delete entity-to-entity relationships whose provenance is this document.
+
+        Fills the gap where reprocess/delete only removed relationships when an
+        endpoint entity became fully orphaned — leaving stale edges otherwise.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE r.source_document_id = $doc_id
+                DELETE r
+                RETURN count(r) as cnt
+            """, doc_id=doc_id)
+            record = result.single()
+            return record["cnt"] if record else 0
 
 
 # Singleton instance

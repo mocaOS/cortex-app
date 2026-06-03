@@ -38,12 +38,14 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 19 | [Agent Skills](19-skills.md) | `19-skills.md` | Developers |
 | 20 | [Troubleshooting](20-troubleshooting.md) | `20-troubleshooting.md` | Everyone |
 | 21 | [Glossary](21-glossary.md) | `21-glossary.md` | Everyone |
+| 22 | [Git Integration](22-git-integration.md) | `22-git-integration.md` | Everyone |
 
 ## Quick Links
 
 - **I want to deploy Cortex** — Start with [Chapter 3: Getting Started](03-getting-started.md)
 - **I want to upload documents and build a knowledge graph** — Start with [Chapter 7: Documents](07-documents.md), then [Chapter 8: Knowledge Graph](08-knowledge-graph.md)
 - **I want to ask questions about my documents** — See [Chapter 10: Ask AI](10-ask-ai.md)
+- **I want to connect a GitHub/GitLab/Gitea repository** — See [Chapter 22: Git Integration](22-git-integration.md)
 - **I want to integrate Cortex into my application** — See [Chapter 16: API Reference](16-api-reference.md) and [Chapter 17: Integrations](17-integrations.md)
 - **I want to extend the agent with custom skills** — See [Chapter 19: Agent Skills](19-skills.md)
 - **Something isn't working** — See [Chapter 20: Troubleshooting](20-troubleshooting.md)

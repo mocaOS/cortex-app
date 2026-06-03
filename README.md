@@ -66,6 +66,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
 - **📤 Library Import/Export**: Export your entire library (documents, knowledge graph, embeddings, communities) as a portable ZIP archive and import it into another instance — no need to re-run the expensive knowledge graph pipeline
 - **🧩 Agent Skills**: Extend Deep Research and Chat with live API connections from the open [AgentSkills](https://agentskills.io/) ecosystem. Install skills from [skills.sh](https://skills.sh) or direct URLs — a setup wizard auto-detects required configuration (API tokens, etc.) and prompts you to provide them. Enabled skills are automatically activated at the start of every session. The researcher agent uses the built-in `http_request` tool to call external APIs described in skill instructions, with authentication injected server-side from stored configuration.
+- **🔗 Git Integration**: Connect **GitHub, GitLab, and Gitea** repositories (including self-hosted) as a living knowledge source. Cortex ingests a repo's files and wiki into the knowledge graph and keeps them in sync **incrementally** via git history (added / modified / deleted / renamed), with a curated `.pdf`/`.md`-only default and custom glob filters. The whole connector is **off by default** — an admin turns it on with `ENABLE_GIT_INTEGRATION=true`, which enables ingestion *and* the agent capability. Each connection is then **read-only (ingest)** unless you grant **read/write**, in which case the research agent gains a `git_repo` tool that opens **pull requests** for your review (never a direct push). Per-connection access tokens, manual or scheduled sync.
 
 ### Security & Performance Features
 - **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
@@ -748,6 +749,19 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `SKILL_SCRIPT_TIMEOUT` | Timeout in seconds for script execution | No | `30` |
 | `SKILL_HTTP_TIMEOUT` | Timeout in seconds for HTTP tool calls | No | `15` |
 | `MAX_SKILL_TOOLS` | Max total skill-provided tools in researcher agent | No | `10` |
+
+#### Git Integration
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_GIT_INTEGRATION` | Master switch for the git repo connector (GitHub/GitLab/Gitea) | No | `false` |
+| `GIT_WORK_DIR` | Directory for per-connection clone working copies (mount a volume in prod) | No | `./git_repos` |
+| `GIT_CLONE_DEPTH` | Shallow-clone depth | No | `1` |
+| `GIT_MAX_REPO_SIZE_MB` | Abort sync above this repo size (0 = unlimited) | No | `500` |
+| `GIT_SYNC_MAX_FILE_SIZE_MB` | Skip files larger than this (0 = no limit) | No | `5` |
+| `GIT_SYNC_POLL_INTERVAL` | Minutes between scheduled-sync checks | No | `5` |
+| `GIT_HTTP_TIMEOUT` | Timeout (seconds) for git provider REST calls | No | `30` |
+| `GIT_HTTP_INSECURE_HOSTS` | Comma-separated hosts allowed to skip TLS verification (self-hosted self-signed) | No | _(empty)_ |
 
 #### Batch Processing
 
