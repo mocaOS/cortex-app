@@ -265,14 +265,44 @@ class LibraryTransferService:
                 skills = self.neo4j.export_all_skills()
                 update_progress(task_id, step, total_steps, f"Exporting {len(skills)} skills...")
                 _write_ndjson(zf, "skills.ndjson", skills)
-                # Bundle skill directories (SKILL.md, tools.json, etc.)
+                # Bundle skill directories (SKILL.md, tools.json, etc.).
+                # config.json is sanitized: secret-typed fields (per the skill's
+                # config_schema) are stripped so exports never carry credentials
+                # — plaintext or ciphertext. Admins re-enter secrets after import.
                 for skill in skills:
                     skill_dir = Path(skill.get("directory_path", ""))
                     skill_id = skill.get("skill_id", "")
                     if skill_dir.is_dir() and skill_id:
+                        secret_names = set()
+                        try:
+                            schema = json.loads(skill.get("config_schema") or "[]")
+                            secret_names = {
+                                v["name"] for v in schema
+                                if v.get("type") == "secret" and "name" in v
+                            }
+                        except (json.JSONDecodeError, TypeError, AttributeError):
+                            pass
                         for f in skill_dir.iterdir():
-                            if f.is_file():
-                                zf.write(str(f), f"skills/{skill_id}/{f.name}")
+                            if not f.is_file():
+                                continue
+                            if f.name == "config.json" and secret_names:
+                                try:
+                                    cfg = json.loads(f.read_text(encoding="utf-8"))
+                                    sanitized = {
+                                        k: v for k, v in cfg.items()
+                                        if k not in secret_names
+                                    }
+                                    zf.writestr(
+                                        f"skills/{skill_id}/config.json",
+                                        json.dumps(sanitized, indent=2),
+                                    )
+                                except (json.JSONDecodeError, OSError) as e:
+                                    logger.warning(
+                                        f"Skipping config.json for skill "
+                                        f"'{skill_id}' in export: {e}"
+                                    )
+                                continue
+                            zf.write(str(f), f"skills/{skill_id}/{f.name}")
 
                 # 14. Document files
                 step += 1

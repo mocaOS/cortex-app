@@ -501,8 +501,19 @@ class SkillService:
                 })
                 tool_map[namespaced] = (skill_id, tool["name"])
 
-        # Load configuration values
+        # Load configuration values (decrypt secret fields for runtime use)
+        from app.services.crypto_service import get_crypto_service, CryptoError
         config = self.get_skill_config(skill_id)
+        secret_names = self._secret_field_names(skill_id)
+        if secret_names:
+            crypto = get_crypto_service()
+            try:
+                config = crypto.decrypt_fields(config, secret_names)
+            except CryptoError as e:
+                raise ValueError(
+                    f"Skill '{skill_id}' has an undecryptable secret "
+                    f"(encryption key changed or removed); reconfigure it. ({e})"
+                )
 
         return instructions, tool_definitions, tool_map, config
 
@@ -680,7 +691,11 @@ class SkillService:
             return {}
 
     def save_skill_config(self, skill_id: str, config: Dict[str, str]) -> None:
-        """Write config.json to a skill's directory."""
+        """Write config.json to a skill's directory.
+
+        Secret-typed fields (per the config_schema) are encrypted at rest when
+        ENCRYPTION_KEY is set. Already-encrypted values pass through unchanged.
+        """
         neo4j = self._get_neo4j()
         node = neo4j.get_skill(skill_id)
         if not node:
@@ -688,10 +703,19 @@ class SkillService:
         dir_path = Path(node.get("directory_path", ""))
         if not dir_path.exists() or not str(dir_path).startswith(str(self._skills_dir)):
             raise ValueError(f"Invalid skill directory for '{skill_id}'")
+        secret_names = self._secret_field_names(skill_id)
+        if secret_names:
+            from app.services.crypto_service import get_crypto_service
+            config = get_crypto_service().encrypt_fields(config, secret_names)
         config_path = dir_path / "config.json"
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         logger.info(f"Saved config for skill '{skill_id}'")
+
+    def _secret_field_names(self, skill_id: str) -> set:
+        """Names of secret-typed fields from the skill's config_schema."""
+        schema = self.get_skill_config_schema(skill_id) or []
+        return {v["name"] for v in schema if v.get("type") == "secret" and "name" in v}
 
     def get_skill_config_schema(self, skill_id: str) -> Optional[List[dict]]:
         """Read the config_schema from the Neo4j Skill node."""

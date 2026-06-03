@@ -41,6 +41,9 @@ services:
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
       # API Key Analytics - track admin key usage (default: false)
       - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
+      # At-rest encryption for secrets (git PATs, skill secret config).
+      # Comma-separated Fernet keys; first encrypts, all decrypt (rotation).
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
     ports:
       - "8000:8000"
     volumes:

@@ -824,6 +824,7 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `ADMIN_API_KEY` | Admin API key for full backend access | Yes | - |
 | `SESSION_SECRET` | JWT session encryption secret (min 32 chars) | Yes | - |
 | `TRACK_ADMIN_API_KEY_USAGE` | Track usage analytics for admin API key | No | `false` |
+| `ENCRYPTION_KEY` | At-rest encryption key(s) for user-supplied secrets (git PATs, skill secret config). Comma-separated Fernet keys: first encrypts, all decrypt (rotation). Unset = plaintext storage + startup warning | Recommended | - |
 
 #### Frontend Customization
 

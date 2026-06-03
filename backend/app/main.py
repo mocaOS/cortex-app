@@ -104,6 +104,7 @@ from app.services.auth_service import (
 )
 from app.services.api_key_service import get_api_key_service
 from app.services.api_usage_service import get_api_usage_service
+from app.services.crypto_service import get_crypto_service, migrate_secrets_at_rest
 
 # Configure logging
 logging.basicConfig(
@@ -210,6 +211,17 @@ async def lifespan(app: FastAPI):
             logger.info(f"Agent skills discovered: {count}")
         except Exception as e:
             logger.warning(f"Could not discover agent skills: {e}")
+
+    # At-rest secret encryption: status banner + idempotent migration of any
+    # plaintext (or rotated-key) git PATs and skill secret fields.
+    # Runs after skill discovery so skill nodes/schemas exist.
+    crypto = get_crypto_service()  # raises on malformed ENCRYPTION_KEY (fail fast)
+    crypto.log_startup_status()
+    if crypto.is_enabled():
+        try:
+            await asyncio.to_thread(migrate_secrets_at_rest)
+        except Exception as e:
+            logger.warning(f"Secret encryption migration failed: {e}")
 
     # Start the git scheduled-sync poller
     git_scheduler_task = None
@@ -4277,7 +4289,7 @@ async def create_git_connection(
         "base_url": request.base_url,
         "repo_owner": request.repo_owner,
         "repo_name": request.repo_name,
-        "pat": request.pat,
+        "pat": get_crypto_service().encrypt(request.pat),
         "pat_last4": request.pat[-4:],
         "access_level": request.access_level.value,
         "branch": request.branch or default_branch,
@@ -4332,7 +4344,7 @@ async def update_git_connection(
     props = {}
     data = request.model_dump(exclude_unset=True)
     if "pat" in data and data["pat"]:
-        props["pat"] = data["pat"]
+        props["pat"] = get_crypto_service().encrypt(data["pat"])
         props["pat_last4"] = data["pat"][-4:]
     for key in ("branch", "include_globs", "exclude_globs", "wiki_enabled",
                 "collection_id", "sync_interval_minutes"):

@@ -109,6 +109,30 @@ openssl rand -base64 32
 - Set appropriate session timeouts
 - Rotate session secrets periodically
 
+## Secret Encryption at Rest
+
+User-supplied secrets — git connector personal access tokens and secret-typed
+skill config fields — are encrypted at rest when `ENCRYPTION_KEY` is set:
+
+```bash
+# Generate a key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+ENCRYPTION_KEY=<generated-key>
+```
+
+- **Enable anytime**: existing plaintext secrets are encrypted automatically on
+  the next startup. Without a key, secrets are stored in plaintext and a
+  warning is logged at startup.
+- **Key rotation** (zero downtime): prepend the new key —
+  `ENCRYPTION_KEY=<new-key>,<old-key>` — restart (everything is re-encrypted
+  with the new key), then drop the old key.
+- **Back up the key**: a lost key makes stored secrets unrecoverable; affected
+  git syncs and skill activations fail with a clear "re-enter the credential"
+  error.
+- **Exports are credential-free**: library exports strip skill secrets, and
+  git connections are never exported.
+
 ## Input Validation
 
 All user inputs are validated:
@@ -245,6 +269,7 @@ Logged events:
 - [ ] Change all default passwords
 - [ ] Set strong `ADMIN_API_KEY` (not the example key)
 - [ ] Set strong `SESSION_SECRET` (32+ characters)
+- [ ] Set `ENCRYPTION_KEY` (and back it up) so git PATs and skill secrets are encrypted at rest
 - [ ] Enable `PROMPT_SECURITY=true`
 - [ ] Configure HTTPS with valid certificates
 - [ ] Restrict `CORS_ORIGINS` to your domains

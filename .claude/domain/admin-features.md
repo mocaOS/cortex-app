@@ -27,6 +27,8 @@ Full instance migration via Settings page → Data Management section.
 
 Download via `GET /api/admin/export/{task_id}/download` streams the ZIP in 1MB chunks.
 
+**Exports never contain secrets**: skill `config.json` files are sanitized in the bundle — secret-typed fields (per the skill's `config_schema`) are stripped, non-secret config retained — so archives are safe to share and portable across instances with different `ENCRYPTION_KEY`s. Git connections (and their PATs) are never exported. After import, admins re-enter skill secrets via the config wizard (the `config_schema` rides on the skill node, so masking/status work immediately).
+
 **Memory-safe streaming (`_write_ndjson`)**: each NDJSON entry is written one JSON line at a time via `zf.open(name, "w", force_zip64=True)` — nothing is buffered beyond a single line. The embedding-heavy payloads (chunks **and** entities both carry vectors) are pulled in 500-row batches from Neo4j and streamed straight into the zip, so peak RAM is ~one batch regardless of corpus size. Batched query methods: `export_chunk_count`/`export_all_chunks_batched` (ORDER BY `c.id`), `export_entity_count`/`export_all_entities_batched` (ORDER BY `e.name`, the unique key), `export_relationship_count`/`export_all_entity_relationships_batched` (ORDER BY `elementId(r)` for stable SKIP/LIMIT pagination). **Do not reintroduce the `lines = [...]; "\n".join(lines)` pattern** — it held the full payload twice and OOM-killed the container on large instances (the kernel OOM killer then took Neo4j and the redeploy down with it; no logs survive a SIGKILL). Documents stay a full list because the `files/` packaging step needs every doc's `file_path`/`id`, but they carry no embeddings.
 
 ### Import

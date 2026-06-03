@@ -288,7 +288,14 @@ class GitConnectorService:
         if not conn:
             raise GitSyncError(f"Connection {connection_id} not found")
 
-        token = conn["pat"]
+        from app.services.crypto_service import get_crypto_service, CryptoError
+        try:
+            token = get_crypto_service().decrypt(conn["pat"])
+        except CryptoError:
+            raise GitSyncError(
+                "Git credentials cannot be decrypted (encryption key changed or "
+                "removed); re-enter the PAT for this connection"
+            )
         vendor = conn["vendor"]
         owner, name = conn["repo_owner"], conn["repo_name"]
         branch = conn.get("branch") or conn.get("default_branch") or "main"

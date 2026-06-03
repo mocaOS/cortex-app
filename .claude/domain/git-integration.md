@@ -28,7 +28,7 @@ The PAT lives in the provider instance / connection node and is injected server-
 
 **Document git-provenance** (optional props on `Document`, set via `store_document`): `git_connection_id, git_path, git_blob_sha, git_commit_sha, git_sync_status`. These — not filename+filesize — are the sync key. `find_git_document(connection_id, git_path)` is the keyed lookup.
 
-PAT is stored plaintext (matches skill-secret handling) and masked in API responses as `••••{last4}`.
+PAT is encrypted at rest (`enc:`-prefixed Fernet ciphertext via `crypto_service.py`) when `ENCRYPTION_KEY` is set, plaintext otherwise — a startup migration encrypts existing plaintext once a key is configured. Masked in API responses as `••••{last4}` (`pat_last4` stays plaintext). Decryption happens only at the two consumers — `git_connector_service._sync_connection()` and the researcher agent's `git_repo` tool — both surface a clear "re-enter the PAT" error if the value is undecryptable (key changed/removed); ciphertext is never used as a credential. Git connections are never included in library exports.
 
 ## Incremental sync engine (`git_connector_service.py`)
 

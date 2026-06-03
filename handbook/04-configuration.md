@@ -292,6 +292,27 @@ The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22
 | `ADMIN_API_KEY` | — | Admin API key for full backend access. **Required.** |
 | `SESSION_SECRET` | — | JWT session encryption secret. Minimum 32 characters. **Required.** |
 | `TRACK_ADMIN_API_KEY_USAGE` | `false` | Track usage analytics for the admin API key. |
+| `ENCRYPTION_KEY` | — | At-rest encryption key(s) for user-supplied secrets: git connector PATs and secret-typed skill config fields. Comma-separated Fernet keys — the first encrypts, all decrypt (rotation support). **Strongly recommended.** Without it, these secrets are stored in plaintext and a warning is logged at startup. |
+
+### Secret Encryption (`ENCRYPTION_KEY`)
+
+Cortex encrypts user-supplied secrets at rest when `ENCRYPTION_KEY` is set:
+
+- **Git connector PATs** — stored encrypted on the connection record in Neo4j.
+- **Skill secrets** — secret-typed config fields (API keys etc.) entered in the skill config wizard, stored encrypted in the skill's `config.json`.
+
+Generate a key:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Behavior:
+
+- **Enabling later is safe.** Existing plaintext secrets are encrypted automatically on the next startup (idempotent migration).
+- **Key rotation (zero downtime):** prepend the new key while keeping the old one — `ENCRYPTION_KEY=<new-key>,<old-key>` — and restart. Startup re-encrypts all secrets with the new key; afterwards drop the old key.
+- **Lost/changed key:** affected secrets cannot be recovered. Git syncs and skill activations fail with a clear "re-enter the credential" error (ciphertext is never used as a credential); re-enter the PAT / skill secret in the admin UI.
+- **Library exports never contain secrets:** secret-typed skill config fields are stripped from export archives regardless of encryption, and git connections are never exported. After importing a library, re-enter skill secrets via the config wizard.
 
 ## Frontend Customization
 

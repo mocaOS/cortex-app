@@ -450,6 +450,12 @@ class Settings(BaseSettings):
     track_admin_api_key_usage: bool = Field(
         default=False
     )  # Track usage analytics for admin API key
+    encryption_key: str = Field(
+        default=""
+    )  # Comma-separated Fernet keys for at-rest secret encryption (git PATs, skill
+    # secret config). First key encrypts, all keys decrypt (rotation support).
+    # Empty = encryption disabled (plaintext fallback). Generate a key with:
+    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
     # ==========================================================================
     # Compute3 Turbo Mode Configuration

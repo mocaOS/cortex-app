@@ -63,6 +63,9 @@ Successful API responses are stored as sources (without chunk_id) for the writer
 - `GET /api/admin/skills/{id}/config` — schema + masked values
 - `PUT /api/admin/skills/{id}/config` — save with mask preservation for existing secrets
 
+### Secret Encryption
+Secret-typed fields (schema `type: "secret"`) are encrypted at rest in `config.json` (`enc:`-prefixed Fernet ciphertext via `crypto_service.py`) when `ENCRYPTION_KEY` is set; plaintext otherwise (startup migration encrypts existing values once a key is configured). `save_skill_config()` encrypts; `load_skill_for_activation()` is the only decrypt point (feeds `_substitute_variables` at runtime) and raises a clear "reconfigure this skill" error if a value is undecryptable. `get_skill_config()` returns stored (possibly ciphertext) values — fine for its callers (masking, PUT-merge, export). Library exports strip secret fields from `config.json` entirely.
+
 ### Config Status
 `config_status` field on `SkillInfo` response: "configured" (all required vars have values), "needs_setup" (schema exists but values missing), or null (no schema yet).
 

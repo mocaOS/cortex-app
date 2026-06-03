@@ -692,10 +692,15 @@ async def _run_researcher_loop(
                     response_text = "Error: no git repository is connected."
                 else:
                     from app.services.git_providers import get_provider, GitProviderError
+                    from app.services.crypto_service import get_crypto_service, CryptoError
                     owner = git_connection["repo_owner"]
                     repo = git_connection["repo_name"]
-                    provider = get_provider(
-                        git_connection["vendor"], git_connection["pat"],
+                    try:
+                        git_pat = get_crypto_service().decrypt(git_connection["pat"])
+                    except CryptoError:
+                        git_pat = None
+                    provider = git_pat and get_provider(
+                        git_connection["vendor"], git_pat,
                         git_connection.get("base_url"),
                     )
                     base_branch = (
@@ -704,7 +709,13 @@ async def _run_researcher_loop(
                         or "main"
                     )
                     write_actions = {"propose_change", "comment"}
-                    if git_action in write_actions and git_connection.get("access_level") != "read_write":
+                    if not provider:
+                        response_text = (
+                            "Error: git credentials cannot be decrypted "
+                            "(encryption key changed or removed); an admin must "
+                            "re-enter the PAT for this connection."
+                        )
+                    elif git_action in write_actions and git_connection.get("access_level") != "read_write":
                         # Hard, server-side enforcement of the read-only toggle.
                         response_text = (
                             "Error: this repository is connected read-only; "
