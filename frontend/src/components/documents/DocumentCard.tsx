@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 
@@ -152,8 +153,6 @@ const formatDate = (dateString: string) => {
   });
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 const isMarkdownFile = (filename: string) => {
   return /\.md$/i.test(filename);
 };
@@ -197,17 +196,24 @@ export function DocumentCard({
       setLoadingContent(true);
       setShowMarkdownViewer(true);
       try {
-        const res = await fetch(`${API_BASE}/api/documents/${doc.id}/file`);
-        if (!res.ok) throw new Error("Failed to fetch file");
-        const text = await res.text();
-        setMarkdownContent(text);
+        const blob = await api.getDocumentFileBlob(doc.id);
+        setMarkdownContent(await blob.text());
       } catch {
         setMarkdownContent("*Failed to load document content.*");
       } finally {
         setLoadingContent(false);
       }
     } else {
-      window.open(`${API_BASE}/api/documents/${doc.id}/file`, "_blank");
+      // window.open can't send the X-API-Key header — fetch as an
+      // authenticated blob and open the object URL instead.
+      try {
+        const blob = await api.getDocumentFileBlob(doc.id);
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } catch {
+        /* viewer button stays usable; nothing to show on failure */
+      }
     }
   }, [doc.id, doc.filename, doc.file_path]);
 

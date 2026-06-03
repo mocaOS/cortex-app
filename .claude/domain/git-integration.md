@@ -14,7 +14,7 @@ GitProvider (Protocol, services/git_providers/)
         └ researcher_agent git_repo  READ/WRITE → PR via provider REST
 ```
 
-The PAT lives in the provider instance / connection node and is injected server-side into every git + REST call — the LLM never sees it. It is scrubbed from logs/errors and never persisted in `.git/config` (the clone remote is rewritten to a tokenless URL after clone).
+The PAT lives in the provider instance / connection node and is injected server-side into every git + REST call — the LLM never sees it. It is scrubbed from logs/errors and never persisted on disk: the clone remote (repo **and** wiki) is rewritten to a tokenless URL after clone, and `.git/FETCH_HEAD` (where git records the fetch URL) is scrubbed after every fetch. Every git subprocess runs under a hard timeout (`_GIT_CMD_TIMEOUT`), and syncs are serialized per connection via an `asyncio.Lock`.
 
 ## Provider abstraction (`services/git_providers/`)
 
@@ -46,7 +46,7 @@ PAT is stored plaintext (matches skill-secret handling) and masked in API respon
 6. **Staleness bump**: if anything changed, reset `last_relationship_analysis_at` / `last_community_detection_at` to the epoch sentinel `"2000-01-01T00:00:00+00:00"` so the UI flags re-extraction. (Sync ingests + embeds only; the user triggers Steps 2/3 manually.)
 7. **SHA advance**: `last_synced_sha = HEAD` only on zero hard failures (else keep old SHA so the next run re-diffs and retries — A→M idempotency makes this safe).
 
-**Wiki**: GitHub → clone `repo.wiki.git`, same engine, paths prefixed `wiki/`. GitLab/Gitea → Wikis API, hash-compared per page.
+**Wiki**: GitHub → clone `repo.wiki.git`, paths prefixed `wiki/`. GitLab/Gitea → Wikis API. Both paths use a content hash (`_wiki_sha`) as the pseudo blob sha; `_ingest_raw` skips unchanged pages, and pages removed from the wiki are flagged orphaned (the main fulltree sweep deliberately leaves `wiki/` paths to this sweep).
 
 ### Global stale-relationship fix
 Relationships carry `source_document_id` but previously survived reprocess/delete unless an endpoint entity fully orphaned. `delete_relationships_by_source_document` + an inline cleanup step now run in `delete_document_chunks` and `delete_document` — fixing stale `RELATES_TO` edges for **all** documents (uploads/custom-inputs/git), not just git.

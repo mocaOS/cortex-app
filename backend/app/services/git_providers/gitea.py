@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 from typing import Optional
+from urllib.parse import quote
 
 from .base import GitProvider, GitRepoRef, GitWriteResult, VerifyResult, WikiPage
 
@@ -48,7 +49,10 @@ class GiteaProvider(GitProvider):
 
     async def get_file_content(self, owner, name, path, ref=None):
         params = {"ref": ref} if ref else None
-        resp = await self._request("GET", f"/repos/{owner}/{name}/contents/{path}", params=params)
+        # Encode each path segment ('/' stays a separator) so names with
+        # '#', '?', spaces etc. survive the URL.
+        enc_path = quote(path, safe="/")
+        resp = await self._request("GET", f"/repos/{owner}/{name}/contents/{enc_path}", params=params)
         data = resp.json()
         if data.get("encoding") == "base64" and data.get("content"):
             return base64.b64decode(data["content"]).decode("utf-8", "replace")
@@ -60,7 +64,7 @@ class GiteaProvider(GitProvider):
         for p in resp.json():
             title = p.get("title", "")
             page = await self._request(
-                "GET", f"/repos/{owner}/{name}/wiki/page/{title}"
+                "GET", f"/repos/{owner}/{name}/wiki/page/{quote(title, safe='')}"
             )
             pdata = page.json()
             content = pdata.get("content_base64")
@@ -86,7 +90,8 @@ class GiteaProvider(GitProvider):
             operation, sha = "create", None
             try:
                 cur = await self._request(
-                    "GET", f"/repos/{owner}/{name}/contents/{path}", params={"ref": branch}
+                    "GET", f"/repos/{owner}/{name}/contents/{quote(path, safe='/')}",
+                    params={"ref": branch},
                 )
                 sha = cur.json().get("sha")
                 operation = "update"

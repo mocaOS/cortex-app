@@ -8,6 +8,7 @@ stays None.
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import quote
 
 from .base import GitProvider, GitRepoRef, GitWriteResult, VerifyResult
 
@@ -67,7 +68,10 @@ class GitHubProvider(GitProvider):
     async def get_file_content(self, owner, name, path, ref=None):
         import base64
         params = {"ref": ref} if ref else None
-        resp = await self._request("GET", f"/repos/{owner}/{name}/contents/{path}", params=params)
+        # Encode each path segment ('/' stays a separator) so names with
+        # '#', '?', spaces etc. survive the URL.
+        enc_path = quote(path, safe="/")
+        resp = await self._request("GET", f"/repos/{owner}/{name}/contents/{enc_path}", params=params)
         data = resp.json()
         if data.get("encoding") == "base64" and data.get("content"):
             return base64.b64decode(data["content"]).decode("utf-8", "replace")
@@ -85,11 +89,12 @@ class GitHubProvider(GitProvider):
 
     async def commit_files(self, owner, name, branch, files, message) -> None:
         for path, content in files:
+            enc_path = quote(path, safe="/")
             # Existing file → need its blob sha to update; 404 means create.
             existing_sha = None
             try:
                 cur = await self._request(
-                    "GET", f"/repos/{owner}/{name}/contents/{path}", params={"ref": branch}
+                    "GET", f"/repos/{owner}/{name}/contents/{enc_path}", params={"ref": branch}
                 )
                 existing_sha = cur.json().get("sha")
             except Exception:
@@ -97,7 +102,7 @@ class GitHubProvider(GitProvider):
             payload = {"message": message, "content": self._b64(content), "branch": branch}
             if existing_sha:
                 payload["sha"] = existing_sha
-            await self._request("PUT", f"/repos/{owner}/{name}/contents/{path}", json=payload)
+            await self._request("PUT", f"/repos/{owner}/{name}/contents/{enc_path}", json=payload)
 
     async def open_pull_request(self, owner, name, head, base, title, body) -> GitWriteResult:
         resp = await self._request(

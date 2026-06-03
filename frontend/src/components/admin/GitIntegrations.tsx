@@ -243,8 +243,8 @@ export function GitIntegrations() {
     try {
       const res = await api.getGitOrphanedDocuments(connectionId);
       setOrphaned((prev) => ({ ...prev, [connectionId]: res.documents }));
-    } catch {
-      /* ignore */
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load orphaned documents");
     }
   };
 

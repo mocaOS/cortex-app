@@ -12,13 +12,15 @@ change to a document operation:
 
 Only text/code files (the document processor's RAW_TEXT_EXTENSIONS) and wiki
 pages are ingested. Binaries and oversized files are skipped and reported.
-The PAT is injected into git via the clone URL only; it is never persisted in
-.git/config and is scrubbed from all logs/errors.
+The PAT is injected into git via the clone URL only; it is never persisted —
+scrubbed from .git/config after clone, from .git/FETCH_HEAD after every fetch,
+and from all logs/errors.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -33,6 +35,10 @@ logger = logging.getLogger(__name__)
 # Graph-staleness sentinel already understood by the stats/UI staleness logic.
 _STALE_SENTINEL = "2000-01-01T00:00:00+00:00"
 
+# Hard ceiling for any single git subprocess (clone of a large repo included),
+# so a hung network operation can't stall a sync task forever.
+_GIT_CMD_TIMEOUT = 600
+
 # Document formats (beyond code/markdown) that the connector will ingest when a
 # glob matches them — routed through Docling. Deliberately excludes images/audio
 # so a repo sync doesn't OCR every logo; the default include-glob is .pdf + .md.
@@ -45,9 +51,20 @@ class GitSyncError(Exception):
     """Raised when a sync cannot proceed (clone failure, size guard, etc.)."""
 
 
+def _wiki_sha(content: bytes) -> str:
+    """Content-derived pseudo blob sha for wiki pages (stable across syncs)."""
+    return "wiki:" + hashlib.sha256(content).hexdigest()[:16]
+
+
 class GitConnectorService:
     def __init__(self):
         self.settings = get_settings()
+        # Per-connection locks: serialize syncs so concurrent callers can't
+        # interleave clone/fetch operations in the same work dir.
+        self._sync_locks: dict[str, asyncio.Lock] = {}
+
+    def _sync_lock(self, connection_id: str) -> asyncio.Lock:
+        return self._sync_locks.setdefault(connection_id, asyncio.Lock())
 
     # ----- lazy service handles (avoid import cycles at module load) ---------
 
@@ -79,6 +96,16 @@ class GitConnectorService:
 
     # ----- git subprocess helpers -------------------------------------------
 
+    @staticmethod
+    async def _communicate(proc, what: str) -> tuple[bytes, bytes]:
+        """Await a git subprocess with a hard timeout, killing it on expiry."""
+        try:
+            return await asyncio.wait_for(proc.communicate(), timeout=_GIT_CMD_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise GitSyncError(f"git {what} timed out after {_GIT_CMD_TIMEOUT}s")
+
     async def _git(self, args: list[str], cwd: Optional[Path] = None, token: str = "") -> str:
         """Run a git command, returning stdout. Raises GitSyncError (token scrubbed)."""
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
@@ -89,13 +116,27 @@ class GitConnectorService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
+        out, err = await self._communicate(proc, args[0])
         if proc.returncode != 0:
             msg = err.decode("utf-8", "replace").strip() or "git command failed"
             if token:
                 msg = msg.replace(token, "***")
             raise GitSyncError(f"git {args[0]} failed: {msg[:400]}")
         return out.decode("utf-8", "replace")
+
+    @staticmethod
+    def _scrub_fetch_head(repo_dir: Path, token: str) -> None:
+        """Remove the PAT from .git/FETCH_HEAD (git records the fetch URL there)."""
+        if not token:
+            return
+        fetch_head = repo_dir / ".git" / "FETCH_HEAD"
+        try:
+            if fetch_head.exists():
+                text = fetch_head.read_text("utf-8", errors="replace")
+                if token in text:
+                    fetch_head.write_text(text.replace(token, "***"), "utf-8")
+        except OSError as e:
+            logger.warning(f"could not scrub FETCH_HEAD in {repo_dir}: {e}")
 
     def _tls_git_config(self, host: str) -> list[str]:
         """Per-invocation -c flags disabling TLS verification for allowlisted hosts."""
@@ -128,6 +169,8 @@ class GitConnectorService:
         head = await self._git(["-C", str(repo_dir), "rev-parse", "FETCH_HEAD"], token=token) \
             if (repo_dir / ".git" / "FETCH_HEAD").exists() else \
             await self._git(["-C", str(repo_dir), "rev-parse", "HEAD"], token=token)
+        # git records the (token-bearing) fetch URL in FETCH_HEAD — scrub it.
+        self._scrub_fetch_head(repo_dir, token)
         return head.strip()
 
     async def _has_commit(self, repo_dir: Path, sha: str) -> bool:
@@ -142,7 +185,10 @@ class GitConnectorService:
             "git", "-C", str(repo_dir), "merge-base", "--is-ancestor", old, new,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.communicate()
+        try:
+            await self._communicate(proc, "merge-base")
+        except GitSyncError:
+            return False
         return proc.returncode == 0
 
     async def _blob_size(self, repo_dir: Path, sha: str) -> int:
@@ -157,7 +203,7 @@ class GitConnectorService:
             "git", "-C", str(repo_dir), "cat-file", "-p", sha,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
+        out, err = await self._communicate(proc, "cat-file")
         if proc.returncode != 0:
             raise GitSyncError(f"cat-file failed: {err.decode('utf-8','replace')[:200]}")
         return out
@@ -228,7 +274,16 @@ class GitConnectorService:
 
     async def sync_connection(self, connection_id: str, task_id: Optional[str] = None,
                               progress=None) -> dict:
-        """Sync one connection. `progress(current, total, message)` is optional."""
+        """Sync one connection. `progress(current, total, message)` is optional.
+
+        Serialized per connection: concurrent calls queue on a lock instead of
+        interleaving git operations in the same work dir.
+        """
+        async with self._sync_lock(connection_id):
+            return await self._sync_connection(connection_id, task_id, progress)
+
+    async def _sync_connection(self, connection_id: str, task_id: Optional[str] = None,
+                               progress=None) -> dict:
         conn = self.neo4j.get_git_connection(connection_id)
         if not conn:
             raise GitSyncError(f"Connection {connection_id} not found")
@@ -430,7 +485,8 @@ class GitConnectorService:
         # Deletes: stored docs whose path no longer exists in the tree
         for doc in self.neo4j.list_documents_for_git_connection(connection_id):
             gp = doc.get("git_path")
-            if gp and gp not in current_paths and not (gp.startswith("wiki/")):
+            if gp and gp not in current_paths and not gp.startswith("wiki/") \
+                    and doc.get("git_sync_status") != "orphaned":
                 self.neo4j.mark_git_document_orphaned(doc["id"])
                 stats["orphaned"] += 1
 
@@ -444,36 +500,52 @@ class GitConnectorService:
             tls = self._tls_git_config(host)
             if not (wiki_dir / ".git").exists():
                 await self._git(tls + ["clone", "--depth", "1", wiki_clone, str(wiki_dir)], token=token)
+                # Scrub the token out of the persisted remote (mirrors _clone_or_fetch).
+                await self._git(["-C", str(wiki_dir), "remote", "set-url", "origin",
+                                 f"https://{wiki_clone.split('@', 1)[-1]}"], token=token)
             else:
                 await self._git(tls + ["-C", str(wiki_dir), "fetch", wiki_clone], token=token)
                 await self._git(["-C", str(wiki_dir), "reset", "--hard", "FETCH_HEAD"], token=token)
+            self._scrub_fetch_head(wiki_dir, token)
+            current_pages: set[str] = set()
             for md in wiki_dir.rglob("*.md"):
+                if ".git" in md.parts:
+                    continue
                 rel = "wiki/" + str(md.relative_to(wiki_dir))
+                current_pages.add(rel)
                 content = md.read_bytes()
                 await self._ingest_raw(connection_id, rel, content, collection_id, commit_sha,
-                                       stats, touched, blob_sha=f"wiki:{md.stat().st_mtime_ns}")
+                                       stats, touched, blob_sha=_wiki_sha(content))
         else:
             pages = await provider.list_wiki_pages(owner, name)
+            current_pages = set()
             for page in (pages or []):
                 rel = "wiki/" + page.slug
+                current_pages.add(rel)
                 content = page.content.encode("utf-8")
-                import hashlib
-                sha = "wiki:" + hashlib.sha256(content).hexdigest()[:16]
-                existing = self.neo4j.find_git_document(connection_id, rel)
-                if existing and existing.get("git_blob_sha") == sha:
-                    continue
                 await self._ingest_raw(connection_id, rel, content, collection_id, commit_sha,
-                                       stats, touched, blob_sha=sha)
+                                       stats, touched, blob_sha=_wiki_sha(content))
+        # Pages removed from the wiki → flag for review (mirrors _apply_fulltree,
+        # which deliberately leaves wiki/ paths to this sweep).
+        for doc in self.neo4j.list_documents_for_git_connection(connection_id):
+            gp = doc.get("git_path")
+            if gp and gp.startswith("wiki/") and gp not in current_pages \
+                    and doc.get("git_sync_status") != "orphaned":
+                self.neo4j.mark_git_document_orphaned(doc["id"])
+                stats["orphaned"] += 1
 
     async def _ingest_raw(self, connection_id, rel_path, content: bytes, collection_id,
                           commit_sha, stats, touched, *, blob_sha: str):
         """Ingest already-fetched content (wiki pages) as a markdown document."""
+        existing = self.neo4j.find_git_document(connection_id, rel_path)
+        if existing and existing.get("git_blob_sha") == blob_sha \
+                and existing.get("git_sync_status") != "orphaned":
+            return  # unchanged — don't re-chunk/re-embed/re-extract
         dest = self._content_path(connection_id, rel_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if not dest.name.endswith(".md"):
             dest = dest.with_suffix(".md")
         dest.write_bytes(content)
-        existing = self.neo4j.find_git_document(connection_id, rel_path)
         if existing:
             doc_id = existing["id"]
             self.neo4j.delete_document_chunks(doc_id)

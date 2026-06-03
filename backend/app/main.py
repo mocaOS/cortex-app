@@ -4291,7 +4291,7 @@ async def create_git_connection(
         "last_synced_at": None,
         "next_sync_due": None,
         "sync_status": "never_synced",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     node = neo4j.create_git_connection(props)
     return _git_conn_response(node)

@@ -116,3 +116,75 @@ def test_glob_filtering():
     none_inc, exc2 = svc._build_specs([], ["*.lock"])
     assert svc._passes_globs("anything.py", none_inc, exc2) is True
     assert svc._passes_globs("yarn.lock", none_inc, exc2) is False
+
+
+def test_scrub_fetch_head_removes_token(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    fetch_head = git_dir / "FETCH_HEAD"
+    fetch_head.write_text(
+        "abc123\t\tbranch 'main' of https://x-access-token:ghp_secret@github.com/o/r\n"
+    )
+    GitConnectorService._scrub_fetch_head(tmp_path, "ghp_secret")
+    text = fetch_head.read_text()
+    assert "ghp_secret" not in text
+    assert "***" in text
+    # no-ops: missing file / empty token don't raise
+    GitConnectorService._scrub_fetch_head(tmp_path / "nope", "ghp_secret")
+    GitConnectorService._scrub_fetch_head(tmp_path, "")
+
+
+def test_wiki_sha_is_content_derived():
+    from app.services.git_connector_service import _wiki_sha
+    a, b = _wiki_sha(b"hello"), _wiki_sha(b"hello")
+    assert a == b and a.startswith("wiki:")
+    assert _wiki_sha(b"other") != a
+
+
+def test_ingest_raw_skips_unchanged_content(monkeypatch):
+    """An existing wiki doc with a matching content sha must not be re-ingested."""
+
+    class FakeNeo4j:
+        def __init__(self):
+            self.calls = []
+
+        def find_git_document(self, cid, path):
+            self.calls.append("find")
+            return {"id": "doc1", "git_blob_sha": "wiki:abcd", "git_sync_status": "synced"}
+
+        def __getattr__(self, name):  # any write would betray a re-ingest
+            raise AssertionError(f"unexpected neo4j call: {name}")
+
+    fake = FakeNeo4j()
+    monkeypatch.setattr(GitConnectorService, "neo4j", property(lambda self: fake))
+    svc = GitConnectorService()
+    stats = {"created": 0, "modified": 0}
+    touched = []
+    asyncio.run(svc._ingest_raw("conn1", "wiki/Home.md", b"x", None, "sha",
+                                stats, touched, blob_sha="wiki:abcd"))
+    assert fake.calls == ["find"]
+    assert touched == [] and stats == {"created": 0, "modified": 0}
+
+
+def test_git_subprocess_timeout(monkeypatch):
+    """A hung git process is killed and surfaces as GitSyncError."""
+    import app.services.git_connector_service as mod
+    from app.services.git_connector_service import GitSyncError
+    monkeypatch.setattr(mod, "_GIT_CMD_TIMEOUT", 0.05)
+
+    class HungProc:
+        killed = False
+
+        async def communicate(self):
+            await asyncio.sleep(10)
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            return -9
+
+    proc = HungProc()
+    with pytest.raises(GitSyncError, match="timed out"):
+        asyncio.run(GitConnectorService._communicate(proc, "fetch"))
+    assert proc.killed is True

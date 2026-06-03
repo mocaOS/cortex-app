@@ -714,10 +714,17 @@ async def _run_researcher_loop(
                         yield {"type": "thinking", "content": f"git_repo: {git_action} on {owner}/{repo}"}
                         try:
                             if git_action == "read_file":
-                                content = await provider.get_file_content(
-                                    owner, repo, args.get("path", ""), base_branch,
-                                )
-                                response_text = _truncate_response(content)
+                                file_path = (args.get("path") or "").strip()
+                                # Server-side guard: repo-relative paths only —
+                                # rejects '..' segments so an LLM-chosen path
+                                # can't walk the provider API URL.
+                                if not file_path or file_path.startswith("/") or ".." in file_path.split("/"):
+                                    response_text = "Error: invalid path — must be a relative path inside the repository."
+                                else:
+                                    content = await provider.get_file_content(
+                                        owner, repo, file_path, base_branch,
+                                    )
+                                    response_text = _truncate_response(content)
                             elif git_action == "propose_change":
                                 files = [
                                     (f["path"], f.get("content", ""))

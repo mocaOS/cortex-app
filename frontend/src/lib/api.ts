@@ -258,6 +258,23 @@ class ApiClient {
     });
   }
 
+  /**
+   * Fetch the original file for a document as a Blob (authenticated).
+   * Used by viewers that can't attach headers themselves (markdown modal,
+   * blob-URL window.open for PDFs etc.).
+   */
+  async getDocumentFileBlob(documentId: string): Promise<Blob> {
+    const apiKey = getAdminApiKey();
+    const res = await fetch(`${API_BASE}/api/documents/${documentId}/file`, {
+      headers: apiKey ? { "X-API-Key": apiKey } : {},
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Failed to fetch file" }));
+      throw new Error(error.detail || `HTTP ${res.status}`);
+    }
+    return res.blob();
+  }
+
   async downloadDocumentsZip(documentIds: string[]): Promise<void> {
     const apiKey = getAdminApiKey();
     const res = await fetch(`${API_BASE}/api/documents/download-zip`, {

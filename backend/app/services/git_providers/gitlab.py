@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import quote
 
-from .base import GitProvider, GitRepoRef, GitWriteResult, VerifyResult, WikiPage
+from .base import GitProvider, GitProviderError, GitRepoRef, GitWriteResult, VerifyResult, WikiPage
 
 
 class GitLabProvider(GitProvider):
@@ -87,21 +87,26 @@ class GitLabProvider(GitProvider):
         )
 
     async def commit_files(self, owner, name, branch, files, message) -> None:
-        # GitLab figures out create-vs-update server-side if we probe; simplest
-        # robust approach: try 'update', the action set is atomic either way.
-        actions = [{"action": "update", "file_path": p, "content": c} for p, c in files]
-        try:
-            await self._request(
-                "POST", f"/projects/{self._pid(owner, name)}/repository/commits",
-                json={"branch": branch, "commit_message": message, "actions": actions},
-            )
-        except Exception:
-            # Fall back to 'create' for files that don't yet exist on the branch.
-            actions = [{"action": "create", "file_path": p, "content": c} for p, c in files]
-            await self._request(
-                "POST", f"/projects/{self._pid(owner, name)}/repository/commits",
-                json={"branch": branch, "commit_message": message, "actions": actions},
-            )
+        # GitLab's actions[] payload requires the right verb per file ('update'
+        # on a missing file fails, 'create' on an existing one fails — and one
+        # bad action rejects the whole atomic commit). Probe each file once to
+        # pick create vs update, then commit everything in a single call.
+        actions = []
+        for p, c in files:
+            try:
+                await self._request(
+                    "GET",
+                    f"/projects/{self._pid(owner, name)}/repository/files/{quote(p, safe='')}",
+                    params={"ref": branch},
+                )
+                action = "update"
+            except GitProviderError:
+                action = "create"
+            actions.append({"action": action, "file_path": p, "content": c})
+        await self._request(
+            "POST", f"/projects/{self._pid(owner, name)}/repository/commits",
+            json={"branch": branch, "commit_message": message, "actions": actions},
+        )
 
     async def open_pull_request(self, owner, name, head, base, title, body) -> GitWriteResult:
         resp = await self._request(

@@ -6011,7 +6011,8 @@ class Neo4jService:
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {git_connection_id: $cid})
-                RETURN d.id as id, d.git_path as git_path, d.filename as filename
+                RETURN d.id as id, d.git_path as git_path, d.filename as filename,
+                       d.git_sync_status as git_sync_status
             """, cid=connection_id)
             return [dict(record) for record in result]
 
