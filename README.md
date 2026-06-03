@@ -42,11 +42,11 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
-  - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: entity extraction & within-document relationship discovery → cross-document deep relationship analysis → detect communities; "Regenerate Graph" deletes all communities, cross-document relationships, and entities for a from-scratch rebuild while preserving per-chunk relationships during Step 2 rebuild), Entity Deduplication, Collections, Add
+  - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: entity extraction & relation discovery → cross-document deep relationship analysis → detect communities; "Regenerate Graph" deletes all communities, cross-document relations, and entities for a from-scratch rebuild while preserving per-chunk relations during Step 2 rebuild), Entity Deduplication, Collections, Add
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
-- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document two-phase deep relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction. Stats endpoint returns `per_chunk_relationship_count` separately so the UI can distinguish within-document vs cross-document relationships. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
+- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document two-phase deep relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction. Stats endpoint returns `per_chunk_relationship_count` separately so the UI can distinguish Step 1 relations vs cross-document relations. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
@@ -60,7 +60,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking and proper document provenance tracking (`source_documents`, `extraction_count`) — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz) with Person-aware name gating (word-prefix validation prevents false matches on shared first names), entity-level deduplicate button in Explore for quick access, inspect modal for reviewing entity details before merging, LLM-generated combined descriptions, review-and-merge UI, inline entity search, and full merge history with audit trail
-- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. "Find more" button runs 1 additional round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (delete cross-document relationships, preserving per-chunk relationships) modes.
+- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. "Find more" button runs 1 additional round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (delete cross-document relations, preserving per-chunk relations) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page (2 decimal places) with color-coded health indicator
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
@@ -291,7 +291,7 @@ npm run dev
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts, `per_chunk_relationship_count` for within-document relationships) |
+| GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts, `per_chunk_relationship_count` for Step 1 relations) |
 | POST | `/api/upload` | Upload a document (supports `start_processing` and `collection_id` params) |
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
@@ -371,7 +371,7 @@ npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/graph/relationships/analyze` | Two-phase relationship analysis: Phase 1 scans candidate pairs, Phase 2 confirms with XML output. Params: `rebuild=true` deletes cross-document (batch) relationships while preserving per-chunk relationships. Multi-round discovery up to `RELATIONSHIP_MAX_ROUNDS`. |
+| POST | `/api/graph/relationships/analyze` | Two-phase relationship analysis: Phase 1 scans candidate pairs, Phase 2 confirms with XML output. Params: `rebuild=true` deletes cross-document (batch) relations while preserving per-chunk relations. Multi-round discovery up to `RELATIONSHIP_MAX_ROUNDS`. |
 | DELETE | `/api/graph/relationships` | Delete ALL entity relationships |
 
 ### Community Detection Endpoints

@@ -55,7 +55,7 @@ No per-step `regenerateTaskId` is stored anymore; the observer rediscovers the a
 
 - Entity extraction has proper task polling with backend progress messages; running tasks detected on mount
 - Fresh instance warning on "Extract Entities" (0 entities) recommends "Generate Graph" instead
-- Displays "X entities and Y within-document relationships extracted" (using `per_chunk_relationship_count` from stats)
+- Displays "X entities and Y relations extracted" (using `per_chunk_relationship_count` from stats)
 - Granular progress messages now tick inside the per-document work — see [`document-pipeline.md`](document-pipeline.md#entity-embedding--storage) for the batched-embedding + per-entity-storage messages, and [`relationships.md`](relationships.md#per-chunk-extraction) for the per-chunk streaming progress.
 
 ### Image Analysis Awareness
@@ -73,7 +73,7 @@ The previous frontend-side `waitingForImagesBeforeStep2` flag was removed when t
 ## Step 2 Details
 
 - ERR (Entity-Relationship Ratio) indicator: color-coded (green >= 0.69, yellow >= 0.29, red < 0.29), displayed to 2 decimal places, tooltip explaining the metric
-- Displays only cross-document relationships (total minus `per_chunk_relationship_count`)
+- Displays only cross-document relations (total minus `per_chunk_relationship_count`)
 - Supports incremental mode (default) and rebuild mode
 - "Find more" button does 1 additional round. See [`.claude/domain/relationships.md`](relationships.md#multi-round-discovery)
 

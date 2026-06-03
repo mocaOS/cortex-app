@@ -32,6 +32,10 @@ Cortex can now connect directly to git repositories and keep their knowledge in 
 
 New env vars: `ENABLE_GIT_INTEGRATION`, `GIT_WORK_DIR`, `GIT_CLONE_DEPTH`, `GIT_MAX_REPO_SIZE_MB`, `GIT_SYNC_MAX_FILE_SIZE_MB`, `GIT_SYNC_POLL_INTERVAL`, `GIT_HTTP_TIMEOUT`, `GIT_HTTP_INSECURE_HOSTS`. The backend image now bundles `git`; `pathspec` was added for glob matching. New endpoints under `/api/integrations/git/*` (admin-gated). New backend: `services/git_providers/` (GitHub/GitLab/Gitea adapters) and `services/git_connector_service.py`; new frontend: `components/admin/GitIntegrations.tsx`; new docs: `handbook/22-git-integration.md`, `documentation/pages/features/git-integration.mdx`, and `.claude/domain/git-integration.md`.
 
+### Knowledge Graph wording: "relations" and "cross-document relations"
+
+The Knowledge Graph page (and docs) now use simpler terminology: Step 1 counts are labeled **relations** (formerly "within-document relationships") and Step 2 counts are labeled **cross-document relations** (formerly "cross-document relationships"). All of these are relations — only the cross-document ones need the qualifier. No behavior change; `per_chunk_relationship_count` and other API fields are unchanged.
+
 ---
 
 ## June 1, 2026

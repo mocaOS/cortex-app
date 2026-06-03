@@ -298,13 +298,13 @@ export default function ExtractAnalyzePage() {
 
       const backendMsg = status.message || `Progress: ${status.progress_percent}%`;
       const countMsg = newlyDiscovered > 0
-        ? `${newlyDiscovered} new cross-document relationships found, still connecting the dots... (${backendMsg})`
+        ? `${newlyDiscovered} new cross-document relations found, still connecting the dots... (${backendMsg})`
         : backendMsg;
       setRelationshipTaskMessage(countMsg);
 
       if (status.status === "completed") {
         activePollRef.current = null;
-        setRelationshipTaskMessage(`Analysis complete! ${crossDocRels - initialRelCount.current} cross-document relationships discovered.`);
+        setRelationshipTaskMessage(`Analysis complete! ${crossDocRels - initialRelCount.current} cross-document relations discovered.`);
         setNewDocsSinceAnalysis(0);
         await fetchData(true);
         // The chain-observer useEffect will detect the backend-spawned
@@ -746,7 +746,7 @@ export default function ExtractAnalyzePage() {
               <p className="text-sm font-medium text-foreground">Generating Knowledge Graph</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {regenerateStep === 1 ? "Step 1 of 3: Extracting entities and relationships from documents..." :
-                 regenerateStep === 2 ? "Step 2 of 3: Deep analysis of cross-document relationships..." :
+                 regenerateStep === 2 ? "Step 2 of 3: Deep analysis of cross-document relations..." :
                  "Step 3 of 3: Detecting communities in the knowledge graph..."}
               </p>
             </div>
@@ -794,7 +794,7 @@ export default function ExtractAnalyzePage() {
                 )}
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                Extracts entities like people, organizations, and concepts from each document, and discovers within-document relationships grounded in the source text.
+                Extracts entities like people, organizations, and concepts from each document, and discovers relations grounded in the source text.
               </p>
 
               {/* Document processing summary */}
@@ -921,7 +921,7 @@ export default function ExtractAnalyzePage() {
 
               {entityCount > 0 && (
                 <p className="text-sm text-green-400 mb-3">
-                  {entityCount.toLocaleString()} entities and {(stats?.per_chunk_relationship_count ?? 0).toLocaleString()} within-document relationships extracted.
+                  {entityCount.toLocaleString()} entities and {(stats?.per_chunk_relationship_count ?? 0).toLocaleString()} relations extracted.
                 </p>
               )}
 
@@ -970,14 +970,14 @@ export default function ExtractAnalyzePage() {
 
               {step2Blocked ? (
                 <p className="text-sm text-muted-foreground">
-                  Complete Step 1 first, then run deep analysis to discover cross-document relationships.
+                  Complete Step 1 first, then run deep analysis to discover cross-document relations.
                 </p>
               ) : entityCount > 0 && relationshipCount === 0 && !analyzingRelationships ? (
                 <div className="flex items-center justify-between mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <p className="text-sm text-yellow-200">
-                      Step 1 relationships are extracted. Run deep analysis to discover additional cross-document connections.
+                      Step 1 relations are extracted. Run deep analysis to discover additional cross-document relations.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-4">
@@ -1013,7 +1013,7 @@ export default function ExtractAnalyzePage() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm("This will delete cross-document relationships and run a full deep analysis. Within-document relationships from Step 1 are preserved. Continue?")) {
+                          if (confirm("This will delete cross-document relations and run a full deep analysis. Relations from Step 1 are preserved. Continue?")) {
                             handleAnalyzeRelationships(true);
                           }
                         }}
@@ -1049,7 +1049,7 @@ export default function ExtractAnalyzePage() {
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center gap-4">
                     <p className="text-sm text-green-400">
-                      {(relationshipCount - (stats?.per_chunk_relationship_count ?? 0)).toLocaleString()} cross-document relationships discovered.
+                      {(relationshipCount - (stats?.per_chunk_relationship_count ?? 0)).toLocaleString()} cross-document relations discovered.
                     </p>
                     {/* Entity-Relationship Ratio (ERR) Indicator */}
                     {stats && (stats.entity_count ?? 0) > 0 && (
@@ -1099,7 +1099,7 @@ export default function ExtractAnalyzePage() {
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm("This will delete cross-document relationships and run a full deep analysis. Within-document relationships from Step 1 are preserved. Continue?")) {
+                        if (confirm("This will delete cross-document relations and run a full deep analysis. Relations from Step 1 are preserved. Continue?")) {
                           handleAnalyzeRelationships(true);
                         }
                       }}

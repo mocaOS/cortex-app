@@ -12,7 +12,7 @@ Building the knowledge graph is a three-step process, managed from the **Knowled
 
 ### Step 1: Entity Extraction (Phase A — Per-Document)
 
-Extracts entities from each document's chunks using an LLM. The UI shows entity and within-document (per-chunk) relationship counts.
+Extracts entities from each document's chunks using an LLM. The UI shows entity and relation (per-chunk) counts.
 
 **What happens:**
 
@@ -41,7 +41,7 @@ available_tokens = (GRAPH_EXTRACTION_MAX_CONTEXT × 0.8) − system_prompt_token
 
 ### Step 2: Relationship Analysis (Phase B — Cross-Document)
 
-Discovers relationships between entities across your entire collection. The UI shows only cross-document relationship counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR indicator is displayed to 2 decimal places.
+Discovers relationships between entities across your entire collection. The UI shows only cross-document relation counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR indicator is displayed to 2 decimal places.
 
 **What happens:**
 

@@ -70,4 +70,4 @@ Relationship analysis supports `rebuild=true` mode (calls `delete_batch_relation
 
 ## Stats
 
-`GraphStatsResponse` also exposes `per_chunk_relationship_count` (via `count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END)`) separately from `relationship_count`, enabling the frontend to distinguish within-document vs cross-document relationships. Step 2 displays only cross-document relationships (total minus `per_chunk_relationship_count`).
+`GraphStatsResponse` also exposes `per_chunk_relationship_count` (via `count(CASE WHEN r.extraction_method = 'per_chunk' THEN 1 END)`) separately from `relationship_count`, enabling the frontend to distinguish Step 1 relations vs cross-document relations. UI wording: Step 1 counts are labeled "relations", Step 2 counts are labeled "cross-document relations". Step 2 displays only cross-document relations (total minus `per_chunk_relationship_count`).

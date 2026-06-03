@@ -3123,7 +3123,7 @@ async def analyze_relationships(
     """Analyze relationships between entities across documents.
 
     This triggers Phase B of the extraction pipeline: the main (large) model
-    analyzes all entities and discovers cross-document relationships.
+    analyzes all entities and discovers cross-document relations.
     Run this after batch document processing to build the relationship graph.
 
     Optionally followed by community detection: POST /api/graph/communities/detect

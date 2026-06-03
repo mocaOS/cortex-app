@@ -940,10 +940,10 @@ paths:
   /api/graph/relationships/analyze:
     post:
       tags: [Knowledge Graph]
-      summary: Analyze cross-document relationships
+      summary: Analyze cross-document relations
       description: >
         Triggers Phase B of the extraction pipeline. The main (large) model
-        analyzes all entities and discovers cross-document relationships.
+        analyzes all entities and discovers cross-document relations.
         Run this after batch document processing to build the relationship graph.
       parameters:
         - name: collection_id
@@ -1679,7 +1679,7 @@ components:
           type: integer
         per_chunk_relationship_count:
           type: integer
-          description: Relationships discovered within documents (Step 1, per-chunk extraction)
+          description: Relations discovered in Step 1 (per-chunk extraction)
         collection_count:
           type: integer
 

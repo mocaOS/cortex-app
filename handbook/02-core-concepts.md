@@ -152,7 +152,7 @@ Relationship discovery is a separate step from entity extraction:
 - **Phase A (Per-Document)**: Entity extraction happens during document ingestion — each document's chunks are analyzed individually. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call to extract relationships using the chunk text as direct evidence. Entity names are mapped to their canonical (dedup-resolved) names before storage, and self-referential relationships are automatically filtered out. Stored with `extraction_method='per_chunk'`.
 - **Phase B (Per-Collection)**: Cross-document relationship analysis happens as a separate job — entities across the entire collection are analyzed together to discover cross-document connections not visible within individual chunks.
 
-This two-phase approach means entities and evidence-grounded per-chunk relationships are discovered incrementally (as each document is processed), while cross-document relationships are discovered holistically (across all documents at once).
+This two-phase approach means entities and evidence-grounded relations are discovered incrementally (as each document is processed), while cross-document relations are discovered holistically (across all documents at once).
 
 ### The 14 Standard Relationship Types
 

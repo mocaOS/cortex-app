@@ -301,7 +301,7 @@ class GraphStatsResponse(BaseModel):
     chunk_count: int
     entity_count: int
     relationship_count: int
-    per_chunk_relationship_count: int = Field(default=0, description="Relationships discovered within documents (Step 1)")
+    per_chunk_relationship_count: int = Field(default=0, description="Relations discovered in Step 1 (per-chunk extraction)")
     total_size: int
     # Enhanced stats
     community_count: int = Field(default=0, description="Number of detected communities")
