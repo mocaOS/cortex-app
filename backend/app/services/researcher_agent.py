@@ -36,6 +36,7 @@ from app.services.research_prompts import (
     build_activated_skills_block,
 )
 from app.services.prompt_security import get_anti_injection_instruction
+from app.services.llm_config import build_chat_params
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +428,7 @@ async def _run_researcher_loop(
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
-                temperature=0.2,
+                **build_chat_params(llm_config.model, temperature=0.2),
             )
         except Exception as e:
             logger.error(
@@ -469,7 +470,7 @@ async def _run_researcher_loop(
                         messages=messages,
                         tools=tools,
                         tool_choice="required",
-                        temperature=0.2,
+                        **build_chat_params(llm_config.model, temperature=0.2),
                     )
                     retry_msg = response.choices[0].message
                 except Exception as e:
@@ -485,7 +486,7 @@ async def _run_researcher_loop(
                             messages=messages + [nudge],
                             tools=tools,
                             tool_choice="auto",
-                            temperature=0.2,
+                            **build_chat_params(llm_config.model, temperature=0.2),
                         )
                         retry_msg = response.choices[0].message
                     except Exception as e:
@@ -505,7 +506,7 @@ async def _run_researcher_loop(
                         messages=messages,
                         tools=tools,
                         tool_choice="auto",
-                        temperature=0.2,
+                        **build_chat_params(llm_config.model, temperature=0.2),
                     )
                     assistant_message = response.choices[0].message
                 except Exception:
@@ -1295,9 +1296,10 @@ async def run_research_pipeline(
         stream = await client.chat.completions.create(
             model=llm_config.model,
             messages=writer_messages,
-            temperature=0.3,
-            max_tokens=writer_max_tokens,
             stream=True,
+            **build_chat_params(
+                llm_config.model, temperature=0.3, max_tokens=writer_max_tokens
+            ),
         )
 
         async for chunk in stream:

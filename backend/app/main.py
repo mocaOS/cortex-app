@@ -93,7 +93,7 @@ from app.services.prompt_security import (
     get_safe_refusal_message,
 )
 from app.services.compute3_service import get_compute3_service
-from app.services.llm_config import get_llm_config, is_turbo_mode_active
+from app.services.llm_config import get_llm_config, is_turbo_mode_active, build_chat_params
 from app.services.auth_service import (
     require_api_key,
     require_read_permission,
@@ -817,8 +817,7 @@ Output only lowercase_words (3-5 words, underscores, no extension):"""
                 {"role": "system", "content": "Output only a filename. Use lowercase_words format. No thinking, no explanation."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.2,
-            "max_tokens": 20,
+            **build_chat_params(llm_config.model, temperature=0.2, max_tokens=20),
         }
         
         # Disable thinking for DeepSeek, R1, and MiniMax models
@@ -958,8 +957,7 @@ Output 3-7 words only:"""
                 {"role": "system", "content": "You output short topic labels. Output only 3-7 words. Never explain or think out loud."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.2,
-            "max_tokens": 20,
+            **build_chat_params(llm_config.model, temperature=0.2, max_tokens=20),
         }
         
         # Disable thinking for DeepSeek and similar models
@@ -2207,9 +2205,10 @@ Question: {request.question}"""
                 request_kwargs = {
                     "model": llm_config.model,
                     "messages": messages,
-                    "temperature": 0.2,  # Lower temperature for faster, more deterministic responses
-                    "max_tokens": 600,   # Reduced for faster completion
                     "stream": True,
+                    # Lower temperature / capped tokens for faster, more deterministic
+                    # responses (params adapted per model family — GPT-5/o-series).
+                    **build_chat_params(llm_config.model, temperature=0.2, max_tokens=600),
                 }
                 
                 # Only add thinking-related params for models that support them
@@ -2383,9 +2382,12 @@ Question: {request.question}"""
             stream = await client.chat.completions.create(
                 model=llm_config.model,
                 messages=messages,
-                temperature=0.3,
-                max_tokens=settings.writer_max_tokens_speed,
-                stream=True
+                stream=True,
+                **build_chat_params(
+                    llm_config.model,
+                    temperature=0.3,
+                    max_tokens=settings.writer_max_tokens_speed,
+                ),
             )
 
             async for chunk in stream:
@@ -2711,8 +2713,7 @@ async def _generate_merged_description(canonical: str, all_names: List[str], ent
         response = await client.chat.completions.create(
             model=config.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=1000,
+            **build_chat_params(config.model, temperature=0.2, max_tokens=1000),
         )
         content = response.choices[0].message.content
         return content.strip() if content else None

@@ -757,6 +757,7 @@ class SkillService:
         so multiple installed skills can't overwrite each other's Authorization.
         """
         from openai import AsyncOpenAI
+        from app.services.llm_config import build_chat_params
         from app.config import get_settings
 
         detail = self.get_skill(skill_id)
@@ -806,8 +807,7 @@ class SkillService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": body},
                 ],
-                temperature=0,
-                max_tokens=1000,
+                **build_chat_params(settings.openai_model, temperature=0, max_tokens=1000),
             )
             raw = response.choices[0].message.content or "{}"
             raw = raw.strip()

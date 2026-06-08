@@ -171,6 +171,30 @@ def get_relationship_llm_config() -> LLMConfig:
     )
 
 
+def build_chat_params(
+    model: str,
+    *,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> dict:
+    """Build chat-completion kwargs adapted to the target model family.
+
+    For OpenAI GPT-5 / o-series reasoning models, `max_tokens` is translated to
+    `max_completion_tokens` and non-default `temperature` is dropped (the API
+    400s otherwise). For all other models (Venice, vLLM/turbo, older OpenAI),
+    the standard params are passed through unchanged. Shares one implementation
+    with the extraction path via `reasoning_config.adapt_token_params`.
+    """
+    from app.services.reasoning_config import adapt_token_params
+
+    params: dict = {}
+    if max_tokens is not None:
+        params["max_tokens"] = max_tokens
+    if temperature is not None:
+        params["temperature"] = temperature
+    return adapt_token_params(model, params)
+
+
 def get_llm_config_tuple() -> Tuple[str, str, str]:
     """
     Get LLM configuration as a tuple for backward compatibility.

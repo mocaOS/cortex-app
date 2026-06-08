@@ -54,7 +54,7 @@ from app.models import (
     ThinkingEvent,
 )
 from app.services.graph_extractor import get_graph_extractor
-from app.services.llm_config import get_llm_config
+from app.services.llm_config import get_llm_config, build_chat_params
 from app.services.neo4j_service import get_neo4j_service
 from app.services.prompt_security import (
     get_anti_injection_instruction,
@@ -2815,8 +2815,7 @@ Response Style:
             response = client.chat.completions.create(
                 model=llm_config.model,
                 messages=messages,
-                temperature=0.3,
-                max_tokens=1200,  # Increased for more complete answers
+                **build_chat_params(llm_config.model, temperature=0.3, max_tokens=1200),
             )
 
             answer = response.choices[0].message.content
@@ -2937,8 +2936,7 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}""",
                 },
                 {"role": "user", "content": f"Break down this question: {question}"},
             ],
-            temperature=0.2,
-            max_tokens=300,
+            **build_chat_params(llm_config.model, temperature=0.2, max_tokens=300),
         )
 
         try:
@@ -3205,7 +3203,9 @@ Response Style:
         messages.append({"role": "user", "content": prompt})
 
         response = client.chat.completions.create(
-            model=llm_config.model, messages=messages, temperature=0.3, max_tokens=2000
+            model=llm_config.model,
+            messages=messages,
+            **build_chat_params(llm_config.model, temperature=0.3, max_tokens=2000),
         )
 
         answer = response.choices[0].message.content
@@ -3310,8 +3310,7 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions.""",
                 },
                 {"role": "user", "content": f"Break down: {question}"},
             ],
-            temperature=0.2,
-            max_tokens=300,
+            **build_chat_params(llm_config.model, temperature=0.2, max_tokens=300),
         )
 
         try:
@@ -3516,9 +3515,8 @@ Comprehensive Answer:""",
         stream = await client.chat.completions.create(
             model=llm_config.model,
             messages=messages,
-            temperature=0.3,
-            max_tokens=2000,
             stream=True,
+            **build_chat_params(llm_config.model, temperature=0.3, max_tokens=2000),
         )
 
         async for chunk in stream:

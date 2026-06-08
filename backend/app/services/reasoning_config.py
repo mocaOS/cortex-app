@@ -114,6 +114,36 @@ _RE_DEEPSEEK_V3 = re.compile(r"\bdeepseek[-_]?v3")
 _RE_GRANITE = re.compile(r"\bgranite")
 
 
+_OPENAI_REASONING_FAMILIES = frozenset({
+    ModelFamily.OPENAI_GPT5_V0,
+    ModelFamily.OPENAI_GPT5_V1PLUS,
+    ModelFamily.OPENAI_GPT5_PRO,
+    ModelFamily.OPENAI_GPT5_CODEX,
+    ModelFamily.OPENAI_O_SERIES,
+    ModelFamily.OPENAI_UNKNOWN_MAJOR,
+})
+
+
+def adapt_token_params(model: str, kwargs: dict) -> dict:
+    """Adapt chat-completion params for OpenAI GPT-5 / o-series reasoning models.
+
+    Those models reject the classic Chat Completions params: `max_tokens` must
+    be sent as `max_completion_tokens`, and `temperature` only accepts the
+    default (1) — any other value 400s. For every other family (Venice/qwen,
+    vLLM, older OpenAI, Anthropic) the params are returned unchanged.
+
+    Returns a new dict; the input is not mutated.
+    """
+    if parse_model_family(model) not in _OPENAI_REASONING_FAMILIES:
+        return kwargs
+    out = dict(kwargs)
+    if "max_tokens" in out:
+        out["max_completion_tokens"] = out.pop("max_tokens")
+    if out.get("temperature") not in (None, 1, 1.0):
+        out.pop("temperature", None)
+    return out
+
+
 def parse_model_family(model: str) -> ModelFamily:
     """Identify the model family from its name string.
 
@@ -478,6 +508,8 @@ def _prepare_call(
     # Ensure model is forwarded to create_fn (caller doesn't repeat it).
     merged = merge_kwargs(create_kwargs, reasoning_kwargs)
     merged.setdefault("model", model)
+    # Translate max_tokens→max_completion_tokens / drop temperature for GPT-5.
+    merged = adapt_token_params(model, merged)
     return merged, reasoning_kwargs, key, already_unsupported
 
 
