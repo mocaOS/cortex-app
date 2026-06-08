@@ -28,13 +28,6 @@ function LoginForm() {
     }
   }, [state?.success, state?.apiKey, router]);
 
-  // Helper to extract file extension from URL
-  const getLogoExtension = (url: string): string => {
-    const urlPath = url.split("?")[0]; // Remove query parameters
-    const ext = urlPath.split(".").pop() || "svg";
-    return ext;
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-6">
       <motion.div
@@ -49,23 +42,20 @@ function LoginForm() {
             initial={{ scale: 0.5, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2, duration: 0.5 }}
-            className="inline-flex items-center justify-center mb-6"
+            className="inline-flex items-center justify-center mb-12"
           >
             <Image
-              src={
-                process.env.NEXT_PUBLIC_LOGO_URL
-                  ? `/custom-logo.${getLogoExtension(process.env.NEXT_PUBLIC_LOGO_URL)}`
-                  : "/logo.svg"
-              }
-              alt="Logo"
-              width={350}
-              height={350}
-              className="h-16 w-auto"
+              src="/brand/cortex_logo_white.svg"
+              alt="Cortex"
+              width={96}
+              height={96}
+              className="h-24 w-24"
               priority
+              unoptimized
             />
           </motion.div>
           <h1 className="text-3xl font-bold text-foreground mb-2">
-            Welcome Back
+            Welcome to Cortex
           </h1>
           <p className="text-muted-foreground">
             Sign in to access the knowledge base

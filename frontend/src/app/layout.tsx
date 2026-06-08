@@ -17,8 +17,22 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+  ),
   title: "Cortex",
   description: "AI-powered knowledge base with Neo4j + Haystack",
+  openGraph: {
+    title: "Cortex",
+    description: "AI-powered knowledge base with Neo4j + Haystack",
+    siteName: "Cortex",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Cortex",
+    description: "AI-powered knowledge base with Neo4j + Haystack",
+  },
 };
 
 export default async function RootLayout({
