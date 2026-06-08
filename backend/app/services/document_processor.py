@@ -3536,6 +3536,7 @@ Comprehensive Answer:""",
         conversation_history: Optional[List[ConversationMessage]] = None,
         collection_id: Optional[str] = None,
         allowed_collection_ids: Optional[List[str]] = None,
+        conversation_memory: Optional[dict] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream research pipeline results using the agent-based architecture.
@@ -3565,6 +3566,7 @@ Comprehensive Answer:""",
             neo4j_service=self.neo4j,
             llm_config=llm_config,
             settings=self.settings,
+            conversation_memory=conversation_memory,
         ):
             yield event
 

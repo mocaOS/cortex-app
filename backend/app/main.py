@@ -116,6 +116,44 @@ logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
+_HEARTBEAT_DONE = object()
+
+
+async def with_sse_heartbeat(gen, interval: float = 8.0):
+    """Wrap an SSE string generator, injecting `: ping` comment lines during
+    silent windows so proxies/load balancers don't idle-timeout and the client
+    can tell "still working" from "connection died". Comment lines are ignored by
+    the SSE spec and by clients, so this is additive and safe.
+
+    Races the wrapped generator against a timer; on each `interval` of silence it
+    emits one keep-alive. Cancels the pump if the client disconnects.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump():
+        try:
+            async for chunk in gen:
+                await queue.put(chunk)
+        except Exception as e:  # surface as an error event, then end
+            await queue.put(f"data: {json.dumps({'error': str(e)})}\n\n")
+        finally:
+            await queue.put(_HEARTBEAT_DONE)
+
+    task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+            if chunk is _HEARTBEAT_DONE:
+                break
+            yield chunk
+    finally:
+        task.cancel()
+
+
 _api_executor: Optional[ThreadPoolExecutor] = None
 
 
@@ -2111,6 +2149,7 @@ async def ask_question_stream(
                         conversation_history=request.conversation_history,
                         collection_id=_stream_effective_collection_id,
                         allowed_collection_ids=_stream_allowed_collection_ids,
+                        conversation_memory=request.conversation_memory,
                     ):
                         yield f"data: {json.dumps(event)}\n\n"
                 else:
@@ -2128,14 +2167,14 @@ async def ask_question_stream(
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return StreamingResponse(
-            generate_agentic(),
+            with_sse_heartbeat(generate_agentic()),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
             }
         )
-    
+
     # Fast vector search mode - optimized for speed, no sources shown
     if request.use_fast_search:
         async def generate_fast():
@@ -2233,14 +2272,14 @@ Question: {request.question}"""
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
         return StreamingResponse(
-            generate_fast(),
+            with_sse_heartbeat(generate_fast()),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
             }
         )
-    
+
     # Standard streaming RAG — optionally uses speed mode agent pipeline
     async def generate():
         try:
@@ -2265,6 +2304,7 @@ Question: {request.question}"""
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id,
                     allowed_collection_ids=_stream_allowed_collection_ids,
+                    conversation_memory=request.conversation_memory,
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
                 return
@@ -2275,6 +2315,12 @@ Question: {request.question}"""
             conversation_history = request.conversation_history
 
             graph_context = None
+
+            # Stage status (additive; removes the silent pre-token window). Gated
+            # by stream_reasoning_steps so the setting matches behavior.
+            _emit_status = settings.stream_reasoning_steps
+            if _emit_status:
+                yield f"data: {json.dumps({'status': {'stage': 'searching', 'message': 'Searching the knowledge base'}})}\n\n"
 
             if request.use_graph:
                 search_result = await processor.graph_search_async(
@@ -2301,6 +2347,8 @@ Question: {request.question}"""
 
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
+                if _emit_status:
+                    yield f"data: {json.dumps({'status': {'stage': 'reranking', 'message': 'Ranking the most relevant sources'}})}\n\n"
                 results = await processor.rerank_results_async(
                     request.question, results, request.top_k
                 )
@@ -2379,6 +2427,9 @@ Question: {request.question}"""
                 base_url=llm_config.base_url,
             )
 
+            if _emit_status:
+                yield f"data: {json.dumps({'status': {'stage': 'generating', 'message': 'Writing the answer'}})}\n\n"
+
             stream = await client.chat.completions.create(
                 model=llm_config.model,
                 messages=messages,
@@ -2402,7 +2453,7 @@ Question: {request.question}"""
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        generate(),
+        with_sse_heartbeat(generate()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -3574,6 +3625,7 @@ async def ask_with_thinking_stream(
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id,
                     allowed_collection_ids=_stream_allowed_collection_ids,
+                    conversation_memory=request.conversation_memory,
                 ):
                     yield f"data: {json.dumps(event)}\n\n"
             else:
@@ -3591,7 +3643,7 @@ async def ask_with_thinking_stream(
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        generate(),
+        with_sse_heartbeat(generate()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

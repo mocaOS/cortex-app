@@ -294,7 +294,30 @@ class Settings(BaseSettings):
     graph_weight: float = Field(default=0.2)  # Weight for graph context in hybrid
     max_conversation_history: int = Field(
         default=6
-    )  # Max messages to include from conversation
+    )  # Max messages to include from conversation (legacy truncation; used when no conversation_memory blob)
+
+    # Conversation memory / multi-bucket context curator (see context_curator.py).
+    # Only active when the client sends a `conversation_memory` blob in the request;
+    # absent blob => legacy max_conversation_history truncation (byte-identical behavior).
+    enable_conversation_memory: bool = Field(
+        default=True
+    )  # Backend kill-switch for the context curator (client opt-in still required via the blob)
+    conversation_memory_window: int = Field(
+        default=6
+    )  # Recent messages kept verbatim; older ones fold into the rolling summary
+    conversation_memory_max_tokens: int = Field(
+        default=1500
+    )  # Approx token budget for the curated context block
+    conversation_memory_compaction_model: str = Field(
+        default=""
+    )  # Model for post-stream compaction; empty => fast-mode model (or primary if unset)
+    conversation_memory_max_ledger: int = Field(
+        default=50
+    )  # Max source_ledger entries retained in the memory blob (most recent kept)
+    enable_memory_fast_path: bool = Field(
+        default=True
+    )  # Allow memory-answerable follow-ups (e.g. "summarize that", "in German") to skip retrieval
+
     enable_agentic_rag: bool = Field(default=True)  # Enable multi-step agentic RAG
     max_agentic_steps: int = Field(default=3)  # Maximum steps in agentic RAG (legacy)
 

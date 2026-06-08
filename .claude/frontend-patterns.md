@@ -20,6 +20,10 @@ KnowledgeGraph visualization (default 100 nodes, force-graph 2D) supports clicki
 
 Research process blocks (Sub-Questions, Thinking Steps, Reasoning Steps) render above the main content bubble. Order: research process → content → graph context → sources. Research Process container auto-scrolls to bottom as new steps stream in.
 
+**Deep Research toggle** (`AskPanel.tsx`): `useAgentic` is in-session state (default Chat; initialized from `initialMode` so `?tab=research` deep-links still open in research). An Erlenmeyer-flask (`FlaskConical`) button flips it any time mid-conversation; the SubMenu "Deep Research" entry was removed in favor of this toggle. A mode chip shows in the input's status line.
+
+**ThinkingIndicator** (`ChatMessage.tsx`): shown while an assistant message streams before any content arrives. Blinking `live-dot` (CSS in `globals.css`) + a staged label + live elapsed-seconds counter + a reassurance line after 12 s. The label prefers the backend `status` event's `message` (stored on the message as `statusMessage`, set from the `status` SSE event in `AskPanel`), falling back to a heuristic over `sources`/`subQuestions`/`thinkingSteps`. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md#streaming-feedback-status--heartbeat).
+
 ## Source Modal Highlighting
 
 Cited chunk is highlighted within the full document text. Uses `indexOf()` to split into three parts: before (60% opacity), cited chunk (full opacity with 3px accent left border), after (60% opacity). Auto-scrolls to highlighted chunk on load.

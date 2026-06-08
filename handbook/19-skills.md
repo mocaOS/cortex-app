@@ -147,6 +147,15 @@ The LLM never sees API keys, tokens, or auth headers. Lines in the SKILL.md that
 - Non-JSON responses are truncated with a hard character limit
 - Successful API responses are also stored as sources for the writer phase, so they appear in the final answer's references
 
+### Failed Calls
+
+When an API call returns an error status (e.g. `401`, `403`, `422`, `500`) or times out, the failure is surfaced rather than hidden:
+
+- **In the chat** — a red skill step appears in the research process showing the failing method, URL, and HTTP status code (for example, `API call failed: POST https://.../tickets → HTTP 403`).
+- **In the answer** — the assistant explicitly states that the attempted action did not succeed and explains why, using the API's error message. It will not claim or imply that a failed action (such as creating a ticket) completed.
+
+If a write action keeps failing, check: the skill's token is configured and current (Setup Wizard), the token's account has permission for that action, and the request matches what the target API expects. See also [Troubleshooting](#troubleshooting).
+
 ## Setup Wizard and Config System
 
 Skills that interact with external APIs typically need configuration — API keys, tokens, base URLs. The setup wizard handles this automatically.
@@ -265,6 +274,8 @@ All skill endpoints require **Admin** authentication.
 - After saving, the badge should disappear
 
 **API calls returning auth errors?**
+- A failed call is now visible directly in the chat: look for a **red skill step** in the research process showing the method, URL, and status code, and the answer will state that the action did not succeed
+- A `401` usually means no/invalid token; a `403` means the token is valid but the account lacks permission for that action; a `422` means the request payload was rejected as invalid
 - Open the skill's configuration and verify that the API key/token is correct
 - Check that the config schema has the right `auth_header` template (e.g., `"Authorization: Bearer API_TOKEN"`)
 - Look at backend logs for `http_request: METHOD URL | auth=yes/none` to verify auth injection

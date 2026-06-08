@@ -132,6 +132,9 @@ export interface StreamEvent {
   // Agent Skills events
   skill_tool?: string;
   skill_name?: string;
+  is_error?: boolean;
+  // Pipeline stage status (drives the live thinking indicator)
+  status?: { stage?: string; message?: string };
 }
 
 export interface UploadResponse {

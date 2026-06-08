@@ -37,8 +37,22 @@ from app.services.research_prompts import (
 )
 from app.services.prompt_security import get_anti_injection_instruction
 from app.services.llm_config import build_chat_params
+from app.services.context_curator import (
+    build_context,
+    compact_memory,
+    source_sid,
+    is_memory_answerable,
+    rehydrate_graph_context,
+)
 
 logger = logging.getLogger(__name__)
+
+
+async def _empty_aiter():
+    """An async iterator that yields nothing (used to skip the researcher loop on
+    the memory fast-path while keeping the shared event-handling block)."""
+    return
+    yield  # pragma: no cover — makes this an async generator
 
 
 # =============================================================================
@@ -58,6 +72,10 @@ class ResearchResult:
     summary: str = ""
     search_count: int = 0
     total_sources_considered: int = 0
+    # Human-readable descriptions of skill API calls (http_request) that failed,
+    # so the writer can explicitly tell the user an attempted action did not
+    # succeed instead of silently glossing over it.
+    failed_actions: list = field(default_factory=list)
 
 
 # =============================================================================
@@ -399,7 +417,9 @@ async def _run_researcher_loop(
     )
 
     messages = [{"role": "system", "content": system_prompt}]
-    for msg in conversation_history[-settings.max_conversation_history :]:
+    # conversation_history is already curated/bounded by the caller
+    # (run_research_pipeline -> context_curator.build_context).
+    for msg in conversation_history:
         messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": question})
 
@@ -581,6 +601,11 @@ async def _run_researcher_loop(
             elif name == "knowledge_search":
                 queries = args.get("queries", [])
                 if queries:
+                    if settings.stream_reasoning_steps:
+                        yield {
+                            "type": "status",
+                            "status": {"stage": "searching", "message": "Searching the knowledge base"},
+                        }
                     yield {
                         "type": "thinking",
                         "content": f"Searching: {', '.join(q[:50] for q in queries[:3])}",
@@ -906,6 +931,9 @@ async def _run_researcher_loop(
                         "(listed in SKILL_HTTP_INSECURE_HOSTS).", req_host,
                     )
 
+                # Short, user-facing failure label (set in the except handlers).
+                # None means the call succeeded.
+                _req_error_label = None
                 try:
                     async with httpx.AsyncClient(
                         timeout=15, follow_redirects=True, verify=_verify_tls
@@ -920,11 +948,15 @@ async def _run_researcher_loop(
                         response_text = _truncate_response(resp.text)
                 except httpx.TimeoutException:
                     response_text = "Error: HTTP request timed out (15s)"
+                    _req_error_label = f"API call timed out: {method} {url} (15s)"
                     logger.warning(f"http_request timed out: {method} {url}")
                 except httpx.HTTPStatusError as e:
                     response_text = (
                         f"Error: HTTP {e.response.status_code} — "
                         f"{e.response.text[:500]}"
+                    )
+                    _req_error_label = (
+                        f"API call failed: {method} {url} → HTTP {e.response.status_code}"
                     )
                     logger.warning(
                         f"http_request failed: {method} {url} → "
@@ -934,6 +966,7 @@ async def _run_researcher_loop(
                     )
                 except Exception as e:
                     response_text = f"Error: {str(e)[:500]}"
+                    _req_error_label = f"API call failed: {method} {url}"
                     logger.warning(f"http_request exception: {method} {url} → {e}")
 
                 messages.append({
@@ -943,6 +976,16 @@ async def _run_researcher_loop(
                 })
 
                 _http_request_called = True
+
+                # Surface a failed call to the user in real time, mirroring the
+                # skill_tool channel used for successful tool activity.
+                if _req_error_label:
+                    yield {
+                        "type": "skill_tool",
+                        "content": _req_error_label,
+                        "skill_name": "http_request",
+                        "is_error": True,
+                    }
 
                 # Store API response as a source so the writer has context.
                 # Use top-level keys matching the format the writer expects.
@@ -956,6 +999,27 @@ async def _run_researcher_loop(
                             "source_type": "skill_api",
                         },
                     })
+                else:
+                    # Record the failure so the writer cannot narrate a failed
+                    # action (e.g. a ticket POST) as if it succeeded. score=0 so
+                    # it never outranks real evidence.
+                    result.sources.append({
+                        "content": (
+                            f"NOTE: This skill API call FAILED and returned no "
+                            f"data. {response_text}"
+                        ),
+                        "score": 0.0,
+                        "filename": f"Skill API (FAILED): {url}",
+                        "metadata": {
+                            "filename": f"Skill API (FAILED): {url}",
+                            "source_type": "skill_api_error",
+                        },
+                    })
+                    # Surfaced to the writer as an explicit instruction (not just
+                    # a low-score source the model may ignore or deflect on).
+                    result.failed_actions.append(
+                        f"{method} {url} — {response_text}"
+                    )
 
             elif name == "activate_skill" and _skill_service:
                 skill_name = args.get("name", "")
@@ -1107,6 +1171,7 @@ async def run_research_pipeline(
     neo4j_service=None,
     llm_config=None,
     settings=None,
+    conversation_memory: Optional[dict] = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Full research pipeline: researcher agent loop → writer stream.
@@ -1121,6 +1186,10 @@ async def run_research_pipeline(
     - {"done": True, "communities_used": [...]} — completion signal
     """
     conversation_history = conversation_history or []
+    # Curate a bounded context from the client-carried memory blob (if any). When
+    # no blob is present this returns the legacy [-max_conversation_history:] slice,
+    # so downstream behavior is unchanged.
+    curated_history = build_context(conversation_history, conversation_memory, settings)
 
     writer_max_tokens = (
         settings.writer_max_tokens_speed
@@ -1134,18 +1203,33 @@ async def run_research_pipeline(
     )
 
     yield {"thinking": "Starting research..."}
+    if settings.stream_reasoning_steps:
+        yield {"status": {"stage": "analyzing", "message": "Analyzing your question"}}
 
     # =========================================================================
-    # Phase 1: Researcher Agent Loop
+    # Phase 1: Researcher Agent Loop (or memory fast-path)
     # =========================================================================
 
     research_result = ResearchResult()
     communities_used = []
 
+    # Fast-path: a follow-up answerable from memory alone (e.g. "summarize that",
+    # "why?", "in German") skips the researcher loop and its retrieval entirely.
+    # Graph grounding is rehydrated from the blob's stored kg_context.
+    fast_path = conversation_memory is not None and await is_memory_answerable(
+        question, conversation_memory, settings
+    )
+
+    if fast_path:
+        yield {"thinking": "Answering from conversation memory (no new retrieval)."}
+        _rg = rehydrate_graph_context(conversation_memory)
+        research_result.graph_context = _rg
+        research_result.communities = _rg.get("communities", [])
+
     async for event in _run_researcher_loop(
         question=question,
         mode=mode,
-        conversation_history=conversation_history,
+        conversation_history=curated_history,
         collection_id=collection_id,
         allowed_collection_ids=allowed_collection_ids,
         processor=processor,
@@ -1153,7 +1237,7 @@ async def run_research_pipeline(
         client=client,
         llm_config=llm_config,
         settings=settings,
-    ):
+    ) if not fast_path else _empty_aiter():
         if event["type"] == "result":
             research_result = event["data"]
             communities_used = event.get("communities_used", [])
@@ -1161,10 +1245,13 @@ async def run_research_pipeline(
             yield {"thinking": event["content"]}
         elif event["type"] == "retrieval":
             yield {"retrieval": event["content"]}
+        elif event["type"] == "status":
+            yield {"status": event["status"]}
         elif event["type"] == "skill_tool":
             yield {
                 "skill_tool": event["content"],
                 "skill_name": event.get("skill_name", ""),
+                "is_error": event.get("is_error", False),
             }
 
     # =========================================================================
@@ -1235,7 +1322,9 @@ async def run_research_pipeline(
                 f"\n\n=== Relevant Knowledge Communities ===\n{community_info}"
             )
 
-    # Emit sources to frontend
+    # Emit sources to frontend. Each carries a conversation-stable `sid` so
+    # citations keep identity across turns (additive field; existing frontends
+    # ignore it). Per-turn [src_N] numbering for the writer is unchanged.
     source_events = [
         {
             "document_id": r.get("document_id", ""),
@@ -1243,6 +1332,7 @@ async def run_research_pipeline(
             "content": r.get("content", ""),
             "score": r.get("rerank_score", r.get("score", 0)),
             "metadata": {"filename": r.get("filename", "")},
+            "sid": source_sid(r),
         }
         for r in writer_sources
     ]
@@ -1270,10 +1360,13 @@ async def run_research_pipeline(
     # Phase 3: Writer Generates Answer
     # =========================================================================
 
+    if settings.stream_reasoning_steps:
+        yield {"status": {"stage": "generating", "message": "Writing the answer"}}
+
     anti_injection = get_anti_injection_instruction(enabled=settings.prompt_security)
     writer_system = get_writer_system_prompt(mode, anti_injection)
 
-    has_history = len(conversation_history) > 0
+    has_history = len(curated_history) > 0
     writer_user = get_writer_user_prompt(
         mode=mode,
         formatted_sources=formatted_sources,
@@ -1281,14 +1374,14 @@ async def run_research_pipeline(
         question=question,
         researcher_summary=research_result.summary,
         has_history=has_history,
+        failed_actions=research_result.failed_actions,
     )
 
     writer_messages = [{"role": "system", "content": writer_system}]
 
-    # Include conversation history for multi-turn context
-    if conversation_history:
-        for msg in conversation_history[-settings.max_conversation_history :]:
-            writer_messages.append({"role": msg.role, "content": msg.content})
+    # Include the curated conversation context for multi-turn continuity.
+    for msg in curated_history:
+        writer_messages.append({"role": msg.role, "content": msg.content})
 
     writer_messages.append({"role": "user", "content": writer_user})
 
@@ -1302,15 +1395,41 @@ async def run_research_pipeline(
             ),
         )
 
+        answer_parts: List[str] = []
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
-                yield {"content": chunk.choices[0].delta.content}
+                token = chunk.choices[0].delta.content
+                answer_parts.append(token)
+                yield {"content": token}
 
     except Exception as e:
         logger.error(f"Writer streaming error: {e}")
+        answer_parts = []
         yield {
             "content": "I encountered an error generating the response. Please try again."
         }
+
+    # Update the client-carried memory blob AFTER streaming (zero added latency on
+    # the answer path). Only when the client opted in by sending a blob.
+    if conversation_memory is not None and getattr(
+        settings, "enable_conversation_memory", True
+    ):
+        try:
+            updated_memory = await compact_memory(
+                memory=conversation_memory,
+                conversation_history=conversation_history,
+                question=question,
+                answer="".join(answer_parts),
+                settings=settings,
+                sources=source_events,
+                kg_context={
+                    "entities": research_result.graph_context.get("entities", []),
+                    "communities": research_result.communities,
+                },
+            )
+            yield {"memory_update": updated_memory}
+        except Exception as e:  # noqa: BLE001 — never break the turn on memory work
+            logger.warning(f"memory_update emission skipped: {e}")
 
     yield {"done": True, "communities_used": list(set(communities_used))}
 

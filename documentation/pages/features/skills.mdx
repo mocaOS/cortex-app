@@ -74,6 +74,13 @@ When skills are active, the agent gains access to a built-in `http_request` tool
 
 **Hostname-scoped auth**: When multiple skills are installed, the server only applies a skill's auth headers if the request URL matches that skill's known hostname (derived from its `base_url` extracted automatically from SKILL.md, or from any URL-shaped config value like `*_BASE_URL`). This prevents two skills that both define `Authorization` headers from silently overwriting each other.
 
+**Failed calls are surfaced, never silent**: If an API call fails — an error status (e.g. `401 Unauthorized`, `403 Forbidden`, `422 Unprocessable Entity`) or a timeout — the failure is shown to you, not glossed over:
+
+- A red skill step appears in the chat's research process with the failing method, URL, and HTTP status.
+- The final answer explicitly tells you the action **did not succeed** and why (using the API's error message), rather than implying it worked.
+
+This matters most for **write actions** (creating a ticket, opening a PR, posting data): a failed write will be reported as failed. Common causes are a missing/expired token (configure it in the skill's Setup Wizard), insufficient permissions on the token's account, or a request the target API rejects as invalid.
+
 ## On-Demand Activation
 
 In addition to auto-activation, the agent retains `activate_skill` and `list_skills` tools for activating additional skills mid-conversation. This is a fallback mechanism — in practice, all enabled skills are pre-loaded at session start.

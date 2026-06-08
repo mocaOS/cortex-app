@@ -7,6 +7,40 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 8, 2026
+
+### Snappier chat: live status, heartbeats, and a Deep Research toggle
+
+The chat no longer feels stuck in the seconds before the first token. The streaming endpoint now emits structured `status` events at each pipeline stage (`analyzing → searching → reranking → generating`, in every mode including standard Chat) and SSE heartbeats during silent windows. The chat UI replaces the static "Thinking…" dots with a **live indicator** — a blinking accent dot, the current stage label, a running elapsed-seconds counter, and a reassurance line after 12 s. Gated by `STREAM_REASONING_STEPS`.
+
+**Deep Research is now an in-chat toggle.** Chat is the default; an Erlenmeyer-flask button flips on Deep Research (multi-step depth) at any time — even mid-conversation — instead of being a separate destination.
+
+### Conversation Memory — a multi-bucket context curator for the agent
+
+The research agent gains an opt-in, **client-carried conversation memory** that replaces blunt history truncation (the agent previously kept only the last 6 messages, silently forgetting older turns). The backend stays stateless: send an opaque `conversation_memory` blob on the request, read the updated one back from a new `memory_update` SSE event, and replay it next turn. Omit the field and nothing changes — it's fully backward-compatible.
+
+A new **context curator** rebuilds a small, fixed context each turn from several memory buckets instead of re-feeding ever-growing history:
+
+- **transcript** — recent turns verbatim + a rolling summary of older ones (no more amnesia past a few turns).
+- **facts / open_questions / intent** — durable knowledge, unresolved threads, and the user's goal + preferred answer style/language, extracted automatically.
+- **source_ledger** — every cited source gets a conversation-stable `sid` (now on each `sources` event), so a citation in turn 2 keeps its identity in turn 5.
+- **kg_context** — a knowledge-graph snapshot for grounding follow-ups.
+
+**Faster, cheaper follow-ups.** A memory fast-path lets questions answerable from memory alone ("summarize that", "why?", "in German") **skip retrieval entirely** — a single lightweight pass instead of the full research loop. Memory updates (summary folding + bucket extraction) run *after* the answer streams using a cheap fast model, so they add no user-visible latency. See [Ask AI → Conversation Memory](/features/ask-ai#conversation-memory). Tunable via `CONVERSATION_MEMORY_*` and `ENABLE_MEMORY_FAST_PATH`.
+
+### Skill API failures are now surfaced instead of silently swallowed
+
+When the research agent calls an external API through a skill's `http_request` tool and the call fails — an error status (`401`, `403`, `422`, `5xx`) or a timeout — that failure is now visible to you rather than glossed over.
+
+Previously a failed call (for example, a Zammad ticket creation returning `403 Forbidden`) was only fed back to the model internally: nothing in the UI distinguished it from a success, and the assistant could narrate the action as if it had completed. Now:
+
+- **A red skill step** appears in the chat's research process showing the failing method, URL, and HTTP status (e.g. `API call failed: POST https://.../tickets → HTTP 403`).
+- **The final answer explicitly reports the failure** — it states the attempted action did not succeed and explains why, using the API's error message, and will not imply the action worked. This is driven by a dedicated "Failed Actions" instruction passed to the answer writer, so it holds even for small/fast models.
+
+This is most important for **write actions** (creating tickets, opening PRs, posting data). Common causes of a failed call: a missing or expired token (configure it in the skill's Setup Wizard), insufficient permissions on the token's account, or a payload the target API rejects as invalid. See [Agent Skills](/features/skills#the-http_request-tool).
+
+---
+
 ## June 3, 2026
 
 ### Git integration — connect GitHub, GitLab & Gitea repositories as a living knowledge source

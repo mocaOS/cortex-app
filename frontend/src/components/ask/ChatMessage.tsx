@@ -181,6 +181,54 @@ interface Message {
   subQuestions?: string[];
   isStreaming?: boolean;
   reranked?: boolean;
+  statusMessage?: string;
+}
+
+// Pre-token "is it alive, not stuck?" indicator. Shown while an assistant
+// message is streaming but no content has arrived — the window where the backend
+// can be silent for seconds. Gives motion (blinking dot), a staged label (from
+// backend `status` events, with a heuristic fallback), a live elapsed counter,
+// and a reassurance line after 12s.
+function ThinkingIndicator({ message }: { message: Message }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = performance.now();
+    const id = setInterval(
+      () => setElapsed(Math.floor((performance.now() - start) / 1000)),
+      1000
+    );
+    return () => clearInterval(id);
+  }, []);
+
+  let label = message.statusMessage;
+  if (!label) {
+    if (message.sources && message.sources.length > 0) label = "Writing the answer";
+    else if (
+      (message.subQuestions && message.subQuestions.length > 0) ||
+      (message.thinkingSteps && message.thinkingSteps.length > 0)
+    )
+      label = "Researching";
+    else label = "Connecting";
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2.5 text-muted-foreground">
+        <span className="live-dot" aria-hidden />
+        <span className="text-[13px]">{label}…</span>
+        {elapsed >= 2 && (
+          <span className="text-[11px] tabular-nums font-mono text-muted-foreground/70">
+            {elapsed}s
+          </span>
+        )}
+      </div>
+      {elapsed >= 12 && (
+        <span className="text-[11.5px] pl-[18px] text-muted-foreground/70">
+          Still working — complex questions can take a moment.
+        </span>
+      )}
+    </div>
+  );
 }
 
 interface ChatMessageProps {
@@ -348,19 +396,30 @@ export default function ChatMessage({
             </div>
             <div ref={thinkingStepsRef} className="space-y-1 max-h-32 overflow-y-auto">
               {message.thinkingSteps.map((step, idx) => {
+                const isSkillError = step.startsWith("[SkillError] ");
                 const isSkillStep = step.startsWith("[Skill] ");
-                const displayStep = isSkillStep ? step.slice(8) : step;
+                const displayStep = isSkillError
+                  ? step.slice(13)
+                  : isSkillStep
+                    ? step.slice(8)
+                    : step;
                 return (
                   <div
                     key={idx}
                     className={cn(
                       "flex items-start gap-2 text-xs",
-                      idx === message.thinkingSteps!.length - 1 && message.isStreaming
-                        ? "text-foreground"
-                        : "text-muted-foreground"
+                      isSkillError
+                        ? "text-destructive"
+                        : idx === message.thinkingSteps!.length - 1 && message.isStreaming
+                          ? "text-foreground"
+                          : "text-muted-foreground"
                     )}
                   >
-                    {isSkillStep ? (
+                    {isSkillError ? (
+                      <span className="w-4 h-4 rounded-full bg-destructive/20 flex items-center justify-center shrink-0 mt-0.5">
+                        <Puzzle className="w-2.5 h-2.5 text-destructive" />
+                      </span>
+                    ) : isSkillStep ? (
                       <span className="w-4 h-4 rounded-full bg-[var(--accent)]/20 flex items-center justify-center shrink-0 mt-0.5">
                         <Puzzle className="w-2.5 h-2.5 text-[var(--accent)]" />
                       </span>
@@ -418,54 +477,7 @@ export default function ChatMessage({
             <div className="text-sm text-left">
               {/* Initial Loading State - before any content arrives */}
               {message.isStreaming && !thinking && !mainContent && (
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <motion.div
-                      className="w-2 h-2 rounded-full bg-accent"
-                      animate={{ 
-                        scale: [1, 1.2, 1],
-                        opacity: [0.5, 1, 0.5]
-                      }}
-                      transition={{ 
-                        duration: 1,
-                        repeat: Infinity,
-                        delay: 0
-                      }}
-                    />
-                    <motion.div
-                      className="w-2 h-2 rounded-full bg-accent"
-                      animate={{ 
-                        scale: [1, 1.2, 1],
-                        opacity: [0.5, 1, 0.5]
-                      }}
-                      transition={{ 
-                        duration: 1,
-                        repeat: Infinity,
-                        delay: 0.2
-                      }}
-                    />
-                    <motion.div
-                      className="w-2 h-2 rounded-full bg-accent"
-                      animate={{ 
-                        scale: [1, 1.2, 1],
-                        opacity: [0.5, 1, 0.5]
-                      }}
-                      transition={{ 
-                        duration: 1,
-                        repeat: Infinity,
-                        delay: 0.4
-                      }}
-                    />
-                  </div>
-                  <motion.span 
-                    className="text-sm text-muted-foreground"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                  >
-                    Thinking...
-                  </motion.span>
-                </div>
+                <ThinkingIndicator message={message} />
               )}
               
               {/* Collapsible Thinking Block - streams content while thinking is in progress */}

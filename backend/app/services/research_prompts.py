@@ -10,7 +10,7 @@ Two modes:
 """
 
 from datetime import date
-from typing import Literal, List
+from typing import Literal, List, Optional
 
 
 # =============================================================================
@@ -522,6 +522,21 @@ Formatting:
 {anti_injection}"""
 
 
+def _format_failed_actions(failed_actions: Optional[List[str]]) -> str:
+    """Render failed skill API calls as an explicit instruction the writer must
+    relay, so a failed action (e.g. a ticket POST) is never silently dropped."""
+    if not failed_actions:
+        return ""
+    items = "\n".join(f"- {a}" for a in failed_actions)
+    return (
+        "\n\n=== Failed Actions (MUST report to the user) ===\n"
+        "The following action(s) were attempted on the user's behalf and FAILED. "
+        "You MUST clearly tell the user that the action did not succeed and briefly "
+        "why (use the error detail). Do NOT claim or imply the action completed.\n"
+        f"{items}"
+    )
+
+
 def get_writer_user_prompt(
     mode: Literal["speed", "quality"],
     formatted_sources: str,
@@ -529,8 +544,11 @@ def get_writer_user_prompt(
     question: str,
     researcher_summary: str = "",
     has_history: bool = False,
+    failed_actions: Optional[List[str]] = None,
 ) -> str:
     """Get the writer user prompt for the given mode."""
+    failed_section = _format_failed_actions(failed_actions)
+
     if mode == "quality":
         summary_section = ""
         if researcher_summary:
@@ -541,7 +559,7 @@ def get_writer_user_prompt(
 === Reference Material ===
 {formatted_sources if formatted_sources else "No references available."}
 {graph_context_str if graph_context_str else ""}
-{summary_section}
+{summary_section}{failed_section}
 
 ### Question:
 {question}
@@ -551,12 +569,12 @@ def get_writer_user_prompt(
     else:  # speed
         if has_history:
             # Follow-up: keep question prominent, sources as supplementary
-            if formatted_sources or graph_context_str:
+            if formatted_sources or graph_context_str or failed_section:
                 return f"""{question}
 
 (Additional reference material if needed:
 {formatted_sources if formatted_sources else ""}
-{graph_context_str if graph_context_str else ""})"""
+{graph_context_str if graph_context_str else ""}){failed_section}"""
             else:
                 return question
         else:
@@ -564,7 +582,7 @@ def get_writer_user_prompt(
 
 === Reference Material ===
 {formatted_sources if formatted_sources else "No references available."}
-{graph_context_str if graph_context_str else ""}
+{graph_context_str if graph_context_str else ""}{failed_section}
 
 ### Question:
 {question}

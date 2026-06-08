@@ -48,6 +48,12 @@ The `http_request` httpx client verifies TLS by default. Hosts listed in `SKILL_
 ### Forcing a tool call (reliability)
 On iteration 0 with skills active, if the model replies with prose instead of calling a tool, the agent first tries `tool_choice="required"`, then **falls back to a corrective system nudge + `tool_choice="auto"`** if `required` errors (some providers, e.g. Venice/minimax, return HTTP 500 on forced tool choice) or yields no tool call. Without the fallback, skill actions (e.g. a ticket POST) silently never fire on prose-first turns.
 
+### Failure Surfacing
+A non-2xx response (or timeout) is caught and turned into an `"Error: ..."` tool-result string for the model **and** surfaced three further ways so a failed call (e.g. a Zammad ticket POST returning 403/422) can't masquerade as success:
+1. A `skill_tool` stream event with `is_error: True` is emitted (`researcher_agent.py`, in the `http_request` except handlers), which the frontend renders as a red Puzzle-icon step (`[SkillError]` prefix in `thinkingSteps`; see `AskPanel.tsx`/`ChatMessage.tsx`).
+2. The failure is appended to `result.sources` as a `skill_api_error`-typed entry (score 0, content prefixed `NOTE: This skill API call FAILED...`).
+3. The failure is recorded on `ResearchResult.failed_actions` and injected into the **writer** user prompt as a `=== Failed Actions (MUST report to the user) ===` section via `get_writer_user_prompt(..., failed_actions=...)` (`research_prompts.py`). This is the reliable channel — a score-0 source alone can be crowded out or trigger the writer's no-context/anti-injection deflection, whereas the explicit instruction makes the writer state the action did not succeed and why. See [`rag-pipeline.md`](rag-pipeline.md#writer).
+
 ### Response Truncation
 `_truncate_response()` intelligently truncates large JSON API responses by progressively slimming array items (truncating string values, flattening nested objects, compacting lists) before falling back to item-level truncation.
 

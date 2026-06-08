@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp } from "lucide-react";
+import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp, FlaskConical } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConversationMessage, GraphContext } from "@/types";
 import { ChatMessage, EmptyChat } from "./ask";
@@ -31,6 +31,8 @@ interface Message {
   subQuestions?: string[];
   isStreaming?: boolean;
   reranked?: boolean;
+  /** Latest backend pipeline stage label (from the `status` SSE event). */
+  statusMessage?: string;
 }
 
 // =========================================================================
@@ -79,8 +81,10 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // Mode determines if agentic (deep research) is enabled
-  const useAgentic = initialMode === "research";
+  // Chat is the default surface; Deep Research is an in-session toggle (flask
+  // icon) that can be flipped at any time mid-conversation. Initialized from the
+  // entry point so the legacy ?tab=research deep-link still opens in research.
+  const [useAgentic, setUseAgentic] = useState(initialMode === "research");
 
   // Persisted settings
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | undefined>(
@@ -214,8 +218,18 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
               return updated;
             });
           }
+          if (event.status?.message) {
+            const statusMessage = event.status.message;
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = { ...updated[lastIdx], statusMessage };
+              return updated;
+            });
+          }
           if (event.skill_tool) {
-            thinkingSteps = [...thinkingSteps, `[Skill] ${event.skill_tool as string}`];
+            const prefix = event.is_error ? "[SkillError] " : "[Skill] ";
+            thinkingSteps = [...thinkingSteps, `${prefix}${event.skill_tool as string}`];
             setMessages((prev) => {
               const updated = [...prev];
               const lastIdx = updated.length - 1;
@@ -336,7 +350,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
       {/* Chat History */}
       <div className="glass rounded-lg flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <EmptyChat mode={initialMode} />
+          <EmptyChat mode={useAgentic ? "research" : "chat"} />
         ) : (
           <div className="p-6 space-y-6">
             <AnimatePresence initial={false}>
@@ -404,6 +418,28 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
           />
 
           <div className="flex items-center gap-1.5">
+            {/* Deep Research toggle (Erlenmeyer flask) — flip between Chat and
+                Deep Research at any time during the session. */}
+            <button
+              type="button"
+              onClick={() => setUseAgentic((v) => !v)}
+              aria-pressed={useAgentic}
+              className={cn(
+                "flex-shrink-0 h-8 px-2.5 rounded-lg flex items-center gap-1.5 transition-colors text-sm font-medium",
+                useAgentic
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+              title={
+                useAgentic
+                  ? "Deep Research is ON — multi-step research (click for Chat)"
+                  : "Chat mode — click to enable Deep Research (multi-step depth)"
+              }
+            >
+              <FlaskConical className="w-4 h-4" />
+              <span className="hidden sm:inline">Deep Research</span>
+            </button>
+
             {/* Clear button - only show when there are messages */}
             {messages.length > 0 && (
               <button
@@ -505,8 +541,19 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
           </div>
         </div>
 
-        {/* Active collection indicator */}
+        {/* Mode + active collection indicator */}
         <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            {useAgentic ? (
+              <FlaskConical className="w-3 h-3 text-accent" />
+            ) : (
+              <Zap className="w-3 h-3" />
+            )}
+            <span className={useAgentic ? "text-accent" : undefined}>
+              {useAgentic ? "Deep Research" : "Chat"}
+            </span>
+          </span>
+          <span className="opacity-40">·</span>
           {selectedCollectionId && selectedCollectionName ? (
             <>
               <FolderOpen className="w-3 h-3 text-blue-500" />

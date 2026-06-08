@@ -122,6 +122,18 @@ VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
 - `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
+- `MAX_CONVERSATION_HISTORY` (default: 6) — legacy message-count cap; used only when no `conversation_memory` blob is sent
+
+### Conversation Memory (Context Curator)
+
+Multi-bucket, client-carried conversation memory — see [`domain/rag-pipeline.md`](domain/rag-pipeline.md#conversation-memory--context-curator). Active only when the client sends a `conversation_memory` blob; absent ⇒ legacy `MAX_CONVERSATION_HISTORY` truncation.
+
+- `ENABLE_CONVERSATION_MEMORY` (default: true) — backend kill-switch (client opt-in via the blob still required)
+- `CONVERSATION_MEMORY_WINDOW` (default: 6) — recent messages kept verbatim; older ones fold into the rolling summary
+- `CONVERSATION_MEMORY_MAX_TOKENS` (default: 1500) — approx token budget for the curated context block
+- `CONVERSATION_MEMORY_COMPACTION_MODEL` (default: empty ⇒ fast-mode model) — model for post-stream compaction
+- `CONVERSATION_MEMORY_MAX_LEDGER` (default: 50) — max `source_ledger` entries retained in the blob (most recent kept); each source carries a stable `sid` for citation continuity
+- `ENABLE_MEMORY_FAST_PATH` (default: true) — let memory-answerable follow-ups ("summarize that", "why?", "in German") skip the researcher loop and retrieval entirely (a cheap classifier decides; KG grounding is rehydrated from the blob's stored `kg_context`)
 
 ## Skills Configuration
 

@@ -107,6 +107,7 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
 | `use_fast_search` | `boolean` | `false` | Use fast vector-only search (disables hybrid/reranking) |
 | `collection_id` | `string \| null` | `null` | Scope search to a specific collection |
 | `conversation_history` | `ConversationMessage[]` | `null` | Previous messages for multi-turn context |
+| `conversation_memory` | `object \| null` | `null` | Opt-in client-carried memory blob (see [Conversation Memory](#conversation-memory)). Omit for stateless behavior. |
 
 ### ConversationMessage Schema
 
@@ -217,6 +218,7 @@ Every event is a JSON object on a `data:` line. Each event contains exactly one 
 
 | Event Key | Type | Mode | Description |
 |-----------|------|------|-------------|
+| `status` | `{stage, message}` | All (if `stream_reasoning_steps`) | Current pipeline stage — `analyzing`/`searching`/`reranking`/`generating`. Drives a live "working" indicator; removes the silent pre-token window |
 | `content` | `string` | All | A token of the streamed answer |
 | `sources` | `SearchResult[]` | All | Retrieved source documents with scores |
 | `graph_context` | `object` | All | Knowledge graph entities, relationships, and community data |
@@ -227,6 +229,11 @@ Every event is a JSON object on a `data:` line. Each event contains exactly one 
 | `done` | `boolean` | All | `true` when the stream is complete |
 | `error` | `string` | All | Error message if something went wrong |
 | `communities_used` | `number[]` | Deep Research | Community IDs used, included in the `done` event |
+| `memory_update` | `object` | When `conversation_memory` sent | Updated memory blob to store and replay next turn (see [Conversation Memory](#conversation-memory)) |
+
+Each source object in `sources` also carries a stable `sid` (string) for cross-turn citation continuity.
+
+During silent windows (≥ 8 s with no event), the stream also emits SSE comment keep-alives (`: ping`) — ignored by the SSE spec and clients, present only to prevent proxy idle-timeouts.
 
 ### Source Object Shape
 
@@ -261,6 +268,37 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
 ```
 
 The backend automatically trims conversation history to the most recent messages (default: 6, configurable via `MAX_CONVERSATION_HISTORY`).
+
+## Conversation Memory
+
+For long conversations, raw history trimming silently forgets older turns. **Conversation Memory** is an opt-in, **client-carried** alternative: the backend stays stateless, the client round-trips an opaque `conversation_memory` blob, and the agent curates a bounded, knowledge-grounded context from it each turn. Omit the field for today's stateless behavior — it's fully backward-compatible.
+
+**How to use it:**
+1. Start with `"conversation_memory": {}` (or omit on turn 1).
+2. Read the `memory_update` SSE event emitted at the end of each turn.
+3. Send that blob back as `conversation_memory` on the next turn (and keep sending the full `conversation_history`).
+
+```jsonc
+// memory_update event payload — store it client-side, send it back next turn
+{
+  "memory_update": {
+    "version": 3,
+    "transcript": { "summary": "…rolling summary of older turns…", "summarized_count": 8 },
+    "facts": ["Project codename: BlueFalcon", "Deadline: Friday"],
+    "open_questions": [],
+    "intent": "The user wants concise answers in German.",
+    "source_ledger": [{ "sid": "s_7fd8dcf10785", "filename": "doc.pdf", "gist": "…" }],
+    "kg_context": { "entities": [], "communities": [] }
+  }
+}
+```
+
+**What it gives you:**
+- **No amnesia** — older turns fold into a rolling summary plus durable `facts` / `open_questions` / `intent`, rebuilt into a small fixed context each turn (lower cost and latency than ever-growing history fed twice).
+- **Citation continuity** — every source in the `sources` event carries a conversation-stable `sid`, accumulated in `source_ledger`, so a source cited in turn 2 keeps its identity in turn 5.
+- **Memory fast-path** — follow-ups answerable from memory alone ("summarize that", "why?", "in German") skip retrieval entirely for a fast, cheap response (toggle with `ENABLE_MEMORY_FAST_PATH`).
+
+Compaction runs *after* the answer streams (a cheap fast-model call), so it adds no user-visible latency. Treat the blob as **opaque** — its shape may grow; only ever store and replay what the server returns.
 
 ## Collection Scope
 

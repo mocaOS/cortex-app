@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -278,6 +278,16 @@ class RAGRequest(BaseModel):
     use_agentic: bool = Field(default=False, description="Whether to use agentic multi-step RAG for complex questions")
     use_fast_search: bool = Field(default=False, description="Use simple vector search for faster responses (disables hybrid/reranking)")
     collection_id: Optional[str] = Field(default=None, description="Collection ID to scope the search to (None = all collections)")
+    conversation_memory: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Opaque, client-carried conversation memory blob (buckets: transcript, "
+            "source_ledger, facts, open_questions, intent). When present, the agent "
+            "curates a bounded context from it instead of raw history truncation, and "
+            "returns an updated blob via a 'memory_update' SSE event. Omit (null) for "
+            "stateless/legacy behavior. See context_curator.py."
+        ),
+    )
 
 
 class RAGResponse(BaseModel):
