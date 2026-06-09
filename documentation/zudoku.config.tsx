@@ -14,12 +14,12 @@ const config: ZudokuConfig = {
   },
   theme: {
     light: {
-      primary: "#2563eb",
-      accent: "#f0f9ff",
+      primary: "#ff9500",
+      accent: "#fff7ed",
     },
     dark: {
-      primary: "#3b82f6",
-      accent: "#0c1b2e",
+      primary: "#ff9500",
+      accent: "#2e1b0c",
     },
   },
   // Enable search with Pagefind
