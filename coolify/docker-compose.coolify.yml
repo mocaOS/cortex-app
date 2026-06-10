@@ -19,12 +19,17 @@ services:
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4J_dbms_memory_heap_initial__size=${NEO4J_HEAP_INITIAL:-512m}
-      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP_MAX:-2G}
-      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-512m}
+      # NOTE: the override vars below are intentionally NOT prefixed NEO4J_.
+      # Coolify injects every app-level env var into every service container,
+      # and neo4j's entrypoint turns any NEO4J_*-prefixed env var into a config
+      # setting (NEO4J_HEAP_INITIAL -> HEAP.INITIAL), which strict_validation
+      # rejects -> neo4j refuses to boot. CORTEX_* names are invisible to it.
+      - NEO4J_dbms_memory_heap_initial__size=${CORTEX_NEO4J_HEAP_INITIAL:-512m}
+      - NEO4J_dbms_memory_heap_max__size=${CORTEX_NEO4J_HEAP_MAX:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${CORTEX_NEO4J_PAGECACHE:-512m}
     # Hard ceiling so one tenant's graph blowing up self-OOMs in its cgroup
     # instead of letting the kernel OOM-killer pick another stack's container.
-    mem_limit: ${NEO4J_MEM_LIMIT:-4g}
+    mem_limit: ${CORTEX_NEO4J_MEM_LIMIT:-4g}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
