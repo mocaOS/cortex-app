@@ -40,6 +40,27 @@ jobs:
       - name: Tests
         run: pytest -q
 
+  slim-image:
+    name: Slim image smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build slim backend image (no torch/docling)
+        run: |
+          docker build -f backend/Dockerfile.prod \
+            --build-arg INSTALL_LOCAL_ML=false \
+            -t cortex-backend-slim:ci backend/
+
+      - name: Import smoke test
+        # Catches any module-level import that sneaks back into the base
+        # dependency set (torch, docling, sentence-transformers).
+        run: |
+          docker run --rm \
+            -e USE_OPENAI_EMBEDDINGS=true \
+            cortex-backend-slim:ci \
+            python -c "import app.main; print('slim image imports OK')"
+
   frontend:
     name: Frontend (typecheck + lint)
     runs-on: ubuntu-latest

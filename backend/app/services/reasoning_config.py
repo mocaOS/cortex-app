@@ -480,6 +480,44 @@ def _strip_reasoning_kwargs(kwargs: dict) -> dict:
     return out
 
 
+def apply_cache_control(messages: list, base_url: str, model: str) -> list:
+    """Mark the first system message as an Anthropic prompt-cache breakpoint.
+
+    Only applies on OpenRouter with an `anthropic/*` model — OpenRouter
+    forwards `cache_control` to Anthropic, which then serves the (large,
+    stable) system prompt at cache-read pricing on subsequent calls. Every
+    other backend either caches automatically by prefix (OpenAI, vLLM with
+    prefix caching) or ignores the field, so this is a no-op for them.
+
+    Returns a new list; the input messages are not mutated.
+    """
+    if classify_backend(base_url, model) != "openrouter":
+        return messages
+    if not (model or "").lower().startswith("anthropic/"):
+        return messages
+    out = []
+    converted = False
+    for m in messages:
+        if (
+            not converted
+            and isinstance(m, dict)
+            and m.get("role") == "system"
+            and isinstance(m.get("content"), str)
+        ):
+            out.append({
+                **m,
+                "content": [{
+                    "type": "text",
+                    "text": m["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }],
+            })
+            converted = True
+        else:
+            out.append(m)
+    return out
+
+
 def _prepare_call(
     base_url: str,
     model: str,
@@ -510,6 +548,17 @@ def _prepare_call(
     merged.setdefault("model", model)
     # Translate max_tokens→max_completion_tokens / drop temperature for GPT-5.
     merged = adapt_token_params(model, merged)
+    # Opt-in provider prompt caching (currently OpenRouter→Anthropic only).
+    if isinstance(merged.get("messages"), list):
+        try:
+            from app.config import get_settings
+
+            if get_settings().enable_prompt_cache_control:
+                merged["messages"] = apply_cache_control(
+                    merged["messages"], base_url, model
+                )
+        except Exception:  # noqa: BLE001 — caching must never break a call
+            pass
     return merged, reasoning_kwargs, key, already_unsupported
 
 

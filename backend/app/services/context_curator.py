@@ -268,6 +268,63 @@ async def _update_buckets(
     }
 
 
+_MAX_MEMORY_BLOB_BYTES = 64 * 1024
+
+
+def clamp_memory_blob(
+    memory: Optional[Dict[str, Any]],
+    settings,
+) -> Optional[Dict[str, Any]]:
+    """Bound an inbound client-carried memory blob before it is trusted.
+
+    The blob travels client → server every turn, so a buggy or malicious
+    client can inflate it without limit. Clamp deterministically (never
+    reject — that would break the API contract): cap the source ledger to
+    the configured size, and if the serialized blob still exceeds
+    ~64KB drop the heaviest buckets until it fits.
+    """
+    if not isinstance(memory, dict):
+        return None
+    clamped = dict(memory)
+
+    cap = getattr(settings, "conversation_memory_max_ledger", 50)
+    ledger = clamped.get("source_ledger")
+    if isinstance(ledger, list) and cap and len(ledger) > cap:
+        clamped["source_ledger"] = ledger[-cap:]
+
+    def _size(blob: Dict[str, Any]) -> int:
+        try:
+            return len(json.dumps(blob, ensure_ascii=False))
+        except (TypeError, ValueError):
+            return _MAX_MEMORY_BLOB_BYTES + 1  # unserializable → clamp hard
+
+    if _size(clamped) <= _MAX_MEMORY_BLOB_BYTES:
+        return clamped
+
+    logger.warning(
+        "Inbound conversation_memory blob exceeds %d bytes — clamping",
+        _MAX_MEMORY_BLOB_BYTES,
+    )
+    # Drop in order of weight/recoverability: kg_context and the ledger are
+    # rebuilt from future turns; the summary is truncated last.
+    clamped.pop("kg_context", None)
+    if _size(clamped) > _MAX_MEMORY_BLOB_BYTES:
+        clamped.pop("source_ledger", None)
+    if _size(clamped) > _MAX_MEMORY_BLOB_BYTES:
+        transcript = _transcript(clamped)
+        summary = (transcript.get("summary") or "")[:8000]
+        clamped["transcript"] = {
+            "summary": summary,
+            "summarized_count": transcript.get("summarized_count", 0),
+        }
+    if _size(clamped) > _MAX_MEMORY_BLOB_BYTES:
+        # Still oversized (e.g. giant facts list) — fall back to empty memory
+        # rather than feeding megabytes into every downstream prompt.
+        logger.warning("conversation_memory blob unclampable — discarding it")
+        return None
+    return clamped
+
+
 async def is_memory_answerable(
     question: str,
     memory: Optional[Dict[str, Any]],
@@ -282,6 +339,17 @@ async def is_memory_answerable(
         return False
     block = render_memory_block(memory)
     if not block:
+        return False
+    # Cheap pre-gate: a blob holding only a source ledger has no answer-bearing
+    # content (no summary/facts/intent) — the classifier would say "no" anyway,
+    # so skip its 200-500ms LLM call entirely.
+    intent_str = memory.get("intent") if isinstance(memory.get("intent"), str) else ""
+    has_substance = bool(
+        intent_str.strip()
+        or _str_list(memory.get("facts"), _MAX_FACTS)
+        or (_transcript(memory).get("summary") or "").strip()
+    )
+    if not has_substance:
         return False
     try:
         llm_config = get_llm_config(fast_mode=True)

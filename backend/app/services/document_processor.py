@@ -15,6 +15,7 @@ Features:
 import asyncio
 import functools
 import gc
+import hashlib
 import json
 import logging
 import os
@@ -294,30 +295,14 @@ def _get_conversion_semaphore() -> asyncio.Semaphore:
 async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
     """Convert via the shared docling service (cortex-helper).
 
-    Streams the file to the service and returns the same dict the subprocess
-    path returns. Raising lets the caller fall back to the local subprocess.
+    Transport (connection reuse, retries with backoff, circuit breaker,
+    auth/tenant headers) lives in helper_client. Raising lets the caller
+    decide between the local-subprocess fallback and strict failure.
     """
-    import httpx
-
-    settings = get_settings()
-    url = settings.docling_service_url.rstrip("/") + "/convert"
-    headers = {}
-    if settings.helper_service_token:
-        headers["X-Helper-Token"] = settings.helper_service_token
+    from app.services.helper_client import convert_document
 
     logger.info(f"Converting {Path(file_path).name} via docling service")
-    async with httpx.AsyncClient(timeout=600.0) as client:
-        with open(file_path, "rb") as fh:
-            resp = await client.post(
-                url,
-                files={"file": (Path(file_path).name, fh)},
-                data={"use_vision": str(use_vision).lower()},
-                headers=headers,
-            )
-        resp.raise_for_status()
-        result = resp.json()
-    if result.get("error"):
-        raise RuntimeError(f"Docling service error: {result['error']}")
+    result = await convert_document(file_path, use_vision)
     logger.info(
         f"Service conversion complete for {result.get('filename', '?')} "
         f"(md_len={len(result.get('markdown') or '')}, images={len(result.get('images', []))})"
@@ -328,25 +313,49 @@ async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
 async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict:
     """Convert a document to markdown.
 
-    Uses the shared docling service when DOCLING_SERVICE_URL is set (falling back
-    to the local subprocess if the service is unreachable); otherwise runs Docling
-    in a subprocess to avoid GIL contention.
+    Uses the shared docling service when DOCLING_SERVICE_URL is set. On
+    service failure (after the helper client's retries): with
+    HELPER_STRICT_REMOTE the document fails cleanly; otherwise it falls back
+    to the local subprocess. Without a service URL, Docling runs in a
+    subprocess to avoid GIL contention.
 
     Returns dict with keys: markdown, filename, images, error.
     """
     import json as _json
 
+    from app.metrics import CONVERSION_SECONDS
+
     settings = get_settings()
     if settings.docling_service_url:
         try:
-            return await _convert_via_service(file_path, use_vision)
+            _t0 = time.monotonic()
+            result = await _convert_via_service(file_path, use_vision)
+            CONVERSION_SECONDS.labels(path="remote").observe(time.monotonic() - _t0)
+            return result
         except Exception as e:
+            if getattr(settings, "helper_strict_remote", False):
+                raise RuntimeError(
+                    f"Docling service conversion failed and HELPER_STRICT_REMOTE "
+                    f"is enabled (no local fallback): {e}"
+                ) from e
             logger.warning(
                 f"Docling service unavailable ({e}); falling back to local subprocess"
             )
 
+    # Slim images ship without docling — fail with an actionable message
+    # instead of an opaque subprocess crash.
+    import importlib.util
+    if importlib.util.find_spec("docling") is None:
+        raise RuntimeError(
+            "Local docling is not available in this image (slim build without "
+            "the ML stack). Set DOCLING_SERVICE_URL to the shared cortex-helper "
+            "(recommended with HELPER_STRICT_REMOTE=true), or deploy the full "
+            "image (INSTALL_LOCAL_ML=true)."
+        )
+
     sem = _get_conversion_semaphore()
     async with sem:
+        _t0 = time.monotonic()
         logger.info(f"Starting subprocess conversion for {Path(file_path).name}")
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.services.docling_worker",
@@ -377,6 +386,7 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
         if result.get("error"):
             raise RuntimeError(f"Docling worker error: {result['error']}")
 
+        CONVERSION_SECONDS.labels(path="local").observe(time.monotonic() - _t0)
         logger.info(
             f"Subprocess conversion complete for {result.get('filename', '?')} "
             f"(md_len={len(result.get('markdown') or '')}, images={len(result.get('images', []))})"
@@ -479,15 +489,24 @@ class DocumentProcessor:
                 f"Using OpenAI embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})"
             )
         else:
-            from haystack.components.embedders import (
-                SentenceTransformersDocumentEmbedder,
-            )
+            try:
+                from haystack.components.embedders import (
+                    SentenceTransformersDocumentEmbedder,
+                )
 
-            self.embedder = SentenceTransformersDocumentEmbedder(
-                model="sentence-transformers/all-MiniLM-L6-v2"
-            )
-            self.embedder.warm_up()
-            logger.info("Using SentenceTransformers embeddings")
+                self.embedder = SentenceTransformersDocumentEmbedder(
+                    model="sentence-transformers/all-MiniLM-L6-v2"
+                )
+                self.embedder.warm_up()
+                logger.info("Using SentenceTransformers embeddings")
+            except ImportError as e:
+                raise RuntimeError(
+                    "Local SentenceTransformers embeddings are not available in "
+                    "this image (slim build without the ML stack). Set "
+                    "USE_OPENAI_EMBEDDINGS=true with EMBEDDING_API_KEY/"
+                    "OPENAI_API_KEY, or deploy the full image "
+                    "(INSTALL_LOCAL_ML=true)."
+                ) from e
 
         logger.info(
             f"Document processor initialized (GraphRAG: {self.graph_extractor.is_available}, Vision: {self.vision_analyzer.is_vision_model_available})"
@@ -772,6 +791,76 @@ class DocumentProcessor:
 
         return True
 
+    def _reprocess_config_hash(self) -> str:
+        """Identity of the settings that change reprocessing output.
+
+        A delta-skip is only safe when the file AND this hash both match the
+        values recorded at the last successful processing run.
+        """
+        s = self.settings
+        src = "|".join([
+            self.graph_extractor.extraction_model_name or "",
+            self.graph_extractor.relationship_model_name or "",
+            s.chunk_by,
+            str(s.chunk_size),
+            str(s.chunk_overlap),
+            str(getattr(s, "sentences_per_chunk", "")),
+            str(s.enable_graph_extraction),
+            str(s.enable_semantic_entity_resolution),
+            s.embedding_model,
+            str(s.embedding_dimension),
+        ])
+        return hashlib.sha256(src.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _file_sha256(file_path: str) -> str:
+        h = hashlib.sha256()
+        with open(file_path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()
+
+    async def _reprocess_delta_skip(self, doc_id: str, file_path: str) -> bool:
+        """True when reprocessing can be skipped entirely: the document
+        completed before, the file bytes are unchanged, and the extraction
+        config matches (enable_reprocess_delta)."""
+        if not getattr(self.settings, "enable_reprocess_delta", False):
+            return False
+        try:
+            fingerprint = await asyncio.to_thread(
+                self.neo4j.get_document_fingerprint, doc_id
+            )
+            if (
+                not fingerprint
+                or fingerprint.get("processing_status") != "completed"
+                or not fingerprint.get("file_sha256")
+            ):
+                return False
+            file_hash = await asyncio.to_thread(self._file_sha256, file_path)
+            if (
+                file_hash == fingerprint["file_sha256"]
+                and self._reprocess_config_hash() == fingerprint.get("config_hash")
+            ):
+                logger.info(
+                    f"Document {doc_id}: content and extraction config "
+                    f"unchanged — skipping reprocess (delta)"
+                )
+                await asyncio.to_thread(
+                    self.neo4j.update_document_status,
+                    doc_id,
+                    ProcessingStatus.COMPLETED,
+                    self.neo4j.get_document(doc_id).get("chunk_count", 0),
+                    None,
+                    "Content unchanged — reprocess skipped",
+                )
+                return True
+        except Exception as e:
+            logger.warning(
+                f"Document {doc_id}: reprocess delta check failed "
+                f"({e}); doing a full reprocess"
+            )
+        return False
+
     async def reprocess_document(self, doc_id: str) -> bool:
         """
         Reprocess an existing document using its stored file.
@@ -796,6 +885,9 @@ class DocumentProcessor:
                 f"Original file not available for document {doc_id}. "
                 f"File path: {file_path}"
             )
+
+        if await self._reprocess_delta_skip(doc_id, file_path):
+            return True
 
         # Delete existing chunks and entities
         cleanup_result = self.neo4j.delete_document_chunks(doc_id)
@@ -823,6 +915,9 @@ class DocumentProcessor:
 
         This deletes existing chunks/entities and reprocesses the file.
         """
+        if await self._reprocess_delta_skip(doc_id, file_path):
+            return True
+
         # Delete existing chunks and entities
         cleanup_result = self.neo4j.delete_document_chunks(doc_id)
         logger.info(
@@ -1549,63 +1644,75 @@ class DocumentProcessor:
 
                 # Track original → canonical name mapping for relationship extraction
                 entity_canonical_map: dict[str, str] = {}
-                # Update the "Storing N/total" message at most ~10 times to avoid
-                # flooding Neo4j with progress writes.
-                store_progress_interval = max(1, len(entities) // 10) if entities else 1
 
-                for idx, entity in enumerate(entities):
-                    self._check_cancellation(doc_id)
-
-                    embedding = entity_embeddings[idx] if use_embedding_dedup and entity_embeddings else None
-
-                    if embedding:
-                        result = await loop.run_in_executor(
-                            _get_processing_executor(),
-                            functools.partial(
-                                self.neo4j.store_entity_with_embedding,
-                                entity,
-                                chunk_id=None,
-                                document_id=doc_id,
-                                embedding=embedding,
-                            ),
+                if getattr(self.settings, "enable_batched_kg_writes", False):
+                    entity_canonical_map.update(
+                        await self._store_entities_batched(
+                            doc_id,
+                            entities,
+                            entity_embeddings if use_embedding_dedup else None,
+                            loop,
                         )
-                        canonical_name = result[0] if isinstance(result, tuple) else entity.name
-                        entity_canonical_map[entity.name.lower()] = canonical_name
-                    else:
-                        canonical_name = await loop.run_in_executor(
-                            _get_processing_executor(),
-                            functools.partial(
-                                self.neo4j.store_entity_with_resolution,
-                                entity,
-                                document_id=doc_id,
-                                similarity_threshold=0.85,
-                            ),
-                        )
-                        entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
+                    )
+                    total_entities += len(entities)
+                else:
+                    # Update the "Storing N/total" message at most ~10 times to
+                    # avoid flooding Neo4j with progress writes.
+                    store_progress_interval = max(1, len(entities) // 10) if entities else 1
 
-                    total_entities += 1
+                    for idx, entity in enumerate(entities):
+                        self._check_cancellation(doc_id)
 
-                    if (
-                        idx == 0
-                        or (idx + 1) % store_progress_interval == 0
-                        or idx == len(entities) - 1
-                    ):
-                        # Progress band 70-85% reserved for entity storage;
-                        # 85% is the next phase ("Linking entities to chunks...").
-                        storage_progress = 70 + int((idx + 1) / max(1, len(entities)) * 14)
-                        await loop.run_in_executor(
-                            _get_processing_executor(),
-                            functools.partial(
-                                self.neo4j.update_document_progress,
-                                doc_id,
-                                storage_progress,
-                                100,
-                                f"Storing entity {idx + 1}/{len(entities)}...",
-                            ),
-                        )
+                        embedding = entity_embeddings[idx] if use_embedding_dedup and entity_embeddings else None
 
-                    if idx % 10 == 0:
-                        await asyncio.sleep(0)
+                        if embedding:
+                            result = await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.store_entity_with_embedding,
+                                    entity,
+                                    chunk_id=None,
+                                    document_id=doc_id,
+                                    embedding=embedding,
+                                ),
+                            )
+                            canonical_name = result[0] if isinstance(result, tuple) else entity.name
+                            entity_canonical_map[entity.name.lower()] = canonical_name
+                        else:
+                            canonical_name = await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.store_entity_with_resolution,
+                                    entity,
+                                    document_id=doc_id,
+                                    similarity_threshold=0.85,
+                                ),
+                            )
+                            entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
+
+                        total_entities += 1
+
+                        if (
+                            idx == 0
+                            or (idx + 1) % store_progress_interval == 0
+                            or idx == len(entities) - 1
+                        ):
+                            # Progress band 70-85% reserved for entity storage;
+                            # 85% is the next phase ("Linking entities to chunks...").
+                            storage_progress = 70 + int((idx + 1) / max(1, len(entities)) * 14)
+                            await loop.run_in_executor(
+                                _get_processing_executor(),
+                                functools.partial(
+                                    self.neo4j.update_document_progress,
+                                    doc_id,
+                                    storage_progress,
+                                    100,
+                                    f"Storing entity {idx + 1}/{len(entities)}...",
+                                ),
+                            )
+
+                        if idx % 10 == 0:
+                            await asyncio.sleep(0)
 
                 await loop.run_in_executor(
                     _get_processing_executor(),
@@ -1620,15 +1727,27 @@ class DocumentProcessor:
 
                 # Link entities to chunks via fuzzy string matching
                 chunk_entity_links = self._match_entities_to_chunks(entities, embedded_chunks)
-                for link_chunk_id, entity_name in chunk_entity_links:
+                if getattr(self.settings, "enable_batched_kg_writes", False):
                     await loop.run_in_executor(
                         _get_processing_executor(),
                         functools.partial(
-                            self.neo4j.link_entity_to_chunk,
-                            entity_name,
-                            link_chunk_id,
+                            self.neo4j.link_entities_to_chunks_batch,
+                            [
+                                {"chunk_id": cid, "entity_name": name}
+                                for cid, name in chunk_entity_links
+                            ],
                         ),
                     )
+                else:
+                    for link_chunk_id, entity_name in chunk_entity_links:
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.link_entity_to_chunk,
+                                entity_name,
+                                link_chunk_id,
+                            ),
+                        )
 
                 # Per-chunk relationship extraction (LLMGraphTransformer approach):
                 # For each chunk with 2+ entities, extract relationships using
@@ -1679,19 +1798,71 @@ class DocumentProcessor:
                     sem = _asyncio.Semaphore(self.settings.concurrent_relations)
 
                     async def _extract_from_chunk(cid: str, ents: list):
+                        """Single-chunk extraction → (chunks_done, rels)."""
                         async with sem:
                             text = chunk_content_map.get(cid, "")
-                            return await self.graph_extractor.extract_chunk_relationships_async(
+                            rels = await self.graph_extractor.extract_chunk_relationships_async(
                                 text,
                                 ents,
                                 max_output_tokens=self.settings.relationship_max_output_tokens,
                             )
+                            return 1, rels
+
+                    async def _extract_from_batch(batch: list):
+                        """Multi-chunk extraction (one LLM call) → (chunks_done, rels)."""
+                        async with sem:
+                            results_map = await self.graph_extractor.extract_chunk_relationships_batch_async(
+                                batch,
+                                max_output_tokens=self.settings.relationship_max_output_tokens,
+                            )
+                            return len(batch), [
+                                r for rels in results_map.values() for r in rels
+                            ]
 
                     # Gather all chunks with 2+ entities
                     tasks = []
-                    for cid, ents in chunk_entities_map.items():
-                        if len(ents) >= 2:
-                            tasks.append(_extract_from_chunk(cid, ents))
+                    if getattr(self.settings, "enable_batched_chunk_relationships", False):
+                        # Greedy-pack eligible chunks into batches: hard cap
+                        # relationship_chunks_per_call, plus a character budget
+                        # (~60% of the relationship context at ~4 chars/token)
+                        # so oversized chunks don't blow the prompt.
+                        eligible_items = [
+                            {
+                                "key": cid,
+                                "chunk_text": chunk_content_map.get(cid, ""),
+                                "entities": ents,
+                            }
+                            for cid, ents in chunk_entities_map.items()
+                            if len(ents) >= 2
+                        ]
+                        max_per_call = max(1, self.settings.relationship_chunks_per_call)
+                        char_budget = max(
+                            4000,
+                            int(self.settings.relationship_max_context * 0.6 * 4),
+                        )
+                        batch: list = []
+                        batch_chars = 0
+                        for item in eligible_items:
+                            item_chars = len(item["chunk_text"])
+                            if batch and (
+                                len(batch) >= max_per_call
+                                or batch_chars + item_chars > char_budget
+                            ):
+                                tasks.append(_extract_from_batch(batch))
+                                batch, batch_chars = [], 0
+                            batch.append(item)
+                            batch_chars += item_chars
+                        if batch:
+                            tasks.append(_extract_from_batch(batch))
+                        if tasks:
+                            logger.info(
+                                f"Document {doc_id}: batched per-chunk extraction — "
+                                f"{eligible_chunks} chunks in {len(tasks)} LLM calls"
+                            )
+                    else:
+                        for cid, ents in chunk_entities_map.items():
+                            if len(ents) >= 2:
+                                tasks.append(_extract_from_chunk(cid, ents))
 
                     if tasks:
                         # Stream results via as_completed so each chunk's relationships
@@ -1702,14 +1873,15 @@ class DocumentProcessor:
                         # while other LLM tasks are still running concurrently.
                         failed_count = 0
                         completed_count = 0
-                        progress_interval = max(1, len(tasks) // 10)
+                        progress_interval = max(1, eligible_chunks // 10)
                         for coro in _asyncio.as_completed(tasks):
                             try:
-                                result = await coro
+                                chunks_done, result = await coro
                             except Exception:
                                 failed_count += 1
                                 completed_count += 1
                                 continue
+                            chunk_new_rels = []
                             for rel in result:
                                 # Remap to canonical entity names from dedup
                                 rel.source = entity_canonical_map.get(rel.source.lower(), rel.source)
@@ -1717,6 +1889,27 @@ class DocumentProcessor:
                                 key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
                                 if key not in seen_rels:
                                     seen_rels.add(key)
+                                    chunk_new_rels.append(rel)
+                            if chunk_new_rels and getattr(
+                                self.settings, "enable_batched_kg_writes", False
+                            ):
+                                # One UNWIND write per completed chunk instead of
+                                # one round trip per relationship.
+                                try:
+                                    stored_count = await loop.run_in_executor(
+                                        _get_processing_executor(),
+                                        functools.partial(
+                                            self.neo4j.store_relationships_batch,
+                                            chunk_new_rels,
+                                            source_document_id=doc_id,
+                                            extraction_method="per_chunk",
+                                        ),
+                                    )
+                                    total_relationships += stored_count
+                                except Exception as e:
+                                    logger.warning(f"Failed to store per-chunk relationship batch: {e}")
+                            else:
+                                for rel in chunk_new_rels:
                                     try:
                                         stored = await loop.run_in_executor(
                                             _get_processing_executor(),
@@ -1731,11 +1924,11 @@ class DocumentProcessor:
                                             total_relationships += 1
                                     except Exception as e:
                                         logger.warning(f"Failed to store per-chunk relationship: {e}")
-                            completed_count += 1
+                            completed_count += chunks_done
                             if (
-                                completed_count == 1
-                                or completed_count % progress_interval == 0
-                                or completed_count == len(tasks)
+                                completed_count <= chunks_done
+                                or completed_count % progress_interval < chunks_done
+                                or completed_count >= eligible_chunks
                             ):
                                 await loop.run_in_executor(
                                     _get_processing_executor(),
@@ -1744,11 +1937,11 @@ class DocumentProcessor:
                                         doc_id,
                                         90,
                                         100,
-                                        f"Extracting per-chunk relationships: {completed_count}/{len(tasks)} chunks ({total_relationships} found)...",
+                                        f"Extracting per-chunk relationships: {completed_count}/{eligible_chunks} chunks ({total_relationships} found)...",
                                     ),
                                 )
                         if failed_count:
-                            logger.warning(f"Document {doc_id}: {failed_count}/{len(tasks)} per-chunk extractions failed")
+                            logger.warning(f"Document {doc_id}: {failed_count}/{len(tasks)} per-chunk extraction calls failed")
 
                     if total_relationships > 0:
                         logger.info(f"Document {doc_id}: {total_relationships} per-chunk relationships extracted")
@@ -1781,6 +1974,28 @@ class DocumentProcessor:
                 ),
             )
 
+            # Record the processed file + config identity so a later reprocess
+            # of unchanged content can be skipped (enable_reprocess_delta).
+            try:
+                file_hash = await asyncio.to_thread(self._file_sha256, file_path)
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.set_document_fingerprint,
+                        doc_id,
+                        file_hash,
+                        self._reprocess_config_hash(),
+                    ),
+                )
+            except Exception as e:
+                logger.debug(f"Could not record document fingerprint: {e}")
+
+            try:
+                from app.metrics import DOCUMENTS_PROCESSED
+                DOCUMENTS_PROCESSED.labels(status="completed").inc()
+            except Exception:
+                pass
+
             logger.info(
                 f"Document {doc_id} processed successfully: "
                 f"{len(embedded_chunks)} chunks, {total_entities} entities, "
@@ -1798,6 +2013,11 @@ class DocumentProcessor:
             raise  # Re-raise to properly cancel the task
         except Exception as e:
             logger.error(f"Error processing document {doc_id}: {e}")
+            try:
+                from app.metrics import DOCUMENTS_PROCESSED
+                DOCUMENTS_PROCESSED.labels(status="failed").inc()
+            except Exception:
+                pass
             await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(
@@ -1834,6 +2054,180 @@ class DocumentProcessor:
                 if fuzz.partial_ratio(entity_name_lower, chunk_content_lower) >= 85:
                     links.append((chunk_id, entity.name))
         return links
+
+    async def _store_entities_batched(
+        self,
+        doc_id: str,
+        entities: list,
+        entity_embeddings: Optional[list],
+        loop,
+    ) -> dict:
+        """Batched resolve → cluster → write entity storage.
+
+        Used when enable_batched_kg_writes is on. Preserves the sequential
+        path's dedup semantics:
+        1. Resolve each entity against the EXISTING graph (one batched
+           vector-index round trip, then one batched Levenshtein round trip
+           for the rest — the same embedding-first / Levenshtein-backup order
+           as store_entity_with_embedding).
+        2. Cluster the still-unresolved entities among themselves in Python
+           (cosine >= threshold or Levenshtein >= 0.85; first occurrence is
+           canonical — matching the sequential "first stored wins" order).
+        3. Write new entities and merges in a few UNWIND calls.
+
+        Returns the original-name(lower) → canonical-name map.
+        """
+        settings = self.settings
+        n = len(entities)
+        embeddings = entity_embeddings if entity_embeddings else [None] * n
+        threshold = settings.entity_similarity_threshold
+        executor = _get_processing_executor()
+
+        # --- Step 1: resolution against the existing graph -------------------
+        resolved: dict[int, dict] = {}
+        if settings.enable_semantic_entity_resolution:
+            emb_rows = [(i, embeddings[i]) for i in range(n) if embeddings[i]]
+            if emb_rows:
+                resolved = await loop.run_in_executor(
+                    executor,
+                    functools.partial(
+                        self.neo4j.resolve_entities_batch_by_embedding,
+                        emb_rows,
+                        threshold,
+                    ),
+                )
+        lev_rows = [
+            (i, entities[i].name) for i in range(n) if i not in resolved
+        ]
+        if lev_rows:
+            lev_matches = await loop.run_in_executor(
+                executor,
+                functools.partial(
+                    self.neo4j.resolve_entities_batch_by_name, lev_rows, 0.85
+                ),
+            )
+            for idx, match in lev_matches.items():
+                resolved.setdefault(idx, match)
+
+        # --- Step 2: cluster unresolved entities within the batch -------------
+        def _cosine(a, b) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(x * x for x in b) ** 0.5
+            return dot / (na * nb) if na and nb else 0.0
+
+        def _same_entity(i: int, r: int) -> bool:
+            from rapidfuzz.distance import Levenshtein
+
+            if (
+                settings.enable_semantic_entity_resolution
+                and embeddings[i] is not None
+                and embeddings[r] is not None
+                and _cosine(embeddings[i], embeddings[r]) >= threshold
+            ):
+                return True
+            return (
+                Levenshtein.normalized_similarity(
+                    entities[i].name.lower(), entities[r].name.lower()
+                )
+                >= 0.85
+            )
+
+        cluster_rep: dict[int, int] = {}
+        reps: list[int] = []
+        for i in range(n):
+            if i in resolved:
+                continue
+            rep = next((r for r in reps if _same_entity(i, r)), None)
+            if rep is None:
+                reps.append(i)
+                cluster_rep[i] = i
+            else:
+                cluster_rep[i] = rep
+
+        # --- Step 3: batched writes ------------------------------------------
+        canonical_map: dict[str, str] = {}
+        new_rows: list[dict] = []
+        merge_rows: list[dict] = []
+        for i in range(n):
+            name = entities[i].name
+            if i in resolved:
+                canonical = resolved[i]["name"]
+                merge_rows.append({
+                    "canonical": canonical,
+                    "alias": name if canonical.lower() != name.lower() else None,
+                    "doc_id": doc_id,
+                })
+            else:
+                rep = cluster_rep[i]
+                canonical = entities[rep].name
+                if i == rep:
+                    new_rows.append({
+                        "name": name,
+                        "type": entities[i].type,
+                        "description": entities[i].description,
+                        "embedding": embeddings[i],
+                        "doc_id": doc_id,
+                    })
+                else:
+                    merge_rows.append({
+                        "canonical": canonical,
+                        "alias": name if canonical.lower() != name.lower() else None,
+                        "doc_id": doc_id,
+                    })
+            canonical_map[name.lower()] = canonical
+
+        write_batch_size = 500
+        total_writes = len(new_rows) + len(merge_rows)
+        written = 0
+        for start in range(0, len(new_rows), write_batch_size):
+            self._check_cancellation(doc_id)
+            batch = new_rows[start:start + write_batch_size]
+            await loop.run_in_executor(
+                executor,
+                functools.partial(self.neo4j.store_entities_batch, batch),
+            )
+            written += len(batch)
+            await self._report_entity_store_progress(
+                doc_id, written, total_writes, loop, executor
+            )
+        for start in range(0, len(merge_rows), write_batch_size):
+            self._check_cancellation(doc_id)
+            batch = merge_rows[start:start + write_batch_size]
+            await loop.run_in_executor(
+                executor,
+                functools.partial(self.neo4j.apply_entity_merges_batch, batch),
+            )
+            written += len(batch)
+            await self._report_entity_store_progress(
+                doc_id, written, total_writes, loop, executor
+            )
+
+        logger.info(
+            f"Document {doc_id}: batched entity storage — {len(new_rows)} new, "
+            f"{len(merge_rows)} merged into existing/cluster canonicals "
+            f"({len(resolved)} resolved against graph)"
+        )
+        return canonical_map
+
+    async def _report_entity_store_progress(
+        self, doc_id: str, done: int, total: int, loop, executor
+    ) -> None:
+        """Progress tick inside the 70-85% entity-storage band."""
+        progress = 70 + int(done / max(1, total) * 14)
+        try:
+            await loop.run_in_executor(
+                executor,
+                functools.partial(
+                    self.neo4j.update_document_progress,
+                    doc_id,
+                    progress,
+                    100,
+                    f"Storing entity {done}/{total}...",
+                ),
+            )
+        except Exception:
+            pass
 
     async def analyze_collection_relationships(
         self,
@@ -1895,6 +2289,37 @@ class DocumentProcessor:
             logger.info(
                 f"Re-analyze mode: {existing_rel_count} existing relationships, running 1 round"
             )
+
+        # Phase B checkpointing: a crash/redeploy mid-analysis resumes instead
+        # of re-paying every batch's LLM cost, and rounds 2+ reuse round 1's
+        # Phase 1 candidates (Phase 2 already avoids existing relationships).
+        checkpointing = getattr(self.settings, "enable_phaseb_checkpointing", False)
+        run_signature = None
+        if checkpointing:
+            import hashlib as _hashlib
+
+            sig_src = (
+                "|".join(sorted(n.lower() for n in entity_names))
+                + f"::{self.graph_extractor.extraction_model_name}"
+                + f"::{self.graph_extractor.relationship_model_name}"
+                + f"::{target_ratio}::{max_rounds}"
+            )
+            run_signature = _hashlib.sha256(sig_src.encode()).hexdigest()[:32]
+            try:
+                if rebuild:
+                    cleared = await asyncio.to_thread(
+                        self.neo4j.clear_phaseb_checkpoints
+                    )
+                else:
+                    # Drop checkpoints from runs with a different entity set /
+                    # config — they can never match this run's batch keys.
+                    cleared = await asyncio.to_thread(
+                        self.neo4j.clear_phaseb_checkpoints, run_signature
+                    )
+                if cleared:
+                    logger.info(f"Cleared {cleared} stale Phase B checkpoint(s)")
+            except Exception as e:
+                logger.warning(f"Could not clear Phase B checkpoints: {e}")
 
         # Build co-occurrence map for smart batching
         if progress_callback:
@@ -2043,6 +2468,43 @@ class DocumentProcessor:
                     token_budget=token_budget,
                 )
 
+            checkpoint_hooks = None
+            if checkpointing:
+                from app.services.graph_extractor import PhaseBCheckpointHooks
+
+                _round = round_num
+
+                async def _is_done(batch_key: str, _r=_round) -> bool:
+                    cp = await asyncio.to_thread(
+                        self.neo4j.get_phaseb_checkpoint, run_signature, batch_key
+                    )
+                    return bool(cp and cp["phase2_done"] and cp["round"] == _r)
+
+                async def _get_candidates(batch_key: str):
+                    cp = await asyncio.to_thread(
+                        self.neo4j.get_phaseb_checkpoint, run_signature, batch_key
+                    )
+                    return cp["candidates"] if cp else None
+
+                async def _save_candidates(batch_key: str, candidates: list, _r=_round) -> None:
+                    await asyncio.to_thread(
+                        self.neo4j.upsert_phaseb_checkpoint,
+                        run_signature, batch_key, _r, candidates,
+                    )
+
+                async def _mark_done(batch_key: str, _r=_round) -> None:
+                    await asyncio.to_thread(
+                        self.neo4j.upsert_phaseb_checkpoint,
+                        run_signature, batch_key, _r, None, True,
+                    )
+
+                checkpoint_hooks = PhaseBCheckpointHooks(
+                    is_batch_done=_is_done,
+                    get_candidates=_get_candidates,
+                    save_candidates=_save_candidates,
+                    mark_batch_done=_mark_done,
+                )
+
             # Run two-phase batched relationship analysis
             # Phase 1 uses extraction model context (larger), Phase 2 uses main model context
             relationships = await self.graph_extractor.analyze_relationships_batched_async(
@@ -2057,6 +2519,7 @@ class DocumentProcessor:
                 parallel_batches=self.settings.parallel_relationship_batches or self.settings.concurrent_extractions,
                 entity_co_occurrence=entity_co_occurrence,
                 extraction_max_context=self.settings.extraction_max_context,
+                checkpoint=checkpoint_hooks,
             )
 
             rounds_completed += 1
@@ -2065,6 +2528,13 @@ class DocumentProcessor:
                 f"{round_prefix}Complete: {len(relationships)} discovered, "
                 f"{storage_stats['stored']} stored in {round_elapsed:.1f}s"
             )
+
+        # All rounds completed — the checkpoints have served their purpose.
+        if checkpointing:
+            try:
+                await asyncio.to_thread(self.neo4j.clear_phaseb_checkpoints)
+            except Exception as e:
+                logger.warning(f"Could not clear Phase B checkpoints: {e}")
 
         # Calculate final ratio
         final_rel_count = self.neo4j.get_relationship_count()
@@ -2120,6 +2590,10 @@ class DocumentProcessor:
         # Collect entity names from image extractions for cross-linking to text chunks
         image_entity_names: list[str] = []
         entity_names_lock = asyncio.Lock()
+        # Shared across all of this document's images: the same entity often
+        # appears in several images (logos, recurring diagram nodes) — embed it
+        # once. Concurrent misses may rarely double-embed; results identical.
+        entity_embedding_cache: dict = {}
 
         logger.info(
             f"Document {doc_id}: starting background analysis of {total} images "
@@ -2252,7 +2726,8 @@ class DocumentProcessor:
                             ):
                                 try:
                                     entity_embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
-                                        extraction.entities
+                                        extraction.entities,
+                                        cache=entity_embedding_cache,
                                     )
                                 except Exception as embed_err:
                                     logger.warning(
@@ -2432,20 +2907,29 @@ class QueryProcessor:
                 f"Using OpenAI text embeddings: {self.settings.embedding_model} (dim={self.settings.embedding_dimension})"
             )
         else:
-            from haystack.components.embedders import (
-                SentenceTransformersTextEmbedder,
-                SentenceTransformersDocumentEmbedder,
-            )
+            try:
+                from haystack.components.embedders import (
+                    SentenceTransformersTextEmbedder,
+                    SentenceTransformersDocumentEmbedder,
+                )
 
-            self.text_embedder = SentenceTransformersTextEmbedder(
-                model="sentence-transformers/all-MiniLM-L6-v2"
-            )
-            self.text_embedder.warm_up()
-            self.batch_embedder = SentenceTransformersDocumentEmbedder(
-                model="sentence-transformers/all-MiniLM-L6-v2", progress_bar=False
-            )
-            self.batch_embedder.warm_up()
-            logger.info("Using SentenceTransformers text embeddings")
+                self.text_embedder = SentenceTransformersTextEmbedder(
+                    model="sentence-transformers/all-MiniLM-L6-v2"
+                )
+                self.text_embedder.warm_up()
+                self.batch_embedder = SentenceTransformersDocumentEmbedder(
+                    model="sentence-transformers/all-MiniLM-L6-v2", progress_bar=False
+                )
+                self.batch_embedder.warm_up()
+                logger.info("Using SentenceTransformers text embeddings")
+            except ImportError as e:
+                raise RuntimeError(
+                    "Local SentenceTransformers embeddings are not available in "
+                    "this image (slim build without the ML stack). Set "
+                    "USE_OPENAI_EMBEDDINGS=true with EMBEDDING_API_KEY/"
+                    "OPENAI_API_KEY, or deploy the full image "
+                    "(INSTALL_LOCAL_ML=true)."
+                ) from e
 
         logger.info(
             "Query processor initialized (GraphRAG + Reranking + Agentic RAG enabled)"
@@ -2470,6 +2954,14 @@ class QueryProcessor:
                         logger.info(
                             f"Loaded cross-encoder: {self.settings.reranking_model}"
                         )
+                    except ImportError:
+                        logger.warning(
+                            "Local cross-encoder unavailable (slim image without "
+                            "the ML stack) — set RERANKER_SERVICE_URL to use the "
+                            "shared helper, or deploy the full image. Reranking "
+                            "disabled."
+                        )
+                        self._reranker = False  # Mark as unavailable
                     except Exception as e:
                         logger.warning(
                             f"Failed to load cross-encoder, disabling reranking: {e}"
@@ -2511,25 +3003,15 @@ class QueryProcessor:
         return True
 
     def _rerank_remote(self, query: str, passages: List[str]) -> Optional[List[float]]:
-        """Score passages via the shared reranker service. None on failure."""
-        import httpx
+        """Score passages via the shared reranker service. None on failure.
 
-        url = self.settings.reranker_service_url.rstrip("/") + "/rerank"
-        headers = {}
-        if self.settings.helper_service_token:
-            headers["X-Helper-Token"] = self.settings.helper_service_token
-        try:
-            resp = httpx.post(
-                url,
-                json={"query": query, "passages": passages},
-                headers=headers,
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()["scores"]
-        except Exception as e:
-            logger.warning(f"Remote rerank failed ({url}); falling back to no rerank: {e}")
-            return None
+        Transport (retries, circuit breaker, headers) lives in helper_client;
+        rerank degradation is safe so a final failure just keeps the
+        original result order.
+        """
+        from app.services.helper_client import rerank
+
+        return rerank(query, passages)
 
     def rerank_results(
         self, query: str, results: List[dict], top_k: int = 5

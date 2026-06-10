@@ -1,0 +1,54 @@
+# Base dependencies — everything except the local ML stack.
+# A "slim" image installs ONLY this file (INSTALL_LOCAL_ML=false): no torch,
+# no sentence-transformers, no docling — saving ~800MB-1GB per tenant
+# container. Slim deployments require OpenAI embeddings plus the shared
+# cortex-helper for reranking (RERANKER_SERVICE_URL) and conversion
+# (DOCLING_SERVICE_URL, ideally with HELPER_STRICT_REMOTE=true).
+
+# Core
+fastapi>=0.109.2
+uvicorn[standard]>=0.27.1
+python-multipart>=0.0.9
+pydantic>=2.6.1
+pydantic-settings>=2.3.0
+
+# Haystack AI Framework (2.8+ required for docling-haystack). NOTE: haystack-ai
+# itself does NOT depend on torch — torch enters via requirements-ml.txt.
+haystack-ai>=2.8.0,<3.0.0
+
+# docling-core is a small pydantic package needed for type imports
+# (vision_analyzer) even when the docling converter itself is remote.
+docling-core>=2.0.0
+pypdf>=4.0.0  # Lightweight PDF page counting for chunked Docling processing
+markdown==3.5.2
+markdown-it-py==3.0.0
+mdit-plain==1.0.1
+beautifulsoup4==4.12.3
+
+# Neo4j
+neo4j>=5.17.0
+
+# Image Processing
+Pillow>=10.0.0  # PIL - Python Imaging Library for image manipulation
+
+# LLM Support
+openai>=1.12.0
+tiktoken>=0.6.0
+
+# Utilities
+python-dotenv>=1.0.1
+aiofiles>=23.2.1
+httpx>=0.26.0
+tenacity>=8.2.3
+numpy>=1.26.4
+PyJWT>=2.8.0
+nltk>=3.9.1
+rapidfuzz>=3.0.0
+PyYAML>=6.0  # SKILL.md frontmatter parsing (agentskills.io)
+pathspec>=0.12.0  # gitignore-style include/exclude globs for the git connector
+cryptography>=42.0.0  # Fernet at-rest encryption for secrets (git PATs, skill secret config)
+prometheus-client>=0.20.0  # /metrics endpoint (pure-Python, no transitive deps)
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

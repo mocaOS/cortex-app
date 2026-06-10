@@ -27,6 +27,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Mount a volume here in production to keep the cache across container restarts.
 ENV HF_HOME=/app/.cache/huggingface
 
+# Customer stacks must not phone home (haystack ships posthog telemetry).
+ENV HAYSTACK_TELEMETRY_ENABLED=False
+
 # Pre-download sentence-transformers + cross-encoder during build so a cold image
 # (no cache volume) still works without a runtime HF download.
 RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
@@ -43,4 +46,4 @@ RUN mkdir -p /app/uploads /app/custom_inputs
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--timeout-graceful-shutdown", "30"]

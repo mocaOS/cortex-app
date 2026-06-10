@@ -3,7 +3,9 @@
 High-quality knowledge graph extraction using XML-formatted prompts.
 """
 
+import hashlib
 import logging
+from dataclasses import dataclass
 from typing import Optional, List, Callable, Awaitable
 import json
 import re
@@ -318,6 +320,30 @@ SuperRare | Twitter
 Museum | ChatGPT
 
 Output related pairs (one per line, format: EntityA | EntityB):"""
+
+
+@dataclass
+class PhaseBCheckpointHooks:
+    """Resume hooks for Phase B batch analysis (enable_phaseb_checkpointing).
+
+    All callables are async (the implementations hit Neo4j off the event
+    loop). Every hook failure is non-fatal — the analysis simply proceeds
+    without checkpointing for that batch.
+
+    - is_batch_done(batch_key): Phase 2 results already stored for this batch
+      in the CURRENT round → skip it entirely (crash/redeploy resume).
+    - get_candidates(batch_key): persisted Phase 1 candidate pairs from any
+      prior round — rounds 2+ become Phase 2-only (Phase 2 already avoids
+      now-existing relationships).
+    - save_candidates(batch_key, candidates): persist Phase 1 output.
+    - mark_batch_done(batch_key): called AFTER on_batch_complete stored the
+      batch's relationships.
+    """
+
+    is_batch_done: Callable[[str], Awaitable[bool]]
+    get_candidates: Callable[[str], Awaitable[Optional[list]]]
+    save_candidates: Callable[[str, list], Awaitable[None]]
+    mark_batch_done: Callable[[str], Awaitable[None]]
 
 
 class GraphExtractor:
@@ -1906,12 +1932,18 @@ Respond with ONLY the community name, nothing else."""
         self,
         entities: List[Entity],
         batch_size: int = 64,
+        cache: Optional[dict] = None,
     ) -> List[Optional[List[float]]]:
         """Embed many entities in batched HTTP calls.
 
         Returns a list aligned with the input. Entries are `None` when the call
         fails or no API key is configured, so callers can fall back per-entity
         (e.g. to Levenshtein resolution) without aborting the whole document.
+
+        `cache` (keyed by (name.lower(), type)) lets a caller reuse embeddings
+        across the text and image pipelines of one document lifecycle — the
+        same entity appearing in both is embedded once. The dict is read AND
+        populated in place.
         """
         if not entities:
             return []
@@ -1926,11 +1958,24 @@ Respond with ONLY the community name, nothing else."""
                 max_retries=2,
             )
 
+        def _key(e: Entity):
+            return (e.name.lower(), e.type)
+
+        results: List[Optional[List[float]]] = [None] * len(entities)
+        to_embed: List[int] = []
+        for i, e in enumerate(entities):
+            if cache is not None and _key(e) in cache:
+                results[i] = cache[_key(e)]
+            else:
+                to_embed.append(i)
+
+        if not to_embed:
+            return results
+
         texts = [
             f"{e.name} ({e.type}): {e.description}" if e.description else f"{e.name} ({e.type})"
-            for e in entities
+            for e in (entities[i] for i in to_embed)
         ]
-        results: List[Optional[List[float]]] = [None] * len(entities)
 
         for batch_start in range(0, len(texts), batch_size):
             batch = texts[batch_start:batch_start + batch_size]
@@ -1941,7 +1986,10 @@ Respond with ONLY the community name, nothing else."""
                 response = await self._async_embed_client.embeddings.create(**embed_kwargs)
                 # OpenAI guarantees response.data preserves input order
                 for i, item in enumerate(response.data):
-                    results[batch_start + i] = item.embedding
+                    orig_idx = to_embed[batch_start + i]
+                    results[orig_idx] = item.embedding
+                    if cache is not None:
+                        cache[_key(entities[orig_idx])] = item.embedding
             except Exception as e:
                 logger.warning(
                     f"Batch entity embedding failed (batch_start={batch_start}, "
@@ -2378,6 +2426,205 @@ Extract relationships supported by the text above:"""
             logger.warning(f"Per-chunk relationship extraction failed after retries: {e}")
             return []
 
+    def _extract_xml_grouped_relationships(
+        self, content: str, num_items: int
+    ) -> Optional[List[List[dict]]]:
+        """Parse batched per-chunk output: <chunk index="i">...<relationship>...</chunk>.
+
+        Mirrors `_extract_xml_grouped_entity_names`: index attribute with
+        positional fallback, out-of-range tolerated. Relationship parsing
+        inside each block delegates to `_extract_xml_relationships`, so type
+        normalization / clamping / the plaintext-arrow fallback stay
+        single-sourced.
+
+        Returns None when no <chunk> blocks exist (caller tries the flat
+        fallback); otherwise an index-aligned list of relationship-dict lists.
+        """
+        blocks = re.findall(
+            r'<chunk\b([^>]*)>(.*?)</chunk>', content, re.IGNORECASE | re.DOTALL
+        )
+        if not blocks:
+            return None
+        result: List[List[dict]] = [[] for _ in range(num_items)]
+        for positional_i, (attrs, body) in enumerate(blocks):
+            target = positional_i
+            m = re.search(r'index\s*=\s*["\']?(\d+)', attrs, re.IGNORECASE)
+            if m:
+                idx = int(m.group(1)) - 1  # 1-based -> 0-based
+                if 0 <= idx < num_items:
+                    target = idx
+            if 0 <= target < num_items:
+                result[target] = self._extract_xml_relationships(body)
+        return result
+
+    async def extract_chunk_relationships_batch_async(
+        self,
+        items: List[dict],
+        max_output_tokens: int = 2000,
+    ) -> dict:
+        """Extract per-chunk relationships for several chunks in ONE LLM call.
+
+        Each item: {"key": chunk_id, "chunk_text": str, "entities": [dict]}.
+        The system prompt is byte-identical to the single-chunk path (one
+        stable, cacheable prefix); only the user prompt groups the sources.
+
+        Degradation order on a per-batch basis:
+        1. Grouped <chunk index="i"> parse (preferred).
+        2. Flat parse — relationships attributed to the first source whose
+           entity set contains both endpoints (validation is per-source, so
+           this is lossless for storage, which records only the document id).
+        3. LLM error or zero relationships parsed → re-dispatch every chunk
+           individually through extract_chunk_relationships_async, i.e. worst
+           case is exactly today's per-chunk behavior for this batch.
+
+        Returns {key: [Relationship]}.
+        """
+        items = [
+            it for it in items
+            if len(it.get("entities") or []) >= 2 and (it.get("chunk_text") or "").strip()
+        ]
+        if not items:
+            return {}
+        if len(items) == 1:
+            only = items[0]
+            rels = await self.extract_chunk_relationships_async(
+                only["chunk_text"], only["entities"], max_output_tokens
+            )
+            return {only["key"]: rels}
+
+        if self.async_relationship_client:
+            client = self.async_relationship_client
+            model = self.relationship_model_name
+        elif self.async_extraction_client:
+            client = self.async_extraction_client
+            model = self.extraction_model_name
+        elif self.async_client:
+            client = self.async_client
+            model = self.current_model
+        else:
+            return {}
+
+        r_types = self.relation_types
+        source_blocks = []
+        entity_sets: List[set] = []
+        for i, it in enumerate(items):
+            entity_list = "\n".join(
+                self._format_entity_for_prompt(e) for e in it["entities"]
+            )
+            entity_sets.append({
+                (e.get("name", "") or "").lower() for e in it["entities"]
+            })
+            source_blocks.append(
+                f'<source index="{i + 1}">\n'
+                f"=== Source Text ===\n{it['chunk_text']}\n\n"
+                f"=== Entities in this text ===\n{entity_list}\n"
+                f"</source>"
+            )
+
+        user_prompt = f"""Extract relationships independently for EACH source below. A relationship may only connect entities listed under the SAME source.
+
+Relation Types (use only these): {", ".join(r_types)}
+
+{chr(10).join(source_blocks)}
+
+For each source, output one <chunk index="i"> block (matching the source index) containing its <relationship> elements. Output an empty <chunk index="i"></chunk> when a source has no supported relationships:"""
+
+        async def _fallback_per_chunk() -> dict:
+            out = {}
+            for it in items:
+                out[it["key"]] = await self.extract_chunk_relationships_async(
+                    it["chunk_text"], it["entities"], max_output_tokens
+                )
+            return out
+
+        try:
+            @retry(
+                retry=retry_if_exception_type(Exception),
+                stop=stop_after_attempt(4),
+                wait=wait_exponential(multiplier=2, min=2, max=30),
+                before_sleep=lambda rs: logger.debug(
+                    f"Batched per-chunk extraction retry #{rs.attempt_number} "
+                    f"after {rs.outcome.exception().__class__.__name__}"
+                ),
+                reraise=True,
+            )
+            async def _call_llm():
+                return await self._async_safe_completion(
+                    client,
+                    model=model,
+                    mode=self._relationship_reasoning_mode,
+                    messages=[
+                        {"role": "system", "content": RELATIONSHIP_ANALYSIS_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=max_output_tokens,
+                )
+
+            response = await _call_llm()
+            content = self._extract_response_content(response)
+        except Exception as e:
+            logger.warning(
+                f"Batched per-chunk extraction failed after retries "
+                f"({len(items)} chunks) — falling back to single-chunk calls: {e}"
+            )
+            return await _fallback_per_chunk()
+
+        if not content:
+            return await _fallback_per_chunk()
+
+        grouped = self._extract_xml_grouped_relationships(content, len(items))
+        if grouped is None:
+            # Flat fallback: attribute each relationship to the first source
+            # whose entity set contains both endpoints.
+            flat = self._extract_xml_relationships(content)
+            grouped = [[] for _ in items]
+            for r in flat:
+                s = (r.get("source", "") or "").strip().lower()
+                t = (r.get("target", "") or "").strip().lower()
+                for i, ent_set in enumerate(entity_sets):
+                    if s in ent_set and t in ent_set:
+                        grouped[i].append(r)
+                        break
+
+        results: dict = {}
+        total = 0
+        for i, it in enumerate(items):
+            ent_set = entity_sets[i]
+            rels = []
+            for r in grouped[i]:
+                source = (r.get("source", "") or "").strip()
+                target = (r.get("target", "") or "").strip()
+                if (
+                    source.lower() in ent_set
+                    and target.lower() in ent_set
+                    and source.lower() != target.lower()
+                ):
+                    confidence = r.get("confidence", 1.0)
+                    if confidence >= 0.5:
+                        rels.append(Relationship(
+                            source=source,
+                            target=target,
+                            relationship_type=r.get("relationship_type", "RELATED_TO"),
+                            description=r.get("description", ""),
+                            weight=r.get("weight", 5.0),
+                            confidence=confidence,
+                        ))
+            results[it["key"]] = rels
+            total += len(rels)
+
+        if total == 0:
+            # Could be a legitimately sparse batch, but empirically (bench
+            # heuristics) all-zero across several 2+-entity chunks usually
+            # means format failure — re-dispatch per chunk as a safety net.
+            logger.info(
+                f"Batched per-chunk extraction parsed 0 relationships across "
+                f"{len(items)} chunks — re-dispatching individually"
+            )
+            return await _fallback_per_chunk()
+
+        return results
+
     async def analyze_relationships_async(
         self,
         entities: List[dict],
@@ -2527,6 +2774,14 @@ Extract relationships supported by the text above:"""
             logger.error(f"Error during relationship analysis: {e}")
             return []
 
+    # (hooks dataclass defined at module level below the class)
+
+    @staticmethod
+    def phaseb_batch_key(batch: List[dict]) -> str:
+        """Deterministic identity of a Phase B entity batch (checkpointing)."""
+        joined = "|".join(sorted((e.get("name", "") or "").lower() for e in batch))
+        return hashlib.sha256(joined.encode()).hexdigest()[:32]
+
     async def analyze_relationships_batched_async(
         self,
         all_entities: List[dict],
@@ -2540,6 +2795,7 @@ Extract relationships supported by the text above:"""
         parallel_batches: int = 1,
         entity_co_occurrence: Optional[dict] = None,
         extraction_max_context: int = 0,
+        checkpoint: Optional["PhaseBCheckpointHooks"] = None,
     ) -> List[Relationship]:
         """Two-phase relationship analysis in batches.
 
@@ -2703,6 +2959,18 @@ Extract relationships supported by the text above:"""
 
         async def process_single_batch(batch_idx: int, batch: List[dict]) -> List[Relationship]:
             """Two-phase processing of a single batch."""
+            batch_key = self.phaseb_batch_key(batch) if checkpoint else None
+            if checkpoint:
+                try:
+                    if await checkpoint.is_batch_done(batch_key):
+                        logger.info(
+                            f"Batch {batch_idx + 1}/{len(batches)}: already "
+                            f"completed per checkpoint — skipping"
+                        )
+                        return []
+                except Exception as e:
+                    logger.warning(f"Checkpoint lookup failed (continuing without): {e}")
+
             # Context budget for Phase 1
             remaining_for_context = min(context_token_budget, max(1000, p1_available // 3))
 
@@ -2727,10 +2995,31 @@ Extract relationships supported by the text above:"""
                 ][:400]
 
             # --- Phase 1: Candidate scan (extraction model) ---
-            candidates = await self.scan_candidate_pairs_async(
-                batch, batch_context, batch_existing,
-                max_output_tokens=self.settings.relationship_max_output_tokens,
-            )
+            # Reuse persisted candidates when available (crash resume within a
+            # round; rounds 2+ skip the re-scan entirely — Phase 2 already
+            # avoids the now-existing relationships).
+            candidates = None
+            if checkpoint:
+                try:
+                    candidates = await checkpoint.get_candidates(batch_key)
+                    if candidates:
+                        logger.info(
+                            f"Batch {batch_idx + 1}/{len(batches)}: reusing "
+                            f"{len(candidates)} persisted Phase 1 candidates"
+                        )
+                except Exception as e:
+                    logger.warning(f"Checkpoint candidate fetch failed: {e}")
+                    candidates = None
+            if not candidates:
+                candidates = await self.scan_candidate_pairs_async(
+                    batch, batch_context, batch_existing,
+                    max_output_tokens=self.settings.relationship_max_output_tokens,
+                )
+                if checkpoint and candidates:
+                    try:
+                        await checkpoint.save_candidates(batch_key, candidates)
+                    except Exception as e:
+                        logger.warning(f"Checkpoint candidate save failed: {e}")
 
             if not candidates:
                 logger.info(
@@ -2771,6 +3060,12 @@ Extract relationships supported by the text above:"""
                     except Exception as e:
                         logger.error(f"Error in on_batch_complete callback: {e}")
 
+                if checkpoint:
+                    try:
+                        await checkpoint.mark_batch_done(self.phaseb_batch_key(batch))
+                    except Exception as e:
+                        logger.warning(f"Checkpoint mark-done failed: {e}")
+
                 del batch_unique
                 del rels
         else:
@@ -2797,6 +3092,12 @@ Extract relationships supported by the text above:"""
                             await on_batch_complete(batch_unique)
                         except Exception as e:
                             logger.error(f"Error in on_batch_complete callback: {e}")
+
+                if checkpoint:
+                    try:
+                        await checkpoint.mark_batch_done(self.phaseb_batch_key(batch))
+                    except Exception as e:
+                        logger.warning(f"Checkpoint mark-done failed: {e}")
 
             tasks = [sem_process(i, b) for i, b in enumerate(batches)]
             await _asyncio.gather(*tasks)

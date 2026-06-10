@@ -16,21 +16,37 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Build variants:
+#   default (INSTALL_LOCAL_ML=true)  — full image with local torch/docling/reranker
+#   slim    (INSTALL_LOCAL_ML=false) — no torch (~800MB-1GB smaller); requires
+#            OpenAI embeddings + cortex-helper (RERANKER_SERVICE_URL /
+#            DOCLING_SERVICE_URL, recommended HELPER_STRICT_REMOTE=true)
+ARG INSTALL_LOCAL_ML=true
+ARG PREDOWNLOAD_MODELS=true
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements first for better caching
+COPY requirements.txt requirements-base.txt requirements-ml.txt ./
+
+# Install Python dependencies (base always; ML stack only in the full image)
+RUN pip install --no-cache-dir -r requirements-base.txt && \
+    if [ "$INSTALL_LOCAL_ML" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-ml.txt; \
+    fi
 
 # Deterministic HF cache location, independent of container user.
 # Mount a volume here in production to keep the cache across container restarts.
 ENV HF_HOME=/app/.cache/huggingface
 
+# Customer stacks must not phone home (haystack ships posthog telemetry).
+ENV HAYSTACK_TELEMETRY_ENABLED=False
+
 # Pre-download sentence-transformers + cross-encoder during build so a cold image
 # (no cache volume) still works without a runtime HF download.
-RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+RUN if [ "$INSTALL_LOCAL_ML" = "true" ] && [ "$PREDOWNLOAD_MODELS" = "true" ]; then \
+        python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
 SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'); \
-CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"; \
+    fi
 
 # Copy application code
 COPY . .
@@ -47,4 +63,6 @@ EXPOSE 8000
 
 # Run with production settings (single worker to reduce memory usage)
 # Increase workers via UVICORN_WORKERS env var if you have enough RAM (each worker uses ~1-2GB)
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}"]
+# --timeout-graceful-shutdown drains in-flight requests/SSE streams on SIGTERM
+# (pair with compose stop_grace_period > this value).
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1} --timeout-graceful-shutdown 30"]

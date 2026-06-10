@@ -30,6 +30,10 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/skill_service.py` — Agent Skills integration. See [`.claude/domain/skills.md`](domain/skills.md)
 - `services/git_connector_service.py` + `services/git_providers/` — Git connector (GitHub/GitLab/Gitea): incremental clone+diff sync into the pipeline, provider abstraction, agent `git_repo` write tool. See [`.claude/domain/git-integration.md`](domain/git-integration.md)
 - `services/llm_config.py` — LLM configuration utility (Turbo Mode support, extraction/relationship model config). See [`.claude/domain/relationships.md`](domain/relationships.md)
+- `services/helper_client.py` — transport layer for cortex-helper calls: shared HTTP client, retries with backoff, circuit breaker, `HELPER_STRICT_REMOTE`, `X-Tenant-ID`/`X-Request-ID` headers
+- `services/rate_limiter.py` — opt-in per-API-key token bucket (`RATE_LIMIT_QPM`) on ask/upload endpoints
+- `logging_setup.py` — `LOG_FORMAT=plain|json` + `X-Request-ID` correlation (contextvar stamped on every log line, echoed on responses, forwarded to cortex-helper)
+- `metrics.py` — Prometheus metrics (no-op without `prometheus-client`); `GET /metrics` is admin-key protected
 
 ## Frontend (`frontend/src/`)
 
@@ -64,5 +68,7 @@ Next.js App Router with unified navigation structure:
 - All API endpoints are in `main.py` (no separate router modules)
 - Turbo mode overrides both extraction and main model configs
 - **Security defaults**: CORS is allowlist-driven (`CORS_ALLOWED_ORIGINS`; wildcard disables credentials). `ENVIRONMENT=production` fails fast on weak/default secrets via `config.py:_enforce_production_secrets`. See [`environment.md`](environment.md).
-- **Per-instance footprint**: the heavy models (cross-encoder reranker, docling) are lazy-loaded and can be offloaded to a shared per-host service (`cortex-helper` repo) via `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` — key for packing many tenant stacks per machine. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md), [`domain/document-pipeline.md`](domain/document-pipeline.md).
-- **CI**: `.github/workflows/ci.yml` runs backend pytest + ruff (error-only) and frontend `tsc --noEmit` + lint on PRs.
+- **Per-instance footprint**: the heavy models (cross-encoder reranker, docling) are lazy-loaded and can be offloaded to a shared per-host service (`cortex-helper` repo) via `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` — key for packing many tenant stacks per machine. The **slim image** (`Dockerfile.prod` build arg `INSTALL_LOCAL_ML=false`) drops torch/docling entirely (~1.2GB vs full image) for helper-backed deployments. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md), [`domain/document-pipeline.md`](domain/document-pipeline.md).
+- **Efficiency flags (v-next)**: batched KG writes, chunk-batched relationship extraction, Phase B checkpointing, reprocess delta, prompt-cache discipline — all default-off behind env flags, gated on `bench/BASELINE.md` A/B runs. See [`environment.md`](environment.md#efficiency-flags-v-next--default-off-until-bench-validated-see-benchbaselinemd).
+- **Graceful shutdown**: uvicorn `--timeout-graceful-shutdown` + compose `stop_grace_period` drain in-flight requests; SSE streams get a terminal `event: shutdown` frame (clients reconnect) and the lifespan awaits task cancellation before closing Neo4j.
+- **CI**: `.github/workflows/ci.yml` runs backend pytest + ruff (error-only), a slim-image build/import smoke test, and frontend `tsc --noEmit` + lint on PRs.

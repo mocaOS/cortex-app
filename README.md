@@ -75,6 +75,8 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
 - **📊 Background Tasks**: Long-running operations with real-time progress polling
 - **🧹 Smart Cleanup**: Automatic task cancellation and complete graph cleanup on document deletion
+- **⚡ Opt-in Efficiency Flags**: UNWIND-batched graph writes, chunk-batched relationship extraction (÷~4 LLM calls), Phase-B crash-resume checkpointing, unchanged-document reprocess skip, and provider prompt caching — all flag-gated with bench-validated rollout (see the [configuration docs](documentation/pages/configuration.mdx) and `bench/BASELINE.md`)
+- **🩺 Production Operations**: Prometheus `GET /metrics` (admin-protected), optional JSON logs with `X-Request-ID` correlation, per-key rate limiting, graceful shutdown with SSE drain, per-service memory caps, an opt-in backup sidecar (`docker-compose.backup.yml`), and a **slim torch-free image variant** (`INSTALL_LOCAL_ML=false`) for stacks backed by the shared `cortex-helper`
 
 ## 🏗️ Architecture
 

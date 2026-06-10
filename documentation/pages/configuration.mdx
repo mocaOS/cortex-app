@@ -678,3 +678,38 @@ curl http://localhost:8000/health
 # Check stats (requires API key)
 curl -H "X-API-Key: your-api-key" http://localhost:8000/api/stats
 ```
+
+## Efficiency Flags (v-next)
+
+All default **off**; enable per stack after an A/B bench run (`bench/BASELINE.md`). None change API shapes or graph semantics.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENTITY_DEDUP_PREFILTER` | `false` | Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every entity. |
+| `ENABLE_BATCHED_KG_WRITES` | `false` | Write entities/links/relationships via UNWIND batches (~10 Neo4j round trips per document instead of hundreds), preserving per-item dedup semantics. |
+| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `false` | Pack several chunks into one per-chunk relationship-extraction LLM call. |
+| `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Max chunks per batched relationship-extraction call. |
+| `ENABLE_PHASEB_CHECKPOINTING` | `false` | Persist Phase B batch progress — crash/redeploy resumes; rounds 2+ reuse round 1's candidate scan. |
+| `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing when file bytes + extraction config are unchanged since the last successful run. |
+| `RESEARCHER_STABLE_PROMPT` | `true` | Keep the researcher system prompt byte-stable across loop iterations (provider prefix caches hit from iteration 2). |
+| `ENABLE_PROMPT_CACHE_CONTROL` | `false` | Anthropic `cache_control` breakpoints when routed via OpenRouter to `anthropic/*` models. |
+
+## Observability, Limits & Resilience
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_FORMAT` | `plain` | `plain` keeps the legacy log format; `json` emits structured lines with `request_id` (from/echoed as `X-Request-ID`). |
+| `METRICS_ENABLED` | `true` | Prometheus metrics at `GET /metrics` (admin API key required; not exposed through the prod nginx). |
+| `RATE_LIMIT_QPM` | `0` | Per-API-key requests/minute on ask/upload endpoints (0 = off). 429 + `Retry-After` on excess. |
+| `RATE_LIMIT_BURST` | `10` | Token-bucket burst capacity for `RATE_LIMIT_QPM`. |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. |
+| `RERANK_TOP_K` | `15` | Candidates kept/reranked per knowledge search. |
+| `HELPER_STRICT_REMOTE` | `false` | With `DOCLING_SERVICE_URL` set: conversion failure marks the document failed instead of falling back to local docling. |
+| `INSTANCE_ID` | hostname | Stack identity sent to cortex-helper (`X-Tenant-ID`) for fair queuing. |
+| `NEO4J_MAX_POOL_SIZE` | `100` | Neo4j driver connection pool size. |
+| `NEO4J_CONNECTION_TIMEOUT` | `10` | Neo4j TCP connect timeout (seconds). |
+| `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | `60` | Max wait for a pooled connection (seconds). |
+
+Compose-level: `NEO4J_MEM_LIMIT` (default 4g), `NEO4J_HEAP_INITIAL`/`NEO4J_HEAP_MAX`/`NEO4J_PAGECACHE`, `FRONTEND_MEM_LIMIT` (1g). Backups: overlay `docker-compose.backup.yml` with `BACKUP_INTERVAL_SECONDS` (86400), `BACKUP_RETENTION_DAYS` (7), `NEO4J_ENTERPRISE_BACKUP` (false).
+
+**Slim image**: build with `--build-arg INSTALL_LOCAL_ML=false` for a torch-free backend (~1.2 GB) when reranking + conversion are offloaded to cortex-helper. Requires OpenAI embeddings; pair with `HELPER_STRICT_REMOTE=true`.

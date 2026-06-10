@@ -1,0 +1,43 @@
+# Opt-in backup sidecar — overlay onto the prod stack:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d
+#
+# Nightly (BACKUP_INTERVAL_SECONDS) online backup of the graph (APOC logical
+# export — works on Community and Enterprise) plus the uploads/custom_inputs
+# volumes, with BACKUP_RETENTION_DAYS rotation. Backups land in the `backups`
+# named volume; bind it to a host path (or ship it with restic/rclone — the
+# operator's concern) for off-host copies.
+#
+# Trigger a manual backup:   docker compose exec backup /backup.sh
+# Restore procedure:         see ops/backup/backup.sh header.
+
+services:
+  backup:
+    build:
+      context: ./ops/backup
+      args:
+        # Must match the neo4j image used by the stack (cypher-shell version)
+        - NEO4J_IMAGE=${NEO4J_IMAGE:-neo4j:5.26-community}
+    container_name: cortex-backup
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      - NEO4J_ADDRESS=neo4j://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      # Enterprise stacks may switch to the physical online backup:
+      - NEO4J_ENTERPRISE_BACKUP=${NEO4J_ENTERPRISE_BACKUP:-false}
+    volumes:
+      - backups:/backups
+      - uploads_data:/data/uploads:ro
+      - custom_inputs_data:/data/custom_inputs:ro
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+volumes:
+  backups:
+  uploads_data:
+  custom_inputs_data:

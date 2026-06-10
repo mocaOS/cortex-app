@@ -406,6 +406,20 @@ def get_researcher_prompt(
         return _get_quality_researcher_prompt(iteration, max_iterations)
 
 
+def get_researcher_prompt_static(
+    mode: Literal["speed", "quality"],
+    max_iterations: int,
+) -> str:
+    """Iteration-free researcher prompt (researcher_stable_prompt mode).
+
+    Byte-stable across loop iterations so providers can serve it from prefix
+    cache; the iteration counter is delivered as a trailing system note
+    instead (see _run_researcher_loop).
+    """
+    full = get_researcher_prompt(mode, 0, max_iterations)
+    return full.replace(f"Iteration 1 of {max_iterations}.\n", "")
+
+
 def _get_speed_researcher_prompt(iteration: int, max_iterations: int) -> str:
     today = date.today().isoformat()
 

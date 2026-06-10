@@ -7,6 +7,34 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 10, 2026 (v-next efficiency & hardening)
+
+### LLM-stack efficiency (flag-gated, default off)
+
+A set of opt-in flags cuts the LLM and database cost of knowledge-graph building without changing any API or output semantics. Each flag ships **default-off** and is meant to be enabled after an A/B run against your bench baseline (`bench/BASELINE.md`):
+
+- **`ENABLE_BATCHED_KG_WRITES`** — entities, chunk links, and relationships are written in UNWIND batches: a handful of Neo4j round trips per document instead of one per item (hundreds→~10 on extraction-heavy docs), while preserving the exact dedup/merge semantics of the per-item path (locked by parity tests).
+- **`ENABLE_BATCHED_CHUNK_RELATIONSHIPS`** (+ `RELATIONSHIP_CHUNKS_PER_CALL`, default 4) — per-chunk relationship extraction packs several chunks into one LLM call (÷~4 calls), with a per-batch safety net that re-dispatches through the single-chunk path on parse failure.
+- **`ENABLE_PHASEB_CHECKPOINTING`** — cross-document relationship analysis persists per-batch progress: a crash or redeploy resumes instead of re-paying every batch, and multi-round runs reuse round 1's candidate scan (~50% fewer Phase 1 calls).
+- **`ENABLE_REPROCESS_DELTA`** — reprocessing a document whose file bytes and extraction config are unchanged is skipped entirely; git re-syncs of unchanged files cost ~zero.
+- **`ENTITY_DEDUP_PREFILTER`** — entity dedup scores the top-50 fulltext candidates instead of scanning every entity (big win on 10k+ entity graphs).
+- **Prompt caching**: the researcher system prompt is now byte-stable across loop iterations (`RESEARCHER_STABLE_PROMPT`, default on — provider prefix caches hit from iteration 2), and `ENABLE_PROMPT_CACHE_CONTROL` adds Anthropic `cache_control` breakpoints when routed via OpenRouter. Skill catalog/instructions are TTL-cached per process instead of being reloaded (Neo4j + filesystem + decryption) on every request.
+
+### Production hardening
+
+- **Resilient helper transport**: calls to the shared `cortex-helper` now retry with backoff behind a circuit breaker; `HELPER_STRICT_REMOTE=true` keeps docling out of tenant containers even on helper outages. The helper itself gained per-tenant fair queuing (`CONVERT_PER_TENANT`, `CONVERT_QUEUE_TIMEOUT` → 503 + Retry-After) and a shutdown drain.
+- **Graceful shutdown**: rolling restarts drain in-flight requests (uvicorn `--timeout-graceful-shutdown` + compose `stop_grace_period`); SSE streams receive a terminal `event: shutdown` frame so clients can reconnect instead of seeing a dead socket.
+- **Observability**: optional JSON logging with `X-Request-ID` correlation end-to-end (chat → backend → helper), and an admin-protected Prometheus `GET /metrics` endpoint (HTTP latency/route, SSE streams, document outcomes, conversion timing, helper breaker state). `LOG_FORMAT=plain` (default) keeps logs byte-identical.
+- **Per-key rate limiting** (`RATE_LIMIT_QPM`, default off) on ask/upload endpoints — a burst guardrail beneath the monthly quota, returning 429 + `Retry-After`.
+- **Memory caps everywhere**: Neo4j, frontend, and nginx now carry compose `mem_limit`s (tunable via `NEO4J_MEM_LIMIT` etc.) so one stack's blowup can't OOM a neighbor; the Neo4j driver pool is configurable; nginx gained a dedicated unbuffered SSE location with a 1-hour read timeout.
+- **Slim backend image**: `Dockerfile.prod --build-arg INSTALL_LOCAL_ML=false` builds a torch-free image (~1.2 GB vs ~7 GB dev image) for stacks that fully offload to cortex-helper — the biggest per-tenant footprint lever yet. CI smoke-builds it on every PR.
+- **Backups**: an opt-in compose overlay (`docker-compose.backup.yml`) runs nightly online graph exports (APOC, works on Community) + file-volume archives with retention, plus a documented restore runbook (`ops/backup/backup.sh`).
+- Fixes: skill HTTP calls now honor `SKILL_HTTP_TIMEOUT` (was hardcoded 15s); vector-index health is verified at startup and silent semantic-dedup degradation is surfaced in `/api/stats` (`vector_search_failures`); inbound conversation-memory blobs are size-clamped.
+
+**No API or schema breakage** — all changes are additive or flag-gated; existing `.env` files and deployments keep working unchanged.
+
+---
+
 ## June 10, 2026
 
 ### Leaner instances: lazy models + a shared per-machine model service

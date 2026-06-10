@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 import uuid
 from typing import AsyncGenerator, Literal, Optional, List
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from openai import AsyncOpenAI
 from app.models import ConversationMessage, GraphContext
 from app.services.research_prompts import (
     get_researcher_prompt,
+    get_researcher_prompt_static,
     get_writer_system_prompt,
     get_writer_user_prompt,
     get_tools_for_mode,
@@ -35,10 +37,12 @@ from app.services.research_prompts import (
     build_skill_catalog_block,
     build_activated_skills_block,
 )
+from app.services.reasoning_config import apply_cache_control
 from app.services.prompt_security import get_anti_injection_instruction
 from app.services.llm_config import build_chat_params
 from app.services.context_curator import (
     build_context,
+    clamp_memory_blob,
     compact_memory,
     source_sid,
     is_memory_answerable,
@@ -273,20 +277,21 @@ async def _execute_knowledge_search(
         _merge_graph_context(merged_ctx, result.get("graph_context", {}))
 
     # Rerank all results together against the original question
+    rerank_top_k = getattr(settings, "rerank_top_k", 15)
     if settings.enable_reranking and all_results:
         try:
             all_results = await processor.rerank_results_async(
-                original_question, all_results, top_k=15
+                original_question, all_results, top_k=rerank_top_k
             )
         except Exception as e:
             logger.warning(f"Reranking failed, using raw scores: {e}")
             all_results = sorted(
                 all_results, key=lambda x: x.get("score", 0), reverse=True
-            )[:15]
+            )[:rerank_top_k]
     else:
         all_results = sorted(
             all_results, key=lambda x: x.get("score", 0), reverse=True
-        )[:15]
+        )[:rerank_top_k]
 
     # Deduplicate by chunk_id
     unique = _deduplicate_sources(all_results)
@@ -408,9 +413,16 @@ async def _run_researcher_loop(
         has_git=bool(git_connection),
     )
 
-    # Build initial messages
+    # Build initial messages. In stable-prompt mode (default) the system
+    # prompt is iteration-free and built exactly once — byte-stable across
+    # the loop, so provider prefix caches hit from iteration 2 on.
+    stable_prompt = getattr(settings, "researcher_stable_prompt", True)
     system_prompt = (
-        get_researcher_prompt(mode, 0, max_iterations)
+        (
+            get_researcher_prompt_static(mode, max_iterations)
+            if stable_prompt
+            else get_researcher_prompt(mode, 0, max_iterations)
+        )
         + build_skill_catalog_block(skill_catalog)
         + build_activated_skills_block(activated_instructions)
         + get_anti_injection_instruction(enabled=settings.prompt_security)
@@ -427,25 +439,59 @@ async def _run_researcher_loop(
     communities_used_ids = []
     _http_request_called = False
 
+    # Wall-clock budget: on expiry we stop gathering and let the writer
+    # synthesize from accumulated results (same path as iteration exhaustion).
+    _wall_clock_budget = getattr(settings, "researcher_wall_clock_seconds", 0)
+    _deadline = (
+        time.monotonic() + _wall_clock_budget if _wall_clock_budget > 0 else None
+    )
+
     for iteration in range(max_iterations):
-        # Rebuild system prompt + tools each iteration (may have new activations)
-        messages[0]["content"] = (
-            get_researcher_prompt(mode, iteration, max_iterations)
-            + build_skill_catalog_block(skill_catalog)
-            + build_activated_skills_block(activated_instructions)
-            + get_anti_injection_instruction(enabled=settings.prompt_security)
-        )
-        tools = get_tools_with_skill_activation(
-            mode,
-            has_skills=bool(skill_catalog),
-            activated_skill_tools=activated_tool_defs or None,
-            has_git=bool(git_connection),
-        )
+        if _deadline is not None and time.monotonic() >= _deadline:
+            logger.info(
+                f"Researcher loop hit wall-clock budget "
+                f"({_wall_clock_budget}s) at iteration {iteration + 1}; "
+                f"synthesizing from gathered results"
+            )
+            yield {
+                "type": "thinking",
+                "content": "Time budget reached — synthesizing the answer from what I've gathered...",
+            }
+            break
+        if stable_prompt:
+            # The system prefix never changes; the iteration counter rides as
+            # a trailing system note so the prefix stays cache-hot. The note
+            # is rebuilt per call (not appended to `messages`), keeping the
+            # persistent list append-only.
+            call_messages = messages + [{
+                "role": "system",
+                "content": f"Iteration {iteration + 1} of {max_iterations}.",
+            }]
+        else:
+            # Legacy: rebuild system prompt + tools each iteration
+            messages[0]["content"] = (
+                get_researcher_prompt(mode, iteration, max_iterations)
+                + build_skill_catalog_block(skill_catalog)
+                + build_activated_skills_block(activated_instructions)
+                + get_anti_injection_instruction(enabled=settings.prompt_security)
+            )
+            tools = get_tools_with_skill_activation(
+                mode,
+                has_skills=bool(skill_catalog),
+                activated_skill_tools=activated_tool_defs or None,
+                has_git=bool(git_connection),
+            )
+            call_messages = messages
+
+        if getattr(settings, "enable_prompt_cache_control", False):
+            call_messages = apply_cache_control(
+                call_messages, llm_config.base_url, llm_config.model
+            )
 
         try:
             response = await client.chat.completions.create(
                 model=llm_config.model,
-                messages=messages,
+                messages=call_messages,
                 tools=tools,
                 tool_choice="auto",
                 **build_chat_params(llm_config.model, temperature=0.2),
@@ -487,7 +533,7 @@ async def _run_researcher_loop(
                 try:
                     response = await client.chat.completions.create(
                         model=llm_config.model,
-                        messages=messages,
+                        messages=call_messages,
                         tools=tools,
                         tool_choice="required",
                         **build_chat_params(llm_config.model, temperature=0.2),
@@ -503,7 +549,7 @@ async def _run_researcher_loop(
                     try:
                         response = await client.chat.completions.create(
                             model=llm_config.model,
-                            messages=messages + [nudge],
+                            messages=call_messages + [nudge],
                             tools=tools,
                             tool_choice="auto",
                             **build_chat_params(llm_config.model, temperature=0.2),
@@ -523,7 +569,7 @@ async def _run_researcher_loop(
                 try:
                     response = await client.chat.completions.create(
                         model=llm_config.model,
-                        messages=messages,
+                        messages=call_messages,
                         tools=tools,
                         tool_choice="auto",
                         **build_chat_params(llm_config.model, temperature=0.2),
@@ -934,9 +980,12 @@ async def _run_researcher_loop(
                 # Short, user-facing failure label (set in the except handlers).
                 # None means the call succeeded.
                 _req_error_label = None
+                _http_timeout = getattr(settings, "skill_http_timeout", 15)
                 try:
                     async with httpx.AsyncClient(
-                        timeout=15, follow_redirects=True, verify=_verify_tls
+                        timeout=_http_timeout,
+                        follow_redirects=True,
+                        verify=_verify_tls,
                     ) as http_client:
                         resp = await http_client.request(
                             method,
@@ -947,8 +996,12 @@ async def _run_researcher_loop(
                         resp.raise_for_status()
                         response_text = _truncate_response(resp.text)
                 except httpx.TimeoutException:
-                    response_text = "Error: HTTP request timed out (15s)"
-                    _req_error_label = f"API call timed out: {method} {url} (15s)"
+                    response_text = (
+                        f"Error: HTTP request timed out ({_http_timeout}s)"
+                    )
+                    _req_error_label = (
+                        f"API call timed out: {method} {url} ({_http_timeout}s)"
+                    )
                     logger.warning(f"http_request timed out: {method} {url}")
                 except httpx.HTTPStatusError as e:
                     response_text = (
@@ -1186,6 +1239,9 @@ async def run_research_pipeline(
     - {"done": True, "communities_used": [...]} — completion signal
     """
     conversation_history = conversation_history or []
+    # Bound the client-carried memory blob before anything trusts it (a buggy
+    # or malicious client can inflate it without limit).
+    conversation_memory = clamp_memory_blob(conversation_memory, settings)
     # Curate a bounded context from the client-carried memory blob (if any). When
     # no blob is present this returns the legacy [-max_conversation_history:] slice,
     # so downstream behavior is unchanged.

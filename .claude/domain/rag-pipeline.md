@@ -68,3 +68,11 @@ Fixed pipeline available as fallback via `ENABLE_AGENT_RESEARCH=false`. Also `EN
 ## Frontend
 
 See [`.claude/frontend-patterns.md`](../frontend-patterns.md#chatresearch-message-rendering) for chat/research message rendering patterns.
+
+## v-Next Efficiency & Hardening
+
+- **Stable researcher prompt** (`RESEARCHER_STABLE_PROMPT`, default true): the system prompt is built once per request from `get_researcher_prompt_static` (iteration-free) + skill blocks; the `Iteration i of N` counter rides as a trailing system note rebuilt per call. The message list stays append-only → provider prefix caches (OpenAI auto, vLLM `--enable-prefix-caching`, OpenRouter) hit from iteration 2 on. `false` restores the legacy per-iteration rebuild.
+- **Anthropic cache_control** (`ENABLE_PROMPT_CACHE_CONTROL`): `reasoning_config.apply_cache_control` marks the first system message as an ephemeral cache breakpoint — only on OpenRouter + `anthropic/*` models; applied in `_prepare_call` (all three model tiers) and the researcher loop.
+- **Skill state TTL cache**: `SkillService` caches `get_skill_catalog()` + `load_skill_for_activation()` for 60s (invalidated on every skill CRUD/config mutation) — removes the per-request Neo4j query + SKILL.md reads + secret decryption, and makes `<active_skills>` byte-identical across requests.
+- **Budgets**: `RESEARCHER_WALL_CLOCK_SECONDS` (0=off) breaks the loop to the writer on expiry; `RERANK_TOP_K` (15) bounds rerank input; inbound `conversation_memory` blobs are clamped (`clamp_memory_blob`: ledger cap, ~64KB ceiling, never a 4xx); `is_memory_answerable` pre-gates the classifier LLM call when the blob has no summary/facts/intent.
+- **Per-key rate limiting** (`RATE_LIMIT_QPM`, 0=off): token bucket on ask/upload endpoints, 429 + `Retry-After`.

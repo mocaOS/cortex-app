@@ -12,11 +12,14 @@ Two skill types:
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import re
 import shutil
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -144,9 +147,23 @@ def _load_tools_json(skill_dir: Path) -> Optional[List[Dict[str, Any]]]:
 class SkillService:
     """Service for discovering, managing, and executing AgentSkills."""
 
+    # Catalog + activation state are loaded on EVERY ask request (Neo4j query,
+    # SKILL.md reads, secret decryption). Skills change rarely, so a short TTL
+    # cache removes that per-request overhead; all CRUD paths invalidate it.
+    _CACHE_TTL_SECONDS = 60
+
     def __init__(self):
         self.settings = get_settings()
         self._skills_dir = self._resolve_skills_dir()
+        self._cache_lock = threading.Lock()
+        self._catalog_cache: Optional[Tuple[float, List[dict]]] = None
+        self._activation_cache: Dict[str, Tuple[float, tuple]] = {}
+
+    def invalidate_cache(self) -> None:
+        """Drop cached catalog/activation state after any skill mutation."""
+        with self._cache_lock:
+            self._catalog_cache = None
+            self._activation_cache.clear()
 
     def _resolve_skills_dir(self) -> Path:
         """Resolve the skills directory path."""
@@ -226,6 +243,7 @@ class SkillService:
             )
 
         logger.info(f"Skill discovery complete: {count} skills found")
+        self.invalidate_cache()
         return count
 
     # -----------------------------------------------------------------
@@ -271,6 +289,7 @@ class SkillService:
             "tool_names": tool_names,
         }
         neo4j.upsert_skill(props)
+        self.invalidate_cache()
         logger.info(f"Installed skill from URL: {skill_id}")
         return self._skill_node_to_info(neo4j.get_skill(skill_id))
 
@@ -355,6 +374,7 @@ class SkillService:
             "tool_names": tool_names,
         }
         neo4j.upsert_skill(props)
+        self.invalidate_cache()
         logger.info(f"Installed skill from registry: {registry_id} → {skill_id}")
         return self._skill_node_to_info(neo4j.get_skill(skill_id))
 
@@ -404,6 +424,7 @@ class SkillService:
             return self._skill_node_to_info(neo4j.get_skill(skill_id))
 
         node = neo4j.update_skill(skill_id, props)
+        self.invalidate_cache()
         if not node:
             return None
         return self._skill_node_to_info(node)
@@ -425,6 +446,7 @@ class SkillService:
                 logger.warning(f"Could not delete skill directory {dir_path}: {e}")
 
         neo4j.delete_skill(skill_id)
+        self.invalidate_cache()
         logger.info(f"Deleted skill: {skill_id}")
         return True
 
@@ -437,11 +459,17 @@ class SkillService:
 
         Returns only name + description (tier 1) — no filesystem reads.
         Used to populate <available_skills> so the agent knows what it
-        can activate on demand.
+        can activate on demand. Cached for _CACHE_TTL_SECONDS (invalidated
+        on every skill mutation).
         """
+        with self._cache_lock:
+            if self._catalog_cache is not None:
+                ts, catalog = self._catalog_cache
+                if time.monotonic() - ts < self._CACHE_TTL_SECONDS:
+                    return copy.deepcopy(catalog)
         neo4j = self._get_neo4j()
         enabled = neo4j.get_enabled_skills()
-        return [
+        catalog = [
             {
                 "skill_id": s.get("skill_id", ""),
                 "name": s.get("name", s.get("skill_id", "")),
@@ -450,6 +478,9 @@ class SkillService:
             }
             for s in enabled
         ]
+        with self._cache_lock:
+            self._catalog_cache = (time.monotonic(), copy.deepcopy(catalog))
+        return catalog
 
     def load_skill_for_activation(
         self, skill_id: str
@@ -465,7 +496,16 @@ class SkillService:
             - tool_definitions: OpenAI function-calling defs from tools.json
             - tool_map: {namespaced_name: (skill_id, original_name)}
             - config: skill configuration values from config.json
+
+        Cached for _CACHE_TTL_SECONDS — the SKILL.md read, tools.json parse,
+        and secret decryption otherwise repeat on every request.
         """
+        with self._cache_lock:
+            cached = self._activation_cache.get(skill_id)
+            if cached is not None:
+                ts, payload = cached
+                if time.monotonic() - ts < self._CACHE_TTL_SECONDS:
+                    return copy.deepcopy(payload)
         neo4j = self._get_neo4j()
         node = neo4j.get_skill(skill_id)
         if not node:
@@ -515,7 +555,12 @@ class SkillService:
                     f"(encryption key changed or removed); reconfigure it. ({e})"
                 )
 
-        return instructions, tool_definitions, tool_map, config
+        payload = (instructions, tool_definitions, tool_map, config)
+        with self._cache_lock:
+            self._activation_cache[skill_id] = (
+                time.monotonic(), copy.deepcopy(payload)
+            )
+        return payload
 
     # -----------------------------------------------------------------
     # Tool Execution
@@ -710,6 +755,7 @@ class SkillService:
         config_path = dir_path / "config.json"
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
+        self.invalidate_cache()
         logger.info(f"Saved config for skill '{skill_id}'")
 
     def _secret_field_names(self, skill_id: str) -> set:
@@ -735,6 +781,7 @@ class SkillService:
         """Store the config_schema as a JSON string on the Neo4j Skill node."""
         neo4j = self._get_neo4j()
         neo4j.update_skill(skill_id, {"config_schema": json.dumps(schema)})
+        self.invalidate_cache()
 
     def get_skill_base_url(self, skill_id: str) -> Optional[str]:
         """Return the API base URL the skill talks to, used to scope auth headers."""
@@ -748,6 +795,7 @@ class SkillService:
         """Persist the skill's API base URL. Empty/None clears it."""
         neo4j = self._get_neo4j()
         neo4j.update_skill(skill_id, {"base_url": (base_url or "").strip() or None})
+        self.invalidate_cache()
 
     async def analyze_skill_config(self, skill_id: str) -> Dict[str, Any]:
         """Use the primary LLM to extract config schema + API base URL from SKILL.md.

@@ -1,0 +1,9 @@
+# Local ML stack — the torch pullers. Installed in the full image (default);
+# skipped in the slim image (INSTALL_LOCAL_ML=false), where reranking and
+# document conversion are served by the shared cortex-helper instead.
+
+sentence-transformers>=2.3.1  # local cross-encoder reranker + ST embedder fallback (pulls torch)
+
+# Document Processing - Docling (handles PDF, DOCX, XLSX, PPTX, HTML, images, audio, LaTeX)
+docling-haystack>=0.1.0
+easyocr>=1.7.1  # OCR engine for image text extraction

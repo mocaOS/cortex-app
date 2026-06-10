@@ -132,6 +132,30 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 - `RERANKER_SERVICE_URL` (default: empty) — e.g. `http://cortex-helper:3030`. When set, `rerank_results` POSTs `{query, passages}` to `/rerank` and no local cross-encoder is loaded.
 - `DOCLING_SERVICE_URL` (default: empty) — e.g. `http://cortex-helper:3030`. When set, `_convert_document_subprocess` POSTs the file to `/convert` (warm converter, ~0.04 s vs ~4.5 s cold subprocess) instead of spawning a local docling subprocess.
 - `HELPER_SERVICE_TOKEN` (default: empty) — shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN`.
+- `HELPER_STRICT_REMOTE` (default: false) — when true (and `DOCLING_SERVICE_URL` set), a conversion that still fails after the helper client's retries marks the document failed instead of falling back to the local docling subprocess (protects tenant memory on packed hosts). All helper HTTP goes through `services/helper_client.py`: shared connection, 3 retries with backoff+jitter on transient failures, circuit breaker (5 failures → open 30s).
+- `INSTANCE_ID` (default: empty ⇒ container hostname) — identifies this stack to the shared helper (`X-Tenant-ID`) for per-tenant fair queuing.
+
+**Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors.
+
+## Efficiency Flags (v-next — default off until bench-validated, see `bench/BASELINE.md`)
+
+- `ENTITY_DEDUP_PREFILTER` (default: false) — Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every Entity node (O(50) vs O(all) per stored entity).
+- `ENABLE_BATCHED_KG_WRITES` (default: false) — entities/chunk-links/relationships are written via UNWIND batches (a handful of Neo4j round trips per document instead of one per item) through a resolve → cluster → batch-write pipeline that preserves the per-item dedup semantics (`test_batched_writes.py` locks the parity contract).
+- `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` (default: false) + `RELATIONSHIP_CHUNKS_PER_CALL` (default: 4) — pack several chunks into one per-chunk relationship-extraction LLM call (grouped `<chunk index>` XML; same system prompt as the single-chunk path). Degrades per batch: grouped parse → flat parse → per-chunk re-dispatch.
+- `ENABLE_PHASEB_CHECKPOINTING` (default: false) — persist Phase B batch progress (`PhaseBCheckpoint` nodes): crash/redeploy resumes from completed batches; rounds 2+ reuse round 1's Phase 1 candidates.
+- `ENABLE_REPROCESS_DELTA` (default: false) — skip reprocessing when the file bytes + extraction config are unchanged since the last successful run (fingerprint on the Document node). Git re-syncs of unchanged files cost ~zero.
+- `ENABLE_PROMPT_CACHE_CONTROL` (default: false) — send Anthropic `cache_control` breakpoints on the system prompt when routed via OpenRouter to `anthropic/*` models (cache-read pricing on the stable prefix). No-op elsewhere.
+- `RESEARCHER_STABLE_PROMPT` (default: true) — keep the researcher system prompt byte-stable across loop iterations (counter rides as a trailing system note) so provider prefix caches hit from iteration 2 on. `false` restores the legacy per-iteration rebuild.
+
+## Observability & Limits
+
+- `LOG_FORMAT` (default: `plain`) — `plain` keeps the legacy log format byte-identical; `json` emits one JSON object/line with `request_id` (read from / echoed as `X-Request-ID`, forwarded to cortex-helper).
+- `METRICS_ENABLED` (default: true) — Prometheus metrics at `GET /metrics` (admin-key protected, not routed through the prod nginx). Requires `prometheus-client` (in requirements; older images degrade to 501).
+- `RATE_LIMIT_QPM` (default: 0 = off) + `RATE_LIMIT_BURST` (default: 10) — per-API-key token-bucket guardrail on ask/upload endpoints (429 + `Retry-After`). Billing remains `MAX_QUERIES_PER_MONTH`.
+- `RESEARCHER_WALL_CLOCK_SECONDS` (default: 0 = unlimited) — wall-clock budget for the researcher loop; on expiry the writer synthesizes from what was gathered.
+- `RERANK_TOP_K` (default: 15) — candidates kept/reranked per knowledge_search; lower on remote rerankers to trade recall for latency.
+- `NEO4J_MAX_POOL_SIZE` (default: 100), `NEO4J_CONNECTION_TIMEOUT` (default: 10), `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` (default: 60) — driver pool tuning.
+- Compose-level: `NEO4J_MEM_LIMIT` (4g), `NEO4J_HEAP_INITIAL/MAX`, `NEO4J_PAGECACHE`, `FRONTEND_MEM_LIMIT` (1g), `stop_grace_period` — every service is memory-capped so one tenant's blowup can't OOM another stack's container. Opt-in backups: `docker-compose.backup.yml` overlay (`BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS`, `NEO4J_ENTERPRISE_BACKUP`; see `ops/backup/backup.sh` for the restore runbook).
 
 ## Feature Flags
 

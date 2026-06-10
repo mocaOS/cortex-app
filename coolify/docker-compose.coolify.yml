@@ -19,9 +19,12 @@ services:
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4J_dbms_memory_heap_initial__size=512m
-      - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_pagecache_size=512m
+      - NEO4J_dbms_memory_heap_initial__size=${NEO4J_HEAP_INITIAL:-512m}
+      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP_MAX:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-512m}
+    # Hard ceiling so one tenant's graph blowing up self-OOMs in its cgroup
+    # instead of letting the kernel OOM-killer pick another stack's container.
+    mem_limit: ${NEO4J_MEM_LIMIT:-4g}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -76,6 +79,9 @@ services:
     # BACKEND_MEM_LIMIT in Coolify env to match this host — keep it above ~2G
     # steady-state and below (host RAM − Neo4j ~3G − frontend − OS headroom).
     mem_limit: ${BACKEND_MEM_LIMIT:-4g}
+    # Give uvicorn's graceful shutdown (in-flight requests, SSE streams) time to
+    # drain before docker sends SIGKILL.
+    stop_grace_period: 35s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -103,6 +109,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
 
 volumes:
   neo4j_data:

@@ -364,3 +364,33 @@ Behavior:
 | `DOCLING_PAGE_CHUNK_SIZE` | `50` | Pages per processing chunk for large PDFs. |
 | `DOCLING_MAX_PAGES_PER_CHUNK` | `50` | Threshold for triggering chunked PDF processing. |
 | `DOCLING_USE_PYPDFIUM_FOR_LARGE_MB` | `0` | Use memory-efficient PyPdfium backend for files larger than this size (MB). 0 = disabled. |
+
+## Efficiency Flags & Hardening (v-next)
+
+Opt-in performance flags (all default off — validate with a bench A/B run first, see `bench/BASELINE.md`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENTITY_DEDUP_PREFILTER` | `false` | Faster entity dedup on large graphs (fulltext prefilter). |
+| `ENABLE_BATCHED_KG_WRITES` | `false` | UNWIND-batched graph writes (~10 DB round trips per document instead of hundreds). |
+| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `false` | Several chunks per relationship-extraction LLM call (÷~4 calls). |
+| `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Chunks per batched call. |
+| `ENABLE_PHASEB_CHECKPOINTING` | `false` | Resume cross-document analysis after a crash; reuse candidates across rounds. |
+| `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing of unchanged documents (git re-syncs become free). |
+| `RESEARCHER_STABLE_PROMPT` | `true` | Prompt-cache-friendly researcher loop. |
+| `ENABLE_PROMPT_CACHE_CONTROL` | `false` | Anthropic prompt caching via OpenRouter. |
+
+Hardening & operations:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_FORMAT` | `plain` | `json` for structured logs with request-ID correlation. |
+| `METRICS_ENABLED` | `true` | Prometheus `GET /metrics` (admin key required). |
+| `RATE_LIMIT_QPM` / `RATE_LIMIT_BURST` | `0` / `10` | Per-API-key burst guardrail on ask/upload (429 + Retry-After). |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Time budget for deep research (0 = unlimited). |
+| `RERANK_TOP_K` | `15` | Rerank candidate pool size. |
+| `HELPER_STRICT_REMOTE` | `false` | Never fall back to local docling when the shared helper is configured. |
+| `INSTANCE_ID` | hostname | Tenant identity for helper fair-queuing. |
+| `NEO4J_MAX_POOL_SIZE` / `NEO4J_CONNECTION_TIMEOUT` / `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | `100` / `10` / `60` | Database driver pool tuning. |
+| `NEO4J_MEM_LIMIT`, `NEO4J_HEAP_MAX`, `FRONTEND_MEM_LIMIT` | `4g`, `2G`, `1g` | Compose memory caps per service. |
+| `BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS` | `86400`, `7` | Backup sidecar (overlay `docker-compose.backup.yml`). |

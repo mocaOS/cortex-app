@@ -8,6 +8,14 @@ services:
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      # Bounded JVM memory so the limit below is meaningful (mirrors prod).
+      - NEO4J_dbms_memory_heap_initial__size=${NEO4J_HEAP_INITIAL:-512m}
+      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP_MAX:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-512m}
+    # Hard ceiling: on hosts packing multiple tenant stacks, one graph blowing up
+    # must self-OOM in its cgroup instead of letting the kernel OOM-killer pick a
+    # victim in another tenant's stack. Sized for heap max + pagecache + overhead.
+    mem_limit: ${NEO4J_MEM_LIMIT:-4g}
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -31,6 +39,9 @@ services:
     # the kernel OOM-killer pick Neo4j as the victim. Keep comfortably above normal
     # steady-state (~2G with the cross-encoder + embedder loaded). Tune per host.
     mem_limit: ${BACKEND_MEM_LIMIT:-4g}
+    # Give uvicorn's graceful shutdown (in-flight requests, SSE streams) time to
+    # drain before docker sends SIGKILL.
+    stop_grace_period: 35s
     env_file:
       - .env
     environment:
@@ -56,6 +67,12 @@ services:
     depends_on:
       neo4j:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   frontend:
     build:

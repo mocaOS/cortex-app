@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_user: str = Field(default="neo4j")
     neo4j_password: str = Field(default="password123")
+    # Driver pool tuning. Defaults match the neo4j-python-driver defaults
+    # (pool size 100, acquisition timeout 60s) except connection_timeout,
+    # which the driver leaves at 30s — 10s fails faster when the DB is down.
+    neo4j_max_pool_size: int = Field(default=100)
+    neo4j_connection_timeout: float = Field(default=10.0)
+    neo4j_connection_acquisition_timeout: float = Field(default=60.0)
 
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = Field(default="")
@@ -315,6 +321,16 @@ class Settings(BaseSettings):
     reranker_service_url: str = Field(default="")  # e.g. http://localhost:3030
     docling_service_url: str = Field(default="")   # e.g. http://localhost:3030
     helper_service_token: str = Field(default="")  # shared secret -> X-Helper-Token
+    helper_strict_remote: bool = Field(
+        default=False
+    )  # When true and DOCLING_SERVICE_URL is set, a conversion that fails after
+    #   retries marks the document failed instead of falling back to the local
+    #   docling subprocess — protects tenant memory on densely packed hosts
+    #   (the local fallback pulls the OCR/layout models into this container).
+    instance_id: str = Field(
+        default=""
+    )  # Identifies this stack to the shared helper (X-Tenant-ID header, used
+    #   for fair queuing). Empty = container hostname.
 
     enable_hybrid_search: bool = Field(
         default=True
@@ -373,6 +389,15 @@ class Settings(BaseSettings):
     writer_max_tokens_quality: int = Field(
         default=4000
     )  # Max output tokens for writer in quality/research mode
+    researcher_wall_clock_seconds: int = Field(
+        default=0
+    )  # Wall-clock budget for the researcher loop (0 = unlimited). On expiry
+    #   the loop stops gathering and the writer synthesizes from what it has.
+    rerank_top_k: int = Field(
+        default=15
+    )  # Candidates kept per knowledge_search after pooling the parallel
+    #   queries; also the rerank input size. Lower it on remote rerankers
+    #   (RERANKER_SERVICE_URL) to trade recall for latency.
 
     # ==========================================================================
     # Agent Skills (agentskills.io standard)
@@ -466,6 +491,69 @@ class Settings(BaseSettings):
     entity_embedding_model: str = Field(
         default=""
     )  # Model for entity embeddings (defaults to embedding_model)
+    entity_dedup_prefilter: bool = Field(
+        default=False
+    )  # Prefilter Levenshtein dedup with the entity fulltext index: scores only
+    #   the top-50 fulltext candidates instead of scanning every Entity node.
+    #   Big win on 10k+ entity graphs; off by default (recall can differ on
+    #   extreme typo variants the fulltext analyzer misses).
+    enable_batched_kg_writes: bool = Field(
+        default=False
+    )  # Store entities/links/relationships via UNWIND batches (a handful of
+    #   Neo4j round trips per document instead of one per item). Preserves the
+    #   per-item dedup semantics; off by default until bench-validated per stack.
+    enable_batched_chunk_relationships: bool = Field(
+        default=False
+    )  # Pack several chunks into one per-chunk relationship-extraction LLM
+    #   call (÷~relationship_chunks_per_call total calls). Falls back to the
+    #   single-chunk path per batch on error or empty parse.
+    relationship_chunks_per_call: int = Field(
+        default=4
+    )  # Max chunks per batched relationship-extraction call (token budget
+    #   may pack fewer).
+    enable_prompt_cache_control: bool = Field(
+        default=False
+    )  # Send Anthropic cache_control breakpoints on the system prompt when
+    #   routed via OpenRouter to anthropic/* models (cache-read pricing on the
+    #   shared extraction/researcher prefix). No-op for other backends.
+    researcher_stable_prompt: bool = Field(
+        default=True
+    )  # Keep the researcher system prompt byte-stable across loop iterations
+    #   (iteration counter moves to a trailing system note) so provider prefix
+    #   caches hit from iteration 2 on. Set false to restore the legacy
+    #   per-iteration prompt rebuild.
+    rate_limit_qpm: int = Field(
+        default=0
+    )  # Per-API-key requests/minute on the expensive endpoints (ask/upload).
+    #   0 = disabled. A burst guardrail, not billing — billing stays
+    #   MAX_QUERIES_PER_MONTH. Exceeding returns 429 + Retry-After.
+    rate_limit_burst: int = Field(
+        default=10
+    )  # Token-bucket burst capacity for RATE_LIMIT_QPM.
+    enable_phaseb_checkpointing: bool = Field(
+        default=False
+    )  # Persist Phase B batch progress (PhaseBCheckpoint nodes): a crash or
+    #   redeploy mid-analysis resumes from completed batches, and rounds 2+
+    #   reuse round 1's Phase 1 candidate pairs (~50% fewer LLM calls on
+    #   multi-round runs).
+    enable_reprocess_delta: bool = Field(
+        default=False
+    )  # Skip reprocessing when a document's chunked content is unchanged
+    #   (chunk content hashes + extraction config hash match), and reuse
+    #   embeddings of unchanged chunks on partial edits. Git re-syncs and
+    #   re-uploads of unchanged files drop to ~zero LLM/embedding cost.
+
+    # ==========================================================================
+    # Observability
+    # ==========================================================================
+    log_format: str = Field(
+        default="plain"
+    )  # "plain" = legacy human-readable format (byte-identical to before);
+    #   "json" = one JSON object per line with request_id correlation.
+    metrics_enabled: bool = Field(
+        default=True
+    )  # Serve Prometheus metrics at GET /metrics (admin-key protected; not
+    #   exposed through the prod nginx). Requires prometheus-client.
 
     # ==========================================================================
     # Collection-Level Graphs

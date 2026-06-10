@@ -60,3 +60,9 @@ Use `dokploy/docker-compose.dokploy.yml`. Configure domains in Dokploy UI (Domai
 ### Standalone Docker
 
 `docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`).
+
+### Slim image & backups
+
+- **Slim backend image** (helper-backed stacks): `docker build -f backend/Dockerfile.prod --build-arg INSTALL_LOCAL_ML=false` → no torch/docling (~1.2GB vs full). Requires OpenAI embeddings + `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` (recommended `HELPER_STRICT_REMOTE=true`). CI smoke-builds it on every PR.
+- **Backups** (opt-in overlay): `docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d` — nightly APOC logical export (Community + Enterprise) + uploads/custom_inputs tar, `BACKUP_RETENTION_DAYS` rotation. Manual run: `docker compose exec backup /backup.sh`. Restore runbook in `ops/backup/backup.sh`.
+- **Memory caps**: every service (incl. Neo4j and nginx) carries a compose `mem_limit`; tune `NEO4J_MEM_LIMIT`/`NEO4J_HEAP_MAX`/`FRONTEND_MEM_LIMIT` per host. `stop_grace_period` + uvicorn `--timeout-graceful-shutdown` drain in-flight requests on restarts; nginx has a dedicated unbuffered `location /api/ask/stream` (1h read timeout) for SSE.

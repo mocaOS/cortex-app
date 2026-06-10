@@ -83,3 +83,10 @@ See [`.claude/domain/knowledge-graph-ui.md`](knowledge-graph-ui.md) for the full
 After Phase A completes:
 - **Step 2**: Two-phase relationship analysis (batch analysis). See [`.claude/domain/relationships.md`](relationships.md#batch-analysis)
 - **Step 3**: Community detection and summarization. See [`.claude/domain/communities.md`](communities.md)
+
+## v-Next Efficiency & Hardening
+
+- **Helper transport** (`services/helper_client.py`): all cortex-helper calls (convert + rerank) share one HTTP client with 3 retries (backoff+jitter, transient errors only) and a per-operation circuit breaker — a network blip no longer instantly degrades a tenant to its local fallback. `HELPER_STRICT_REMOTE=true` makes conversion failure mark the document failed instead of pulling docling into the tenant container. Rerank failure stays no-rerank (safe).
+- **Reprocess delta** (`ENABLE_REPROCESS_DELTA`): on successful processing the Document gets a fingerprint (`file_sha256` + `reprocess_config_hash`); a reprocess whose file bytes and extraction config both match is skipped entirely ("Content unchanged"). Chunks also carry an additive `content_hash` property.
+- **Image entity-embedding cache**: one per-document cache dict dedups entity embeddings across a document's images (same logo/diagram entity embedded once).
+- **Conversion metrics**: `cortex_document_conversion_seconds{path=remote|local}` + helper request counters; documents-processed counters by outcome.

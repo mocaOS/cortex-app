@@ -3,6 +3,7 @@
 import os
 import logging
 import asyncio
+import time
 import uuid
 import shutil
 import glob
@@ -106,17 +107,29 @@ from app.services.api_key_service import get_api_key_service
 from app.services.api_usage_service import get_api_usage_service
 from app.services.crypto_service import get_crypto_service, migrate_secrets_at_rest
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure logging (LOG_FORMAT=plain keeps the legacy format byte-identical;
+# LOG_FORMAT=json emits one JSON object per line with request_id correlation)
+from app.logging_setup import (
+    configure as _configure_logging,
+    get_request_id,
+    new_request_id,
+    set_request_id,
 )
+from app import metrics
+
+_configure_logging(getattr(get_settings(), "log_format", "plain"))
 # Suppress Neo4j notification warnings about missing properties/relationships
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
 _HEARTBEAT_DONE = object()
+
+# Set by the lifespan cleanup when the process is going down. SSE generators
+# watch it between chunks: instead of a dead socket mid-answer, clients get a
+# terminal `event: shutdown` frame and can reconnect to the replacement
+# instance.
+SHUTTING_DOWN = asyncio.Event()
 
 
 async def with_sse_heartbeat(gen, interval: float = 8.0):
@@ -126,7 +139,8 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
     the SSE spec and by clients, so this is additive and safe.
 
     Races the wrapped generator against a timer; on each `interval` of silence it
-    emits one keep-alive. Cancels the pump if the client disconnects.
+    emits one keep-alive. Cancels the pump if the client disconnects. On process
+    shutdown it emits a terminal `event: shutdown` frame and closes the stream.
     """
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -140,8 +154,13 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
             await queue.put(_HEARTBEAT_DONE)
 
     task = asyncio.create_task(_pump())
+    from app import metrics as _metrics
+    _metrics.SSE_ACTIVE_STREAMS.inc()
     try:
         while True:
+            if SHUTTING_DOWN.is_set():
+                yield "event: shutdown\ndata: {\"reason\": \"server restarting\"}\n\n"
+                break
             try:
                 chunk = await asyncio.wait_for(queue.get(), timeout=interval)
             except asyncio.TimeoutError:
@@ -151,6 +170,7 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
                 break
             yield chunk
     finally:
+        _metrics.SSE_ACTIVE_STREAMS.dec()
         task.cancel()
 
 
@@ -322,15 +342,52 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not initialize processors: {e}")
     
     yield
-    
-    # Cleanup
-    watchdog_task.cancel()
-    reranker_reaper_task.cancel()
+
+    # Cleanup. uvicorn's --timeout-graceful-shutdown has already stopped new
+    # connections and is draining in-flight requests; SSE generators watch
+    # SHUTTING_DOWN to terminate their streams cleanly (terminal event) so
+    # clients reconnect instead of seeing a dead socket.
+    SHUTTING_DOWN.set()
+
+    background_tasks = [watchdog_task, reranker_reaper_task]
     if git_scheduler_task:
-        git_scheduler_task.cancel()
-    neo4j.close()
+        background_tasks.append(git_scheduler_task)
+    for task in background_tasks:
+        task.cancel()
+    # Let cancellation handlers actually run before tearing down their deps.
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+
+    # Close the shared helper HTTP client (no-op when unused).
+    try:
+        from app.services.helper_client import close_async_client
+        await close_async_client()
+    except Exception:
+        pass
+
     if _api_executor:
-        _api_executor.shutdown(wait=False)
+        # Bounded: give blocked DB threads a moment to finish, but never hang
+        # shutdown past the stop grace period. The shutdown itself must run on
+        # a dedicated thread — asyncio.to_thread would submit it INTO
+        # _api_executor (it is the loop's default executor) and deadlock.
+        import threading as _threading
+
+        _pool_drained = _threading.Event()
+
+        def _drain_pool():
+            try:
+                _api_executor.shutdown(wait=True, cancel_futures=True)
+            finally:
+                _pool_drained.set()
+
+        _threading.Thread(target=_drain_pool, daemon=True).start()
+        for _ in range(200):  # up to 20s, without blocking the event loop
+            if _pool_drained.is_set():
+                break
+            await asyncio.sleep(0.1)
+        if not _pool_drained.is_set():
+            logger.warning("API executor did not drain within 20s; continuing shutdown")
+
+    neo4j.close()
     logger.info("Application shutdown complete")
 
 
@@ -375,6 +432,34 @@ def _seconds_until_next_utc_month() -> int:
     else:
         nxt = datetime(now.year, now.month + 1, 1)
     return max(1, int((nxt - now).total_seconds()))
+
+
+async def enforce_rate_limit(request: Request) -> None:
+    """Per-key token-bucket guardrail on expensive endpoints (opt-in).
+
+    No-op when RATE_LIMIT_QPM is unset (default 0). Keyed by API key,
+    falling back to client IP for unauthenticated callers.
+    """
+    settings = get_settings()
+    qpm = getattr(settings, "rate_limit_qpm", 0)
+    if qpm <= 0:
+        return
+    from app.services.rate_limiter import get_rate_limiter, rate_limit_key
+
+    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
+    client_ip = request.client.host if request.client else None
+    allowed, retry_after = get_rate_limiter().check(
+        rate_limit_key(api_key, client_ip),
+        qpm,
+        getattr(settings, "rate_limit_burst", 10),
+    )
+    if not allowed:
+        metrics.RATE_LIMITED.labels(route=request.url.path).inc()
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded ({qpm} requests/minute). Slow down.",
+            headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
 
 
 async def enforce_query_quota() -> None:
@@ -471,6 +556,57 @@ class APIUsageMiddleware(BaseHTTPMiddleware):
 
 # Add usage tracking middleware
 app.add_middleware(APIUsageMiddleware)
+
+
+@app.middleware("http")
+async def request_id_and_metrics_middleware(request: Request, call_next):
+    """Correlation + telemetry for every request.
+
+    - Reads/generates X-Request-ID, stores it in a contextvar (stamped on
+      every log line; forwarded to cortex-helper) and echoes it back.
+    - Records request count + latency by ROUTE TEMPLATE (bounded cardinality).
+    """
+    set_request_id(request.headers.get("X-Request-ID") or new_request_id())
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        route = getattr(request.scope.get("route"), "path", request.url.path)
+        metrics.HTTP_REQUESTS.labels(
+            route=route, method=request.method, status="5xx"
+        ).inc()
+        raise
+    route = getattr(request.scope.get("route"), "path", None)
+    if route:  # unmatched paths (404 noise) are not labeled
+        metrics.HTTP_REQUESTS.labels(
+            route=route,
+            method=request.method,
+            status=f"{response.status_code // 100}xx",
+        ).inc()
+        metrics.HTTP_DURATION.labels(route=route).observe(
+            time.monotonic() - start
+        )
+    rid = get_request_id()
+    if rid:
+        response.headers["X-Request-ID"] = rid
+    return response
+
+
+@app.get("/metrics")
+async def prometheus_metrics(auth: AuthResult = Depends(require_admin)):
+    """Prometheus metrics (admin-only; not routed through the prod nginx)."""
+    settings = get_settings()
+    if not getattr(settings, "metrics_enabled", True):
+        raise HTTPException(status_code=404, detail="Metrics disabled")
+    if not metrics.AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="prometheus-client is not installed in this image",
+        )
+    payload, content_type = metrics.render()
+    from fastapi.responses import Response as _Response
+
+    return _Response(content=payload, media_type=content_type)
 
 
 # =============================================================================
@@ -773,7 +909,8 @@ async def upload_file(
     collection_id: Optional[str] = Query(default=None, description="Collection to add document to"),
     start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)"),
     source: Optional[str] = Query(default=None, description="Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'."),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _rate: None = Depends(enforce_rate_limit),
 ):
     """
     Upload a file to the knowledge base.
@@ -1956,6 +2093,7 @@ async def search(
     request: SearchRequest,
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
+    _rate: None = Depends(enforce_rate_limit),
 ):
     """
     Perform hybrid search on the knowledge base.
@@ -2023,6 +2161,7 @@ async def ask_question(
     request: RAGRequest,
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
+    _rate: None = Depends(enforce_rate_limit),
 ):
     """
     Ask a question using enhanced GraphRAG.
@@ -2150,6 +2289,7 @@ async def ask_question_stream(
     request: RAGRequest,
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
+    _rate: None = Depends(enforce_rate_limit),
 ):
     """
     Stream the RAG response for better UX.
@@ -3636,6 +3776,7 @@ async def ask_with_thinking_stream(
     request: RAGRequest,
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
+    _rate: None = Depends(enforce_rate_limit),
 ):
     """
     Stream the RAG response with extended thinking visibility.

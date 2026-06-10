@@ -31,13 +31,31 @@ class Neo4jService:
     def __init__(self):
         self.settings = get_settings()
         self._driver = None
+        # Tracks silent degradation of semantic entity dedup: every failed
+        # vector-index lookup falls back to Levenshtein-only resolution.
+        # Surfaced in get_stats() so operators can see it.
+        self._vector_search_failures = 0
+        self._vector_search_failure_warned = False
     
     @property
     def driver(self):
         if self._driver is None:
             self._driver = GraphDatabase.driver(
                 self.settings.neo4j_uri,
-                auth=(self.settings.neo4j_user, self.settings.neo4j_password)
+                auth=(self.settings.neo4j_user, self.settings.neo4j_password),
+                max_connection_pool_size=self.settings.neo4j_max_pool_size,
+                connection_timeout=self.settings.neo4j_connection_timeout,
+                connection_acquisition_timeout=(
+                    self.settings.neo4j_connection_acquisition_timeout
+                ),
+                keep_alive=True,
+            )
+            logger.info(
+                "Neo4j driver created (pool_size=%s, connection_timeout=%ss, "
+                "acquisition_timeout=%ss)",
+                self.settings.neo4j_max_pool_size,
+                self.settings.neo4j_connection_timeout,
+                self.settings.neo4j_connection_acquisition_timeout,
             )
         return self._driver
     
@@ -258,6 +276,17 @@ class Neo4jService:
                 logger.warning(f"git_document_path index may already exist: {e}")
 
             # =================================================================
+            # Phase B checkpoint index (enable_phaseb_checkpointing)
+            # =================================================================
+            try:
+                session.run("""
+                    CREATE INDEX phaseb_checkpoint_key IF NOT EXISTS
+                    FOR (p:PhaseBCheckpoint) ON (p.run_signature, p.batch_key)
+                """)
+            except Exception as e:
+                logger.warning(f"PhaseBCheckpoint index may already exist: {e}")
+
+            # =================================================================
             # Data migrations
             # =================================================================
             # Backfill source field on existing documents that don't have one
@@ -275,6 +304,37 @@ class Neo4jService:
                     logger.info(f"Backfilled source field on {updated} existing documents")
             except Exception as e:
                 logger.warning(f"Could not backfill document source field: {e}")
+
+            # =================================================================
+            # Vector index health check
+            # =================================================================
+            # A broken/missing vector index silently degrades semantic entity
+            # dedup to Levenshtein-only — make that loud at startup.
+            try:
+                health = session.run(
+                    "SHOW INDEXES YIELD name, type, state "
+                    "WHERE type = 'VECTOR' AND name IN ['chunk_embedding', 'entity_embedding'] "
+                    "RETURN name, state"
+                )
+                states = {r["name"]: r["state"] for r in health}
+                for idx_name in ("chunk_embedding", "entity_embedding"):
+                    state = states.get(idx_name)
+                    if state is None:
+                        logger.error(
+                            f"Vector index '{idx_name}' is MISSING — semantic "
+                            f"search/dedup will silently degrade. Check "
+                            f"EMBEDDING_DIMENSION vs the index creation errors above."
+                        )
+                    elif state == "FAILED":
+                        logger.error(
+                            f"Vector index '{idx_name}' is in FAILED state — "
+                            f"drop and recreate it (restart re-runs schema init)."
+                        )
+                    elif state != "ONLINE":
+                        # POPULATING right after first creation is normal
+                        logger.info(f"Vector index '{idx_name}' state: {state}")
+            except Exception as e:
+                logger.warning(f"Could not verify vector index health: {e}")
 
             logger.info("Neo4j schema initialized successfully (including Collections, Communities, GraphRAG indexes, APIKeys, Skills)")
     
@@ -331,13 +391,19 @@ class Neo4jService:
             if isinstance(embedding, np.ndarray):
                 embedding = embedding.tolist()
             
+            import hashlib as _hashlib
+            content_hash = _hashlib.sha256(
+                (chunk.content or "").encode("utf-8", errors="replace")
+            ).hexdigest()[:32]
+
             result = session.run("""
                 MATCH (d:Document {id: $document_id})
                 MERGE (c:Chunk {id: $chunk_id})
                 SET c.content = $content,
                     c.embedding = $embedding,
                     c.chunk_index = $chunk_index,
-                    c.metadata = $metadata
+                    c.metadata = $metadata,
+                    c.content_hash = $content_hash
                 MERGE (d)-[:HAS_CHUNK]->(c)
                 RETURN c.id as id
             """,
@@ -346,9 +412,34 @@ class Neo4jService:
                 content=chunk.content,
                 embedding=embedding,
                 chunk_index=chunk.chunk_index,
-                metadata=str(chunk.metadata)
+                metadata=str(chunk.metadata),
+                content_hash=content_hash,
             )
             return result.single()["id"]
+
+    def set_document_fingerprint(
+        self, doc_id: str, file_sha256: str, config_hash: str
+    ) -> None:
+        """Record the processed file + extraction-config identity on the
+        Document (used by enable_reprocess_delta to skip unchanged reprocesses)."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.file_sha256 = $file_sha256,
+                    d.reprocess_config_hash = $config_hash
+            """, id=doc_id, file_sha256=file_sha256, config_hash=config_hash)
+
+    def get_document_fingerprint(self, doc_id: str) -> Optional[dict]:
+        """Return {file_sha256, config_hash, processing_status} or None."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})
+                RETURN d.file_sha256 as file_sha256,
+                       d.reprocess_config_hash as config_hash,
+                       coalesce(d.processing_status, 'pending') as processing_status
+            """, id=doc_id)
+            record = result.single()
+            return dict(record) if record else None
     
     def update_document_status(
         self, 
@@ -1916,7 +2007,18 @@ class Neo4jService:
     ) -> List[dict]:
         """
         Find entities with similar names using Levenshtein distance.
+
+        With `entity_dedup_prefilter` enabled, candidates come from the
+        entity fulltext index (top 50) and only those are Levenshtein-scored —
+        O(50) instead of a full Entity label scan per lookup. Falls back to
+        the full scan if the fulltext query fails.
         """
+        if self.settings.entity_dedup_prefilter:
+            candidates = self._find_similar_entities_prefiltered(
+                entity_name, threshold
+            )
+            if candidates is not None:
+                return candidates
         with self.driver.session() as session:
             try:
                 # Use APOC for string similarity if available
@@ -1938,6 +2040,49 @@ class Neo4jService:
                     RETURN e.name as name, e.type as type, e.description as description, 1.0 as similarity
                 """, name=entity_name)
                 return [dict(record) for record in result]
+
+    def _find_similar_entities_prefiltered(
+        self,
+        entity_name: str,
+        threshold: float,
+    ) -> Optional[List[dict]]:
+        """Fulltext-prefiltered Levenshtein lookup.
+
+        Returns None when the fulltext path errored (caller falls back to the
+        full scan). An empty list is a real "no candidates" result.
+        """
+        # Lucene query: escape special chars, then OR the name terms so
+        # multi-word entities still match on partial term hits.
+        sanitized = "".join(
+            c if c.isalnum() else " " for c in entity_name
+        ).strip()
+        if not sanitized:
+            return None
+        query = " OR ".join(sanitized.split())
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    CALL db.index.fulltext.queryNodes(
+                        'entity_name_fulltext', $query, {limit: 50}
+                    )
+                    YIELD node
+                    WITH node,
+                         apoc.text.levenshteinSimilarity(
+                             toLower(node.name), toLower($name)
+                         ) as similarity
+                    WHERE similarity >= $threshold
+                    RETURN node.name as name, node.type as type,
+                           node.description as description, similarity
+                    ORDER BY similarity DESC
+                    LIMIT 5
+                """, query=query, name=entity_name, threshold=threshold)
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.debug(
+                    f"Fulltext dedup prefilter failed, falling back to full "
+                    f"scan: {e}"
+                )
+                return None
     
     def get_chunk_context_for_entities(
         self,
@@ -4265,7 +4410,16 @@ class Neo4jService:
                 """, embedding=entity_embedding, threshold=threshold, limit=limit)
                 return [dict(record) for record in result]
             except Exception as e:
-                logger.debug(f"Entity embedding search failed (index may not exist): {e}")
+                self._vector_search_failures += 1
+                if not self._vector_search_failure_warned:
+                    self._vector_search_failure_warned = True
+                    logger.warning(
+                        f"Entity embedding search failed — semantic dedup is "
+                        f"degrading to Levenshtein-only (this is logged once; "
+                        f"see vector_search_failures in /api/stats): {e}"
+                    )
+                else:
+                    logger.debug(f"Entity embedding search failed: {e}")
                 return []
     
     def store_entity_with_embedding(
@@ -4419,10 +4573,404 @@ class Neo4jService:
 
             record = result.single()
             return (record["name"] if record else entity.name, True)
-    
+
+    # =========================================================================
+    # Batched KG writes (enable_batched_kg_writes)
+    # =========================================================================
+    # These reproduce the per-item semantics of store_entity_with_embedding /
+    # store_entity_with_resolution / link_entity_to_chunk / store_relationship
+    # in a handful of UNWIND round trips. The per-item methods stay the
+    # default path; test_batched_writes.py asserts the parity contract.
+
+    def resolve_entities_batch_by_embedding(
+        self,
+        rows: List[Tuple[int, List[float]]],
+        threshold: float,
+    ) -> dict:
+        """Vector-index resolution for many embeddings in one round trip.
+
+        Args:
+            rows: (index, embedding) pairs.
+        Returns:
+            {index: {"name": canonical, "similarity": score}} — indices
+            without a match above threshold are absent.
+        """
+        if not rows:
+            return {}
+        payload = [{"idx": i, "embedding": emb} for i, emb in rows]
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    UNWIND $rows AS row
+                    CALL {
+                        WITH row
+                        CALL db.index.vector.queryNodes('entity_embedding', 5, row.embedding)
+                        YIELD node, score
+                        WITH node, score
+                        WHERE score >= $threshold
+                        RETURN node.name AS name, score
+                        ORDER BY score DESC
+                        LIMIT 1
+                    }
+                    RETURN row.idx AS idx, name, score AS similarity
+                """, rows=payload, threshold=threshold)
+                return {
+                    r["idx"]: {"name": r["name"], "similarity": r["similarity"]}
+                    for r in result
+                }
+            except Exception as e:
+                self._vector_search_failures += 1
+                logger.warning(
+                    f"Batched entity embedding resolution failed — falling "
+                    f"back to Levenshtein for this batch: {e}"
+                )
+                return {}
+
+    def resolve_entities_batch_by_name(
+        self,
+        rows: List[Tuple[int, str]],
+        threshold: float = 0.85,
+    ) -> dict:
+        """Levenshtein resolution for many names in one round trip.
+
+        One full Entity scan serves the whole batch (vs one scan per entity
+        on the per-item path). With entity_dedup_prefilter, each name only
+        scores its top-50 fulltext candidates instead.
+        """
+        if not rows:
+            return {}
+        if self.settings.entity_dedup_prefilter:
+            resolved = self._resolve_batch_by_name_prefiltered(rows, threshold)
+            if resolved is not None:
+                return resolved
+        payload = [{"idx": i, "name": name} for i, name in rows]
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    UNWIND $rows AS row
+                    CALL {
+                        WITH row
+                        MATCH (e:Entity)
+                        WITH e, apoc.text.levenshteinSimilarity(
+                            toLower(e.name), toLower(row.name)
+                        ) AS similarity
+                        WHERE similarity >= $threshold
+                        RETURN e.name AS name, similarity
+                        ORDER BY similarity DESC
+                        LIMIT 1
+                    }
+                    RETURN row.idx AS idx, name, similarity
+                """, rows=payload, threshold=threshold)
+                return {
+                    r["idx"]: {"name": r["name"], "similarity": r["similarity"]}
+                    for r in result
+                }
+            except Exception as e:
+                logger.warning(
+                    f"Batched Levenshtein resolution failed (APOC missing?) — "
+                    f"treating batch as unresolved: {e}"
+                )
+                return {}
+
+    def _resolve_batch_by_name_prefiltered(
+        self,
+        rows: List[Tuple[int, str]],
+        threshold: float,
+    ) -> Optional[dict]:
+        """Fulltext-prefiltered variant of resolve_entities_batch_by_name.
+
+        Returns None on error so the caller falls back to the full scan.
+        """
+        payload = []
+        for i, name in rows:
+            sanitized = "".join(
+                c if c.isalnum() else " " for c in name
+            ).strip()
+            if not sanitized:
+                continue
+            payload.append({
+                "idx": i,
+                "name": name,
+                "query": " OR ".join(sanitized.split()),
+            })
+        if not payload:
+            return {}
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    UNWIND $rows AS row
+                    CALL {
+                        WITH row
+                        CALL db.index.fulltext.queryNodes(
+                            'entity_name_fulltext', row.query, {limit: 50}
+                        )
+                        YIELD node
+                        WITH node, apoc.text.levenshteinSimilarity(
+                            toLower(node.name), toLower(row.name)
+                        ) AS similarity
+                        WHERE similarity >= $threshold
+                        RETURN node.name AS name, similarity
+                        ORDER BY similarity DESC
+                        LIMIT 1
+                    }
+                    RETURN row.idx AS idx, name, similarity
+                """, rows=payload, threshold=threshold)
+                return {
+                    r["idx"]: {"name": r["name"], "similarity": r["similarity"]}
+                    for r in result
+                }
+            except Exception as e:
+                logger.debug(
+                    f"Prefiltered batch resolution failed, falling back to "
+                    f"full scan: {e}"
+                )
+                return None
+
+    def store_entities_batch(self, rows: List[dict]) -> int:
+        """Create/merge many entities in one UNWIND call.
+
+        Each row: {name, type, description, embedding (nullable), doc_id}.
+        SET semantics are identical to store_entity_with_embedding's MERGE
+        (existing type kept, longer description wins, first embedding wins,
+        provenance appended, extraction_count incremented).
+        """
+        if not rows:
+            return 0
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $rows AS row
+                MERGE (e:Entity {name: row.name})
+                ON CREATE SET
+                    e.type = row.type,
+                    e.description = row.description,
+                    e.embedding = row.embedding,
+                    e.source_documents = CASE WHEN row.doc_id IS NOT NULL THEN [row.doc_id] ELSE [] END,
+                    e.extraction_count = 1,
+                    e.created_at = datetime(),
+                    e.last_extracted_at = datetime()
+                ON MATCH SET
+                    e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN row.type ELSE e.type END,
+                    e.description = CASE WHEN size(coalesce(e.description, '')) < size(row.description) THEN row.description ELSE e.description END,
+                    e.embedding = CASE WHEN e.embedding IS NULL THEN row.embedding ELSE e.embedding END,
+                    e.source_documents = CASE
+                        WHEN row.doc_id IS NOT NULL AND NOT row.doc_id IN coalesce(e.source_documents, [])
+                        THEN coalesce(e.source_documents, []) + row.doc_id
+                        ELSE coalesce(e.source_documents, [])
+                    END,
+                    e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                    e.last_extracted_at = datetime()
+                RETURN count(e) AS stored
+            """, rows=rows)
+            record = result.single()
+            return record["stored"] if record else 0
+
+    def apply_entity_merges_batch(self, rows: List[dict]) -> int:
+        """Apply many entity merges (alias + provenance) in one UNWIND call.
+
+        Each row: {canonical, alias (nullable), doc_id (nullable)}. Mirrors
+        the merge branch of store_entity_with_embedding: alias appended when
+        different, document provenance appended, extraction_count += 1.
+        """
+        if not rows:
+            return 0
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $rows AS row
+                MATCH (e:Entity {name: row.canonical})
+                SET e.aliases = CASE
+                        WHEN row.alias IS NULL THEN e.aliases
+                        WHEN e.aliases IS NULL THEN [row.alias]
+                        WHEN NOT row.alias IN e.aliases THEN e.aliases + row.alias
+                        ELSE e.aliases
+                    END,
+                    e.source_documents = CASE
+                        WHEN row.doc_id IS NOT NULL AND NOT row.doc_id IN coalesce(e.source_documents, [])
+                        THEN coalesce(e.source_documents, []) + row.doc_id
+                        ELSE coalesce(e.source_documents, [])
+                    END,
+                    e.extraction_count = coalesce(e.extraction_count, 0) + 1,
+                    e.last_extracted_at = datetime()
+                RETURN count(e) AS merged
+            """, rows=rows)
+            record = result.single()
+            return record["merged"] if record else 0
+
+    def link_entities_to_chunks_batch(
+        self,
+        pairs: List[dict],
+        tx_size: int = 1000,
+    ) -> int:
+        """MERGE many (Chunk)-[:MENTIONS]->(Entity) links in UNWIND batches.
+
+        Each pair: {chunk_id, entity_name}. Like link_entity_to_chunk, pairs
+        whose chunk or entity doesn't exist are silently skipped.
+        """
+        if not pairs:
+            return 0
+        linked = 0
+        with self.driver.session() as session:
+            for start in range(0, len(pairs), tx_size):
+                batch = pairs[start:start + tx_size]
+                result = session.run("""
+                    UNWIND $pairs AS p
+                    MATCH (c:Chunk {id: p.chunk_id})
+                    MATCH (e:Entity {name: p.entity_name})
+                    MERGE (c)-[:MENTIONS]->(e)
+                    RETURN count(*) AS linked
+                """, pairs=batch)
+                record = result.single()
+                linked += record["linked"] if record else 0
+        return linked
+
+    def store_relationships_batch(
+        self,
+        relationships: List[Relationship],
+        source_document_id: str = None,
+        extraction_method: str = "per_document",
+    ) -> int:
+        """Store many relationships in one UNWIND + apoc.merge call.
+
+        Self-referential relationships are skipped (as in store_relationship).
+        Falls back to the per-item path when APOC is unavailable.
+        Returns the number of relationships actually stored (relationships
+        whose endpoints don't exist are skipped, matching the per-item path).
+        """
+        rows = [
+            {
+                "source": r.source,
+                "target": r.target,
+                "rel_type": r.relationship_type,
+                "description": r.description,
+                "weight": r.weight,
+            }
+            for r in relationships
+            if r.source.strip().lower() != r.target.strip().lower()
+        ]
+        if not rows:
+            return 0
+        with self.driver.session() as session:
+            try:
+                result = session.run("""
+                    UNWIND $rows AS row
+                    MATCH (s:Entity {name: row.source})
+                    MATCH (t:Entity {name: row.target})
+                    CALL apoc.merge.relationship(
+                        s, row.rel_type, {},
+                        {description: row.description, weight: row.weight}, t
+                    ) YIELD rel
+                    SET rel.extracted_at = datetime(),
+                        rel.extraction_method = $extraction_method,
+                        rel.source_document_id = $source_doc_id
+                    RETURN count(rel) AS stored
+                """,
+                    rows=rows,
+                    extraction_method=extraction_method,
+                    source_doc_id=source_document_id,
+                )
+                record = result.single()
+                return record["stored"] if record else 0
+            except Exception as e:
+                logger.debug(
+                    f"Batched relationship store failed (APOC missing?), "
+                    f"falling back to per-item: {e}"
+                )
+        stored = 0
+        for rel in relationships:
+            try:
+                if self.store_relationship(
+                    rel,
+                    source_document_id=source_document_id,
+                    extraction_method=extraction_method,
+                ):
+                    stored += 1
+            except Exception as e:
+                logger.warning(f"Failed to store relationship in fallback: {e}")
+        return stored
+
+    # =========================================================================
+    # Phase B checkpoints (enable_phaseb_checkpointing)
+    # =========================================================================
+    # A crash/redeploy mid-analysis no longer re-pays every batch's Phase 1 +
+    # Phase 2 LLM cost: completed batches are skipped on resume and Phase 1
+    # candidate pairs are reused across rounds.
+
+    def get_phaseb_checkpoint(
+        self, run_signature: str, batch_key: str
+    ) -> Optional[dict]:
+        """Return {round, phase2_done, candidates} for a batch, or None."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (p:PhaseBCheckpoint {run_signature: $sig, batch_key: $key})
+                RETURN p.round as round, p.phase2_done as phase2_done,
+                       p.candidates_json as candidates_json
+            """, sig=run_signature, key=batch_key)
+            record = result.single()
+            if not record:
+                return None
+            import json as _json
+            candidates = None
+            if record["candidates_json"]:
+                try:
+                    candidates = [
+                        tuple(pair) for pair in _json.loads(record["candidates_json"])
+                    ]
+                except (ValueError, TypeError):
+                    candidates = None
+            return {
+                "round": record["round"],
+                "phase2_done": bool(record["phase2_done"]),
+                "candidates": candidates,
+            }
+
+    def upsert_phaseb_checkpoint(
+        self,
+        run_signature: str,
+        batch_key: str,
+        round_num: int,
+        candidates: Optional[list] = None,
+        phase2_done: Optional[bool] = None,
+    ) -> None:
+        """Create/update a batch checkpoint. Only provided fields are set."""
+        import json as _json
+        sets = ["p.round = $round", "p.updated_at = datetime()"]
+        params = {"sig": run_signature, "key": batch_key, "round": round_num}
+        if candidates is not None:
+            sets.append("p.candidates_json = $candidates_json")
+            params["candidates_json"] = _json.dumps(
+                [list(pair) for pair in candidates]
+            )
+        if phase2_done is not None:
+            sets.append("p.phase2_done = $phase2_done")
+            params["phase2_done"] = phase2_done
+        with self.driver.session() as session:
+            session.run(f"""
+                MERGE (p:PhaseBCheckpoint {{run_signature: $sig, batch_key: $key}})
+                SET {", ".join(sets)}
+            """, **params)
+
+    def clear_phaseb_checkpoints(self, run_signature: Optional[str] = None) -> int:
+        """Delete checkpoints — all of them, or those NOT matching a signature
+        when one is given (stale runs)."""
+        with self.driver.session() as session:
+            if run_signature:
+                result = session.run("""
+                    MATCH (p:PhaseBCheckpoint)
+                    WHERE p.run_signature <> $sig
+                    DETACH DELETE p
+                    RETURN count(p) as deleted
+                """, sig=run_signature)
+            else:
+                result = session.run("""
+                    MATCH (p:PhaseBCheckpoint)
+                    DETACH DELETE p
+                    RETURN count(p) as deleted
+                """)
+            record = result.single()
+            return record["deleted"] if record else 0
+
     def get_stats(self, allowed_collection_ids: Optional[List[str]] = None) -> dict:
         """Get knowledge base and knowledge graph statistics.
-        
+
         Args:
             allowed_collection_ids: If provided, scope document/entity/community counts
                 to only those accessible from these collections.
@@ -4572,6 +5120,7 @@ class Neo4jService:
                 "last_relationship_analysis_at": self._get_or_seed_analysis_timestamp(record["relationship_count"]),
                 "last_community_detection_at": self._get_or_seed_detection_timestamp(record["community_count"]),
                 "last_entity_merge_at": self._get_meta("last_entity_merge_at"),
+                "vector_search_failures": self._vector_search_failures,
                 "entity_relationship_ratio": round(
                     record["relationship_count"] / entity_count, 2
                 ) if entity_count > 0 else 0.0,
