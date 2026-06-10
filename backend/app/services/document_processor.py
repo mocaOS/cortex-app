@@ -14,32 +14,25 @@ Features:
 
 import asyncio
 import functools
+import gc
 import json
 import logging
 import os
 import re
 import sys
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
-from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import ConversionResult
-from docling.datamodel.pipeline_options import (
-    EasyOcrOptions,
-    OcrOptions,
-    PdfPipelineOptions,
-    TableFormerMode,
-    TableStructureOptions,
-    TesseractOcrOptions,
-)
-
-# Docling imports for enhanced OCR
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling_haystack.converter import DoclingConverter, ExportType
+# NOTE: docling is intentionally NOT imported at module scope. Importing it
+# (docling.document_converter et al.) pulls torch + docling-ibm-models (~244 MB)
+# into every backend process at startup. The live ingestion path converts in a
+# dedicated subprocess (docling_worker.py, which builds its own converter), so
+# the in-process converter is built lazily in _build_docling_converter().
 from haystack import Document as HaystackDocument
 from haystack.components.preprocessors import DocumentSplitter
 
@@ -298,12 +291,59 @@ def _get_conversion_semaphore() -> asyncio.Semaphore:
     return _conversion_semaphore
 
 
+async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
+    """Convert via the shared docling service (cortex-helper).
+
+    Streams the file to the service and returns the same dict the subprocess
+    path returns. Raising lets the caller fall back to the local subprocess.
+    """
+    import httpx
+
+    settings = get_settings()
+    url = settings.docling_service_url.rstrip("/") + "/convert"
+    headers = {}
+    if settings.helper_service_token:
+        headers["X-Helper-Token"] = settings.helper_service_token
+
+    logger.info(f"Converting {Path(file_path).name} via docling service")
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        with open(file_path, "rb") as fh:
+            resp = await client.post(
+                url,
+                files={"file": (Path(file_path).name, fh)},
+                data={"use_vision": str(use_vision).lower()},
+                headers=headers,
+            )
+        resp.raise_for_status()
+        result = resp.json()
+    if result.get("error"):
+        raise RuntimeError(f"Docling service error: {result['error']}")
+    logger.info(
+        f"Service conversion complete for {result.get('filename', '?')} "
+        f"(md_len={len(result.get('markdown') or '')}, images={len(result.get('images', []))})"
+    )
+    return result
+
+
 async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict:
-    """Run Docling conversion in a subprocess to avoid GIL contention.
+    """Convert a document to markdown.
+
+    Uses the shared docling service when DOCLING_SERVICE_URL is set (falling back
+    to the local subprocess if the service is unreachable); otherwise runs Docling
+    in a subprocess to avoid GIL contention.
 
     Returns dict with keys: markdown, filename, images, error.
     """
     import json as _json
+
+    settings = get_settings()
+    if settings.docling_service_url:
+        try:
+            return await _convert_via_service(file_path, use_vision)
+        except Exception as e:
+            logger.warning(
+                f"Docling service unavailable ({e}); falling back to local subprocess"
+            )
 
     sem = _get_conversion_semaphore()
     async with sem:
@@ -395,66 +435,11 @@ class DocumentProcessor:
         self.graph_extractor = get_graph_extractor()
         self.vision_analyzer = get_vision_analyzer()
 
-        # Initialize Docling converter with enhanced OCR settings for better image text extraction
-        # Configure pipeline options for maximum accuracy on scanned documents and images
-        # When vision model is set: skip local OCR and picture description - use vision model for images
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = not self.vision_analyzer.is_vision_model_available
-        pipeline_options.do_table_structure = True
-        pipeline_options.do_picture_description = not self.vision_analyzer.is_vision_model_available
-        pipeline_options.table_structure_options = TableStructureOptions(
-            do_cell_matching=True,
-            mode=TableFormerMode.ACCURATE,  # Prioritize accuracy over speed
-        )
-
-        # Configure EasyOCR only when no vision model - avoid local CPU/GPU processing when vision model is set
-        if not self.vision_analyzer.is_vision_model_available:
-            pipeline_options.ocr_options = EasyOcrOptions(
-                lang=["en", "de"],
-                use_gpu=True,  # Enable GPU acceleration if available
-                confidence_threshold=0.2,  # Lower threshold = more aggressive text detection
-            )
-
-        # Alternative: Tesseract OCR (uncomment to use instead of EasyOCR)
-        # pipeline_options.ocr_options = TesseractOcrOptions(
-        #     lang=["eng"],
-        #     force_full_page_ocr=True,  # Force OCR on entire page for scanned docs
-        # )
-
-        # Configure accelerator for thorough processing
-        pipeline_options.accelerator_options = AcceleratorOptions(
-            num_threads=8,  # Increase threads for more thorough processing
-            device=AcceleratorDevice.AUTO,  # Auto-detect CUDA/MPS/CPU
-        )
-
-        # Generate higher resolution images for better OCR accuracy
-        pipeline_options.generate_page_images = True
-        pipeline_options.images_scale = 2.0  # 2x resolution for better text recognition
-
-        # Create underlying Docling DocumentConverter with enhanced pipeline options
-        # This handles PDF, IMAGE, and other formats with the configured OCR settings
-        underlying_converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
-                InputFormat.IMAGE: PdfFormatOption(pipeline_options=pipeline_options),
-            }
-        )
-
-        # Create Haystack DoclingConverter with the pre-configured underlying converter
-        # Uses MARKDOWN export type for consistent processing with existing pipeline
-        self.docling_converter = DoclingConverter(
-            export_type=ExportType.MARKDOWN,
-            converter=underlying_converter,
-        )
-        # Log initialization with image analysis and OCR method
-        if self.vision_analyzer.is_vision_model_available:
-            logger.info(
-                "Docling converter initialized (markdown only, no local OCR/VLM - image analysis via external vision model)"
-            )
-        else:
-            logger.info(
-                "Docling converter initialized with enhanced OCR and Docling SmolVLM (EasyOCR, 8 threads, 2x image scale)"
-            )
+        # In-process Docling converter is built lazily (see _build_docling_converter
+        # / _get_converter). The live ingestion path converts in a subprocess
+        # (_convert_document_subprocess), so this stays None on startup and avoids
+        # importing docling/torch (~244 MB) into every backend instance.
+        self.docling_converter = None
 
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
@@ -914,12 +899,74 @@ class DocumentProcessor:
         ".scala": "scala", ".lua": "lua", ".r": "r", ".pl": "perl",
     }
 
-    def _get_converter(self, file_type: str):
-        """Get the appropriate converter for a file type.
+    def _build_docling_converter(self):
+        """Build the in-process Docling converter on demand.
 
-        Docling handles all supported document formats natively.
+        docling is imported here, not at module scope: importing it pulls torch +
+        docling-ibm-models (~244 MB) into the process. The live ingestion path
+        converts in the docling_worker subprocess, so most instances never call
+        this and never pay that cost.
+        """
+        from docling.datamodel.accelerator_options import (
+            AcceleratorDevice,
+            AcceleratorOptions,
+        )
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            EasyOcrOptions,
+            PdfPipelineOptions,
+            TableFormerMode,
+            TableStructureOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling_haystack.converter import DoclingConverter, ExportType
+
+        # Configure pipeline for accuracy on scanned docs/images. When a vision
+        # model is set, skip local OCR and picture description and let the vision
+        # model handle images instead.
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = not self.vision_analyzer.is_vision_model_available
+        pipeline_options.do_table_structure = True
+        pipeline_options.do_picture_description = not self.vision_analyzer.is_vision_model_available
+        pipeline_options.table_structure_options = TableStructureOptions(
+            do_cell_matching=True,
+            mode=TableFormerMode.ACCURATE,  # Prioritize accuracy over speed
+        )
+        if not self.vision_analyzer.is_vision_model_available:
+            pipeline_options.ocr_options = EasyOcrOptions(
+                lang=["en", "de"],
+                use_gpu=True,
+                confidence_threshold=0.2,
+            )
+        pipeline_options.accelerator_options = AcceleratorOptions(
+            num_threads=8,
+            device=AcceleratorDevice.AUTO,  # Auto-detect CUDA/MPS/CPU
+        )
+        pipeline_options.generate_page_images = True
+        pipeline_options.images_scale = 2.0  # 2x resolution for better text recognition
+
+        underlying_converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                InputFormat.IMAGE: PdfFormatOption(pipeline_options=pipeline_options),
+            }
+        )
+        logger.info("In-process Docling converter built (lazy)")
+        return DoclingConverter(
+            export_type=ExportType.MARKDOWN,
+            converter=underlying_converter,
+        )
+
+    def _get_converter(self, file_type: str):
+        """Get the appropriate converter for a file type (built lazily).
+
+        Note: the live ingestion path converts via _convert_document_subprocess
+        (docling_worker.py). This in-process converter is retained for callers
+        needing synchronous conversion and is built on first use.
         """
         if file_type.lower() in self.DOCLING_EXTENSIONS:
+            if self.docling_converter is None:
+                self.docling_converter = self._build_docling_converter()
             return self.docling_converter
         return None
 
@@ -2357,6 +2404,8 @@ class QueryProcessor:
         self.neo4j = get_neo4j_service()
         self.graph_extractor = get_graph_extractor()
         self._reranker = None  # Lazy load cross-encoder
+        self._reranker_last_used = 0.0  # monotonic ts of last local rerank
+        self._reranker_lock = threading.Lock()  # guard concurrent load/unload
 
         # Initialize text embedder based on configuration
         if self.settings.use_openai_embeddings and self.settings.embed_api_key:
@@ -2404,48 +2453,116 @@ class QueryProcessor:
 
     @property
     def reranker(self):
-        """Lazy load cross-encoder for re-ranking."""
-        if self._reranker is None and self.settings.enable_reranking:
-            try:
-                from sentence_transformers import CrossEncoder
+        """Lazy-load the local cross-encoder (thread-safe).
 
-                self._reranker = CrossEncoder(self.settings.reranking_model)
-                logger.info(f"Loaded cross-encoder: {self.settings.reranking_model}")
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load cross-encoder, disabling reranking: {e}"
-                )
-                self._reranker = False  # Mark as unavailable
+        Returns None when reranking is disabled or a remote reranker service is
+        configured (in which case scoring happens over HTTP, not in-process).
+        """
+        if self.settings.reranker_service_url or not self.settings.enable_reranking:
+            return None
+        if self._reranker is None:
+            with self._reranker_lock:
+                if self._reranker is None:  # re-check inside the lock
+                    try:
+                        from sentence_transformers import CrossEncoder
+
+                        self._reranker = CrossEncoder(self.settings.reranking_model)
+                        logger.info(
+                            f"Loaded cross-encoder: {self.settings.reranking_model}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to load cross-encoder, disabling reranking: {e}"
+                        )
+                        self._reranker = False  # Mark as unavailable
         return self._reranker if self._reranker else None
+
+    def prewarm_reranker(self) -> None:
+        """Fire-and-forget background load of the local reranker.
+
+        Call this at the START of a request so the ~7 s cold start overlaps the
+        query-analysis LLM call + embedding + search that run before reranking,
+        instead of blocking the rerank step. Idempotent and non-blocking; no-op
+        in remote/disabled mode or once the model is loaded.
+        """
+        if self.settings.reranker_service_url or not self.settings.enable_reranking:
+            return
+        if self._reranker is not None:  # loaded or marked-failed
+            return
+        _rerank_executor.submit(lambda: self.reranker)
+
+    def maybe_unload_reranker(self) -> bool:
+        """Unload the local reranker if idle past the configured TTL.
+
+        Called by the background reaper. Reclaims ~1 GB; the model reloads on the
+        next query. Returns True if it unloaded. TTL 0 = never unload.
+        """
+        ttl = self.settings.reranker_idle_ttl_seconds
+        if ttl <= 0 or not self._reranker:
+            return False
+        if time.monotonic() - self._reranker_last_used < ttl:
+            return False
+        with self._reranker_lock:
+            if not self._reranker:
+                return False
+            self._reranker = None
+        gc.collect()
+        logger.info(f"Unloaded idle cross-encoder (idle > {ttl}s); reclaimed reranker memory")
+        return True
+
+    def _rerank_remote(self, query: str, passages: List[str]) -> Optional[List[float]]:
+        """Score passages via the shared reranker service. None on failure."""
+        import httpx
+
+        url = self.settings.reranker_service_url.rstrip("/") + "/rerank"
+        headers = {}
+        if self.settings.helper_service_token:
+            headers["X-Helper-Token"] = self.settings.helper_service_token
+        try:
+            resp = httpx.post(
+                url,
+                json={"query": query, "passages": passages},
+                headers=headers,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            return resp.json()["scores"]
+        except Exception as e:
+            logger.warning(f"Remote rerank failed ({url}); falling back to no rerank: {e}")
+            return None
 
     def rerank_results(
         self, query: str, results: List[dict], top_k: int = 5
     ) -> List[dict]:
         """
-        Re-rank results using cross-encoder for better precision.
+        Re-rank results using a cross-encoder for better precision.
 
-        Cross-encoders score query-document pairs directly,
-        providing more accurate relevance scores than bi-encoders.
+        Uses the shared reranker service when configured, else the local model.
+        Cross-encoders score query-document pairs directly, more accurately than
+        the bi-encoder similarity that produced the candidates.
         """
-        if not results or not self.reranker:
+        if not results:
             return results[:top_k]
 
         try:
-            # Create query-content pairs
-            pairs = [(query, r.get("content", "")) for r in results]
+            passages = [r.get("content", "") for r in results]
+            if self.settings.reranker_service_url:
+                scores = self._rerank_remote(query, passages)
+            else:
+                model = self.reranker
+                if not model:
+                    return results[:top_k]
+                self._reranker_last_used = time.monotonic()
+                scores = model.predict([(query, p) for p in passages])
 
-            # Score with cross-encoder
-            scores = self.reranker.predict(pairs)
+            if scores is None:  # remote failed → keep original order
+                return results[:top_k]
 
-            # Add rerank scores to results
             for i, score in enumerate(scores):
                 results[i]["rerank_score"] = float(score)
-
-            # Sort by rerank score
             reranked = sorted(
                 results, key=lambda x: x.get("rerank_score", 0), reverse=True
             )
-
             logger.debug(f"Reranked {len(results)} results")
             return reranked[:top_k]
 

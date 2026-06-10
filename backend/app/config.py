@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     uppercase names (e.g., NEO4J_URI, OPENAI_API_KEY).
     """
 
+    # Deployment environment. Set ENVIRONMENT=production to enforce secret
+    # hardening at startup (see _enforce_production_secrets).
+    environment: str = Field(default="development")
+
+    # Comma-separated list of allowed CORS origins (e.g.
+    # "https://app.example.com,https://admin.example.com"). The default "*"
+    # allows any origin but, per the CORS spec, only without credentials —
+    # which is safe here because all auth is header-based (X-API-Key).
+    cors_allowed_origins: str = Field(default="*")
+
     # Neo4j Configuration
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_user: str = Field(default="neo4j")
@@ -283,6 +293,29 @@ class Settings(BaseSettings):
     reranking_model: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2"
     )  # Cross-encoder model
+    # Eagerly load the cross-encoder at startup. The local reranker pulls
+    # torch + sentence-transformers (~780 MB resident) into the process; with
+    # remote embeddings it is the ONLY thing that does. Defaulting this OFF
+    # keeps idle instances lean (~250 MB vs ~1 GB) — important for packing many
+    # tenant stacks per host — at the cost of a one-time cold start (~10–30 s)
+    # on the first reranked query. Set true for latency-sensitive single-tenant
+    # deployments. Has no effect when enable_reranking is false.
+    reranker_preload: bool = Field(default=False)
+    # Idle TTL for the locally-loaded cross-encoder, in seconds. After this much
+    # time with no rerank, the model is unloaded to reclaim ~1 GB; it reloads on
+    # the next query. 0 = never unload (stay loaded once loaded). Ignored when a
+    # remote reranker service is configured.
+    reranker_idle_ttl_seconds: int = Field(default=1800)
+
+    # ==========================================================================
+    # Shared model services (cortex-helper) — offload heavy models to a service
+    # hosted once per physical machine. Empty = use the built-in local path
+    # (in-process reranker / subprocess docling). See cortex-helper/README.md.
+    # ==========================================================================
+    reranker_service_url: str = Field(default="")  # e.g. http://localhost:3030
+    docling_service_url: str = Field(default="")   # e.g. http://localhost:3030
+    helper_service_token: str = Field(default="")  # shared secret -> X-Helper-Token
+
     enable_hybrid_search: bool = Field(
         default=True
     )  # Enable hybrid (vector + keyword) search
@@ -634,6 +667,53 @@ class Settings(BaseSettings):
         parsed = parse_overrides(self.reasoning_model_overrides)
         self.__dict__["_parsed_reasoning_overrides"] = parsed
         return parsed
+
+    @property
+    def is_production(self) -> bool:
+        """True when running with ENVIRONMENT=production (or "prod")."""
+        return self.environment.strip().lower() in ("production", "prod")
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse cors_allowed_origins into a list. ["*"] means allow any."""
+        raw = self.cors_allowed_origins.strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def _enforce_production_secrets(self):
+        """Refuse to boot an insecure instance in production.
+
+        Auth is header-based (X-API-Key), but a default/empty Neo4j password
+        or a weak JWT signing secret is a direct compromise path, so we fail
+        fast rather than start with insecure defaults. Only enforced when
+        ENVIRONMENT=production; development keeps convenient defaults.
+        """
+        if not self.is_production:
+            return self
+
+        problems: list[str] = []
+
+        if self.neo4j_password in ("", "password123"):
+            problems.append(
+                "NEO4J_PASSWORD must be set to a strong, non-default value"
+            )
+
+        # session_secret signs admin JWTs; it is only needed when admin login
+        # is enabled, which is the case whenever an admin password is set.
+        if self.admin_password and len(self.session_secret) < 32:
+            problems.append(
+                "SESSION_SECRET must be at least 32 characters when "
+                "ADMIN_PASSWORD is set"
+            )
+
+        if problems:
+            raise ValueError(
+                "Insecure configuration for ENVIRONMENT=production:\n  - "
+                + "\n  - ".join(problems)
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod

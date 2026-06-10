@@ -179,6 +179,8 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 |----------|---------|-------------|
 | `ENABLE_RERANKING` | `true` | Enable cross-encoder re-ranking for improved precision. |
 | `RERANKING_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model for re-ranking. |
+| `RERANKER_PRELOAD` | `false` | Eager-load the cross-encoder at startup. Off keeps idle instances lean (the first query's load is hidden behind the preceding search/LLM work). |
+| `RERANKER_IDLE_TTL_SECONDS` | `1800` | Unload the idle local cross-encoder after this many seconds to reclaim ~1 GB (reloads on next query). `0` = never unload. |
 | `ENABLE_HYBRID_SEARCH` | `true` | Enable hybrid (vector + keyword + graph) search. |
 | `ENABLE_BATCHED_QUERY_EXTRACTION` | `true` | Batch a search's queries into one entity-extraction call + one embedding call (instead of one each per query) to cut LLM/embedding round-trips during research. |
 | `VECTOR_WEIGHT` | `0.5` | Weight for vector search in RRF fusion. |
@@ -188,6 +190,16 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 | `MAX_CONVERSATION_HISTORY` | `6` | Max messages retained in conversation context. |
 | `ENABLE_AGENTIC_RAG` | `true` | Enable multi-step agentic RAG. |
 | `MAX_AGENTIC_STEPS` | `3` | Maximum steps in legacy agentic RAG pipeline. |
+
+## Shared Model Services (cortex-helper)
+
+For multi-instance deployments (e.g. many isolated customer stacks on one host), the heavy ML models can be hosted **once per machine** by the companion `cortex-helper` service and shared by all stacks, instead of each instance loading its own copy. Leave these unset to use the built-in local path; both fall back to local automatically if the service is unreachable.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RERANKER_SERVICE_URL` | — | Reranker service base URL (e.g. `http://cortex-helper:3030`). Set = no local cross-encoder is loaded. |
+| `DOCLING_SERVICE_URL` | — | Docling service base URL. Set = documents convert via the warm shared service instead of a local subprocess. |
+| `HELPER_SERVICE_TOKEN` | — | Shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN`. |
 
 ## Agent Research Pipeline
 
@@ -286,6 +298,8 @@ The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ENVIRONMENT` | `development` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD` empty/`password123`, or `SESSION_SECRET` < 32 chars when `ADMIN_PASSWORD` is set). |
+| `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist for production. |
 | `PROMPT_SECURITY` | `true` | Enable prompt injection detection and protection. |
 | `ADMIN_EMAIL` | `admin@example.com` | Admin login email for the web interface. |
 | `ADMIN_PASSWORD` | — | Admin login password. **Required.** |

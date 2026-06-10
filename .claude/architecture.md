@@ -63,3 +63,6 @@ Next.js App Router with unified navigation structure:
 - Frontend uses `"use client"` directive for interactive components; API calls go through `lib/api.ts`
 - All API endpoints are in `main.py` (no separate router modules)
 - Turbo mode overrides both extraction and main model configs
+- **Security defaults**: CORS is allowlist-driven (`CORS_ALLOWED_ORIGINS`; wildcard disables credentials). `ENVIRONMENT=production` fails fast on weak/default secrets via `config.py:_enforce_production_secrets`. See [`environment.md`](environment.md).
+- **Per-instance footprint**: the heavy models (cross-encoder reranker, docling) are lazy-loaded and can be offloaded to a shared per-host service (`cortex-helper` repo) via `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` — key for packing many tenant stacks per machine. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md), [`domain/document-pipeline.md`](domain/document-pipeline.md).
+- **CI**: `.github/workflows/ci.yml` runs backend pytest + ruff (error-only) and frontend `tsc --noEmit` + lint on PRs.

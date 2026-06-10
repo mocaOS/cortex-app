@@ -2,9 +2,14 @@
 
 Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
+## Deployment & CORS
+
+- `ENVIRONMENT` (default: `development`) — set to `production` to enforce secret hardening at startup. A Pydantic validator (`config.py:_enforce_production_secrets`) refuses to boot when `NEO4J_PASSWORD` is empty/`password123`, or when `SESSION_SECRET` is shorter than 32 chars while `ADMIN_PASSWORD` is set. Development keeps the convenient defaults.
+- `CORS_ALLOWED_ORIGINS` (default: `*`) — comma-separated allowlist of origins (e.g. `https://app.example.com,https://admin.example.com`). Wildcard `*` allows any origin but, per spec, with **credentials disabled** — safe here because all auth is header-based (`X-API-Key`), never cookies. An explicit allowlist re-enables credentialed CORS. Parsed by `config.cors_origins_list`; applied in `main.py`. A startup WARN fires when running wildcard.
+
 ## Database
 
-- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` — Neo4j connection
+- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` — Neo4j connection (production refuses the default `password123`; see Deployment above)
 
 ## Primary LLM
 
@@ -111,6 +116,23 @@ VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 - `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
 - `EMBEDDING_MAX_INPUT_TOKENS` (default: 8192) — per-input token cap before sending to the embeddings endpoint. Oversized inputs are char-truncated client-side (~2.8 chars/token, deliberately conservative to handle markdown/code/CJK content without overshooting the server cap) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* errors. **Keep at 8192 for managed providers** — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of the underlying model's native window. Only lift (e.g. to 32768 for Qwen3-Embedding-8B) on self-hosted vLLM where you control the deployment. Applied in `app/services/document_processor.py:_truncate_for_embedding`.
 
+## Reranking
+
+The cross-encoder reranker (`QueryProcessor.rerank_results`) is the precision pass after hybrid RRF. The local model drags torch + sentence-transformers (~780 MB beyond the ~650 MB haystack/torch floor) into the process, so its lifecycle is tuned for per-instance footprint (key for tenant density — see [`domain/rag-pipeline.md`](domain/rag-pipeline.md)).
+
+- `ENABLE_RERANKING` (default: true) — enable cross-encoder reranking.
+- `RERANKING_MODEL` (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`) — local cross-encoder.
+- `RERANKER_PRELOAD` (default: **false**) — eager-load the cross-encoder at startup. Off keeps idle instances lean and defers the ~7 s cold start to first use (which `prewarm_reranker()`, fired from `enforce_query_quota`, overlaps with the pre-rerank LLM/search work). Set true for latency-sensitive single-tenant deploys that want zero cold start. No effect when reranking is disabled or offloaded to a service.
+- `RERANKER_IDLE_TTL_SECONDS` (default: 1800) — unload the local cross-encoder after this much idle time to reclaim ~1 GB; it reloads on the next query. `0` = never unload. A reaper task (`main.py:_reranker_idle_reaper`) enforces it. Ignored in remote mode.
+
+## Shared Model Services (cortex-helper)
+
+Offload heavy models to a service hosted once per physical machine (see the `cortex-helper` repo). Empty = use the built-in local path (in-process reranker / subprocess docling). Both clients fall back to local automatically if the service is unreachable. Does NOT remove the ~650 MB torch/haystack floor — the win is eliminating the reranker load spike and per-document docling model reloads, and centralizing GPU.
+
+- `RERANKER_SERVICE_URL` (default: empty) — e.g. `http://cortex-helper:3030`. When set, `rerank_results` POSTs `{query, passages}` to `/rerank` and no local cross-encoder is loaded.
+- `DOCLING_SERVICE_URL` (default: empty) — e.g. `http://cortex-helper:3030`. When set, `_convert_document_subprocess` POSTs the file to `/convert` (warm converter, ~0.04 s vs ~4.5 s cold subprocess) instead of spawning a local docling subprocess.
+- `HELPER_SERVICE_TOKEN` (default: empty) — shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN`.
+
 ## Feature Flags
 
 - `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
@@ -163,7 +185,7 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 
 ## Auth
 
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` — auth
+- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET` — admin auth. In `ENVIRONMENT=production`, startup fails fast if `SESSION_SECRET` is < 32 chars while `ADMIN_PASSWORD` is set (see [Deployment & CORS](#deployment--cors)).
 
 ## Secret Encryption
 

@@ -665,9 +665,11 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
+| `ENVIRONMENT` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD`, `SESSION_SECRET`) | No | `development` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist in production | No | `*` |
 | `NEO4J_URI` | Neo4j connection URI | Yes | `bolt://localhost:7687` |
 | `NEO4J_USER` | Neo4j username | Yes | `neo4j` |
-| `NEO4J_PASSWORD` | Neo4j password | Yes | `password123` |
+| `NEO4J_PASSWORD` | Neo4j password (rejected as default `password123` when `ENVIRONMENT=production`) | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (powerful reasoning models recommended, e.g. Minimax M2.7, GLM5, Kimi K2.5) | No | `openai/minimax-m21` |
@@ -709,6 +711,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `SENTENCES_PER_CHUNK` | Sentences per chunk (if sentence mode) | No | `5` |
 | `ENABLE_RERANKING` | Enable cross-encoder re-ranking | No | `true` |
 | `RERANKING_MODEL` | Cross-encoder model for re-ranking | No | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `RERANKER_PRELOAD` | Eager-load the cross-encoder at startup. Off keeps idle instances lean (cold start deferred to first query, overlapped with pre-rerank work) | No | `false` |
+| `RERANKER_IDLE_TTL_SECONDS` | Unload the idle local cross-encoder after N seconds to reclaim ~1 GB (reloads on next query). `0` = never unload | No | `1800` |
 | `ENABLE_HYBRID_SEARCH` | Enable hybrid (vector + keyword) search | No | `true` |
 | `ENABLE_BATCHED_QUERY_EXTRACTION` | Batch a search's queries into one entity-extraction + one embedding call (vs one each per query) | No | `true` |
 | `VECTOR_WEIGHT` | Weight for vector search in RRF | No | `0.5` |
@@ -717,6 +721,16 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `MAX_CONVERSATION_HISTORY` | Max messages in conversation context | No | `6` |
 | `ENABLE_AGENTIC_RAG` | Enable multi-step agentic RAG | No | `true` |
 | `MAX_AGENTIC_STEPS` | Maximum steps in agentic RAG (legacy) | No | `3` |
+
+#### Shared Model Services (cortex-helper)
+
+Optionally offload the heavy ML components (cross-encoder reranker + Docling converter) to a service hosted once per physical machine, so many tenant stacks on that host don't each load their own copy. When unset, cortex-app uses its built-in local path (in-process reranker / subprocess Docling). Both fall back to local automatically if the service is unreachable. See the `cortex-helper` repo.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `RERANKER_SERVICE_URL` | Reranker service base URL (e.g. `http://cortex-helper:3030`). Set = no local cross-encoder is loaded | No | - |
+| `DOCLING_SERVICE_URL` | Docling service base URL (e.g. `http://cortex-helper:3030`). Set = convert via warm service instead of subprocess | No | - |
+| `HELPER_SERVICE_TOKEN` | Shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN` | No | - |
 
 #### Agent-Based Research Pipeline
 

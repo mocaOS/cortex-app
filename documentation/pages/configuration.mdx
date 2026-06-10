@@ -343,6 +343,22 @@ ENABLE_BATCHED_QUERY_EXTRACTION=true
 # Enable cross-encoder re-ranking for precision
 ENABLE_RERANKING=true
 RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+
+# Lifecycle (per-instance footprint tuning)
+RERANKER_PRELOAD=false          # eager-load at startup; off = lazy, leaner idle instances
+RERANKER_IDLE_TTL_SECONDS=1800  # unload idle model to reclaim ~1 GB; 0 = never unload
+```
+
+The local cross-encoder pulls ~780 MB into the process. It is lazy-loaded by default; the first reranked query's load is hidden behind the preceding LLM/search work, and the model unloads after `RERANKER_IDLE_TTL_SECONDS` of inactivity.
+
+### Shared Model Services (cortex-helper)
+
+Offload the cross-encoder and Docling converter to a service hosted once per physical machine (the `cortex-helper` repo), so many tenant stacks on that host don't each load their own copy. Falls back to the built-in local path automatically when unset or unreachable.
+
+```bash
+RERANKER_SERVICE_URL=http://cortex-helper:3030   # set = no local cross-encoder loaded
+DOCLING_SERVICE_URL=http://cortex-helper:3030    # set = convert via warm service, not subprocess
+HELPER_SERVICE_TOKEN=                             # shared secret -> X-Helper-Token (match helper's HELPER_TOKEN)
 ```
 
 ### Agentic RAG
@@ -505,6 +521,15 @@ When no vision model is configured, Docling's built-in image description (SmolDo
 
 ## Security
 
+### Deployment hardening & CORS
+
+```bash
+ENVIRONMENT=production            # fail fast on weak/default secrets at startup
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+With `ENVIRONMENT=production`, startup refuses to boot if `NEO4J_PASSWORD` is empty or the default `password123`, or if `SESSION_SECRET` is shorter than 32 characters while `ADMIN_PASSWORD` is set. `CORS_ALLOWED_ORIGINS` defaults to `*` (any origin, credentials disabled since auth is header-based); set an explicit comma-separated allowlist for production.
+
 ### Prompt Security
 
 ```bash
@@ -612,6 +637,13 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `REASONING_MODEL_OVERRIDES` | No | empty | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
+| `RERANKER_PRELOAD` | No | `false` | Eager-load cross-encoder at startup |
+| `RERANKER_IDLE_TTL_SECONDS` | No | `1800` | Unload idle reranker after N s (0 = never) |
+| `RERANKER_SERVICE_URL` | No | - | Offload reranking to cortex-helper |
+| `DOCLING_SERVICE_URL` | No | - | Offload Docling conversion to cortex-helper |
+| `HELPER_SERVICE_TOKEN` | No | - | Shared secret for the helper service |
+| `ENVIRONMENT` | No | `development` | `production` = fail fast on weak secrets |
+| `CORS_ALLOWED_ORIGINS` | No | `*` | Comma-separated CORS allowlist |
 | `ENABLE_AGENTIC_RAG` | No | `true` | Enable agentic mode |
 | `ENABLE_AGENT_RESEARCH` | No | `true` | Use agent pipeline for deep research (vs legacy) |
 | `ENABLE_AGENT_CHAT` | No | `true` | Use agent pipeline for standard chat (required for skills) |

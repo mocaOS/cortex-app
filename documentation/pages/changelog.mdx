@@ -7,6 +7,22 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 10, 2026
+
+### Leaner instances: lazy models + a shared per-machine model service
+
+Backend startup memory dropped from ~2.2 GB to ~1 GB by deferring heavy model loads. The cross-encoder reranker no longer loads at startup (`RERANKER_PRELOAD=false` by default) — its ~7 s cold start is now hidden behind the query-analysis and search work that precedes reranking, and the model unloads after an idle period (`RERANKER_IDLE_TTL_SECONDS`, default 1800; `0` = never) to reclaim ~1 GB. Docling is no longer imported at startup (it ran in a subprocess anyway), saving ~244 MB per instance.
+
+**New `cortex-helper` service.** For deployments running many isolated stacks on one host, the cross-encoder reranker and Docling converter can now be hosted **once per physical machine** and shared by all stacks via `RERANKER_SERVICE_URL` / `DOCLING_SERVICE_URL` / `HELPER_SERVICE_TOKEN`. Models stay warm (Docling conversions skip the per-document model reload — ~0.04 s vs ~4.5 s), and both clients fall back to the built-in local path automatically if the service is unset or unreachable. Single-instance and on-prem users are unaffected.
+
+### Production hardening
+
+- **CORS** is now allowlist-driven via `CORS_ALLOWED_ORIGINS` (default `*` allows any origin but with credentials disabled, since auth is header-based). Set an explicit allowlist for production.
+- **Fail-fast secrets**: `ENVIRONMENT=production` refuses to boot on weak/default secrets — an empty/`password123` `NEO4J_PASSWORD`, or a `SESSION_SECRET` under 32 characters when `ADMIN_PASSWORD` is set.
+- **CI**: a GitHub Actions workflow now runs backend tests + lint and frontend type-check + lint on every PR.
+
+---
+
 ## June 8, 2026
 
 ### Snappier chat: live status, heartbeats, and a Deep Research toggle

@@ -157,6 +157,25 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
 _api_executor: Optional[ThreadPoolExecutor] = None
 
 
+async def _reranker_idle_reaper():
+    """Periodically unload the local cross-encoder if it's been idle past its TTL.
+
+    Reclaims ~1 GB on low-traffic tenant stacks; the model reloads on the next
+    query. No-op when reranking is remote/disabled or TTL is 0 (never unload).
+    """
+    settings = get_settings()
+    ttl = settings.reranker_idle_ttl_seconds
+    if ttl <= 0 or settings.reranker_service_url or not settings.enable_reranking:
+        return
+    check_interval = max(30, min(ttl, 300))
+    while True:
+        await asyncio.sleep(check_interval)
+        try:
+            get_query_processor().maybe_unload_reranker()
+        except Exception as e:
+            logger.debug(f"Reranker reaper: {e}")
+
+
 async def _event_loop_watchdog():
     """Background task that monitors event loop health and dumps thread stacks
     when the loop appears blocked."""
@@ -211,6 +230,9 @@ async def lifespan(app: FastAPI):
 
     # Start event loop watchdog to detect GIL/blocking issues
     watchdog_task = asyncio.create_task(_event_loop_watchdog())
+
+    # Start the reranker idle-unload reaper (no-op in remote/disabled/TTL=0 mode)
+    reranker_reaper_task = asyncio.create_task(_reranker_idle_reaper())
     
     # Create upload directory
     os.makedirs(settings.upload_dir, exist_ok=True)
@@ -274,12 +296,28 @@ async def lifespan(app: FastAPI):
         query_processor = get_query_processor()
         logger.info("Processors initialized")
 
-        # Pre-warm the cross-encoder reranker so the first Q+A request doesn't
-        # pay the cold-start cost (HF model download + weight load can take
-        # 10–30s and was previously blocking the event loop mid-request).
+        # Optionally pre-warm the cross-encoder reranker so the first Q+A
+        # request doesn't pay the cold-start cost (HF weight load can take
+        # 10–30s and would otherwise block the event loop mid-request).
         # Runs in a thread because sentence_transformers init does sync I/O + CPU.
-        if settings.enable_reranking:
+        #
+        # Off by default: the local reranker drags torch + sentence-transformers
+        # (~780 MB) into the process. Deferring the load until first use keeps
+        # idle/low-traffic tenant stacks lean. Enable RERANKER_PRELOAD=true for
+        # latency-sensitive deployments that want zero cold start.
+        if settings.reranker_service_url:
+            logger.info(
+                f"Reranking offloaded to service at {settings.reranker_service_url}; "
+                "no local cross-encoder will be loaded"
+            )
+        elif settings.enable_reranking and settings.reranker_preload:
             await asyncio.to_thread(lambda: query_processor.reranker)
+            logger.info("Cross-encoder reranker pre-warmed at startup")
+        elif settings.enable_reranking:
+            logger.info(
+                "Reranker load deferred to first use (RERANKER_PRELOAD=false); "
+                "torch/sentence-transformers stay unloaded until then"
+            )
     except Exception as e:
         logger.warning(f"Could not initialize processors: {e}")
     
@@ -287,6 +325,7 @@ async def lifespan(app: FastAPI):
     
     # Cleanup
     watchdog_task.cancel()
+    reranker_reaper_task.cancel()
     if git_scheduler_task:
         git_scheduler_task.cancel()
     neo4j.close()
@@ -303,10 +342,22 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Origins come from CORS_ALLOWED_ORIGINS (comma-separated). Per the CORS spec,
+# a wildcard origin is only valid without credentials — and that's fine here
+# because all auth is header-based (X-API-Key), never cookies. An explicit
+# allowlist re-enables credentialed requests.
+_cors_settings = get_settings()
+_cors_origins = _cors_settings.cors_origins_list
+_cors_allow_credentials = _cors_origins != ["*"]
+if not _cors_allow_credentials:
+    logger.warning(
+        "CORS is configured with wildcard origins (CORS_ALLOWED_ORIGINS=*). "
+        "Set an explicit origin allowlist for production deployments."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -332,6 +383,16 @@ async def enforce_query_quota() -> None:
     No-op when the env var is unset (default 0 = unlimited).
     """
     settings = get_settings()
+
+    # Kick off the reranker load now (non-blocking) so its ~7 s cold start
+    # overlaps the query-analysis LLM call + embedding + search that run before
+    # reranking, rather than stalling the rerank step. No-op in remote/disabled
+    # mode or once the model is loaded.
+    try:
+        get_query_processor().prewarm_reranker()
+    except Exception:
+        pass
+
     if settings.max_queries_per_month <= 0:
         return
     neo4j = get_neo4j_service()

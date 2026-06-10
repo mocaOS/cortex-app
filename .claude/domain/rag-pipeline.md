@@ -31,6 +31,15 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 
 To remove the "is it stuck?" silent window before the first token, the SSE stream emits additive `{"status": {"stage", "message"}}` events at pipeline stages — `analyzing`/`searching`/`generating` on the agent path (`researcher_agent.py`), `searching`/`reranking`/`generating` on the legacy chat path (`main.py`) — gated by `stream_reasoning_steps`. Every `StreamingResponse` is wrapped with `with_sse_heartbeat()` (`main.py`), which injects `: ping` comment lines during ≥8 s silent windows (keep-alive; ignored by clients). Both are additive/backward-compatible. The frontend `ChatMessage` `ThinkingIndicator` consumes `status` (with a heuristic fallback). Partner integration: [`docs/cortex-chat-integration.md`](../../docs/cortex-chat-integration.md).
 
+## Reranking (cross-encoder) — lifecycle & offload
+
+`knowledge_search` reranks hybrid-RRF candidates through `QueryProcessor.rerank_results` → `self.reranker.predict(pairs)` (the single rerank choke point; `pairs = [(query, content), …]` → scores). The local CrossEncoder pulls torch + sentence-transformers (~780 MB beyond the ~650 MB haystack floor), so the lifecycle is tuned for per-instance footprint:
+
+- **Lazy by default** — `RERANKER_PRELOAD=false`; the model loads on first reranked query, not at startup.
+- **Cold-start hiding** — `prewarm_reranker()` (fired from `enforce_query_quota` at request entry) kicks off the ~7 s load in the background so it overlaps the query-analysis LLM + embedding + search that precede reranking.
+- **Idle unload** — `RERANKER_IDLE_TTL_SECONDS` (default 1800; 0 = never) + `_reranker_idle_reaper` unload the model when idle, reclaiming ~1 GB; it reloads on next use.
+- **Offload** — when `RERANKER_SERVICE_URL` is set, `rerank_results` POSTs to the shared `cortex-helper` service and no local model loads (`_rerank_remote`, with graceful fallback to original order on failure). See [`environment.md`](../environment.md#shared-model-services-cortex-helper).
+
 ## Writer
 
 Synthesizes all gathered context from the researcher into a streamed answer.

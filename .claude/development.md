@@ -27,6 +27,18 @@ npm run build      # Production build
 npm run lint       # ESLint
 ```
 
+## CI
+
+`.github/workflows/ci.yml` gates PRs (and pushes to `main`):
+- **Backend**: `pip install -r requirements.txt`, `ruff check --select E9,F63,F7,F82 .` (error-only smoke check — full ruff/mypy is a follow-up), `pytest`.
+- **Frontend**: `npm ci`, `npx tsc --noEmit`, `npm run lint`.
+
+The pytest suite is fully isolated (LLM + Neo4j mocked, env sandboxed via `conftest.py`), so it runs with no external services.
+
+## Shared model service (cortex-helper)
+
+Optional companion repo (`cortex-helper`) hosting the cross-encoder reranker + docling converter once per physical host, for tenant-stack density. Run `docker compose up -d` there (listens on **:3030**), then set `RERANKER_SERVICE_URL` / `DOCLING_SERVICE_URL` / `HELPER_SERVICE_TOKEN` in each cortex-app `.env`. To wire across compose projects, put both on a shared external docker network. Unset = built-in local path. See [`environment.md`](environment.md#shared-model-services-cortex-helper).
+
 ## Neo4j
 
 Requires Neo4j 5.15+ with APOC plugin (this repo ships 5.26 in all compose files — 4096-dim vector indexes supported, native fit for Qwen3-Embedding-8B). In Docker this is preconfigured. For local dev, set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` env vars. See [`.claude/environment.md`](environment.md) for all env vars.
