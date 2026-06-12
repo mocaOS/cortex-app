@@ -95,6 +95,14 @@ Cross-document relationship discovery settings.
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo URL | No |
 | `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No |
 
+### Chat
+
+The `chat` service runs [Cortex Chat](https://github.com/mocaOS/cortex-chat), built from its public repo as a remote build context. It reuses `ADMIN_API_KEY`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` (the chat superadmin signs in with the same credentials as Cortex), so only one extra variable is needed:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `CHAT_APP_ENCRYPTION_KEY` | 32 random bytes, base64-encoded — encrypts minted backend API keys in the chat's SQLite store. Generate with `openssl rand -base64 32`. Must stay stable across redeploys. | Yes |
+
 > **Do NOT set `NEO4J_USER`** - Neo4j interprets all `NEO4J_*` env vars as config settings, causing startup failures. The username is hardcoded to `neo4j` in the compose file.
 
 ## Domain Configuration
@@ -107,6 +115,7 @@ Dokploy uses Traefik for reverse proxy with automatic SSL via Let's Encrypt. The
 2. Go to the **Domains** tab
 3. Add your backend domain (e.g., `api-cortex.yourdomain.com`) mapped to port `8000`
 4. Repeat for the **frontend** service with your frontend domain (e.g., `cortex.yourdomain.com`) mapped to port `3000`
+5. Repeat for the **chat** service with your chat domain (e.g., `chat-cortex.yourdomain.com`) mapped to port `3000`
 
 Dokploy auto-configures Traefik labels and TLS certificates. Allow ~10 seconds after deployment for certificate generation.
 
@@ -120,6 +129,7 @@ When using manual labels, ensure router names (e.g., `cortex-backend`, `cortex-f
 
 - **Frontend**: Main domain (e.g., `cortex.yourdomain.com`) on port 3000
 - **Backend API**: API subdomain (e.g., `api-cortex.yourdomain.com`) on port 8000
+- **Chat**: Chat subdomain (e.g., `chat-cortex.yourdomain.com`) on port 3000
 - **Neo4j**: Not exposed externally (internal only, not on dokploy-network)
 
 ## Differences from Coolify Deployment

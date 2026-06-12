@@ -149,6 +149,44 @@ services:
     #   - "traefik.http.services.cortex-frontend.loadbalancer.server.port=3000"
     #   - "traefik.docker.network=dokploy-network"
 
+  chat:
+    build:
+      # Cortex Chat lives in its own public repo — BuildKit clones it as a
+      # remote build context. No build args: all config is runtime env.
+      context: https://github.com/mocaOS/cortex-chat.git#main
+      dockerfile: Dockerfile
+    environment:
+      # Cortex backend over the internal compose network (server-side only —
+      # the browser talks to chat, chat proxies to the backend)
+      - CORTEX_API_URL=http://backend:8000
+      # Reuse the tenant admin credentials: the chat superadmin signs in with
+      # the same email/password as Cortex, and scoped backend keys are minted
+      # with the tenant admin API key.
+      - BACKEND_ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SUPERADMIN_EMAIL=${ADMIN_EMAIL}
+      - SUPERADMIN_PASSWORD=${ADMIN_PASSWORD}
+      # 32 random bytes, base64 — encrypts minted backend keys in SQLite
+      - APP_ENCRYPTION_KEY=${CHAT_APP_ENCRYPTION_KEY}
+    expose:
+      - "3000"
+    volumes:
+      # SQLite DB + avatars + uploaded branding assets
+      - chat_data:/app/data
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+    # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.cortex-chat.rule=Host(`chat-cortex.yourdomain.com`)"
+    #   - "traefik.http.routers.cortex-chat.entrypoints=websecure"
+    #   - "traefik.http.routers.cortex-chat.tls.certResolver=letsencrypt"
+    #   - "traefik.http.services.cortex-chat.loadbalancer.server.port=3000"
+    #   - "traefik.docker.network=dokploy-network"
+
 networks:
   dokploy-network:
     external: true
@@ -160,3 +198,4 @@ volumes:
   custom_inputs_data:
   skills_data:
   hf_cache:
+  chat_data:
