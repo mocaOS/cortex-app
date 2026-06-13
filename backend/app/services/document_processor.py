@@ -3411,7 +3411,13 @@ Response Style:
 
             messages.append({"role": "user", "content": prompt})
 
-            response = client.chat.completions.create(
+            # Run the blocking OpenAI SDK call in a thread: this is an async
+            # endpoint, and a synchronous generation call (~15-20s) would pin
+            # the event loop, starving every other in-flight request's async
+            # work (Neo4j acquisition, etc.) and cascading into timeouts/500s
+            # under concurrency. Embeddings/Neo4j already use to_thread.
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=llm_config.model,
                 messages=messages,
                 **build_chat_params(llm_config.model, temperature=0.3, max_tokens=1200),
@@ -3523,7 +3529,8 @@ Response Style:
             )
         )
 
-        decompose_response = client.chat.completions.create(
+        decompose_response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=llm_config.model,
             messages=[
                 {
@@ -3801,7 +3808,10 @@ Response Style:
 
         messages.append({"role": "user", "content": prompt})
 
-        response = client.chat.completions.create(
+        # Threaded for the same reason as the non-agentic path: a sync LLM
+        # call here would block the event loop for the whole generation.
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=llm_config.model,
             messages=messages,
             **build_chat_params(llm_config.model, temperature=0.3, max_tokens=2000),
