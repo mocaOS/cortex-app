@@ -65,6 +65,8 @@ Synthesizes all gathered context from the researcher into a streamed answer.
 
 Fixed pipeline available as fallback via `ENABLE_AGENT_RESEARCH=false`. Also `ENABLE_AGENT_CHAT=false` to disable chat agent.
 
+**Event-loop invariant (don't regress):** every LLM call on a request path must be non-blocking. `document_processor.py` `rag_query` (the non-agentic `/api/ask` path) and `_agentic_rag_query` use the **synchronous** `OpenAI` client, so their `client.chat.completions.create(...)` calls are wrapped in `await asyncio.to_thread(...)` — a bare sync call pins the asyncio event loop for the whole ~15-20s generation, starving every other in-flight request's async work (Neo4j acquisition, etc.) and cascading into timeouts/`500`s under concurrency (watchdog logs `Event loop was blocked for …s` + a thread dump). The agentic researcher/writer path already uses `AsyncOpenAI` + `await`; embeddings, Neo4j, and query entity-extraction are already threaded/async. Use `AsyncOpenAI` or `asyncio.to_thread` for any new generation call — never a bare sync `.create()` in an `async def`.
+
 ## Frontend
 
 See [`.claude/frontend-patterns.md`](../frontend-patterns.md#chatresearch-message-rendering) for chat/research message rendering patterns.
