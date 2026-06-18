@@ -398,6 +398,15 @@ class Settings(BaseSettings):
     )  # Candidates kept per knowledge_search after pooling the parallel
     #   queries; also the rerank input size. Lower it on remote rerankers
     #   (RERANKER_SERVICE_URL) to trade recall for latency.
+    ask_deadline_seconds: int = Field(
+        default=28
+    )  # Hard wall-clock deadline for the non-streaming POST /api/ask handler.
+    #   On expiry the request returns a clean 504 JSON {detail} instead of the
+    #   edge proxy (Traefik) cutting the silent socket and emitting a bare
+    #   plain-text 500. Keep this just BELOW the edge proxy read timeout
+    #   (~30s by default); raise it in lockstep when the Traefik timeout is
+    #   raised. Does NOT apply to /api/ask/stream — SSE heartbeats keep that
+    #   connection alive. 0 = no app-level deadline.
 
     # ==========================================================================
     # Agent Skills (agentskills.io standard)

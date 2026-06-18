@@ -2201,54 +2201,47 @@ async def ask_question(
         if request.conversation_history:
             conversation_history = request.conversation_history
 
-        # Use agent pipeline for agentic requests if enabled
+        # Agentic deep research routinely runs ~60-90s. The non-streaming
+        # endpoint buffers the entire run and sends no bytes until done, so it
+        # always races the edge-proxy read timeout and dies as a bare 500.
+        # Fail fast with structured guidance to the SSE endpoint (which stays
+        # alive via heartbeats) instead of making the client wait for a 504.
         if request.use_agentic and settings.enable_agent_research:
-            result = await processor.agent_rag_query(
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "agentic_requires_streaming",
+                    "message": (
+                        "Agentic deep research is not supported on the "
+                        "non-streaming POST /api/ask endpoint (it routinely "
+                        "exceeds the gateway timeout). Use POST /api/ask/stream "
+                        "(SSE) for use_agentic:true requests."
+                    ),
+                    "use_endpoint": "/api/ask/stream",
+                },
+            )
+
+        # Legacy path for non-agent requests. Bound it with an app-level
+        # deadline so a slow request returns a clean 504 JSON {detail} rather
+        # than letting the edge proxy (Traefik) cut the silent socket and emit
+        # a bare plain-text 500. Keep ASK_DEADLINE_SECONDS just below the proxy
+        # read timeout. NOTE: the underlying to_thread work (neo4j/LLM) cannot
+        # be cancelled and runs to completion in the background even after we
+        # return 504 — acceptable for now; raising workers/queueing is Tier 1.
+        deadline = settings.ask_deadline_seconds
+        result = await asyncio.wait_for(
+            processor.rag_query(
                 question=request.question,
-                mode="quality",
+                top_k=request.top_k,
+                use_graph=request.use_graph,
+                max_hops=request.max_hops,
                 conversation_history=conversation_history,
+                use_reranking=request.use_reranking,
+                use_agentic=request.use_agentic,
                 collection_id=effective_collection_id,
                 allowed_collection_ids=allowed_collection_ids,
-            )
-
-            # Build sources from agent result (already formatted)
-            sources = [
-                SearchResult(
-                    document_id=s.get("document_id", ""),
-                    chunk_id=s.get("chunk_id", ""),
-                    content=s.get("content", ""),
-                    score=s.get("score", 0),
-                    metadata=s.get("metadata", {}),
-                )
-                for s in result.get("sources", [])
-            ]
-
-            graph_context = None
-            if result.get("graph_context"):
-                graph_context = GraphContext(**result["graph_context"])
-
-            return RAGResponse(
-                question=result["question"],
-                answer=result["answer"],
-                sources=sources,
-                graph_context=graph_context,
-                reranked=result.get("reranked", False),
-                reasoning_steps=result.get("reasoning_steps"),
-                communities_used=result.get("communities_used"),
-                retrieval_stats=result.get("retrieval_stats"),
-            )
-
-        # Legacy path for non-agent requests
-        result = await processor.rag_query(
-            question=request.question,
-            top_k=request.top_k,
-            use_graph=request.use_graph,
-            max_hops=request.max_hops,
-            conversation_history=conversation_history,
-            use_reranking=request.use_reranking,
-            use_agentic=request.use_agentic,
-            collection_id=effective_collection_id,
-            allowed_collection_ids=allowed_collection_ids,
+            ),
+            timeout=deadline if deadline and deadline > 0 else None,
         )
 
         sources = [
@@ -2279,6 +2272,28 @@ async def ask_question(
             reranked=result.get("reranked", False),
             reasoning_steps=result.get("reasoning_steps")
         )
+    except asyncio.TimeoutError:
+        deadline = get_settings().ask_deadline_seconds
+        logger.warning(
+            f"/api/ask exceeded {deadline}s deadline for question: {request.question[:80]!r}"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "deadline_exceeded",
+                "message": (
+                    f"The request exceeded the server-side deadline "
+                    f"({deadline}s). Retry, simplify the question, or use "
+                    f"POST /api/ask/stream which streams incrementally and is "
+                    f"not subject to this deadline."
+                ),
+                "deadline_seconds": deadline,
+            },
+        )
+    except HTTPException:
+        # Preserve intended status codes (e.g. 400 agentic guard, 403 collection
+        # access, 504 deadline) instead of re-wrapping them as a generic 500.
+        raise
     except Exception as e:
         logger.error(f"Error in GraphRAG query: {e}")
         raise HTTPException(status_code=500, detail=str(e))

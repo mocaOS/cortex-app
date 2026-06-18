@@ -693,8 +693,12 @@ async def _run_researcher_loop(
                 query = args.get("query", "")
                 if query and neo4j_service:
                     try:
-                        communities = neo4j_service.search_communities_by_content(
-                            query, limit=3
+                        # Sync neo4j driver — offload so it doesn't block the
+                        # event loop and starve other in-flight requests.
+                        communities = await asyncio.to_thread(
+                            neo4j_service.search_communities_by_content,
+                            query,
+                            limit=3,
                         )
                     except Exception as e:
                         logger.warning(f"Community search failed: {e}")
@@ -731,7 +735,11 @@ async def _run_researcher_loop(
                 names = args.get("names", [])
                 if names and neo4j_service:
                     try:
-                        entities = neo4j_service.find_entities_by_name(names[:5])
+                        # Sync neo4j driver — offload so it doesn't block the
+                        # event loop and starve other in-flight requests.
+                        entities = await asyncio.to_thread(
+                            neo4j_service.find_entities_by_name, names[:5]
+                        )
                     except Exception as e:
                         logger.warning(f"Entity lookup failed: {e}")
                         entities = []
