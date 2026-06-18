@@ -360,6 +360,56 @@ and the loop continues; a whole-Q+A failure for a combo just zeroes that
 combo's `qa_*` fields without poisoning the ingestion data captured
 upstream.
 
+## Q+A chat benchmark (snappiness — `run_qa_bench.py`)
+
+A separate, lighter benchmark from the ingestion harness above. It answers:
+**"which chat model is snappiest without sacrificing answer quality?"** It holds
+your already-ingested graph FIXED and swaps only the answer model, so there's no
+re-ingestion and your graph is never touched.
+
+```bash
+# All models in bench/qa_models.yaml, against the live local graph:
+python bench/run_qa_bench.py --count 10 --budget 30 --hard-cap 90
+
+# Just a couple of models:
+python bench/run_qa_bench.py --models minimax-m3,qwen3-5-35b-a3b
+
+# Print the plan (no docker, no LLM calls):
+python bench/run_qa_bench.py --dry-run
+
+# Wiring test against the already-running backend (no per-model recreate):
+python bench/run_qa_bench.py --models minimax-m3 --count 2 --no-recreate
+```
+
+Prereqs: the local stack up with a **non-empty graph** (it queries
+`/api/stats`; aborts if `entity_count==0`), `ADMIN_API_KEY` + `OPENAI_API_*` in
+`.env`. Edit `bench/qa_models.yaml` (auto-created from `.example`) to pick
+candidates — a flat list; `context` is pinned the same for all (override with
+`--context`); `base_url`/`api_key` default to your `.env` provider.
+
+**What it measures**, streaming `POST /api/ask/stream` (`use_agentic=false`, the
+snappy graph-chat path), per model × question:
+
+- **TTFT** — time to the first answer token. The snappiness signal a user feels,
+  and the overthinking proxy (a model that reasons forever delays its first
+  visible token).
+- **Total latency** (p50/p95), **tokens/sec**, **answer length**.
+- **status** — `ok` / `over_budget` (completed but slower than `--budget`) /
+  `timeout` (blew the `--hard-cap` wall clock — the chat "gave up" / lost the
+  user) / `error`.
+- **Quality** — faithfulness/completeness/groundedness/conciseness (1–5), judged
+  by your baseline model (reuses the Q+A judge).
+
+**Question bank** is generated once from the graph itself (samples entities +
+community summaries; no `bench/files/` needed) and cached so every model answers
+the identical set.
+
+**Outputs** (gitignored): `bench/logs/qa-chat-report-<batch>.md` — a leaderboard
+ranking models on a speed×quality blend with overthinkers flagged 🚩 — and
+`bench/logs/qa-chat-results-<batch>.json`. The report marks your current model as
+the baseline so you can see who beats it. `.env` is restored and the backend
+recreated back onto your model when it finishes (or on Ctrl-C).
+
 ## Adding a new model
 
 Edit `bench/models.yaml` (your local, gitignored copy):

@@ -207,7 +207,7 @@ RELATIONSHIP_MAX_CONTEXT=196608              # must match RELATIONSHIP_EXTRACTIO
 EXTRACTION_REASONING_MODE=off                # extraction, summaries, communities
 RELATIONSHIP_REASONING_MODE=off              # candidate scan + relationship extraction
 VISION_REASONING_MODE=off                    # vision-model image descriptions
-DEFAULT_REASONING_MODE=auto                  # Q&A / researcher agent (stays AUTO)
+DEFAULT_REASONING_MODE=off                   # chat path: thinking off → snappy first token, no empty answers (deep-research stays AUTO)
 # REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom:minimal  # escape hatch for novel models
 
 # ── Vision (image analysis during document ingestion) ────────────

@@ -95,6 +95,7 @@ from app.services.prompt_security import (
 )
 from app.services.compute3_service import get_compute3_service
 from app.services.llm_config import get_llm_config, is_turbo_mode_active, build_chat_params
+from app.services.reasoning_config import safe_chat_completion, ReasoningMode
 from app.services.auth_service import (
     require_api_key,
     require_read_permission,
@@ -2456,25 +2457,22 @@ Question: {request.question}"""
                     base_url=llm_config.base_url,
                 )
                 
-                # Build request kwargs
-                request_kwargs = {
-                    "model": llm_config.model,
-                    "messages": messages,
-                    "stream": True,
+                # Compose the answer with hidden reasoning suppressed on the chat
+                # path (centralized per-provider dispatch — incl. Venice
+                # disable_thinking — replaces the old deepseek-only hack) for a
+                # snappy first token; auto-falls-back if a model rejects the param.
+                stream = await safe_chat_completion(
+                    client.chat.completions.create,
+                    base_url=llm_config.base_url,
+                    model=llm_config.model,
+                    reasoning_mode=ReasoningMode.parse(settings.default_reasoning_mode),
+                    overrides=settings.parsed_reasoning_overrides,
+                    messages=messages,
+                    stream=True,
                     # Lower temperature / capped tokens for faster, more deterministic
                     # responses (params adapted per model family — GPT-5/o-series).
                     **build_chat_params(llm_config.model, temperature=0.2, max_tokens=600),
-                }
-                
-                # Only add thinking-related params for models that support them
-                model_lower = llm_config.model.lower()
-                if "deepseek" in model_lower or "r1" in model_lower:
-                    request_kwargs["extra_body"] = {
-                        "enable_thinking": False,  # DeepSeek-R1 style
-                        "reasoning_effort": "none",
-                    }
-                
-                stream = await client.chat.completions.create(**request_kwargs)
+                )
                 
                 async for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content:
@@ -2646,8 +2644,12 @@ Question: {request.question}"""
             if _emit_status:
                 yield f"data: {json.dumps({'status': {'stage': 'generating', 'message': 'Writing the answer'}})}\n\n"
 
-            stream = await client.chat.completions.create(
+            stream = await safe_chat_completion(
+                client.chat.completions.create,
+                base_url=llm_config.base_url,
                 model=llm_config.model,
+                reasoning_mode=ReasoningMode.parse(settings.default_reasoning_mode),
+                overrides=settings.parsed_reasoning_overrides,
                 messages=messages,
                 stream=True,
                 **build_chat_params(

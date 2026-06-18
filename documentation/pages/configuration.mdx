@@ -221,10 +221,12 @@ RELATIONSHIP_REASONING_MODE=off
 # without <think> tokens leaking into image descriptions.
 VISION_REASONING_MODE=off
 
-# Default AUTO: the Q&A / researcher path stays on the provider default.
-# reasoning_effort=minimal breaks parallel tool calls on OpenAI, so don't
-# force it OFF here.
-DEFAULT_REASONING_MODE=auto
+# Chat/answer path. Default OFF: reasoning-capable models (esp. Venice) stream
+# hidden chain-of-thought in a separate channel, adding seconds before the first
+# answer token and causing empty/timeout answers under the agent loop. OFF
+# (Venice disable_thinking) → sub-second first token. Deep-research stays AUTO.
+# On OpenAI GPT-5/o-series, OFF can disable parallel tool calls — set =auto there.
+DEFAULT_REASONING_MODE=off
 
 # Escape hatch for novel models the heuristics get wrong.
 # Format: "model1:mode1,model2:mode2"

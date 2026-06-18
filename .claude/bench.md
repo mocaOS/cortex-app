@@ -47,6 +47,9 @@ This is the same dispatch table that backs Cortex's `EXTRACTION_REASONING_MODE` 
 | `bench/llm_review.py` | One-shot Anthropic SDK call at end of batch. System prompt is `cache_control:ephemeral` for prompt caching. Returns per-run `observations`/`vs_previous_run` + a single top-level `code_optimisation_findings` markdown block. |
 | `bench/qa_evaluator.py` | Q+A retrieval evaluation. `generate_question_bank()` runs once per batch from `bench/files/`. `run_question_set(cx, q, mode=…)` posts to `/api/ask` (speed=non-agentic, quality=agentic). `judge_answers()` is one end-of-batch LLM call scoring every (run × mode × question) on faithfulness/completeness/groundedness/conciseness 1–5. `apply_qa_scores_to_runs()` merges aggregates back. |
 | `bench/_llm_io.py` | Shared `chat_completion()` helper + `parse_json_response()`. Lifted out of `llm_review.py` so `qa_evaluator.py` doesn't duplicate the `response_format` 400-retry + `<think>` block stripping. |
+| `bench/run_qa_bench.py` | **Standalone Q+A *chat* benchmark** (separate entrypoint from `run_bench.py`). Holds the graph FIXED, swaps only the chat model (`OPENAI_MODEL` + `OPENAI_MAX_CONTEXT`) per candidate, and scores snappiness + quality. Reuses `EnvSwapper`/`BatchLock`/`recreate_backend` from `run_bench.py` and `judge_answers` from `qa_evaluator.py`. See the dedicated section below. |
+| `bench/qa_snappiness.py` | Engine for `run_qa_bench.py`: graph-sourced question generation (`generate_question_bank_from_graph`), streaming latency capture (`stream_question` → TTFT/total/timeout/overthinking), aggregation, scoring/flagging, and the leaderboard markdown report. |
+| `bench/qa_models.yaml(.example)` | Q+A-benchmark model list (committed `.example`, gitignored local). A flat list of chat-model candidates; `context` pinned the same for all; `base_url`/`api_key` default to the operator's live `OPENAI_API_BASE`/`OPENAI_API_KEY`. NOT the 3-tier `models.yaml`. |
 | `bench/build_results_ods.py` | `odfpy`-based spreadsheet writer. Reads a flat-dict JSON, appends a row to `bench/logs/llm-config-results.ods` (or `$BENCH_ODS_PATH`). |
 | `bench/build_dashboard.py` | Idempotent aggregator. Scans `bench/logs/runs/*.json` + latest `findings_*.md` → emits `bench/logs/dashboard-data.js` declaring `window.BENCH_DATA = {…}`. Called by the orchestrator 3× per batch and runnable manually. |
 | `bench/index.html` | Static dashboard page. Cortex-branded inline CSS, Chart.js + marked.js via CDN. Loads `logs/dashboard-data.js` via a relative `<script>` tag (works under `file://` and `http://`). Empty state when no runs; otherwise renders hero, verdict donut, ERR bars, phase-timing stacks, failure heatmap, per-combo cards (with LLM observations), and cross-run findings markdown. |
@@ -197,6 +200,86 @@ Lives in `bench/qa_evaluator.py`. Closes the loop on ingestion-only scoring by e
 **Run-JSON additions (17 columns surfaced in `.ods`):** `qa_questions_count`, `qa_speed_{answered,errors,avg_latency_ms,faithfulness,completeness,groundedness,conciseness,summary}`, and the matching `qa_quality_*` set.
 
 **Live-state phase names extended:** `A | B | step_3 | qa_speed | qa_quality | done` — the dashboard ticker picks these up automatically once `LiveState.phase` is updated by `run_combo`.
+
+## Q+A chat benchmark (snappiness — standalone, `run_qa_bench.py`)
+
+A SECOND, lighter benchmark answering a different question than the main harness.
+`run_bench.py` re-ingests a corpus per combo to score INGESTION; this one holds
+the **already-ingested graph fixed** and swaps only the answer model to score the
+CHAT experience: latency/snappiness (and overthinking → timeouts) + answer
+quality. No re-ingestion, no DB reset — it never mutates the graph.
+
+**Per-model loop** (`run()` in `run_qa_bench.py`):
+1. `apply_model_to_env` rewrites only `OPENAI_MODEL`, `OPENAI_API_BASE`,
+   `OPENAI_API_KEY`, `OPENAI_MAX_CONTEXT` (context pinned identical for all
+   models so the comparison is fair). `--reasoning-mode` optionally sets
+   `DEFAULT_REASONING_MODE`; default `leave` keeps the operator's prod setting.
+2. `recreate_backend()` + `wait_until_ready` (skip both with `--no-recreate` for
+   wiring tests against the running backend).
+3. `qa_snappiness.run_snappiness_set` streams the fixed bank through
+   `POST /api/ask/stream` (`use_agentic=false`).
+
+**Metrics per (model × question)** — see `qa_snappiness.stream_question`:
+`ttft_ms` (request → first `{"content"}` event; the snappiness/overthinking
+proxy), `gen_ttft_ms` (generating-status → first content, isolating pure model
+TTFT when `STREAM_REASONING_STEPS=true`), `total_ms`, `tokens_per_sec`,
+`answer_chars`, and `status` ∈ {ok, over_budget, timeout, incomplete, error}.
+`over_budget` = completed but slower than `--budget` (snappy target);
+`timeout` = blew the `--hard-cap` wall clock (the deepseek-v4-flash failure).
+
+**Quality** reuses `qa_evaluator.judge_answers` (faithfulness/completeness/
+groundedness/conciseness, 1–5), judged by the operator's baseline model.
+`score_and_flag` ranks on `combined_score = 0.5·speed_index +
+0.5·quality% − timeout_penalty` and flags overthinkers (any timeouts, p95 TTFT
+≫ fleet median, or mean total over budget).
+
+**Question bank** is generated ONCE from the live graph
+(`generate_question_bank_from_graph`: samples `/api/graph/entities` +
+`/api/graph/communities` → the baseline model composes factoid/synthesis/
+thematic questions), cached at `logs/qa-chat-bank-<batch>.json`, reused so every
+model answers the identical set. (No `bench/files/` corpus needed — the graph IS
+the corpus here.)
+
+**Outputs:** `logs/qa-chat-report-<batch>.md` (leaderboard) +
+`logs/qa-chat-results-<batch>.json` (per-model rows + raw answers, written
+incrementally after each model). `.env` restored and backend recreated back onto
+the operator's model in the `finally` block.
+
+**CLI:** `--models a,b,c` (overrides `qa_models.yaml`) · `--count` (bank size,
+default 12) · `--budget` (snappy seconds, default 60) · `--hard-cap` (per-Q wall
+clock, default 180) · `--context` (default from yaml/198000) · `--reasoning-mode
+{leave,off,auto,on}` · `--skip-judge` · `--no-recreate` · `--dry-run`.
+
+**Chat-path snappiness learnings (from the first QA-bench batches).** The
+initial batch surfaced widespread *empty* answers (e.g. gemma 8/10, minimax-m27
+10/10) and 30–60s+ latencies. Root cause was NOT model quality:
+- **Reasoning models stream chain-of-thought in a separate `reasoning_content`
+  channel** the chat stream loop ignores. A direct probe (`_probe_thinking.py`)
+  showed gemma at TTFT-to-content **13.6s plain → 0.57s with
+  `venice_parameters.disable_thinking`** (reasoning_chars 4865 → 0). Across the
+  multi-iteration researcher loop this compounded into budget-exhausting
+  empties/timeouts.
+- **The chat path never suppressed reasoning.** `build_chat_params`
+  (`llm_config.py`) only sets tokens/temperature; the suppression machinery
+  (`safe_chat_completion` / `build_reasoning_kwargs`) was wired into ingestion
+  only. Fix: route the speed-researcher loop + writer (`researcher_agent.py`)
+  and the non-agentic + fast streaming writers (`main.py`) through
+  `safe_chat_completion` with `DEFAULT_REASONING_MODE` (now default **off** →
+  Venice `disable_thinking`). Quality/deep-research stays AUTO. See
+  `.claude/environment.md` → `DEFAULT_REASONING_MODE`.
+- **Residual snappiness lever = the agent loop, not the model.** With thinking
+  off a single model call is <1s, but the speed chat still runs
+  `agent_rag_stream(speed)` for up to `RESEARCHER_MAX_ITERATIONS_SPEED` (default
+  5) tool-loop rounds + retrieval, so TTFT stays ~15–20s. Lowering that, or
+  bypassing the loop when no skills are active, is the next lever.
+
+⚠️ **Heartbeats defeat read timeouts (key gotcha).** `with_sse_heartbeat`
+(backend `main.py`) emits `: ping` every 8s, so the httpx read timeout can NEVER
+bound a silently-reasoning model — bytes keep arriving at the transport. The
+per-question cap MUST be a wall-clock `asyncio.wait_for(_consume(), hard_cap_s)`,
+not the transport timeout. `qa_snappiness.stream_question` already does this;
+don't regress it to an in-loop elapsed check (that only ticks on yielded events,
+and heartbeat lines are filtered out before yielding).
 
 ## Output paths
 

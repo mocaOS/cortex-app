@@ -37,7 +37,23 @@ from app.services.research_prompts import (
     build_skill_catalog_block,
     build_activated_skills_block,
 )
-from app.services.reasoning_config import apply_cache_control
+from app.services.reasoning_config import (
+    apply_cache_control,
+    safe_chat_completion,
+    ReasoningMode,
+)
+
+
+def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
+    """Reasoning level for the chat/answer LLM calls.
+
+    Speed/chat → DEFAULT_REASONING_MODE (default OFF → Venice disable_thinking,
+    snappy first token). Deep-research (quality) → AUTO (provider default;
+    hidden reasoning preserved). See config.default_reasoning_mode.
+    """
+    if mode == "speed":
+        return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
+    return ReasoningMode.AUTO
 from app.services.prompt_security import get_anti_injection_instruction
 from app.services.llm_config import build_chat_params
 from app.services.context_curator import (
@@ -489,8 +505,12 @@ async def _run_researcher_loop(
             )
 
         try:
-            response = await client.chat.completions.create(
+            response = await safe_chat_completion(
+                client.chat.completions.create,
+                base_url=llm_config.base_url,
                 model=llm_config.model,
+                reasoning_mode=_chat_reasoning_mode(mode, settings),
+                overrides=settings.parsed_reasoning_overrides,
                 messages=call_messages,
                 tools=tools,
                 tool_choice="auto",
@@ -1450,8 +1470,15 @@ async def run_research_pipeline(
     writer_messages.append({"role": "user", "content": writer_user})
 
     try:
-        stream = await client.chat.completions.create(
+        # Writer composes the final answer from already-gathered context — it
+        # never needs hidden reasoning, so suppress it for a snappy first token
+        # (mode-aware: quality stays AUTO). See _chat_reasoning_mode.
+        stream = await safe_chat_completion(
+            client.chat.completions.create,
+            base_url=llm_config.base_url,
             model=llm_config.model,
+            reasoning_mode=_chat_reasoning_mode(mode, settings),
+            overrides=settings.parsed_reasoning_overrides,
             messages=writer_messages,
             stream=True,
             **build_chat_params(

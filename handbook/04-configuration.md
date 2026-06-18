@@ -57,7 +57,7 @@ Reasoning hurts structured extraction (drift, hidden-token cost, latency, malfor
 | `EXTRACTION_REASONING_MODE` | `off` | Reasoning mode for entity extraction, document summaries, community summarization, community naming, entity enrichment, and query-side entity extraction. |
 | `RELATIONSHIP_REASONING_MODE` | `off` | Reasoning mode for candidate-pair scan (Phase 1), gleaning pass, per-chunk relationship extraction, and batch relationship analysis (Phase 2). |
 | `VISION_REASONING_MODE` | `off` | Reasoning mode for the vision-model image-description call. Lets a reasoning multimodal model (e.g. Qwen3-VL-27B) be used as `VISION_MODEL` without `<think>` tokens leaking into descriptions. |
-| `DEFAULT_REASONING_MODE` | `auto` | Reasoning mode for the Q&A path. Researcher agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI. |
+| `DEFAULT_REASONING_MODE` | `off` | Reasoning mode for the chat/answer path (speed researcher loop + writer + non-agentic/fast streaming). `off` suppresses hidden reasoning (Venice `disable_thinking`) for a sub-second first token and to avoid empty/timeout answers; deep-research (quality) stays AUTO. On OpenAI GPT-5/o-series, `off` can disable parallel tool calls — set `auto` there. |
 | `REASONING_MODEL_OVERRIDES` | empty | Per-model override for novel models the heuristics get wrong. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom-llm:minimal`. |
 
 ### Handling new model releases

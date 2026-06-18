@@ -206,9 +206,15 @@ class Settings(BaseSettings):
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
     # Defaults: extraction/relationship/vision OFF (reasoning hurts structured
-    # extraction and image-description tasks); default mode AUTO (don't inject
-    # anything for the general Q&A path).
-    default_reasoning_mode: str = Field(default="auto")
+    # extraction and image-description tasks). The chat/answer path (speed-mode
+    # researcher loop + writer) also defaults OFF: on reasoning-capable models
+    # (esp. Venice) hidden chain-of-thought streams in a separate
+    # `reasoning_content` channel and adds 3–14s before the first answer token —
+    # often blowing the request budget into empty/timeout answers. OFF (Venice
+    # `disable_thinking`) cuts time-to-first-token to <1s. Deep-research
+    # (quality) mode is unaffected and keeps reasoning. Set to `auto` to restore
+    # provider-default thinking on chat.
+    default_reasoning_mode: str = Field(default="off")
     extraction_reasoning_mode: str = Field(default="off")
     relationship_reasoning_mode: str = Field(default="off")
     vision_reasoning_mode: str = Field(default="off")
