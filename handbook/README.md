@@ -39,6 +39,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 20 | [Troubleshooting](20-troubleshooting.md) | `20-troubleshooting.md` | Everyone |
 | 21 | [Glossary](21-glossary.md) | `21-glossary.md` | Everyone |
 | 22 | [Git Integration](22-git-integration.md) | `22-git-integration.md` | Everyone |
+| 23 | [The Cortex Standard](23-the-cortex-standard.md) ★ | `23-the-cortex-standard.md` | Everyone |
 
 ## Quick Links
 
@@ -49,6 +50,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 - **I want to integrate Cortex into my application** — See [Chapter 16: API Reference](16-api-reference.md) and [Chapter 17: Integrations](17-integrations.md)
 - **I want to extend the agent with custom skills** — See [Chapter 19: Agent Skills](19-skills.md)
 - **Something isn't working** — See [Chapter 20: Troubleshooting](20-troubleshooting.md)
+- **I want to understand the philosophy behind Cortex** — Read [Chapter 23: The Cortex Standard](23-the-cortex-standard.md)
 
 ## Additional Resources
 
