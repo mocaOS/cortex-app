@@ -9,7 +9,6 @@ const protectedRoutes = [
   "/collections",
   "/documents",
   "/explore",
-  "/turbo",
   "/admin",
 ];
 

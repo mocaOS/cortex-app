@@ -20,7 +20,6 @@ body:
         - Search & RAG (hybrid search, agentic RAG, reranking)
         - Ask AI / Chat (streaming responses, extended thinking)
         - Collections (grouping, collection-level graphs)
-        - Turbo Mode (Compute3, vLLM, GPU inference)
         - Admin & Auth (API keys, login, usage analytics)
         - Vision / OCR (image analysis, Docling)
         - Graph Visualization (Explore page)
@@ -43,7 +42,6 @@ body:
         - Nginx (reverse proxy)
         - LLM Provider (OpenAI / LiteLLM)
         - Embedding Provider
-        - Compute3 / vLLM
         - Docling (document conversion)
         - Unknown
     validations:

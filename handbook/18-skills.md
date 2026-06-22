@@ -1,4 +1,4 @@
-# Chapter 19: Agent Skills
+# Chapter 18: Agent Skills
 
 Agent Skills extend the Cortex Library's Deep Research and Chat capabilities with external instructions and live API access from the open [AgentSkills](https://agentskills.io/) ecosystem. Skills are reusable capability packages — each is a `SKILL.md` file that teaches the researcher agent how to interact with external services. The agent uses a built-in `http_request` tool to call APIs described in skill instructions, with authentication handled entirely server-side.
 

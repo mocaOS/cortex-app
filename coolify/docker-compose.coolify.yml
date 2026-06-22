@@ -3,7 +3,7 @@
 # Deploy this via Coolify's Docker Compose resource
 #
 # Only REQUIRED env vars are declared below. Everything else — embedding settings,
-# vision/graph-extraction overrides, Compute3, relationship & community tuning, feature
+# vision/graph-extraction overrides, relationship & community tuning, feature
 # flags, pricing caps, branding (logo/accent color), admin email, etc. — defaults to
 # sensible values in backend/app/config.py. To override one, add it as a Coolify env
 # var AND add a matching `- VAR=${VAR}` line under `environment:` below (and a `- VAR=${VAR}`

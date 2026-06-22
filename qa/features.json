@@ -14,7 +14,7 @@
     {
       "id": "F-AUTH-002", "name": "Route auth-gating & logout", "area": "Auth",
       "user_story": "As an admin, I want protected routes to require login and a logout that clears my session so that the KB is not publicly accessible.",
-      "expected": "proxy.ts middleware redirects unauthenticated users on /,/add,/ask,/explore,/documents,/collections,/turbo,/admin to /login? from=path. Logout calls clearAdminApiKey()+logout() server action -> /login.",
+      "expected": "proxy.ts middleware redirects unauthenticated users on /,/add,/ask,/explore,/documents,/collections,/admin to /login? from=path. Logout calls clearAdminApiKey()+logout() server action -> /login.",
       "edge_cases": "Missing localStorage key -> api.request throws 'Not authenticated'; session expiry mid-poll; deep-link to protected route preserves ? from.",
       "validation": "Cookie presence checked in middleware.",
       "dependencies": "proxy.ts, AuthProvider, lib/api.ts.",
@@ -375,21 +375,10 @@
       "status": "Tested (test_git_sync) + Documented", "defect_count": 1, "severity": "Medium", "notes": "D-001 fixed here (extension check forced full DocumentProcessor build).", "last_tested": "2026-06-22"
     },
     {
-      "id": "F-TURBO-001", "name": "Turbo mode (Compute3 GPU)", "area": "Turbo",
-      "user_story": "As an admin, I want to launch/monitor a GPU inference job so that I can accelerate processing/queries.",
-      "expected": "Turbo endpoints: status (read), balance/start/stop/extend/jobs (admin). 400 'not available' if COMPUTE3_API_KEY unset (status returns available:false). start (runtime 60-86400, gpu_count 1-8); extend (additional_seconds required 60-86400, 404 no active job); stop (no job -> message). /turbo page polls status+jobs 10s with live vLLM log viewer.",
-      "edge_cases": "Key unset -> 400/available:false; already-running start returns existing job; extend no job -> 404; balance fetch failure tolerated.",
-      "validation": "runtime ge60 le86400; gpu_count ge1 le8; additional_seconds required.",
-      "dependencies": "compute3_service, Compute3 API.",
-      "assumptions": "Turbo overrides extraction+main model configs.",
-      "test_cases": "Happy: start->ready->stop. Error: no key -> 400, extend no job -> 404. Boundary: runtime 60/86400/59, gpu_count 1/8/9. Security: API key never exposed in status.",
-      "status": "Tested (test_compute3_turbo) + Documented", "defect_count": 1, "severity": "Low", "notes": "D-002 fixed: latent wait_for_ready readiness path (get_auth_token + 4-arg set_turbo_mode_state). Added regression tests.", "last_tested": "2026-06-22"
-    },
-    {
       "id": "F-ADMIN-001", "name": "System configuration view", "area": "Admin",
       "user_story": "As an admin, I want to view all non-secret system config so that I can verify the deployment.",
-      "expected": "GET /api/admin/config -> SystemConfigResponse (LLM/embedding/vision models, chunking, RAG/community/entity flags, turbo, skills, git). No secrets. UI: 6 collapsible read-only sections; Vision/Turbo conditional.",
-      "edge_cases": "Vision/Turbo blocks hidden when unavailable.",
+      "expected": "GET /api/admin/config -> SystemConfigResponse (LLM/embedding/vision models, chunking, RAG/community/entity flags, skills, git). No secrets. UI: 6 collapsible read-only sections; Vision conditional.",
+      "edge_cases": "Vision block hidden when unavailable.",
       "validation": "",
       "dependencies": "config.py.",
       "assumptions": "No secret leakage.",
@@ -498,12 +487,12 @@
     {
       "id": "F-NAV-001", "name": "Global navigation chrome", "area": "Navigation",
       "user_story": "As a user, I want persistent header/submenu/stats-bar so that I can navigate and see KB status.",
-      "expected": "Header (Manage/Explore pills, Settings gear, Turbo indicator poll 5/30s). SubMenu context tabs (hidden on /admin). StatsBar (4 KPIs, poll 5s, orphan cleanup banner, hidden on /admin). LayoutWrapper minimal layout on /login. Redirect stubs: / -> /documents; /entities,/relationships,/communities -> explore tabs; /ask -> chat/research.",
-      "edge_cases": "Turbo poll failure hides indicator; labels hidden below sm; redirects preserve intent.",
+      "expected": "Header (Manage/Explore pills, Settings gear). SubMenu context tabs (hidden on /admin). StatsBar (4 KPIs, poll 5s, orphan cleanup banner, hidden on /admin). LayoutWrapper minimal layout on /login. Redirect stubs: / -> /documents; /entities,/relationships,/communities -> explore tabs; /ask -> chat/research.",
+      "edge_cases": "Labels hidden below sm; redirects preserve intent.",
       "validation": "",
-      "dependencies": "getTurboStatus, getStats, cleanupOrphanedEntities.",
+      "dependencies": "getStats, cleanupOrphanedEntities.",
       "assumptions": "",
-      "test_cases": "Happy: navigate all sections. Edge: turbo indicator states; orphan banner. Responsive: labels collapse on mobile. Redirects: each stub resolves.",
+      "test_cases": "Happy: navigate all sections. Edge: orphan banner. Responsive: labels collapse on mobile. Redirects: each stub resolves.",
       "status": "Tested (LIVE E2E: anonymous / -> 307 redirect, /login 200) + Documented", "defect_count": 0, "severity": "", "notes": "Unauthenticated frontend redirect confirmed against running deployment. Dead components ask/AskInput.tsx, ask/AskSettings.tsx flagged (unused).", "last_tested": "2026-06-22"
     },
     {
@@ -560,15 +549,6 @@
       "severity": "Medium",
       "root_cause": "RAW_TEXT_EXTENSIONS is a class attribute, but _supported read it through an instance, forcing heavy processor (embedder/splitter) construction during change-set computation. Test isolation also leaked: _isolate_env blanks openai_api_key but not the embedding credentials.",
       "status": "FIXED — _supported() now reads DocumentProcessor.RAW_TEXT_EXTENSIONS from the class without instantiating. Full suite 323/323 green, no regression."
-    },
-    {
-      "id": "D-002", "feature_id": "F-TURBO-001",
-      "repro": "Static/dynamic: invoke the vLLM-readiness path — Compute3Service.wait_for_vllm_ready() (reached when create_turbo_job(wait_for_ready=True)). Lines 312/508 of compute3_service.py.",
-      "expected": "Readiness branch fetches the auth token via the async Compute3 API and enables turbo state without crashing.",
-      "actual": "Latent crash: (1) job.get_auth_token() — no such method on Compute3Job (it is the async Service.get_job_token(job_id)) -> AttributeError; (2) set_turbo_mode_state(True, base_url, token, job_key) passes 4 args to a 3-arg function -> TypeError. Currently unreachable (wait_for_ready defaults False; no caller sets True), so inert today but a landmine.",
-      "severity": "Low",
-      "root_cause": "Readiness branch diverged from the working live path (get_active_turbo_job at L542-557 correctly uses await self.get_job_token(job.job_id) + 3-arg set_turbo_mode_state). The dead branch was never exercised so the API drift went unnoticed.",
-      "status": "FIXED — both call sites now mirror the live path: await self.get_job_token(job.job_id) when job.auth, and 3-arg set_turbo_mode_state. Added tests/test_compute3_turbo.py (4 tests, previously-zero compute3 coverage). Suite 327/327 green."
     },
     {
       "id": "D-003", "feature_id": "F-ADMIN-005",

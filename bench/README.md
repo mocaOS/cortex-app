@@ -435,7 +435,7 @@ my-new-model:
 
 Providers supported by Cortex's reasoning-suppression dispatch (auto-detected
 from `base_url`): OpenAI direct, OpenRouter, Venice, Anthropic, and any
-OpenAI-compatible vLLM/Compute3 endpoint. Other providers still work — the
+OpenAI-compatible vLLM endpoint. Other providers still work — the
 backend just won't inject reasoning-control kwargs for them.
 
 ## Family tags

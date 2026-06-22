@@ -31,26 +31,25 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 12 | [Communities](12-communities.md) | `12-communities.md` | End Users |
 | 13 | [Entity Deduplication](13-deduplication.md) | `13-deduplication.md` | End Users |
 | 14 | [Image Analysis](14-image-analysis.md) | `14-image-analysis.md` | Everyone |
-| 15 | [Turbo Mode (GPU Acceleration)](15-turbo-mode.md) ⚠️ on hold | `15-turbo-mode.md` | Reference only — Compute3 service not yet in production |
-| 16 | [API Reference](16-api-reference.md) | `16-api-reference.md` | Developers |
-| 17 | [Integration Patterns](17-integrations.md) | `17-integrations.md` | Developers |
-| 18 | [Administration and Maintenance](18-administration.md) | `18-administration.md` | Administrators |
-| 19 | [Agent Skills](19-skills.md) | `19-skills.md` | Developers |
-| 20 | [Troubleshooting](20-troubleshooting.md) | `20-troubleshooting.md` | Everyone |
-| 21 | [Glossary](21-glossary.md) | `21-glossary.md` | Everyone |
-| 22 | [Git Integration](22-git-integration.md) | `22-git-integration.md` | Everyone |
-| 23 | [The Cortex Standard](23-the-cortex-standard.md) ★ | `23-the-cortex-standard.md` | Everyone |
+| 15 | [API Reference](15-api-reference.md) | `15-api-reference.md` | Developers |
+| 16 | [Integration Patterns](16-integrations.md) | `16-integrations.md` | Developers |
+| 17 | [Administration and Maintenance](17-administration.md) | `17-administration.md` | Administrators |
+| 18 | [Agent Skills](18-skills.md) | `18-skills.md` | Developers |
+| 19 | [Troubleshooting](19-troubleshooting.md) | `19-troubleshooting.md` | Everyone |
+| 20 | [Glossary](20-glossary.md) | `20-glossary.md` | Everyone |
+| 21 | [Git Integration](21-git-integration.md) | `21-git-integration.md` | Everyone |
+| 22 | [The Cortex Standard](22-the-cortex-standard.md) ★ | `22-the-cortex-standard.md` | Everyone |
 
 ## Quick Links
 
 - **I want to deploy Cortex** — Start with [Chapter 3: Getting Started](03-getting-started.md)
 - **I want to upload documents and build a knowledge graph** — Start with [Chapter 7: Documents](07-documents.md), then [Chapter 8: Knowledge Graph](08-knowledge-graph.md)
 - **I want to ask questions about my documents** — See [Chapter 10: Ask AI](10-ask-ai.md)
-- **I want to connect a GitHub/GitLab/Gitea repository** — See [Chapter 22: Git Integration](22-git-integration.md)
-- **I want to integrate Cortex into my application** — See [Chapter 16: API Reference](16-api-reference.md) and [Chapter 17: Integrations](17-integrations.md)
-- **I want to extend the agent with custom skills** — See [Chapter 19: Agent Skills](19-skills.md)
-- **Something isn't working** — See [Chapter 20: Troubleshooting](20-troubleshooting.md)
-- **I want to understand the philosophy behind Cortex** — Read [Chapter 23: The Cortex Standard](23-the-cortex-standard.md)
+- **I want to connect a GitHub/GitLab/Gitea repository** — See [Chapter 21: Git Integration](21-git-integration.md)
+- **I want to integrate Cortex into my application** — See [Chapter 15: API Reference](15-api-reference.md) and [Chapter 16: Integrations](16-integrations.md)
+- **I want to extend the agent with custom skills** — See [Chapter 18: Agent Skills](18-skills.md)
+- **Something isn't working** — See [Chapter 19: Troubleshooting](19-troubleshooting.md)
+- **I want to understand the philosophy behind Cortex** — Read [Chapter 22: The Cortex Standard](22-the-cortex-standard.md)
 
 ## Additional Resources
 

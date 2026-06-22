@@ -3350,7 +3350,7 @@ class QueryProcessor:
         try:
             from openai import OpenAI
 
-            # Use turbo mode config if active, otherwise default settings
+            # Resolve the LLM config from settings
             llm_config = get_llm_config()
             client = OpenAI(
                 api_key=llm_config.api_key,
@@ -3502,7 +3502,7 @@ Response Style:
                 collection_id=collection_id,
             )
 
-        # Use turbo mode config if active, otherwise default settings
+        # Resolve the LLM config from settings
         llm_config = get_llm_config()
         client = OpenAI(
             api_key=llm_config.api_key,
@@ -3889,7 +3889,7 @@ Response Style:
             yield {"done": True}
             return
 
-        # Use turbo mode config if active, otherwise default settings
+        # Resolve the LLM config from settings
         llm_config = get_llm_config()
 
         if not llm_config.api_key:

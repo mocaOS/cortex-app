@@ -68,9 +68,9 @@ curl -H "X-API-Key: your-api-key" http://localhost:8000/api/stats
 | Permission | Grants Access To |
 |-----------|-----------------|
 | **read** | Search, Ask AI, view documents, view entities/relationships/communities, view graph visualization, view stats, view task status |
-| **manage** | Everything in `read`, plus: upload documents, delete documents, reprocess documents, manage collections, run entity extraction, run relationship analysis, run community detection, entity deduplication, cancel tasks, turbo mode start/stop/extend |
+| **manage** | Everything in `read`, plus: upload documents, delete documents, reprocess documents, manage collections, run entity extraction, run relationship analysis, run community detection, entity deduplication, cancel tasks |
 
-Admin-only operations (system reset, API key management, system configuration, turbo balance/jobs) always require the admin API key.
+Admin-only operations (system reset, API key management, system configuration) always require the admin API key.
 
 ### Collection-Scoped Keys
 
@@ -318,6 +318,6 @@ The interactive API docs (`/docs`, `/redoc`, `/openapi.json`) describe every end
 - [ ] API key authentication required for all endpoints
 - [ ] CORS configured to allow only your domains
 - [ ] Interactive API docs disabled in production (`EXPOSE_API_DOCS=auto` or `false`)
-- [ ] Regular backups scheduled (see [Chapter 18](18-administration.md))
+- [ ] Regular backups scheduled (see [Chapter 17](17-administration.md))
 - [ ] API key usage tracking enabled (`TRACK_ADMIN_API_KEY_USAGE=true`)
 - [ ] Generated API keys use least-privilege permissions

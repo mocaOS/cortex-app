@@ -1,4 +1,4 @@
-# Chapter 23: The Cortex Standard
+# Chapter 22: The Cortex Standard
 
 > *Knowledge should be free to move. Memory should outlive the model. Answers should be fast, grounded, and honest. This is the standard we hold Cortex to — and the standard we believe the field should hold itself to.*
 

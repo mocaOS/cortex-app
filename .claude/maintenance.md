@@ -17,9 +17,8 @@ The handbook contains 21 chapters (`01-introduction.md` through `21-glossary.md`
 - `12-communities.md` — community detection and browsing
 - `13-deduplication.md` — entity deduplication
 - `14-image-analysis.md` — image processing pipeline
-- `15-turbo-mode.md` — GPU-accelerated inference
-- `18-administration.md` — admin settings, system reset, import/export
-- `19-skills.md` — Agent Skills system
+- `17-administration.md` — admin settings, system reset, import/export
+- `18-skills.md` — Agent Skills system
 - Other chapters as relevant (see `handbook/README.md` for full TOC)
 
 ### `README.md` — Project Overview

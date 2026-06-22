@@ -16,12 +16,11 @@ A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_m
 
 ### Fixes
 - **D-001 (Medium)** — the git connector's extension check (`GitConnectorService._supported`) instantiated a full `DocumentProcessor` (building the embedder) just to read a class-level constant; it now reads the class attribute directly. This also restored hermetic test isolation on machines with a real `.env`.
-- **D-002 (Low, latent)** — the Compute3/Turbo vLLM-readiness branch called a nonexistent `job.get_auth_token()` and passed a 4th argument to the 3-arg `set_turbo_mode_state`; both now mirror the working live path (`await get_job_token(...)` + 3-arg call).
 - **D-003 (Low)** — API-usage endpoint categorization used dict-order prefix matching, mislabeling `/api/custom-inputs/{id}` as `upload` instead of `documents`; now longest-prefix-wins (analytics data integrity).
 - **D-004 (Low)** — interactive API docs were served unauthenticated; now gated by `EXPOSE_API_DOCS` (see above).
 
 ### Testing
-- Backend suite expanded from 322 to **458 hermetic tests** (new modules for auth, Compute3, API-usage, vision image-prep, context-curator memory, library-transfer NDJSON round-trip, researcher-agent helpers, skill-service parsing, RRF fusion, and FastAPI endpoint contracts).
+- Backend suite expanded from 322 to **458 hermetic tests** (new modules for auth, API-usage, vision image-prep, context-curator memory, library-transfer NDJSON round-trip, researcher-agent helpers, skill-service parsing, RRF fusion, and FastAPI endpoint contracts).
 - New **live end-to-end harness** (`backend/tests/test_live_e2e*.py`) exercises real journeys (health, auth boundary, collections CRUD, hybrid search, streaming chat, full document ingestion→extraction) against a running stack; auto-skips when none is reachable. Authenticated runs read the key from `CORTEX_E2E_API_KEY`.
 
 **No API or schema breakage** — `EXPOSE_API_DOCS` is additive; the only behavior change is that interactive docs default off under `ENVIRONMENT=production` (re-enable with `EXPOSE_API_DOCS=true`).
@@ -187,9 +186,9 @@ VISION_MAX_CONCURRENT=4
 
 A subsequent 52-doc batch on the new values processed clean: **0 × 429s, 0 × Levenshtein fallbacks, 0 × event-loop block warnings, 52/52 succeeded**. Updated in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, `handbook/{03-getting-started.md, 04-configuration.md}` — eight locations total. The old values remain reasonable on bigger self-hosted vLLM endpoints where you control the rate-limit policy; they were just too hot for Venice's gateway.
 
-### Recommended stack switches to DeepSeek-V4-Flash + Qwen3-Embedding-8B native context
+### Recommended stack standardizes on MiniMax-M3 + Qwen3-Embedding-8B native context
 
-The bench-validated primary moves from MiniMax-M2.7 (196K window, inlined `<think>` issues on Venice for relationship-tier calls) to DeepSeek-V4-Flash (1M window). The recommended block in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` now reads `OPENAI_MODEL=deepseek-v4-flash` / `OPENAI_MAX_CONTEXT=1000000`.
+The bench-validated primary is MiniMax-M3 (192K window). The recommended block in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` reads `OPENAI_MODEL=minimax-m3` / `OPENAI_MAX_CONTEXT=196608`. Keep MiniMax confined to the primary Q&A/research tier — it inlines `<think>` tokens on ingestion paths despite disable_thinking, so extraction/vision stay on Qwen3.
 
 ### `EMBEDDING_MAX_INPUT_TOKENS` env var + post-chunker token-cap sub-splitter
 
@@ -231,14 +230,14 @@ Clicking **Generate Graph** on the Documents page previously navigated to `/extr
 
 ### Reasoning Suppression Control (Provider-Agnostic)
 
-Modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax M2) over-think on structured-extraction tasks, inline `<think>` tokens that corrupt XML output, and burn token budget on chain-of-thought that the parser never sees. A new provider-agnostic switch forces reasoning OFF (or any other level) on every LLM call inside the knowledge-graph pipeline while leaving the researcher/writer Q&A path on AUTO.
+Modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax M3) over-think on structured-extraction tasks, inline `<think>` tokens that corrupt XML output, and burn token budget on chain-of-thought that the parser never sees. A new provider-agnostic switch forces reasoning OFF (or any other level) on every LLM call inside the knowledge-graph pipeline while leaving the researcher/writer Q&A path on AUTO.
 
 - New `backend/app/services/reasoning_config.py` — `ReasoningMode` enum, regex-based model-family classifier, and a per-backend dispatch table. Each backend gets the correct kwargs:
   - **OpenAI** → `reasoning_effort` (`none`/`minimal`/`low`/…)
   - **OpenRouter** → `extra_body.reasoning.effort`
   - **Venice** → `extra_body.venice_parameters.disable_thinking`
   - **Anthropic** → `extra_body.thinking={"type":"disabled"}` (omitted on Opus 4.7+ adaptive thinking)
-  - **vLLM / Compute3** → `extra_body.chat_template_kwargs.enable_thinking=false`
+  - **vLLM** → `extra_body.chat_template_kwargs.enable_thinking=false`
 - `safe_chat_completion` / `safe_chat_completion_sync` wrappers handle a runtime fallback: if a model 400s on the reasoning param, the wrapper retries without it and caches the `(base_url, model)` pair so future calls skip the param upfront — one wasted call per misclassified model, then nothing.
 - All 14 LLM call sites in `graph_extractor.py` route through the wrappers — entity extraction, document summaries, community naming, entity enrichment, candidate scan, gleaning pass, per-chunk + Phase-2 relationship extraction.
 - **Vision-model image analysis** uses the same switch via a `flatten_reasoning_body()` helper that converts OpenAI-SDK-style `extra_body` into a raw-HTTP body dict (vision uses `httpx`, not the OpenAI client). One-shot 400-fallback works the same way.
@@ -298,7 +297,7 @@ The model + budget inheritance chains compress a 3-model 12-env-var stack down t
 ```env
 OPENAI_API_KEY=...
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m27
+OPENAI_MODEL=minimax-m3
 OPENAI_MAX_CONTEXT=196608
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -378,10 +377,8 @@ A comprehensive security audit remediation that closes every gap in the collecti
 
 All endpoints now require an `X-API-Key` header. Previously unprotected endpoints now enforce appropriate permission levels:
 
-- *Read* — `GET /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/result`, `GET /api/turbo/status`
+- *Read* — `GET /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/result`
 - *Manage* — `POST /api/documents/{id}/reprocess` (+ per-document collection validation), `POST /api/documents/reprocess` (+ per-document collection check in loop), `POST /api/documents/process-pending`, `POST /api/cleanup/orphaned-entities`, `PATCH /api/graph/entity/{name}`, `POST /api/entities/merge`, `POST /api/graph/relationships/analyze` (+ `collection_id` validated if supplied), `DELETE /api/graph/relationships`, `DELETE /api/graph/entities`, `POST /api/graph/communities/detect` (+ `collection_id` validated if supplied), `DELETE /api/graph/communities/{id}`, `DELETE /api/graph/communities`, `POST /api/graph/communities/summarize`, `DELETE /api/tasks/{id}`, `POST /api/tasks/cleanup`, `POST /api/custom-input/generate-topic`
-- *Admin* — `GET /api/turbo/balance`, `POST /api/turbo/start`, `POST /api/turbo/stop`, `POST /api/turbo/extend`, `GET /api/turbo/jobs`, `GET /api/turbo/jobs/{id}`, `GET /api/turbo/jobs/{id}/logs` (Turbo Mode manages billing-sensitive GPU resources — elevated from unprotected to admin-only)
-
 **Collection scoping propagated to all read endpoints**
 
 Restricted keys now receive automatically filtered results across every read endpoint — no endpoint leaks cross-collection data:
@@ -598,7 +595,6 @@ Restricted keys now receive automatically filtered results across every read end
 - Relationship analysis runs as a background task with progress tracking via `/api/tasks/{id}`
 - Added relationship provenance: `extracted_at`, `extraction_method`, `source_document_id` properties on relationships
 - New auto-trigger options: `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` and `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` for automated pipeline after batch processing
-- Turbo mode always overrides both extraction and main model configs for massive-scale ingestion
 
 ### Community Deletion and Graph Cleanup
 
@@ -785,7 +781,7 @@ Restricted keys now receive automatically filtered results across every read end
 
 - Launched the full documentation site built with Zudoku, featuring:
   - Getting Started guides (Introduction, Quickstart, Configuration)
-  - Core Features documentation (Document Upload, Search, Ask AI, Knowledge Graph, Collections, Communities, Turbo Mode)
+  - Core Features documentation (Document Upload, Search, Ask AI, Knowledge Graph, Collections, Communities)
   - Guides (Deployment, Authentication, Security)
   - Code examples (Python, cURL, Integration)
   - OpenAPI-powered API Reference

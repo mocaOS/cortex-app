@@ -1,4 +1,4 @@
-# Chapter 18: Administration and Maintenance
+# Chapter 17: Administration and Maintenance
 
 This chapter covers day-to-day administration tasks for self-hosted Cortex Library deployments.
 

@@ -89,7 +89,6 @@ This handbook covers both perspectives. Cloud users will find the end-user chapt
 | **Embeddings** | OpenAI / sentence-transformers | Convert text to semantic vectors for similarity search |
 | **LLM** | Any OpenAI-compatible API | Entity extraction, relationship analysis, Q&A, summarization, research |
 | **Vision** | OpenAI GPT-4o / Claude / LLaVA | Image analysis and OCR during document ingestion |
-| **GPU (Optional)** | Compute3 (vLLM) | GPU-accelerated inference for production workloads |
 
 ### Backend Service Architecture
 
@@ -104,8 +103,7 @@ The backend is organized as a monolithic FastAPI application with specialized se
 | **Vision Analyzer** | `vision_analyzer.py` | Image extraction and analysis with vision model integration |
 | **Auth Service** | `auth_service.py` | Admin JWT authentication and API key validation |
 | **Prompt Security** | `prompt_security.py` | Prompt injection detection and output filtering |
-| **Compute3 Service** | `compute3_service.py` | GPU job management for Turbo Mode |
-| **LLM Config** | `llm_config.py` | LLM provider configuration with Turbo Mode override |
+| **LLM Config** | `llm_config.py` | LLM provider configuration |
 
 ## Use Cases
 
@@ -160,4 +158,4 @@ This handbook serves two primary audiences:
 - **New to Cortex?** Continue to [Chapter 2: Core Concepts](02-core-concepts.md) for foundational knowledge
 - **Ready to deploy?** Jump to [Chapter 3: Getting Started](03-getting-started.md) for installation
 - **Ready to use?** Jump to [Chapter 6: The Web Interface](06-web-interface.md) for a UI walkthrough
-- **Building an integration?** Jump to [Chapter 16: API Reference](16-api-reference.md)
+- **Building an integration?** Jump to [Chapter 15: API Reference](15-api-reference.md)

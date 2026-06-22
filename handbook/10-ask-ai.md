@@ -25,7 +25,7 @@ a second on a capable model, and the chat writer is tuned to lead with the
 answer and stay concise. Deep Research (quality) mode is unaffected — it keeps
 reasoning for thorough, multi-hop work. To restore provider-default thinking on
 chat (e.g. on OpenAI models that disable parallel tool calls at low reasoning),
-set `DEFAULT_REASONING_MODE=auto`. See Chapter 4 and Chapter 23.
+set `DEFAULT_REASONING_MODE=auto`. See Chapter 4 and Chapter 22.
 
 ## How the Pipeline Works
 

@@ -1,4 +1,4 @@
-# Chapter 16: API Reference
+# Chapter 15: API Reference
 
 The Library exposes 70+ REST API endpoints. All endpoints except `/health` require an `X-API-Key` header. This chapter provides a complete endpoint reference.
 
@@ -143,19 +143,6 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | `GET` | `/api/tasks/{id}/result` | Read | Task result (202 if running, 200 on completion) |
 | `DELETE` | `/api/tasks/{id}` | Manage | Cancel/remove task |
 | `POST` | `/api/tasks/cleanup` | Manage | Remove completed tasks. Query: `max_age_hours` (1-168) |
-
-## Turbo Mode (Compute3)
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/turbo/status` | Read | Availability, active job, ready state |
-| `GET` | `/api/turbo/balance` | Admin | Compute3 account balance |
-| `POST` | `/api/turbo/start` | Admin | Start GPU job. Query: `runtime`, `gpu_type`, `gpu_count` |
-| `POST` | `/api/turbo/stop` | Admin | Stop GPU job. Query: `job_id` |
-| `POST` | `/api/turbo/extend` | Admin | Extend runtime. Query: `additional_seconds`, `job_id` |
-| `GET` | `/api/turbo/jobs` | Admin | List GPU jobs. Query: `state` |
-| `GET` | `/api/turbo/jobs/{id}` | Admin | Job details |
-| `GET` | `/api/turbo/jobs/{id}/logs` | Admin | Job logs |
 
 ## Admin — API Keys
 

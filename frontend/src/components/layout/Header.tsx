@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
@@ -10,7 +9,6 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
 
 interface NavItem {
   href: string;
@@ -36,9 +34,6 @@ const navItems: NavItem[] = [
 
 export default function Header() {
   const pathname = usePathname();
-  const [turboAvailable, setTurboAvailable] = useState(false);
-  const [turboActive, setTurboActive] = useState(false);
-  const [turboReady, setTurboReady] = useState(false);
 
   // Helper to extract file extension from URL
   const getLogoExtension = (url: string): string => {
@@ -46,26 +41,6 @@ export default function Header() {
     const ext = urlPath.split(".").pop() || "svg";
     return ext;
   };
-
-  // Check turbo mode availability on mount
-  useEffect(() => {
-    const checkTurboStatus = async () => {
-      try {
-        const status = await api.getTurboStatus();
-        setTurboAvailable(status.available);
-        setTurboActive(status.active);
-        setTurboReady(status.ready ?? false);
-      } catch {
-        setTurboAvailable(false);
-      }
-    };
-
-    checkTurboStatus();
-
-    const pollInterval = turboActive && !turboReady ? 5000 : 30000;
-    const interval = setInterval(checkTurboStatus, pollInterval);
-    return () => clearInterval(interval);
-  }, [turboActive, turboReady]);
 
   // Check if a nav item is active
   const isNavActive = (item: NavItem): boolean => {
@@ -119,29 +94,6 @@ export default function Header() {
                 </Link>
               ))}
             </nav>
-
-            {/* Turbo Status Indicator */}
-            {turboAvailable && (turboActive || turboReady) && (
-              <div
-                className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-all",
-                  turboReady
-                    ? "bg-green-500/10 text-green-400"
-                    : "bg-yellow-500/10 text-yellow-400"
-                )}
-                title={turboReady ? "Turbo Mode Ready" : "Turbo Mode Warming Up"}
-              >
-                <span
-                  className={cn(
-                    "w-2 h-2 rounded-full",
-                    turboReady ? "bg-green-400" : "bg-yellow-400 animate-pulse"
-                  )}
-                />
-                <span className="hidden sm:inline">
-                  {turboReady ? "Turbo" : "Warming"}
-                </span>
-              </div>
-            )}
 
             {/* Settings */}
             <Link

@@ -8,7 +8,6 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - **Semantic Search**: Vector embeddings with hybrid search (vector + keyword + graph)
 - **Knowledge Graph**: Neo4j-based graph storage with community detection
 - **Collections**: Organization of documents into collections with separate knowledge graphs
-- **Turbo Mode**: GPU-accelerated LLM inference via Compute3
 - **API Key Management**: Admin-controlled API key system with permissions
 
 ---
@@ -424,73 +423,6 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 
 ---
 
-### Turbo Mode (Compute3 GPU Acceleration)
-
-#### `GET /api/turbo/status`
-**Description**: Get Turbo Mode status  
-**Authentication**: None  
-**Response**: `{
-  "available": bool,
-  "active": bool,
-  "ready": bool,
-  "job": Optional[dict],
-  "config": Optional[dict]
-}`
-
-**Notes**: `ready` indicates vLLM server is ready for requests.
-
-#### `GET /api/turbo/balance`
-**Description**: Get Compute3 account balance  
-**Authentication**: None  
-**Response**: `{"total": float, "available": float, "reserved": float}`
-
-#### `POST /api/turbo/start`
-**Description**: Start Turbo Mode by launching GPU job  
-**Authentication**: None  
-**Parameters**:
-- `runtime`: Optional[int] (query param, 60-86400 seconds)
-- `gpu_type`: Optional[str] (query param)
-- `gpu_count`: Optional[int] (query param, 1-8)
-
-**Response**: `{"message": str, "job": dict}`
-
-#### `POST /api/turbo/stop`
-**Description**: Stop Turbo Mode by cancelling GPU job  
-**Authentication**: None  
-**Parameters**:
-- `job_id`: Optional[str] (query param)
-
-**Response**: `{"message": str, "job_id": str}`
-
-#### `POST /api/turbo/extend`
-**Description**: Extend runtime of active Turbo Mode job  
-**Authentication**: None  
-**Parameters**:
-- `additional_seconds`: int (query param, 60-86400)
-- `job_id`: Optional[str] (query param)
-
-**Response**: `{"message": str, "job": dict}`
-
-#### `GET /api/turbo/jobs`
-**Description**: List all Turbo Mode jobs  
-**Authentication**: None  
-**Parameters**:
-- `state`: Optional[str] (query param, filter by state)
-
-**Response**: `{"jobs": List[dict], "total": int}`
-
-#### `GET /api/turbo/jobs/{job_id}`
-**Description**: Get details of a specific Turbo Mode job  
-**Authentication**: None  
-**Response**: Job dict
-
-#### `GET /api/turbo/jobs/{job_id}/logs`
-**Description**: Get logs from a Turbo Mode job  
-**Authentication**: None  
-**Response**: `{"job_id": str, "logs": str}`
-
----
-
 ### Background Tasks
 
 #### `GET /api/tasks/{task_id}`
@@ -548,7 +480,7 @@ Returns current system settings grouped into:
 - **Extraction**: `extraction_model`, `extraction_api_base`, `extraction_max_context`, `batch_processing_concurrency`
 - **Vision**: `vision_model`, `vision_api_base`, `vision_max_concurrent`, `vision_model_available`
 - **Embeddings**: `embedding_model`, `embedding_dimension`, `embedding_api_base`, `embedding_send_dimensions`
-- Plus: chunking, search/RAG, graph, community detection, entity resolution, collections, features, turbo mode settings
+- Plus: chunking, search/RAG, graph, community detection, entity resolution, collections, features settings
 
 **Note**: API keys, passwords, and secrets are never included in the response.
 
@@ -932,7 +864,6 @@ Returns current system settings grouped into:
 - Document summary generation for context
 - Community summarization
 - Entity embedding generation for semantic resolution
-- Supports Turbo Mode (Compute3 GPU acceleration)
 
 ### Neo4jService
 
@@ -999,30 +930,6 @@ Returns current system settings grouped into:
 - `delete_api_key(key_id) -> bool`: Delete API key
 - `revoke_api_key(key_id) -> Optional[APIKeyListItem]`: Revoke API key
 - `activate_api_key(key_id) -> Optional[APIKeyListItem]`: Activate API key
-
-### Compute3Service
-
-**Location**: `app/services/compute3_service.py`
-
-**Key Methods**:
-- `get_balance() -> dict`: Get account balance
-- `list_jobs(state) -> List[Compute3Job]`: List jobs
-- `get_job(job_id) -> Optional[Compute3Job]`: Get job by ID
-- `create_turbo_job(runtime, gpu_type, gpu_count, model, wait_for_ready) -> Optional[Compute3Job]`: Create Turbo Mode job
-- `cancel_job(job_id) -> bool`: Cancel job
-- `extend_job(job_id, additional_seconds) -> Optional[Compute3Job]`: Extend job runtime
-- `get_job_logs(job_id) -> str`: Get job logs
-- `check_vllm_health(base_url, auth_token) -> bool`: Check vLLM server health
-- `wait_for_vllm_ready(job, timeout, interval) -> bool`: Wait for vLLM to be ready
-- `get_active_turbo_job() -> Optional[Compute3Job]`: Get active turbo job
-- `get_turbo_status() -> dict`: Get turbo status (sync)
-- `get_turbo_status_async() -> dict`: Get turbo status (async)
-
-**Features**:
-- GPU job management via Compute3 API
-- vLLM inference server deployment
-- Health checking and readiness detection
-- JWT token management for authenticated jobs
 
 ### PromptSecurity
 
@@ -1108,7 +1015,7 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 #### OpenAI / LiteLLM Configuration
 - `OPENAI_API_KEY`: API key for LLM calls
 - `OPENAI_API_BASE`: API base URL (default: `https://api.openai.com/v1`)
-- `OPENAI_MODEL`: Model for LLM calls (default: `openai/minimax-m21`)
+- `OPENAI_MODEL`: Model for LLM calls (default: `openai/minimax-m3`)
 - `OPENAI_MODEL_FAST_MODE`: Model for Fast Mode (defaults to `OPENAI_MODEL`)
 
 #### Upload Configuration
@@ -1194,15 +1101,6 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `ADMIN_API_KEY`: Admin API key for full backend access
 - `SESSION_SECRET`: Secret for JWT session encryption (min 32 chars)
 
-#### Compute3 Turbo Mode Configuration
-- `COMPUTE3_API_KEY`: Compute3 API key for turbo mode
-- `COMPUTE3_API_BASE`: Compute3 API base URL (default: `https://api.compute3.ai`)
-- `COMPUTE3_GPU_TYPE`: GPU type (default: `h100`)
-- `COMPUTE3_GPU_COUNT`: Number of GPUs (default: `4`)
-- `COMPUTE3_MODEL`: Model to run on Compute3 (default: `MiniMaxAI/MiniMax-M2.1`)
-- `COMPUTE3_DOCKER_IMAGE`: Docker image for vLLM (default: `vllm/vllm-openai:nightly`)
-- `COMPUTE3_DEFAULT_RUNTIME`: Default job runtime in seconds (default: `3600`)
-
 ### Environment Variable Loading
 
 Configuration is loaded from:
@@ -1212,7 +1110,6 @@ Configuration is loaded from:
 
 ### Property Helpers
 
-- `turbo_mode_available`: Check if Compute3 API key is set
 - `fast_mode_model`: Get model for Fast Mode
 - `extraction_model`: Get model for graph extraction
 - `summary_model`: Get model for community summarization
@@ -1246,14 +1143,6 @@ Configuration is loaded from:
 - **Background Tasks**: Long-running operations (community detection, batch processing)
 - **URL Protection**: Prevents URLs from being split during chunking
 - **Permanent File Storage**: Original files kept for reprocessing
-
-### Turbo Mode Features
-
-- **GPU Acceleration**: High-performance LLM inference on dedicated GPUs
-- **vLLM Server**: OpenAI-compatible inference server
-- **Health Checking**: Automatic readiness detection
-- **Job Management**: Start, stop, extend GPU jobs
-- **Cost Tracking**: Account balance monitoring
 
 ---
 

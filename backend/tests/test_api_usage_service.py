@@ -32,7 +32,6 @@ from app.services.api_usage_service import categorize_endpoint
         ("/api/documents/abc/content", "documents"),
         ("/api/graph/communities/123", "graph"),
         ("/api/admin/reset", "admin"),
-        ("/api/turbo/start", "turbo"),
         ("/api/collections/c1/entities", "collections"),
         # fallback
         ("/api/totally-unknown", "other"),

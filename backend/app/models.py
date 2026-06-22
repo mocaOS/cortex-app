@@ -1002,13 +1002,6 @@ class SystemConfigResponse(BaseModel):
     
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
-    
-    # Turbo Mode (Compute3)
-    turbo_mode_available: bool = Field(..., description="Whether turbo mode is available")
-    compute3_gpu_type: str = Field(..., description="GPU type for turbo mode")
-    compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
-    compute3_model: str = Field(..., description="Model for turbo mode")
-    compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
 
     # Agent Skills
     enable_skills: bool = Field(default=False, description="Whether agent skills are enabled")
@@ -1056,11 +1049,6 @@ class SystemConfigResponse(BaseModel):
                 "default_collection": "default",
                 "stream_reasoning_steps": True,
                 "show_retrieval_stats": True,
-                "prompt_security": True,
-                "turbo_mode_available": False,
-                "compute3_gpu_type": "h100",
-                "compute3_gpu_count": 4,
-                "compute3_model": "MiniMaxAI/MiniMax-M2.1",
-                "compute3_default_runtime": 3600
+                "prompt_security": True
             }
         }

@@ -6,7 +6,7 @@
 # create a .env file, so all vars must be passed explicitly via environment.
 #
 # Only REQUIRED env vars are declared below. Everything else — embedding settings,
-# vision/graph-extraction overrides, Compute3, relationship & community tuning, feature
+# vision/graph-extraction overrides, relationship & community tuning, feature
 # flags, chunking, resource caps, agent research, skills, branding (logo/accent color),
 # admin email, etc. — defaults to sensible values in backend/app/config.py. To override
 # one, add it as a Dokploy env var AND add a matching `- VAR=${VAR}` line under

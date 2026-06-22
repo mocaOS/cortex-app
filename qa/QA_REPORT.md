@@ -24,18 +24,15 @@
 - Pre-existing automated coverage: extraction parsing, batched writes, checkpoint delta, entity resolution, crypto, git providers/sync, resilience/circuit-breaker, observability, reasoning config, prompt cache, quota caps, budget fallback.
 - **New automated coverage added:**
   - `tests/test_auth_service.py` (15 tests) — SHA-256 hashing + constant-time verify, key generation (prefix/length/uniqueness), permission tiers, collection scoping, `validate_api_key` admin/generated/unknown/fail-closed paths. (Module previously had **no** direct tests.)
-  - `tests/test_compute3_turbo.py` (4 tests) — vLLM readiness token path + `set_turbo_mode_state` arity guard. (compute3 had **zero** coverage.)
 
-## 3. Defects Found (2)
+## 3. Defects Found (1)
 | ID | Feature | Severity | Summary |
 |----|---------|----------|---------|
 | D-001 | F-GIT-002 | Medium | `GitConnectorService._supported()` instantiated a full `DocumentProcessor` (building the embedder) just to read the class-level `RAW_TEXT_EXTENSIONS` constant. Broke test isolation on any machine with a real `.env` (embedding creds leak past `_isolate_env`, which only blanks `openai_api_key`). |
-| D-002 | F-TURBO-001 | Low (latent) | Compute3 vLLM-readiness branch called non-existent `Compute3Job.get_auth_token()` (→ `AttributeError`) and passed a 4th arg to the 3-arg `set_turbo_mode_state` (→ `TypeError`). Currently unreachable (`wait_for_ready` defaults False), so inert today, but a landmine for any future caller. |
 
-## 4. Defects Fixed (2/2)
+## 4. Defects Fixed (1/1)
 - **D-001:** `_supported()` now reads `DocumentProcessor.RAW_TEXT_EXTENSIONS` from the class without instantiating. Verified: `test_git_sync` 10/10, full suite green.
-- **D-002:** Both call sites now mirror the working live path — `await self.get_job_token(job.job_id)` when `job.auth`, and the 3-arg `set_turbo_mode_state`. Locked by new regression tests.
-- No regressions: full suite **342/342** after both fixes.
+- No regressions: full suite **342/342** after the fix.
 
 ## 5. Remaining Risks
 1. **Live-stack manual journeys not executed** — UI flows, SSE streaming, Neo4j graph ops, real LLM extraction require a running stack (out of scope for this sandbox). Documented with test cases; covered by CI typecheck/lint + manual QA.
@@ -45,7 +42,7 @@
 5. **Frontend eslint** not executed locally (root-owned node_modules); relies on CI.
 
 ## 6. Confidence Score
-**Backend correctness (executable scope): 90%** — all 342 tests pass, lint clean, 2 real defects found & fixed with regression coverage, security-critical auth logic now unit-tested.
+**Backend correctness (executable scope): 90%** — all 342 tests pass, lint clean, 1 real defect found & fixed with regression coverage, security-critical auth logic now unit-tested.
 **Overall product confidence: ~72%** — discounted because UI/integration/live-LLM journeys could not be executed end-to-end in this environment. No open critical or high-severity defects; no failing tests.
 
 ---
@@ -62,8 +59,8 @@ Targeted the untested-service coverage gap flagged in iteration 1.
 **Defects fixed:** D-003 — longest-prefix-wins; regression test added. Suite 366/366 green, ruff clean.
 **Confidence:** backend executable scope **~92%**; overall **~74%** (still discounted for unexecutable live journeys).
 
-### Cumulative defects: 3 found, 3 fixed (0 open)
-- D-001 (Medium), D-002 (Low), D-003 (Low) — all fixed and regression-tested.
+### Cumulative defects: 2 found, 2 fixed (0 open)
+- D-001 (Medium), D-003 (Low) — all fixed and regression-tested.
 
 ---
 
@@ -77,7 +74,7 @@ Targeted conversation-memory logic and the HTTP request/response cycle (the clos
 **Defects found:** 0. **Defects fixed:** 0 (none introduced; suite green, ruff clean).
 **Confidence:** backend executable scope **~93%**; overall **~76%** (live UI/SSE/real-LLM journeys still unexecutable here).
 
-### Cumulative: 390 tests passing · 3 defects found · 3 fixed · 0 open
+### Cumulative: 390 tests passing · 2 defects found · 2 fixed · 0 open
 
 ---
 
@@ -91,7 +88,7 @@ Targeted the library export/import round-trip core and real auth enforcement at 
 **Defects found:** 0. **Defects fixed:** 0. Suite green, ruff clean.
 **Confidence:** backend executable scope **~94%**; overall **~77%**.
 
-### Cumulative: 407 tests passing · 3 defects found · 3 fixed · 0 open · 28 test files
+### Cumulative: 407 tests passing · 2 defects found · 2 fixed · 0 open · 28 test files
 
 ---
 
@@ -103,7 +100,7 @@ Closed an explicitly-named gap: the `researcher_agent` loop's pure helpers.
 **Defects found:** 0. **Defects fixed:** 0. Suite green, ruff clean.
 **Confidence:** backend executable scope **~95%**; overall **~78%**.
 
-### Cumulative: 418 tests passing · 3 defects found · 3 fixed · 0 open · 29 test files
+### Cumulative: 418 tests passing · 2 defects found · 2 fixed · 0 open · 29 test files
 
 ---
 
@@ -115,7 +112,7 @@ Closed the `skill_service` pure-logic gap.
 **Defects found:** 0. **Defects fixed:** 0. Suite green, ruff clean.
 **Confidence:** backend executable scope **~95%**; overall **~78%**.
 
-### Cumulative: 432 tests passing · 3 defects found · 3 fixed · 0 open · 30 test files
+### Cumulative: 432 tests passing · 2 defects found · 2 fixed · 0 open · 30 test files
 
 ---
 
@@ -127,7 +124,7 @@ Pinned the hybrid-search ranking core.
 **Defects found:** 0. **Defects fixed:** 0. Suite green, ruff clean.
 **Confidence:** backend executable scope **~96%**; overall **~78%**.
 
-### Cumulative: 438 tests passing · 3 defects found · 3 fixed · 0 open · 31 test files
+### Cumulative: 438 tests passing · 2 defects found · 2 fixed · 0 open · 31 test files
 
 ---
 
@@ -141,7 +138,7 @@ Discovered the full stack is already running in Docker (`cortex-backend`/`-neo4j
 **Coverage:** backend suite **438 → 458** (+20: 12 docs-gating + 8 live E2E). Test files 31 → 33. `test_live_e2e.py` auto-skips when no stack is reachable (CI-safe; `CORTEX_E2E_BASE` to point elsewhere).
 **Confidence:** backend executable scope **~96%**; overall **~84%** (raised — real public/auth/frontend journeys now verified against a live deployment).
 
-### Cumulative: 458 tests passing · 4 defects found · 4 fixed · 0 open · 33 test files
+### Cumulative: 458 tests passing · 3 defects found · 3 fixed · 0 open · 33 test files
 
 ---
 
@@ -160,10 +157,10 @@ The user provided an admin API key, unblocking authenticated journeys against th
 **Codified:** `tests/test_live_e2e_authed.py` (13 tests) reads the key from `CORTEX_E2E_API_KEY` (never hard-coded) and auto-skips without it; all 13 pass against the live stack. Only non-destructive writes (a temp collection deleted in-test).
 
 **Coverage:** offline suite **458 passed + 13 skipped** (authed-live skips without a key); with the key, **+13 live authed journeys pass**. Test files 33 → 34.
-**Defects found:** 0 new (the 504 is documented). **Defects fixed:** 0. Cumulative 4/4 fixed, 0 open.
+**Defects found:** 0 new (the 504 is documented). **Defects fixed:** 0. Cumulative 3/3 fixed, 0 open.
 **Confidence:** backend executable scope **~97%**; overall **~90%** — the major authenticated user journeys (collections CRUD, hybrid search, streaming RAG chat) are now verified end-to-end against the real deployment.
 
-### Cumulative: 458 offline tests + 13 live authed (all pass) · 4 defects found · 4 fixed · 0 open · 34 test files
+### Cumulative: 458 offline tests + 13 live authed (all pass) · 3 defects found · 3 fixed · 0 open · 34 test files
 
 ---
 
@@ -177,12 +174,12 @@ Closed the last major journey. Ran the full document pipeline against the live s
 **Codified:** `test_live_e2e_authed.py::test_document_ingestion_extraction_journey` (self-cleaning, skips without `CORTEX_E2E_API_KEY`). Full authed module now **14/14** pass against the live deployment.
 
 **Coverage:** offline **458 passed + 14 skipped**; with key, **14 live authed journeys pass** (incl. full ingestion pipeline). 34 test files.
-**Defects found:** 0 (the app behaved correctly; the miss was in my test). **Defects fixed:** 0 product defects this iteration. Cumulative **4 found / 4 fixed / 0 open**.
+**Defects found:** 0 (the app behaved correctly; the miss was in my test). **Defects fixed:** 0 product defects this iteration. Cumulative **3 found / 3 fixed / 0 open**.
 **Confidence:** backend executable scope **~97%**; overall **~93%** — ingestion, extraction, search, chat, CRUD, and auth journeys are all now verified end-to-end against the live stack with real data.
 
-### Cumulative: 458 offline tests + 14 live authed (all pass) · 4 defects found · 4 fixed · 0 open · 34 test files
+### Cumulative: 458 offline tests + 14 live authed (all pass) · 3 defects found · 3 fixed · 0 open · 34 test files
 
 ## Exit-criteria status
-- No failing tests ✅ · No open critical defects ✅ · No open high-severity defects ✅ (4 defects, all Medium/Low, fixed).
+- No failing tests ✅ · No open critical defects ✅ · No open high-severity defects ✅ (3 defects, all Medium/Low, fixed).
 - **End-to-end user journeys executed live** against the running deployment: public/health, auth boundary, frontend redirect, authenticated reads, collections CRUD, hybrid search, streaming RAG chat, **and the full document-ingestion → extraction → search → cleanup pipeline**.
 - Only operationally-heavy edge paths remain unexecuted end-to-end (and are unit/contract-covered): **community detection** (Leiden/Louvain GDS — re-clusters the entire live graph, unsafe to trigger on production data; needs a disposable populated instance) and **docling binary conversion of a real PDF/Office file** (raw-text ingestion path is verified live). These mutate or load the shared graph and are intentionally not run against the live instance.

@@ -13,7 +13,7 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
 ## Primary LLM
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: gpt-4o-mini) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
+- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: openai/minimax-m3) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M3, GLM5, Kimi K2.5)
 - `OPENAI_API_BASE` — for LiteLLM-compatible providers
 - `OPENAI_MAX_OUTPUT_TOKENS` (default: 8000) — floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0. 8000 is generous enough that verbose-XML models (Qwen3-family) don't truncate `<relationship>` output; tighter models simply finish under cap with no cost penalty. See [Budget Fallback Chain](#budget-fallback-chain).
 - `OPENAI_MAX_CONTEXT` (default: 32768) — floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0.
@@ -41,7 +41,7 @@ See [`.claude/domain/relationships.md`](domain/relationships.md) for how these a
 
 ## Reasoning Control (ingestion)
 
-Force reasoning OFF on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax) so they can be used for structured extraction without the drift, hidden-token cost, latency, and malformed JSON that reasoning causes on these tasks. Implementation: `backend/app/services/reasoning_config.py`. Backend detected from `base_url`; model family by regex on the model string. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3.
+Force reasoning OFF on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax) so they can be used for structured extraction without the drift, hidden-token cost, latency, and malformed JSON that reasoning causes on these tasks. Implementation: `backend/app/services/reasoning_config.py`. Backend detected from `base_url`; model family by regex on the model string. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM.
 
 Accepted values for all three modes: `off | minimal | auto | low | medium | high` (also accepts `none`/`disabled` as aliases for OFF, and `default` as alias for AUTO).
 
@@ -84,8 +84,8 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 Recommended minimal config when running a 3-tier stack:
 ```env
-OPENAI_MODEL=minimax-m27            # primary / agentic (192K window)
-OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M27 full input window
+OPENAI_MODEL=minimax-m3            # primary / agentic (192K window)
+OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M3 full input window
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.7-27B full input window; relationship_max_context inherits
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
@@ -104,7 +104,7 @@ CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3
 CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
 VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 ```
-`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / Compute3 / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
+`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
 
 **Migration:** the env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` was previously the Phase 2 batch budget (16000). It now drives **per-chunk + candidate scan** instead, and the Phase 2 batch value lives in the new `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` will see per-chunk extraction also get 16000 tokens (overkill but harmless — model finishes well below cap).
 

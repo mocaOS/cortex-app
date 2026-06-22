@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = Field(default="")
     openai_api_base: str = Field(default="https://api.openai.com/v1")
-    openai_model: str = Field(default="openai/minimax-m21")
+    openai_model: str = Field(default="openai/minimax-m3")
     openai_model_fast_mode: str = Field(
         default=""
     )  # Model for "Fast Mode" in Ask AI (defaults to openai_model if empty)
@@ -624,30 +624,6 @@ class Settings(BaseSettings):
     # secret config). First key encrypts, all keys decrypt (rotation support).
     # Empty = encryption disabled (plaintext fallback). Generate a key with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-    # ==========================================================================
-    # Compute3 Turbo Mode Configuration
-    # ==========================================================================
-    compute3_api_key: str = Field(default="")  # Compute3 API key for turbo mode
-    compute3_api_base: str = Field(
-        default="https://api.compute3.ai"
-    )  # Compute3 API base URL
-    compute3_gpu_type: str = Field(default="h100")  # GPU type for turbo mode jobs
-    compute3_gpu_count: int = Field(default=4)  # Number of GPUs for turbo mode
-    compute3_model: str = Field(
-        default="MiniMaxAI/MiniMax-M2.1"
-    )  # Model to run on Compute3 (HuggingFace model ID)
-    compute3_docker_image: str = Field(
-        default="vllm/vllm-openai:nightly"
-    )  # Docker image for vLLM (nightly required for MiniMax-M2.1)
-    compute3_default_runtime: int = Field(
-        default=3600
-    )  # Default job runtime in seconds (1 hour)
-
-    @property
-    def turbo_mode_available(self) -> bool:
-        """Check if turbo mode is available (Compute3 API key is set)."""
-        return bool(self.compute3_api_key)
 
     @property
     def vision_model_available(self) -> bool:

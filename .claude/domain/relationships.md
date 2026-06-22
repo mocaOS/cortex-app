@@ -2,7 +2,7 @@
 
 All relationship extraction and analysis logic. See [`.claude/environment.md`](../environment.md#relationship-llm) for env var reference.
 
-> **Reasoning control:** all relationship-tier LLM calls (Phase 1 candidate scan, gleaning pass, per-chunk extraction, Phase 2 batch analysis) run under `RELATIONSHIP_REASONING_MODE` (default `off`). The helper at `backend/app/services/reasoning_config.py` suppresses thinking on reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1) via provider-correct kwargs (`reasoning_effort` for OpenAI, `extra_body.reasoning` for OpenRouter, `extra_body.chat_template_kwargs.enable_thinking=false` for vLLM/Compute3, `venice_parameters` for Venice, `thinking={type:disabled}` for Anthropic — Opus 4.7+ omits the param). No-op for pure instruct models. Runtime fallback strips the param and caches the model on `BadRequestError`. Override knob: `REASONING_MODEL_OVERRIDES=model:mode`.
+> **Reasoning control:** all relationship-tier LLM calls (Phase 1 candidate scan, gleaning pass, per-chunk extraction, Phase 2 batch analysis) run under `RELATIONSHIP_REASONING_MODE` (default `off`). The helper at `backend/app/services/reasoning_config.py` suppresses thinking on reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1) via provider-correct kwargs (`reasoning_effort` for OpenAI, `extra_body.reasoning` for OpenRouter, `extra_body.chat_template_kwargs.enable_thinking=false` for vLLM, `venice_parameters` for Venice, `thinking={type:disabled}` for Anthropic — Opus 4.7+ omits the param). No-op for pure instruct models. Runtime fallback strips the param and caches the model on `BadRequestError`. Override knob: `REASONING_MODEL_OVERRIDES=model:mode`.
 
 ## Three-Tier LLM Configuration
 

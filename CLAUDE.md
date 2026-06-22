@@ -39,7 +39,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md` |
 | `backend/app/services/skill_service.py` | `domain/skills.md` |
 | `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |
-| `backend/app/services/llm_config.py`, `compute3_service.py` | `environment.md`, `domain/relationships.md` |
+| `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md` |
 | `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
 | `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md` |
 | `backend/app/services/prompt_security.py` | `architecture.md` |
@@ -51,7 +51,6 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `frontend/src/app/admin/**`, `components/admin/**` | `domain/admin-features.md`, `domain/skills.md`, `domain/git-integration.md` |
 | `frontend/src/app/collections/**`, `components/collections/**` | `frontend-patterns.md` |
 | `frontend/src/app/add/**` | `domain/document-pipeline.md` |
-| `frontend/src/app/turbo/**` | `environment.md` |
 | `frontend/src/components/layout/**` | `architecture.md`, `frontend-patterns.md` |
 | `frontend/src/lib/**` | `architecture.md` |
 | `design-system/**` | `design-system.md` |

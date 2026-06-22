@@ -45,7 +45,7 @@ SESSION_SECRET=your-session-secret-key-at-least-32-characters-long
 
 ```bash
 # Primary model for Q&A, research, chat
-# Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
+# Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5)
 OPENAI_MODEL=gpt-4o-mini
 
 # Optional: Faster/cheaper model for "Fast Mode"
@@ -203,7 +203,7 @@ discovery:
 
 ### Reasoning Control for ingestion
 
-Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M2) be used for ingestion while suppressing their thinking. Cortex auto-detects the provider from `base_url` and the model family from the model name — works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3.
+Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M3) be used for ingestion while suppressing their thinking. Cortex auto-detects the provider from `base_url` and the model family from the model name — works for OpenAI, OpenRouter, Venice, Anthropic, and self-hosted vLLM.
 
 Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for OFF).
 
@@ -257,8 +257,8 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=deepseek-v4-flash        # primary / agentic (1M window)
-OPENAI_MAX_CONTEXT=1000000                 # unlock DeepSeek-V4-Flash full input window
+OPENAI_MODEL=minimax-m3        # primary / agentic (192K window)
+OPENAI_MAX_CONTEXT=196608                 # unlock MiniMax-M3 full input window
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B full input window; relationship_max_context inherits
@@ -272,9 +272,9 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 # vLLM users running Qwen3-Embedding-8B can lift to 32768.
 ```
 
-Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap DeepSeek-V4-Flash and Qwen3.7-27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (8192 regardless of the underlying model's native window); oversized inputs are char-truncated client-side to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap MiniMax-M3 and Qwen3.7-27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (8192 regardless of the underlying model's native window); oversized inputs are char-truncated client-side to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
-**Performance tuning (Venice-validated).** Pair these four knobs with the stack above to maximize ingestion throughput. Bench-validated against Venice; safe on Venice, Compute3, or large self-hosted vLLM endpoints. Dial back on stock OpenAI or smaller hosts to avoid rate-limit errors.
+**Performance tuning (Venice-validated).** Pair these four knobs with the stack above to maximize ingestion throughput. Bench-validated against Venice; safe on Venice or large self-hosted vLLM endpoints. Dial back on stock OpenAI or smaller hosts to avoid rate-limit errors.
 
 ```bash
 BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
@@ -542,33 +542,6 @@ PROMPT_SECURITY=true
 ### API Key Authentication
 
 See [Authentication Guide](/guides/authentication) for details.
-
----
-
-## Compute3 Turbo Mode (ON HOLD)
-
-> ⚠️ **Not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The variables below are kept in the codebase against future activation but have no runtime effect today. Safe to leave all of them unset.
-
-GPU-accelerated inference for faster processing:
-
-```bash
-# Enable Compute3 integration
-COMPUTE3_API_KEY=your-c3-api-key-here
-COMPUTE3_API_BASE=https://api.compute3.ai
-
-# GPU configuration
-COMPUTE3_GPU_TYPE=h100
-COMPUTE3_GPU_COUNT=4
-
-# Model to use on Compute3
-COMPUTE3_MODEL=MiniMaxAI/MiniMax-M2.1
-
-# Docker image for inference
-COMPUTE3_DOCKER_IMAGE=vllm/vllm-openai:latest
-
-# Default runtime in seconds
-COMPUTE3_DEFAULT_RUNTIME=3600
-```
 
 ---
 

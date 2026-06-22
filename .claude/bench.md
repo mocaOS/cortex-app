@@ -31,7 +31,7 @@ Each model entry's `base_url` determines which reasoning-suppression strategy `b
 | `openrouter.ai` | `extra_body.reasoning.effort = "none"` (or `"minimal"` for original GPT-5) |
 | `venice.ai` | `extra_body.venice_parameters.disable_thinking = true` |
 | `api.anthropic.com` | `extra_body.thinking = {"type": "disabled"}` — omit for Opus 4.7+ (returns 400) |
-| anything else (vLLM, Compute3, self-host) | `extra_body.chat_template_kwargs.{enable_thinking,thinking} = false` |
+| anything else (vLLM, self-host) | `extra_body.chat_template_kwargs.{enable_thinking,thinking} = false` |
 
 This is the same dispatch table that backs Cortex's `EXTRACTION_REASONING_MODE` / `RELATIONSHIP_REASONING_MODE` env knobs; the bench just exercises it across many combos.
 

@@ -349,48 +349,6 @@ export interface EntityDetails {
 }
 
 // =============================================================================
-// Turbo Mode Types (Compute3 GPU Acceleration)
-// =============================================================================
-
-export interface TurboJob {
-  job_id: string;
-  state: string;
-  gpu_type: string;
-  gpu_count: number;
-  region: string;
-  price_per_hour: number;
-  runtime: number;
-  hostname?: string;
-  base_url?: string;
-  is_running: boolean;
-  is_ready: boolean;  // vLLM server is ready for requests
-  created_at?: number;
-  started_at?: number;
-  completed_at?: number;
-  completed?: boolean;
-}
-
-export interface TurboStatus {
-  available: boolean;
-  active: boolean;   // GPU job is running
-  ready: boolean;    // vLLM server is ready for requests
-  job?: TurboJob;
-  config?: {
-    gpu_type: string;
-    gpu_count: number;
-    model: string;
-    default_runtime: number;
-  };
-}
-
-export interface TurboBalance {
-  total?: number;
-  available?: number;
-  reserved?: number;
-  error?: string;
-}
-
-// =============================================================================
 // Custom Input Types (Manual Q&A, Text, Markdown)
 // =============================================================================
 
@@ -752,13 +710,6 @@ export interface SystemConfig {
   
   // Security
   prompt_security: boolean;
-  
-  // Turbo Mode (Compute3)
-  turbo_mode_available: boolean;
-  compute3_gpu_type: string;
-  compute3_gpu_count: number;
-  compute3_model: string;
-  compute3_default_runtime: number;
 
   // Agent Skills
   enable_skills: boolean;

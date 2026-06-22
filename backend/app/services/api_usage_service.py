@@ -57,9 +57,6 @@ ENDPOINT_CATEGORIES = {
     # Admin endpoints
     "/api/admin": "admin",
     "/api/stats": "stats",
-    
-    # Turbo mode
-    "/api/turbo": "turbo",
 }
 
 

@@ -24,7 +24,7 @@ CI parity lint gate (error-class only): `.qa-venv/bin/python -m ruff check --sel
 - `mock_neo4j`, `mock_processors` — MagicMock singletons; `client` — FastAPI `TestClient` with Neo4j/processors mocked and the three auth deps overridden to a fake admin.
 
 ### Coverage map (unit/contract)
-Dedicated suites cover: config/budget fallback, reasoning dispatch, prompt cache, graph-extractor XML parsing + chunk-batch + batched writes + checkpoint delta, entity resolution, crypto, git providers + sync, resilience/circuit-breaker, observability, quota caps, **auth_service** (hashing/generation/permission tiers/collection scope + real HTTP 401 enforcement via a no-bypass client), **compute3** turbo readiness, **api_usage** endpoint categorization, **vision** image-payload prep, **context_curator** memory helpers, **library_transfer** NDJSON round-trip, **researcher_agent** helpers (merge/dedup/truncate/substitute), **skill_service** parse/sanitize/env-boundary, **RRF** hybrid-search fusion, and FastAPI **endpoint contract** smoke tests (422/400/404).
+Dedicated suites cover: config/budget fallback, reasoning dispatch, prompt cache, graph-extractor XML parsing + chunk-batch + batched writes + checkpoint delta, entity resolution, crypto, git providers + sync, resilience/circuit-breaker, observability, quota caps, **auth_service** (hashing/generation/permission tiers/collection scope + real HTTP 401 enforcement via a no-bypass client), **api_usage** endpoint categorization, **vision** image-payload prep, **context_curator** memory helpers, **library_transfer** NDJSON round-trip, **researcher_agent** helpers (merge/dedup/truncate/substitute), **skill_service** parse/sanitize/env-boundary, **RRF** hybrid-search fusion, and FastAPI **endpoint contract** smoke tests (422/400/404).
 
 ## Live end-to-end harness (`backend/tests/test_live_e2e*.py`)
 
@@ -56,6 +56,5 @@ The live journeys are codified as the `backend/tests/test_live_e2e*.py` pytest m
 | ID | Area | Severity | Fix |
 |----|------|----------|-----|
 | D-001 | `git_connector_service._supported()` | Medium | Read `DocumentProcessor.RAW_TEXT_EXTENSIONS` from the class instead of instantiating a full processor (broke test isolation when a real `.env` was present). |
-| D-002 | `compute3_service` vLLM readiness | Low (latent) | Replaced nonexistent `job.get_auth_token()` + 4-arg `set_turbo_mode_state` with `await self.get_job_token(job.job_id)` + the 3-arg call. |
 | D-003 | `api_usage_service.categorize_endpoint` | Low | Longest-prefix-wins matching so `/api/custom-inputs/{id}` categorizes as `documents`, not `upload` (analytics data integrity). |
 | D-004 | API docs exposure | Low | Interactive docs (`/docs`,`/redoc`,`/openapi.json`) now gated by `EXPOSE_API_DOCS` (off in production by default). See [`environment.md`](environment.md). |

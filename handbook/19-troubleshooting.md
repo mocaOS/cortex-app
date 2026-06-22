@@ -1,4 +1,4 @@
-# Chapter 20: Troubleshooting
+# Chapter 19: Troubleshooting
 
 This chapter covers common issues and their solutions.
 
@@ -115,7 +115,6 @@ ss -tlnp | grep 3000
 - Reduce `CONCURRENT_EXTRACTIONS`
 - Reduce `BATCH_PROCESSING_CONCURRENCY`
 - Reduce `VISION_MAX_CONCURRENT`
-- Use Turbo Mode for GPU-accelerated processing (no rate limits)
 
 ## Knowledge Graph Issues
 
@@ -162,16 +161,15 @@ Run the indicated step to resolve staleness.
 | Embedding API | Slow after conversion | Check API latency, increase thread pool |
 | Entity extraction | Slow at "extracting" stage | Increase `CONCURRENT_EXTRACTIONS`, check LLM API speed |
 | Vision API | Image progress stuck | Increase `VISION_MAX_CONCURRENT`, check vision API |
-| Overall | Everything slow | Use Turbo Mode for GPU acceleration |
+| Overall | Everything slow | Tune concurrency settings, use a faster LLM endpoint |
 
 ### Slow Relationship Analysis
 
 Relationship analysis is the most compute-intensive step. Speed it up:
 
 1. **Increase `PARALLEL_RELATIONSHIP_BATCHES`** — This is the most impactful setting. Default is 2; try 4-8 if your LLM API can handle it.
-2. **Use Turbo Mode** — GPU-accelerated inference is 3-5x faster.
-3. **Use a faster model** — Smaller models process batches faster.
-4. **Increase `RELATIONSHIP_MAX_CONTEXT`** — Larger batches mean fewer total batches.
+2. **Use a faster model** — Smaller models process batches faster.
+3. **Increase `RELATIONSHIP_MAX_CONTEXT`** — Larger batches mean fewer total batches.
 
 ### Slow Search/Q&A
 
@@ -256,7 +254,7 @@ curl -X POST http://localhost:8000/api/cleanup/orphaned-entities \
 
 ### Lost Data After Reset
 
-**Prevention:** Always back up before resetting. See [Chapter 18: Administration](18-administration.md).
+**Prevention:** Always back up before resetting. See [Chapter 17: Administration](17-administration.md).
 
 **If no backup exists:** Data deleted by system reset cannot be recovered. Re-upload documents and rebuild the graph.
 
