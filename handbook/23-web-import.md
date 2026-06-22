@@ -4,20 +4,21 @@ Web Import turns web pages into knowledge. You give Cortex a list of URLs — or
 
 This feature supersedes the standalone `mdharvest` tool. The crawling is performed by [**crawl4ai**](https://github.com/unclecode/crawl4ai), an open-source web crawler built for LLM pipelines. Cortex itself never runs a browser — it calls a crawl4ai service over HTTP. You run crawl4ai once and point Cortex at it; a single crawl4ai instance can serve many Cortex deployments.
 
-It is disabled by default. An administrator enables it by setting `ENABLE_WEB_CRAWL=true` and a `CRAWL_SERVICE_URL` (see [Chapter 4: Configuration](04-configuration.md)). When both are set, a **Web Import** option appears on the **Add Knowledge** page.
+It is disabled by default. An administrator enables it by setting `ENABLE_WEB_CRAWL=true` and a `CRAWL_SERVICE_URL` (see [Chapter 4: Configuration](04-configuration.md)). When both are set, a **Web Import** option appears in the dropdown next to the **Upload** button on the **Documents** page.
 
 ## How it works
 
-1. On **Add Knowledge**, choose **Web Import**.
-2. Provide URLs in one of two ways:
-   - **Paste** them directly, one per line.
-   - **Discover** — enter a single page URL and Cortex lists the same-site links it finds, each with a checkbox so you can pull only the pages you want.
-3. Choose a **content filter**:
+1. On the **Documents** page, click the small **▾** arrow beside the **Upload** button and choose **Web Import**. A modal opens.
+2. Pick a **collection** to import into.
+3. Provide URLs in one of two ways:
+   - **Paste** them directly into the URL box, one per line.
+   - **Discover links** — enter a single page URL and Cortex lists the same-site links it finds, each with a checkbox, so you can add only the pages you want to the list.
+4. Choose a **content filter**:
    - **Readable** (default) — the main article content with navigation, ads, and boilerplate removed.
    - **Full page** — the whole page converted to markdown.
    - **Relevance-ranked** — keeps only the passages most relevant to a query you supply.
-4. Optionally pick a **collection**, then click **Import**.
-5. Cortex crawls the pages (several at a time), then processes them into the graph, showing live progress and a final summary of successes and failures.
+5. Click **Import from Web**. Cortex crawls the pages (several at a time) and processes them into the graph, showing a live progress bar.
+6. When it finishes, the modal reports how many pages were imported (and any failures). Close it — the new documents are already listed on the Documents page.
 
 Every imported page carries a provenance header recording its source URL and the date it was extracted, so its origin is always traceable.
 

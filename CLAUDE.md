@@ -46,13 +46,13 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md` |
 | `backend/app/services/prompt_security.py` | `architecture.md` |
 | `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |
-| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md` |
+| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md`, `domain/web-crawl.md` (Web Import modal) |
 | `frontend/src/app/deduplicate/**` | `domain/entities.md` |
 | `frontend/src/app/explore/**`, `components/explore/**` | `frontend-patterns.md`, `domain/entities.md` |
 | `frontend/src/app/ask/**`, `components/ask/**` | `domain/rag-pipeline.md`, `frontend-patterns.md` |
 | `frontend/src/app/admin/**`, `components/admin/**` | `domain/admin-features.md`, `domain/skills.md`, `domain/git-integration.md` |
 | `frontend/src/app/collections/**`, `components/collections/**` | `frontend-patterns.md` |
-| `frontend/src/app/add/**`, `components/add/**` | `domain/document-pipeline.md`, `domain/web-crawl.md` |
+| `frontend/src/app/add/**` | `domain/document-pipeline.md` |
 | `frontend/src/components/layout/**` | `architecture.md`, `frontend-patterns.md` |
 | `frontend/src/lib/**` | `architecture.md` |
 | `design-system/**` | `design-system.md` |

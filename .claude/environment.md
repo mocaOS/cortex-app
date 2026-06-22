@@ -145,7 +145,7 @@ Web→markdown harvesting (the "Web Import" feature; supersedes the deprecated s
 - `CRAWL_SERVICE_URL` (default: empty) — base URL of the crawl4ai service, e.g. `http://crawl4ai:11235` (self-host) or `http://<host>:11235` (the shared per-server instance). Empty = disabled.
 - `CRAWL_SERVICE_TOKEN` (default: empty) — optional bearer token sent as `Authorization: Bearer <token>`; must match crawl4ai's `security.api_token`. Empty = no auth header (crawl4ai on a trusted/internal network).
 - `CRAWL_HTTP_TIMEOUT` (default: 60) — per-request timeout (s) for crawl4ai calls (browser rendering of a slow page can take tens of seconds).
-- `CRAWL_CONTENT_FILTER` (default: `fit`) — crawl4ai `/md` filter: `fit` (readability — clean main content, the Trafilatura replacement), `raw` (full DOM→markdown), or `bm25` (query-ranked; needs a query). Per-request override via the API.
+- `CRAWL_CONTENT_FILTER` (default: `fit`) — crawl4ai `/md` filter: `fit` (readability — clean main content), `raw` (full DOM→markdown), or `bm25` (query-ranked; needs a query). Per-request override via the API.
 - `CRAWL_CONCURRENCY` (default: 5) — max URLs crawled concurrently within one Web Import job (the shared crawl4ai enforces its own browser-pool limits).
 - `CRAWL_MAX_URLS_PER_JOB` (default: 100) — hard cap on URLs per job; **the per-tenant plan lever** (the AaaS operator lowers it via env). 0 = unlimited.
 - `CRAWL_DISCOVER_MAX_LINKS` (default: 200) — cap on candidate links returned by `/api/web-import/discover`.

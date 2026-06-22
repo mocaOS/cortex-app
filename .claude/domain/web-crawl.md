@@ -34,7 +34,7 @@ cortex-app                                  crawl4ai service (own / shared)
 Mirrors `helper_client.py`'s transport discipline: one shared `httpx.AsyncClient`, 3 retries with backoff+jitter on transient failures, and its own `CircuitBreaker("crawl")` (reused from `helper_client`; surfaced as op `crawl` in `/metrics`). Auth: `Authorization: Bearer <CRAWL_SERVICE_TOKEN>` when set (crawl4ai's scheme — NOT the helper's `X-Helper-Token`); also sends `X-Tenant-ID` + `X-Request-ID`.
 
 - **`crawl_markdown(url, content_filter=None, query=None)`** → POST `/md` with `{url, f, c:"0"}` (+ `q` for bm25). `f` defaults to `CRAWL_CONTENT_FILTER` (`fit`). Returns `{url, title, markdown}`. Title is best-effort: first `# ` H1 in the markdown, else derived from the URL path. Raises `CrawlUnavailableError` on circuit-open / network / 4xx / empty markdown. `c="0"` = cache-bypass (defense-in-depth; see Privacy).
-- **`discover_links(url)`** → POST `/crawl` with `{urls:[url]}`, reads `results[0].links.internal`. Filters to **same-host** http(s) links, drops `_SKIP_PATTERNS` (login/cart/legal/…) and asset extensions (ported from `mdharvest`), dedups, caps at `CRAWL_DISCOVER_MAX_LINKS`. Returns `{source_url, domain, links:[{url,title}]}`.
+- **`discover_links(url)`** → POST `/crawl` with `{urls:[url]}`, reads `results[0].links.internal`. Filters to **same-host** http(s) links, drops `_SKIP_PATTERNS` (login/cart/legal/…) and asset extensions, dedups, caps at `CRAWL_DISCOVER_MAX_LINKS`. Returns `{source_url, domain, links:[{url,title}]}`.
 
 4xx is the caller's problem (bad URL/auth) and does NOT trip the breaker; transient 5xx/timeouts do.
 
@@ -49,7 +49,7 @@ Mirrors `helper_client.py`'s transport discipline: one shared `httpx.AsyncClient
 1. Crawl all URLs concurrently (`asyncio.Semaphore(CRAWL_CONCURRENCY)`), wrap each in the provenance header (below), write to `{custom_inputs_dir}/{uuid}.md`, `store_file_only(source=f"crawl:{netloc}")` (staged PENDING). Per-URL failures are collected, not fatal.
 2. If anything succeeded, `processor.process_pending_documents(progress_callback=...)` runs the shared extract/embed pass. `complete_task` with `{imported, failed, total, succeeded[], failures[], processing}`. All-fail ⇒ `fail_task`.
 
-**Markdown provenance header** (`_format_crawl_markdown`, ported verbatim from `mdharvest` for KB consistency):
+**Markdown provenance header** (`_format_crawl_markdown`):
 
 ```markdown
 # {title}
@@ -75,13 +75,17 @@ A hard requirement, satisfied by construction. The controls live where the opera
 
 There is no crawl-history surface to leak; 1–3 make cross-tenant visibility impossible, 4 controls who can call it. **SSRF**: crawl4ai fetches any URL given — on shared hosts, add egress rules blocking RFC1918 + `169.254.169.254` at the network layer (see `cortex-helper/README.md`).
 
-## Feature gating in the frontend
+## Frontend (Documents-page modal)
 
-`/api/features` (read-permission, non-admin) returns `enable_web_crawl` (already AND-ed with "crawl service configured"). The Web Import UI on the Add page reads it; the full `/api/admin/config` (`SystemConfigResponse.enable_web_crawl`) is admin-only.
+The entry point is a split **Upload** button on the Documents page (`components/DocumentList.tsx`): a `▾` dropdown beside Upload offers a single **Web Import** item that opens `components/documents/WebImportModal.tsx` (collection → URLs → Discover links → content filter → "Import from Web" → live progress → completion screen; refreshes the doc list via `onImported`).
 
-## Deliberately NOT ported from mdharvest
+Gating: `DocumentList` calls `/api/features` (read-permission, non-admin) which returns `enable_web_crawl` (already AND-ed with "crawl service configured") and renders the `▾`/modal only when true; the full `/api/admin/config` (`SystemConfigResponse.enable_web_crawl`) is admin-only. The modal reuses `api.webImport` / `api.webDiscover` / `api.pollTask`. (There is no `/add`-page entry point — that approach was dropped.)
 
-Crawlee + its private-API isolation hacks, the Playwright/BeautifulSoup fetchers, Trafilatura (crawl4ai's `fit` filter replaces it), and the standalone SQLite job DB (cortex's `TaskProgress` + `Document` nodes replace it). Kept: the markdown header, the discovery UX, and the same-host link/skip-pattern heuristics.
+## Design notes (why cortex-app stays thin)
+
+- **crawl4ai does all the heavy lifting** — JS rendering via a headless browser pool, anti-scrape handling, and HTML→markdown content filtering (`fit` = readability extraction). cortex-app carries no browser, HTML parser, or scraping dependency of its own — just an HTTP client (`crawl_client.py`).
+- **No crawl-specific storage** — jobs reuse the existing `TaskProgress` tracker and land as ordinary `Document` nodes; there is no separate crawl database or history table.
+- The only crawl-specific logic in cortex-app is the same-host link/skip-pattern filtering (`crawl_client.py`) and the provenance header (`_format_crawl_markdown`).
 
 ## Future (not built — MVP is batch import + discovery)
 

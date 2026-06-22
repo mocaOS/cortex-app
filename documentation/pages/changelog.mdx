@@ -7,6 +7,39 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 22, 2026 (Web Import — MDHarvest powered by Crawl4ai)
+
+A new way to get web content into your knowledge base: **Web Import** harvests web pages into clean markdown and ingests them exactly like uploaded documents — chunked, embedded, and run through entity/relationship extraction, so they show up in Search, Ask AI, and the knowledge graph. It supersedes the standalone `mdharvest` tool.
+
+Cortex never embeds a browser. It calls an open-source [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — you run crawl4ai once and a single instance can serve many Cortex deployments (in hosted setups, one per server, shared across tenants). There is no local crawler fallback, which keeps the per-instance footprint small.
+
+### Using it
+
+On the **Documents** page, the **Upload** button now has a **▾** menu beside it with a **Web Import** option (it appears only when the feature is enabled). It opens a modal where you:
+
+- pick a **collection**,
+- paste **URLs** (one per line) — or use **Discover links** to crawl a page and pick same-site links from a checklist,
+- choose a **content filter** (Readable / Full page / Relevance-ranked),
+- and click **Import from Web**.
+
+A progress bar tracks the crawl and processing; when it finishes you get a clear "imported N of M — close this window to see your documents" summary, and the document list refreshes automatically. Each imported page carries a provenance header recording its source URL and the extraction date.
+
+### Enabling it
+
+```bash
+ENABLE_WEB_CRAWL=true
+CRAWL_SERVICE_URL=http://crawl4ai:11235   # your own, or a shared crawl4ai
+# CRAWL_SERVICE_TOKEN=...                  # only if crawl4ai requires a token
+```
+
+With the flag off or no service URL set, the feature stays hidden. See the [Web Import guide](/features/web-import) for self-hosting crawl4ai and the full tuning reference (`CRAWL_CONTENT_FILTER`, `CRAWL_CONCURRENCY`, `CRAWL_MAX_URLS_PER_JOB`, …).
+
+**Privacy on shared crawl4ai instances**: when several deployments share one crawler, no crawl history is retained and no deployment can see another's crawls — storage is ephemeral, only request-scoped endpoints are used (never the async job API), and every request bypasses the cache.
+
+**No API or schema breakage** — the feature is additive and off by default.
+
+---
+
 ## June 22, 2026 (QA pass — test coverage, fixes & docs hardening)
 
 A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_master.ods` — Features/Defects/Summary sheets), a large expansion of the backend test suite, a live end-to-end harness, and four fixes.
