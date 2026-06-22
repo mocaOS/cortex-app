@@ -718,6 +718,50 @@ export interface SystemConfig {
 
   // Git Integration
   enable_git_integration: boolean;
+
+  // Web Crawl (MDHarvest powered by Crawl4ai)
+  enable_web_crawl: boolean;
+}
+
+// =============================================================================
+// Feature Flags (GET /api/features)
+// =============================================================================
+
+export interface FeatureFlags {
+  enable_collections: boolean;
+  enable_skills: boolean;
+  enable_git_integration: boolean;
+  enable_web_crawl: boolean;
+}
+
+// =============================================================================
+// Web Import (MDHarvest powered by Crawl4ai)
+// =============================================================================
+
+export type WebContentFilter = "fit" | "raw" | "bm25";
+
+export interface WebImportRequest {
+  urls: string[];
+  collection_id?: string;
+  content_filter?: WebContentFilter;
+  query?: string;
+}
+
+export interface WebImportResponse {
+  task_id: string;
+  accepted_urls: number;
+  message: string;
+}
+
+export interface WebDiscoverLink {
+  url: string;
+  title: string;
+}
+
+export interface WebDiscoverResponse {
+  source_url: string;
+  domain: string;
+  links: WebDiscoverLink[];
 }
 
 // =============================================================================

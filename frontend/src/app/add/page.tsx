@@ -6,6 +6,7 @@ import {
   HelpCircle,
   FileText,
   Code,
+  Globe,
   Loader2,
   CheckCircle,
   AlertCircle,
@@ -19,10 +20,14 @@ import {
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import CollectionSelector from "@/components/CollectionSelector";
+import WebImportPanel from "@/components/add/WebImportPanel";
 import { PageTransition } from "@/components/layout";
 import type { CustomInputType, CustomInputItem } from "@/types";
 
-const inputTypes: { type: CustomInputType; label: string; icon: LucideIcon; description: string }[] = [
+// Local selector type: the three custom-input types plus the "web" import flow.
+type AddInputType = CustomInputType | "web";
+
+const inputTypes: { type: AddInputType; label: string; icon: LucideIcon; description: string }[] = [
   {
     type: "qa",
     label: "Q&A",
@@ -43,8 +48,15 @@ const inputTypes: { type: CustomInputType; label: string; icon: LucideIcon; desc
   },
 ];
 
+const webInputType: { type: AddInputType; label: string; icon: LucideIcon; description: string } = {
+  type: "web",
+  label: "Web Import",
+  icon: Globe,
+  description: "Import web pages as markdown — MDHarvest powered by Crawl4ai",
+};
+
 interface FormState {
-  inputType: CustomInputType;
+  inputType: AddInputType;
   content: string;
   answer: string;
   title: string;
@@ -73,6 +85,16 @@ export default function AddPage() {
   const [isLoadingInputs, setIsLoadingInputs] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Web Import feature gate (MDHarvest powered by Crawl4ai)
+  const [webCrawlEnabled, setWebCrawlEnabled] = useState(false);
+
+  useEffect(() => {
+    api
+      .getFeatures()
+      .then((features) => setWebCrawlEnabled(features.enable_web_crawl))
+      .catch((error) => console.error("Failed to fetch features:", error));
+  }, []);
 
   // Fetch custom inputs
   const fetchCustomInputs = useCallback(async () => {
@@ -158,7 +180,13 @@ export default function AddPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    // Web Import is handled by its own panel, not this custom-input form.
+    if (form.inputType === "web") {
+      return;
+    }
+    const customInputType: CustomInputType = form.inputType;
+
     if (!form.content.trim()) {
       setSubmitResult({
         success: false,
@@ -185,9 +213,9 @@ export default function AddPage() {
       }
 
       const result = await api.createCustomInput({
-        input_type: form.inputType,
+        input_type: customInputType,
         content: form.content.trim(),
-        answer: form.inputType === "qa" ? form.answer.trim() : undefined,
+        answer: customInputType === "qa" ? form.answer.trim() : undefined,
         title: form.title.trim() || undefined,
         collection_id: form.collectionId,
         start_processing: true,
@@ -221,7 +249,9 @@ export default function AddPage() {
     }
   };
 
-  const selectedTypeInfo = inputTypes.find((t) => t.type === form.inputType);
+  const selectableTypes = webCrawlEnabled ? [...inputTypes, webInputType] : inputTypes;
+  const selectedTypeInfo = selectableTypes.find((t) => t.type === form.inputType);
+  const isWebImport = form.inputType === "web";
 
   const getTypeIcon = (type: CustomInputType) => {
     const found = inputTypes.find((t) => t.type === type);
@@ -260,12 +290,21 @@ export default function AddPage() {
             {/* Input Type Selector */}
             <div className="space-y-3">
               <label className="text-sm font-medium text-foreground">Content Type</label>
-              <div className="grid grid-cols-3 gap-3">
-                {inputTypes.map((type) => (
+              <div
+                className={cn(
+                  "grid gap-3",
+                  webCrawlEnabled ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"
+                )}
+              >
+                {selectableTypes.map((type) => (
                   <button
                     key={type.type}
                     type="button"
-                    onClick={() => setForm({ ...form, inputType: type.type })}
+                    onClick={() => {
+                      setForm({ ...form, inputType: type.type });
+                      setSubmitResult(null);
+                      setExistingSimilar([]);
+                    }}
                     className={cn(
                       "flex flex-col items-center gap-2 p-4 rounded-xl border transition-all",
                       form.inputType === type.type
@@ -283,6 +322,17 @@ export default function AddPage() {
               )}
             </div>
 
+            {/* Web Import panel (MDHarvest powered by Crawl4ai) */}
+            {isWebImport && (
+              <WebImportPanel
+                collectionId={form.collectionId}
+                onCollectionChange={(id) => setForm({ ...form, collectionId: id })}
+              />
+            )}
+
+            {/* Custom-input fields (Q&A / Text / Markdown) */}
+            {!isWebImport && (
+              <>
             {/* Collection Selector */}
             <div className="space-y-2 relative z-40">
               <label className="text-sm font-medium text-foreground">Collection</label>
@@ -463,6 +513,8 @@ export default function AddPage() {
                 </>
               )}
             </button>
+              </>
+            )}
           </motion.form>
 
           {/* Existing Custom Inputs List */}

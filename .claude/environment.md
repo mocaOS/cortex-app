@@ -137,6 +137,21 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 
 **Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors.
 
+## MDHarvest powered by Crawl4ai (web → markdown)
+
+Web→markdown harvesting (the "Web Import" feature; supersedes the deprecated standalone `mdharvest` tool). cortex-app never embeds a browser — it calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP via `services/crawl_client.py`. Self-host points at the user's own crawl4ai; cloud points at the shared per-host crawl4ai (hosted in `cortex-helper`). See [`domain/web-crawl.md`](domain/web-crawl.md) and `cortex-helper/README.md`. There is **no** local crawl fallback — empty URL ⇒ feature off (no in-process browser stack, by design).
+
+- `ENABLE_WEB_CRAWL` (default: false) — master switch for the Web Import endpoints + UI. The UI is shown only when this is true **and** `CRAWL_SERVICE_URL` is set (the `/api/features` flag AND-s both).
+- `CRAWL_SERVICE_URL` (default: empty) — base URL of the crawl4ai service, e.g. `http://crawl4ai:11235` (self-host) or `http://<host>:11235` (the shared per-server instance). Empty = disabled.
+- `CRAWL_SERVICE_TOKEN` (default: empty) — optional bearer token sent as `Authorization: Bearer <token>`; must match crawl4ai's `security.api_token`. Empty = no auth header (crawl4ai on a trusted/internal network).
+- `CRAWL_HTTP_TIMEOUT` (default: 60) — per-request timeout (s) for crawl4ai calls (browser rendering of a slow page can take tens of seconds).
+- `CRAWL_CONTENT_FILTER` (default: `fit`) — crawl4ai `/md` filter: `fit` (readability — clean main content, the Trafilatura replacement), `raw` (full DOM→markdown), or `bm25` (query-ranked; needs a query). Per-request override via the API.
+- `CRAWL_CONCURRENCY` (default: 5) — max URLs crawled concurrently within one Web Import job (the shared crawl4ai enforces its own browser-pool limits).
+- `CRAWL_MAX_URLS_PER_JOB` (default: 100) — hard cap on URLs per job; **the per-tenant plan lever** (the AaaS operator lowers it via env). 0 = unlimited.
+- `CRAWL_DISCOVER_MAX_LINKS` (default: 200) — cap on candidate links returned by `/api/web-import/discover`.
+
+All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 retries with backoff+jitter, its own circuit breaker (op `crawl` in `/metrics`), and cache-bypass (`c="0"`) per request. Only the synchronous `/md` + `/crawl` endpoints are used (never the addressable async `/crawl/job` API) so nothing is retained or cross-tenant-visible.
+
 ## Efficiency Flags (v-next — default off until bench-validated, see `bench/BASELINE.md`)
 
 - `ENTITY_DEDUP_PREFILTER` (default: false) — Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every Entity node (O(50) vs O(all) per stored entity).

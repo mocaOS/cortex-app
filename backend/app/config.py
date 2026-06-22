@@ -344,6 +344,51 @@ class Settings(BaseSettings):
     )  # Identifies this stack to the shared helper (X-Tenant-ID header, used
     #   for fair queuing). Empty = container hostname.
 
+    # ==========================================================================
+    # MDHarvest powered by Crawl4ai — web → markdown harvesting.
+    # cortex-app NEVER embeds a browser/crawler stack; it speaks crawl4ai's
+    # native REST API (/md, /crawl) over HTTP. One code path, two deployments:
+    #   - self-host : CRAWL_SERVICE_URL -> the user's own crawl4ai (:11235)
+    #   - cloud     : CRAWL_SERVICE_URL -> the shared per-host crawl4ai (set by
+    #                 the AaaS operator; one container per server, many tenants)
+    # Empty URL => feature OFF (no in-process fallback — that browser stack is
+    # exactly the per-tenant footprint we refuse to pay). See cortex-helper.
+    # ==========================================================================
+    enable_web_crawl: bool = Field(
+        default=False
+    )  # Master switch for web→markdown harvesting (Web Import UI + endpoints).
+    #   Auto-treated as enabled by the UI only when crawl_service_url is also set.
+    crawl_service_url: str = Field(
+        default=""
+    )  # Base URL of the crawl4ai service, e.g. http://crawl4ai:11235 (self-host)
+    #   or http://<host>:11235 / the shared per-server instance (cloud). Empty
+    #   = feature disabled.
+    crawl_service_token: str = Field(
+        default=""
+    )  # Optional bearer token for crawl4ai (Authorization: Bearer <token>).
+    #   Empty = no auth header (crawl4ai bound to an internal/trusted network).
+    crawl_http_timeout: int = Field(
+        default=60
+    )  # Per-request timeout (s) for crawl4ai calls. Browser rendering of a slow
+    #   page can take tens of seconds; keep this generous.
+    crawl_content_filter: str = Field(
+        default="fit"
+    )  # crawl4ai /md filter strategy: "fit" (readability — clean main content,
+    #   the Trafilatura replacement), "raw" (full DOM→markdown), or "bm25"
+    #   (query-relevance ranked; needs a query). Default fit for KB ingestion.
+    crawl_concurrency: int = Field(
+        default=5
+    )  # Max URLs crawled concurrently within one Web Import job. The shared
+    #   crawl4ai enforces its own global browser-pool limits; this just bounds
+    #   how hard a single tenant pushes it.
+    crawl_max_urls_per_job: int = Field(
+        default=100
+    )  # Hard cap on URLs accepted per Web Import job (plan-limit lever — the
+    #   AaaS operator lowers this per tenant via env). 0 = unlimited.
+    crawl_discover_max_links: int = Field(
+        default=200
+    )  # Cap on candidate links returned by /api/web-import/discover.
+
     enable_hybrid_search: bool = Field(
         default=True
     )  # Enable hybrid (vector + keyword) search

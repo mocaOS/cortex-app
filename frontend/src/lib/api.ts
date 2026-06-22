@@ -40,6 +40,10 @@ import type {
   SkillInfo,
   SkillDetail,
   SkillRegistryItem,
+  FeatureFlags,
+  WebImportRequest,
+  WebImportResponse,
+  WebDiscoverResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -1079,6 +1083,48 @@ class ApiClient {
    */
   async getSystemConfig(): Promise<SystemConfig> {
     return this.request<SystemConfig>("/api/admin/config");
+  }
+
+  // ===========================================================================
+  // Feature Flags
+  // ===========================================================================
+
+  /**
+   * Get enabled feature flags (read permission).
+   *
+   * Returns which optional features are enabled for this instance.
+   * `enable_web_crawl` is already AND-ed with "crawl service configured".
+   */
+  async getFeatures(): Promise<FeatureFlags> {
+    return this.request<FeatureFlags>("/api/features");
+  }
+
+  // ===========================================================================
+  // Web Import (MDHarvest powered by Crawl4ai)
+  // ===========================================================================
+
+  /**
+   * Import one or more web pages as markdown documents.
+   *
+   * Returns a task id to poll via `pollTask`. The backend caps the number of
+   * URLs per job and may reject with a 400 (invalid/too many URLs) or 403
+   * (plan limits) — surface the thrown error text to the user.
+   */
+  async webImport(req: WebImportRequest): Promise<WebImportResponse> {
+    return this.request<WebImportResponse>("/api/web-import", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  /**
+   * Discover crawlable links on a given page (one level deep).
+   */
+  async webDiscover(url: string): Promise<WebDiscoverResponse> {
+    return this.request<WebDiscoverResponse>("/api/web-import/discover", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
   }
 
   // ===========================================================================

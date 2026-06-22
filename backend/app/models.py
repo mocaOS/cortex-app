@@ -414,6 +414,51 @@ class CustomInputResponse(BaseModel):
 
 
 # =============================================================================
+# MDHarvest powered by Crawl4ai — web → markdown import
+# =============================================================================
+
+class WebImportRequest(BaseModel):
+    """Request to harvest one or more URLs into the knowledge base as markdown."""
+    urls: List[str] = Field(..., min_length=1, description="Absolute http(s) URLs to crawl")
+    collection_id: Optional[str] = Field(default=None, description="Collection to add the harvested documents to")
+    content_filter: Optional[str] = Field(default=None, description="crawl4ai filter: 'fit' (readability, default), 'raw', or 'bm25'")
+    query: Optional[str] = Field(default=None, description="Relevance query (only used by the 'bm25' filter)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "urls": ["https://example.com/article", "https://example.com/guide"],
+                "collection_id": "default",
+                "content_filter": "fit"
+            }
+        }
+
+
+class WebImportResponse(BaseModel):
+    """Response when a web-import job is accepted (poll /api/tasks/{task_id})."""
+    task_id: str = Field(..., description="Background task id to poll for progress")
+    accepted_urls: int = Field(..., description="Number of URLs accepted into the job")
+    message: str
+
+
+class WebDiscoverRequest(BaseModel):
+    """Request to discover same-site candidate links on a page."""
+    url: str = Field(..., description="Page URL to scan for same-host links")
+
+
+class WebDiscoverLink(BaseModel):
+    url: str
+    title: str
+
+
+class WebDiscoverResponse(BaseModel):
+    """Discovered candidate links for selective import."""
+    source_url: str
+    domain: str
+    links: List[WebDiscoverLink]
+
+
+# =============================================================================
 # Background Task Tracking
 # =============================================================================
 
@@ -1010,6 +1055,9 @@ class SystemConfigResponse(BaseModel):
 
     # Git Integration
     enable_git_integration: bool = Field(default=False, description="Whether the git repo connector is enabled")
+
+    # MDHarvest powered by Crawl4ai (web → markdown)
+    enable_web_crawl: bool = Field(default=False, description="Whether web→markdown harvesting (Web Import) is enabled")
 
     class Config:
         json_schema_extra = {

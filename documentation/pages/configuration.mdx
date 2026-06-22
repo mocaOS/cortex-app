@@ -490,6 +490,41 @@ The backend image bundles the `git` binary. Connections are created and managed 
 
 ---
 
+## Web Import (MDHarvest powered by Crawl4ai)
+
+Harvest web pages into clean markdown and ingest them into the graph. Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — run it once and point Cortex at it. See the [Web Import feature guide](/features/web-import) for the full walkthrough.
+
+```bash
+# Master switch — the Web Import option appears only when this is true
+# AND a crawl service URL is set
+ENABLE_WEB_CRAWL=true
+
+# crawl4ai service base URL (self-hosted or shared). Empty = feature off
+CRAWL_SERVICE_URL=http://crawl4ai:11235
+
+# Optional bearer token (must match crawl4ai's security.api_token)
+CRAWL_SERVICE_TOKEN=
+
+# Default content filter: fit (readable) | raw (full page) | bm25 (ranked)
+CRAWL_CONTENT_FILTER=fit
+
+# Per-page crawl timeout (seconds)
+CRAWL_HTTP_TIMEOUT=60
+
+# Concurrency within one import job
+CRAWL_CONCURRENCY=5
+
+# Maximum URLs accepted per import (0 = unlimited)
+CRAWL_MAX_URLS_PER_JOB=100
+
+# Cap on links returned by the Discover sub-flow
+CRAWL_DISCOVER_MAX_LINKS=200
+```
+
+Run crawl4ai with `docker run -d -p 11235:11235 --shm-size=1g unclecode/crawl4ai:0.7.4`. It uses a headless browser pool (~4 GB RAM); keep port 11235 on a private network. A single crawl4ai instance can serve many Cortex deployments.
+
+---
+
 ## Vision Model Configuration
 
 Configure image analysis capabilities:

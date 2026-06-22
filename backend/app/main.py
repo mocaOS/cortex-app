@@ -7,11 +7,13 @@ import time
 import uuid
 import shutil
 import glob
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,6 +85,12 @@ from app.models import (
     GitVerifyResponse,
     GitRepoBrowseItem,
     GitSyncTriggerResponse,
+    # MDHarvest powered by Crawl4ai models
+    WebImportRequest,
+    WebImportResponse,
+    WebDiscoverRequest,
+    WebDiscoverResponse,
+    WebDiscoverLink,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -361,6 +369,13 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.helper_client import close_async_client
         await close_async_client()
+    except Exception:
+        pass
+
+    # Close the shared crawl4ai HTTP client (no-op when unused).
+    try:
+        from app.services.crawl_client import close_async_client as close_crawl_client
+        await close_crawl_client()
     except Exception:
         pass
 
@@ -3877,6 +3892,28 @@ async def ask_with_thinking_stream(
 
 
 # =============================================================================
+# Public Feature Flags Endpoint
+# =============================================================================
+
+@app.get("/api/features")
+async def get_feature_flags(auth: AuthResult = Depends(require_read_permission)):
+    """UI-relevant feature flags for non-admin clients.
+
+    The full /api/admin/config is admin-only; this lightweight endpoint lets
+    manage-permission UIs (e.g. the Add/Web Import page) gate features without
+    exposing the rest of the system configuration.
+    """
+    settings = get_settings()
+    return {
+        "enable_collections": settings.enable_collections,
+        "enable_skills": settings.enable_skills,
+        "enable_git_integration": settings.enable_git_integration,
+        # Web import needs both the master switch AND a configured crawl service.
+        "enable_web_crawl": settings.enable_web_crawl and bool(settings.crawl_service_url),
+    }
+
+
+# =============================================================================
 # Admin System Configuration Endpoint
 # =============================================================================
 
@@ -3989,6 +4026,9 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
 
         # Git Integration
         enable_git_integration=settings.enable_git_integration,
+
+        # MDHarvest powered by Crawl4ai
+        enable_web_crawl=settings.enable_web_crawl,
     )
 
 
@@ -4152,6 +4192,206 @@ async def save_skill_config(
         return {"message": "Configuration saved", "skill_id": skill_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# =============================================================================
+# MDHarvest powered by Crawl4ai — web → markdown import
+# =============================================================================
+#
+# Batch-harvest URLs into the knowledge base as clean markdown. cortex-app
+# never embeds a browser/crawler stack; it calls a crawl4ai service over HTTP
+# (services/crawl_client.py). Self-host points CRAWL_SERVICE_URL at the user's
+# own crawl4ai; cloud points it at the shared per-host instance. Empty URL =>
+# feature disabled (404). See .claude/domain/web-crawl.md.
+
+def _require_web_crawl_enabled():
+    settings = get_settings()
+    if not settings.enable_web_crawl or not settings.crawl_service_url:
+        raise HTTPException(status_code=404, detail="Web crawling is disabled")
+
+
+def _crawl_slugify(text: str) -> str:
+    """Filesystem-safe slug from a title (lowercase, hyphenated, <=100 chars)."""
+    text = (text or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return (text or "page")[:100]
+
+
+def _format_crawl_markdown(title: str, url: str, body: str) -> str:
+    """Wrap crawled markdown with the canonical MDHarvest provenance header."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"# {title}\n\n> Source: {url}\n> Extracted: {today}\n\n---\n\n{body}\n"
+
+
+async def _run_web_import_task(
+    task_id: str,
+    urls: List[str],
+    collection_id: Optional[str],
+    content_filter: Optional[str],
+    query: Optional[str],
+):
+    """Background runner: crawl each URL → store as markdown → process pending.
+
+    Mirrors the git connector's two-phase shape: stage every harvested page as
+    a PENDING document, then run the shared processing pass once at the end.
+    """
+    from app.services import crawl_client
+
+    settings = get_settings()
+    processor = get_document_processor()
+    total = len(urls)
+    succeeded: List[dict] = []
+    failed: List[dict] = []
+    update_task_progress(task_id, 0, total, "Starting web import...")
+
+    sem = asyncio.Semaphore(max(1, int(settings.crawl_concurrency or 5)))
+    done = 0
+    counter_lock = asyncio.Lock()
+
+    async def harvest_one(url: str):
+        nonlocal done
+        async with sem:
+            try:
+                res = await crawl_client.crawl_markdown(
+                    url, content_filter=content_filter, query=query
+                )
+                file_content = _format_crawl_markdown(res["title"], url, res["markdown"])
+                doc_id = str(uuid.uuid4())
+                filename = f"{_crawl_slugify(res['title'])}.md"
+                file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
+                async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                    await f.write(file_content)
+                file_size = len(file_content.encode("utf-8"))
+                await processor.store_file_only(
+                    file_path, filename, file_size, collection_id,
+                    source=f"crawl:{urlparse(url).netloc}",
+                )
+                succeeded.append({"url": url, "title": res["title"]})
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"web import failed for {url}: {e}")
+                failed.append({"url": url, "error": str(e)})
+            finally:
+                async with counter_lock:
+                    done += 1
+                    update_task_progress(
+                        task_id, done, total,
+                        f"Crawled {done}/{total} ({len(failed)} failed)",
+                    )
+
+    await asyncio.gather(*[harvest_one(u) for u in urls])
+
+    if not succeeded:
+        fail_task(task_id, f"All {total} URL(s) failed to crawl")
+        return
+
+    # Phase 2: extract/embed the staged pages (shared with uploads/git).
+    def progress(cur, tot, msg):
+        update_task_progress(task_id, cur, tot, f"Processing: {msg}")
+
+    try:
+        proc_result = await processor.process_pending_documents(progress_callback=progress)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"web import processing failed: {e}")
+        fail_task(task_id, f"Processing failed: {e}")
+        return
+
+    complete_task(task_id, {
+        "imported": len(succeeded),
+        "failed": len(failed),
+        "total": total,
+        "succeeded": succeeded,
+        "failures": failed,
+        "processing": proc_result,
+    })
+
+
+@app.post("/api/web-import", response_model=WebImportResponse)
+async def web_import(
+    request: WebImportRequest,
+    auth: AuthResult = Depends(require_manage_permission),
+):
+    """Harvest one or more URLs into the knowledge base as markdown.
+
+    Returns a task_id immediately; poll GET /api/tasks/{task_id} for progress.
+    """
+    _require_web_crawl_enabled()
+    settings = get_settings()
+
+    target_collection = request.collection_id or "default"
+    validate_collection_access(auth, target_collection, "add content to")
+
+    # Normalize + validate URLs (http/https only, dedup, preserve order).
+    seen: set = set()
+    urls: List[str] = []
+    for raw in request.urls:
+        u = (raw or "").strip()
+        if not u:
+            continue
+        parsed = urlparse(u)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(status_code=400, detail=f"Invalid URL: {raw}")
+        if u not in seen:
+            seen.add(u)
+            urls.append(u)
+    if not urls:
+        raise HTTPException(status_code=400, detail="No valid http(s) URLs provided")
+
+    cap = int(settings.crawl_max_urls_per_job or 0)
+    if cap > 0 and len(urls) > cap:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many URLs ({len(urls)}); this plan allows {cap} per job.",
+        )
+
+    # Enforce graph file/entity limits (same gate as custom-input).
+    neo4j = get_neo4j_service()
+    if settings.max_files > 0:
+        stats = await asyncio.to_thread(neo4j.get_stats)
+        if stats["document_count"] + len(urls) > settings.max_files:
+            raise HTTPException(
+                status_code=403,
+                detail=f"File limit reached (max: {settings.max_files}). Upgrade your plan to add more documents.",
+            )
+
+    collection_id = request.collection_id
+    if collection_id is None and settings.enable_collections:
+        collection_id = settings.default_collection
+
+    task = create_task("web_import")
+    _spawn_chain_task(_run_web_import_task(
+        task.task_id, urls, collection_id, request.content_filter, request.query
+    ))
+    return WebImportResponse(
+        task_id=task.task_id,
+        accepted_urls=len(urls),
+        message=f"Web import started for {len(urls)} URL(s)",
+    )
+
+
+@app.post("/api/web-import/discover", response_model=WebDiscoverResponse)
+async def web_import_discover(
+    request: WebDiscoverRequest,
+    auth: AuthResult = Depends(require_manage_permission),
+):
+    """Discover same-site candidate links on a page for selective import."""
+    _require_web_crawl_enabled()
+    from app.services import crawl_client
+
+    url = (request.url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    try:
+        result = await crawl_client.discover_links(url)
+    except crawl_client.CrawlUnavailableError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return WebDiscoverResponse(
+        source_url=result["source_url"],
+        domain=result["domain"],
+        links=[WebDiscoverLink(**l) for l in result["links"]],
+    )
 
 
 # =============================================================================

@@ -1,0 +1,77 @@
+---
+title: Web Import (MDHarvest powered by Crawl4ai)
+description: Harvest web pages into clean markdown and ingest them into your knowledge graph, using a self-hosted or shared crawl4ai service
+---
+
+Web Import turns any web page into a clean markdown document in your knowledge base. Paste a list of URLs (or discover the links on a page and pick which ones to pull), and Cortex crawls each one, extracts the readable content, and ingests it exactly like an uploaded document — chunked, embedded, and run through entity/relationship extraction so it shows up in Search, Ask AI, and the knowledge graph.
+
+The crawling itself is done by [**crawl4ai**](https://github.com/unclecode/crawl4ai), an open-source, LLM-oriented web crawler. Cortex never embeds a browser of its own — it talks to a crawl4ai service over HTTP. That means **you run crawl4ai once** and point Cortex at it.
+
+Enable it with `ENABLE_WEB_CRAWL=true` **and** a `CRAWL_SERVICE_URL`. The **Web Import** option then appears on the **Add Knowledge** page. If either is unset, the feature stays hidden.
+
+## Using Web Import
+
+1. Go to **Add Knowledge** and choose **Web Import**.
+2. Either paste one or more URLs (one per line), or use **Discover links**: enter a single page URL and Cortex returns the same-site links it finds, with checkboxes so you can add just the ones you want.
+3. Pick a **content filter**:
+   - **Readable** (recommended) — the main article content, stripped of nav/ads/boilerplate.
+   - **Full page** — the entire page converted to markdown.
+   - **Relevance-ranked** — keeps the passages most relevant to a query you provide.
+4. Choose a **collection** (optional) and click **Import**.
+5. A progress bar tracks the crawl + processing; when it finishes you get a summary of how many pages were imported and which (if any) failed.
+
+Each imported page is saved with a small provenance header so you always know where it came from:
+
+```markdown
+# Page title
+
+> Source: https://example.com/the-page
+> Extracted: 2026-06-22
+
+---
+
+…clean markdown…
+```
+
+## Running crawl4ai (self-hosting)
+
+If you self-host Cortex, run your own crawl4ai container and point Cortex at it. The simplest setup:
+
+```bash
+docker run -d --name crawl4ai \
+  -p 11235:11235 \
+  --shm-size=1g \
+  unclecode/crawl4ai:0.7.4
+```
+
+Then set in your Cortex backend `.env`:
+
+```
+ENABLE_WEB_CRAWL=true
+CRAWL_SERVICE_URL=http://crawl4ai:11235     # or http://<host>:11235
+# CRAWL_SERVICE_TOKEN=...                    # only if you enable a token in crawl4ai
+```
+
+`CRAWL_SERVICE_URL` should be reachable from the Cortex backend container — use the service name if they share a Docker network, or the host's IP/port otherwise. If you run crawl4ai with a `security.api_token`, set the same value as `CRAWL_SERVICE_TOKEN` (Cortex sends it as `Authorization: Bearer …`).
+
+That single crawl4ai instance can serve as many Cortex backends as you like — it's stateless, so you don't need one per Cortex.
+
+:::tip
+crawl4ai uses a headless browser pool and wants ~4 GB of memory and `--shm-size=1g`. Run it on a host with room to spare, and **don't expose port 11235 to the public internet** — keep it on a private/internal network.
+:::
+
+## Tuning
+
+A few backend settings control behaviour (see the [Configuration](/configuration) reference):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CRAWL_CONTENT_FILTER` | `fit` | Default content filter (`fit` / `raw` / `bm25`). |
+| `CRAWL_CONCURRENCY` | `5` | How many URLs in one job are crawled at once. |
+| `CRAWL_MAX_URLS_PER_JOB` | `100` | Maximum URLs accepted per import. |
+| `CRAWL_HTTP_TIMEOUT` | `60` | Per-page crawl timeout (seconds). |
+| `CRAWL_DISCOVER_MAX_LINKS` | `200` | Cap on links returned by Discover. |
+
+## Privacy on shared crawl4ai instances
+
+If several independent Cortex deployments share one crawl4ai (e.g. in a hosted, multi-customer setup), crawl4ai is configured so that **no crawl history is retained and no customer can see what another crawled**: its storage is ephemeral, Cortex only uses request-scoped endpoints (never the async job API), and every request bypasses the cache. Operators should additionally keep crawl4ai on a private network with a bearer token and block crawls to internal addresses. See the `cortex-helper` repository for the hardened shared-host setup.

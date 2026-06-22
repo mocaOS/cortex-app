@@ -30,13 +30,14 @@ Cortex sits at the center of your setup. Curate your base knowledge in the defau
 
 The beauty? Your data isn't trapped. When a hot new agent framework drops next month, just wait for an official plugin OR write a migration script and connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
-> **💡 Pro Tip:** Use our lightweight scraper kit [**mdharvest**](https://github.com/mocaOS/mdharvest) (built on Crawlee) to turn any URL into beautifully formatted Markdown files ready for ingestion.
+> **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
 
 ## ✨ Features
 
 ### Core Features
 - **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
+- **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
@@ -779,6 +780,21 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `GIT_SYNC_POLL_INTERVAL` | Minutes between scheduled-sync checks | No | `5` |
 | `GIT_HTTP_TIMEOUT` | Timeout (seconds) for git provider REST calls | No | `30` |
 | `GIT_HTTP_INSECURE_HOSTS` | Comma-separated hosts allowed to skip TLS verification (self-hosted self-signed) | No | _(empty)_ |
+
+#### Web Import (MDHarvest powered by Crawl4ai)
+
+Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — it never runs a browser itself. Run crawl4ai once and point Cortex at it; one instance can serve many deployments. See [Web Import](handbook/23-web-import.md).
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_WEB_CRAWL` | Master switch for Web Import (UI shows only when this **and** `CRAWL_SERVICE_URL` are set) | No | `false` |
+| `CRAWL_SERVICE_URL` | crawl4ai service base URL, e.g. `http://crawl4ai:11235` (empty = feature off) | No | _(empty)_ |
+| `CRAWL_SERVICE_TOKEN` | Bearer token, if crawl4ai requires one (matches its `security.api_token`) | No | _(empty)_ |
+| `CRAWL_CONTENT_FILTER` | Default content filter: `fit` / `raw` / `bm25` | No | `fit` |
+| `CRAWL_HTTP_TIMEOUT` | Per-page crawl timeout (seconds) | No | `60` |
+| `CRAWL_CONCURRENCY` | URLs crawled at once per import job | No | `5` |
+| `CRAWL_MAX_URLS_PER_JOB` | Max URLs per import (0 = unlimited) | No | `100` |
+| `CRAWL_DISCOVER_MAX_LINKS` | Cap on links returned by Discover | No | `200` |
 
 #### Batch Processing
 
