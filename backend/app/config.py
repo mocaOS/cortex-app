@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # hardening at startup (see _enforce_production_secrets).
     environment: str = Field(default="development")
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). "auto" (default)
+    # enables them in development and disables them in production to avoid
+    # unauthenticated API-schema disclosure on a directly-exposed backend.
+    # Set EXPOSE_API_DOCS=true/false to force either way.
+    expose_api_docs: str = Field(default="auto")
+
     # Comma-separated list of allowed CORS origins (e.g.
     # "https://app.example.com,https://admin.example.com"). The default "*"
     # allows any origin but, per the CORS spec, only without credentials —
@@ -778,6 +784,21 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """True when running with ENVIRONMENT=production (or "prod")."""
         return self.environment.strip().lower() in ("production", "prod")
+
+    @property
+    def docs_enabled(self) -> bool:
+        """Whether to serve interactive API docs (/docs, /redoc, /openapi.json).
+
+        Default "auto": on in development, off in production (avoids exposing the
+        full API schema unauthenticated on a directly-reachable backend). An
+        explicit EXPOSE_API_DOCS=true/false overrides the auto behaviour.
+        """
+        raw = self.expose_api_docs.strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+        if raw in ("0", "false", "no", "off"):
+            return False
+        return not self.is_production
 
     @property
     def cors_origins_list(self) -> list[str]:

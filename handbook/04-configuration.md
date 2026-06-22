@@ -300,6 +300,7 @@ The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22
 |----------|---------|-------------|
 | `ENVIRONMENT` | `development` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD` empty/`password123`, or `SESSION_SECRET` < 32 chars when `ADMIN_PASSWORD` is set). |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist for production. |
+| `EXPOSE_API_DOCS` | `auto` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in development, off in production (prevents unauthenticated API-schema disclosure). Set `true`/`false` to force. See [Chapter 5](05-security.md#api-documentation-exposure). |
 | `PROMPT_SECURITY` | `true` | Enable prompt injection detection and protection. |
 | `ADMIN_EMAIL` | `admin@example.com` | Admin login email for the web interface. |
 | `ADMIN_PASSWORD` | — | Admin login password. **Required.** |

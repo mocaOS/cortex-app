@@ -308,10 +308,13 @@ class Compute3Service:
                 if wait_for_ready and job.base_url:
                     is_ready = await self.wait_for_vllm_ready(job)
                     if is_ready:
-                        # Use JWT token if auth is enabled
-                        auth_token = job.get_auth_token() or self.api_key
-                        job_key = job.job_key if job.auth else None
-                        set_turbo_mode_state(True, job.base_url, auth_token, job_key)
+                        # Use JWT token if auth is enabled (fetched via the
+                        # Compute3 API, mirroring get_active_turbo_job()).
+                        auth_token = None
+                        if job.auth:
+                            auth_token = await self.get_job_token(job.job_id)
+                        auth_token = auth_token or self.api_key
+                        set_turbo_mode_state(True, job.base_url, auth_token)
                         logger.info(f"Turbo Mode enabled - vLLM server ready at {job.base_url}")
                     else:
                         logger.warning(f"vLLM server did not become ready in time")
@@ -505,7 +508,9 @@ class Compute3Service:
             # Update base_url from refreshed job (hostname might have changed)
             if refreshed_job.base_url:
                 # Use JWT token for authentication if job has auth enabled
-                auth_token = refreshed_job.get_auth_token()
+                auth_token = None
+                if refreshed_job.auth:
+                    auth_token = await self.get_job_token(refreshed_job.job_id)
                 if await self.check_vllm_health(refreshed_job.base_url, auth_token):
                     job.set_ready(True)
                     # Copy job_key to original job object for token generation

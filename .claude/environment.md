@@ -151,6 +151,7 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 
 - `LOG_FORMAT` (default: `plain`) — `plain` keeps the legacy log format byte-identical; `json` emits one JSON object/line with `request_id` (read from / echoed as `X-Request-ID`, forwarded to cortex-helper).
 - `METRICS_ENABLED` (default: true) — Prometheus metrics at `GET /metrics` (admin-key protected, not routed through the prod nginx). Requires `prometheus-client` (in requirements; older images degrade to 501).
+- `EXPOSE_API_DOCS` (default: `auto`) — interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` enables them in development and **disables them in production** (resolved via `config.docs_enabled`, keyed off `ENVIRONMENT`) so a directly-reachable backend doesn't disclose its full API schema to anonymous callers — the prod nginx routes root paths to the frontend, but the per-tenant container model exposes the backend directly. Set `EXPOSE_API_DOCS=true`/`false` to force either way. Wired into `FastAPI(docs_url/redoc_url/openapi_url)` in `main.py`.
 - `RATE_LIMIT_QPM` (default: 0 = off) + `RATE_LIMIT_BURST` (default: 10) — per-API-key token-bucket guardrail on ask/upload endpoints (429 + `Retry-After`). Billing remains `MAX_QUERIES_PER_MONTH`.
 - `RESEARCHER_WALL_CLOCK_SECONDS` (default: 0 = unlimited) — wall-clock budget for the researcher loop; on expiry the writer synthesizes from what was gathered.
 - `RERANK_TOP_K` (default: 15) — candidates kept/reranked per knowledge_search; lower on remote rerankers to trade recall for latency.

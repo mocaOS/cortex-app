@@ -211,8 +211,12 @@ class GitConnectorService:
     # ----- change-set computation -------------------------------------------
 
     def _supported(self, path: str) -> bool:
+        # Read the extension set from the class, not an instance: this is a pure
+        # constant lookup during change-set computation and must not force the
+        # heavy DocumentProcessor (embedder/splitter) to be constructed.
+        from .document_processor import DocumentProcessor
         ext = Path(path).suffix.lower()
-        return ext in self.processor.RAW_TEXT_EXTENSIONS or ext in _GIT_DOC_EXTENSIONS
+        return ext in DocumentProcessor.RAW_TEXT_EXTENSIONS or ext in _GIT_DOC_EXTENSIONS
 
     def _passes_globs(self, path: str, spec_inc, spec_exc) -> bool:
         if spec_exc is not None and spec_exc.match_file(path):

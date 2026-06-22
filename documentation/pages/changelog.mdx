@@ -7,6 +7,27 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 22, 2026 (QA pass — test coverage, fixes & docs hardening)
+
+A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_master.ods` — Features/Defects/Summary sheets), a large expansion of the backend test suite, a live end-to-end harness, and four fixes.
+
+### New config
+- **`EXPOSE_API_DOCS`** (default `auto`) — gates the interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` keeps them on in development and **off in production**, so a directly-reachable backend no longer discloses its full API schema to anonymous callers. Set `true`/`false` to force. (Closes D-004 below.)
+
+### Fixes
+- **D-001 (Medium)** — the git connector's extension check (`GitConnectorService._supported`) instantiated a full `DocumentProcessor` (building the embedder) just to read a class-level constant; it now reads the class attribute directly. This also restored hermetic test isolation on machines with a real `.env`.
+- **D-002 (Low, latent)** — the Compute3/Turbo vLLM-readiness branch called a nonexistent `job.get_auth_token()` and passed a 4th argument to the 3-arg `set_turbo_mode_state`; both now mirror the working live path (`await get_job_token(...)` + 3-arg call).
+- **D-003 (Low)** — API-usage endpoint categorization used dict-order prefix matching, mislabeling `/api/custom-inputs/{id}` as `upload` instead of `documents`; now longest-prefix-wins (analytics data integrity).
+- **D-004 (Low)** — interactive API docs were served unauthenticated; now gated by `EXPOSE_API_DOCS` (see above).
+
+### Testing
+- Backend suite expanded from 322 to **458 hermetic tests** (new modules for auth, Compute3, API-usage, vision image-prep, context-curator memory, library-transfer NDJSON round-trip, researcher-agent helpers, skill-service parsing, RRF fusion, and FastAPI endpoint contracts).
+- New **live end-to-end harness** (`backend/tests/test_live_e2e*.py`) exercises real journeys (health, auth boundary, collections CRUD, hybrid search, streaming chat, full document ingestion→extraction) against a running stack; auto-skips when none is reachable. Authenticated runs read the key from `CORTEX_E2E_API_KEY`.
+
+**No API or schema breakage** — `EXPOSE_API_DOCS` is additive; the only behavior change is that interactive docs default off under `ENVIRONMENT=production` (re-enable with `EXPOSE_API_DOCS=true`).
+
+---
+
 ## June 10, 2026 (v-next efficiency & hardening)
 
 ### LLM-stack efficiency (flag-gated, default off)

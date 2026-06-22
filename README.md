@@ -669,6 +669,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 |----------|-------------|----------|---------|
 | `ENVIRONMENT` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD`, `SESSION_SECRET`) | No | `development` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist in production | No | `*` |
+| `EXPOSE_API_DOCS` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in dev, off in production (avoids unauthenticated API-schema disclosure); `true`/`false` to force | No | `auto` |
 | `NEO4J_URI` | Neo4j connection URI | Yes | `bolt://localhost:7687` |
 | `NEO4J_USER` | Neo4j username | Yes | `neo4j` |
 | `NEO4J_PASSWORD` | Neo4j password (rejected as default `password123` when `ENVIRONMENT=production`) | Yes | `password123` |
@@ -894,15 +895,30 @@ Custom inputs are processed through the same GraphRAG pipeline as uploaded docum
 
 ## 🧪 Testing
 
-```bash
-# Backend tests
-cd backend
-pytest
+The backend suite is fully hermetic — LLM, Neo4j, and the ML stack are mocked in `conftest.py`, so it runs with no external services. The system Python has no pytest; create a torch-free venv from the base requirements:
 
-# Frontend tests
+```bash
+# Backend unit/contract suite
+cd backend
+python3 -m venv .qa-venv
+.qa-venv/bin/pip install -r requirements-base.txt    # torch-free; includes pytest
+.qa-venv/bin/python -m pytest -q
+.qa-venv/bin/python -m ruff check --select E9,F63,F7,F82 app/ tests/   # CI lint gate
+
+# Frontend gate (no test runner — type-check + lint)
 cd frontend
-npm test
+npm ci
+npx tsc --noEmit
+npm run lint
 ```
+
+**Live end-to-end journeys** (`backend/tests/test_live_e2e*.py`) run real HTTP requests against a running stack and auto-skip when none is reachable. Authenticated journeys read the key from `CORTEX_E2E_API_KEY` (never hard-coded):
+
+```bash
+CORTEX_E2E_API_KEY=<key> .qa-venv/bin/python -m pytest tests/test_live_e2e_authed.py
+```
+
+The canonical QA feature/defect inventory lives in [`qa/cortex_qa_master.ods`](qa/) with a written summary in [`qa/QA_REPORT.md`](qa/QA_REPORT.md); see [`.claude/qa.md`](.claude/qa.md) for the full harness reference.
 
 ## 📊 Neo4j Schema
 

@@ -392,11 +392,18 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown complete")
 
 
+# Interactive docs are disabled in production by default (EXPOSE_API_DOCS=auto)
+# so a directly-exposed backend doesn't leak its full API schema to anonymous
+# callers. Set EXPOSE_API_DOCS=true to force them on.
+_docs_on = get_settings().docs_enabled
 app = FastAPI(
     title="Cortex",
     description="A Neo4j + Haystack powered GraphRAG knowledge base with entity extraction, knowledge graph construction, and semantic search",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_on else None,
+    redoc_url="/redoc" if _docs_on else None,
+    openapi_url="/openapi.json" if _docs_on else None,
 )
 
 # CORS middleware

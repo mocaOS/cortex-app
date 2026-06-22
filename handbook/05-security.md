@@ -303,6 +303,10 @@ Configure allowed origins for API access. In production, restrict to your specif
 - JWT tokens are stored in HTTP-only cookies (not accessible to client-side JavaScript)
 - Sessions expire based on the JWT token lifetime
 
+### API Documentation Exposure
+
+The interactive API docs (`/docs`, `/redoc`, `/openapi.json`) describe every endpoint and parameter. They are controlled by `EXPOSE_API_DOCS` (default `auto`): **enabled in development, automatically disabled when `ENVIRONMENT=production`** so a directly-reachable backend doesn't disclose its full API schema to anonymous callers. Set `EXPOSE_API_DOCS=true` to re-enable them in production (e.g. behind an authenticated gateway), or `false` to force them off everywhere.
+
 ## Security Checklist for Production
 
 - [ ] Strong `NEO4J_PASSWORD` (not the default `password123`)
@@ -313,6 +317,7 @@ Configure allowed origins for API access. In production, restrict to your specif
 - [ ] `PROMPT_SECURITY=true` enabled
 - [ ] API key authentication required for all endpoints
 - [ ] CORS configured to allow only your domains
+- [ ] Interactive API docs disabled in production (`EXPOSE_API_DOCS=auto` or `false`)
 - [ ] Regular backups scheduled (see [Chapter 18](18-administration.md))
 - [ ] API key usage tracking enabled (`TRACK_ADMIN_API_KEY_USAGE=true`)
 - [ ] Generated API keys use least-privilege permissions

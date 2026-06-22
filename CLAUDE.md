@@ -22,6 +22,7 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
 | [`.claude/domain/git-integration.md`](.claude/domain/git-integration.md) | Git connector (GitHub/GitLab/Gitea): provider abstraction, incremental sync engine, document provenance, `git_repo` write tool, scheduled polling |
 | [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
+| [`.claude/qa.md`](.claude/qa.md) | QA & testing — backend pytest suite (`.qa-venv`, conftest fixtures, coverage map), live E2E harness (`test_live_e2e*.py`), canonical QA spreadsheet (`qa/`), defect log |
 
 ## File-Path Routing
 
@@ -57,6 +58,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `documentation/**`, `handbook/**` | `maintenance.md` |
 | `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
 | `bench/**` | `bench.md` |
+| `backend/tests/**`, `qa/**` | `qa.md` |
 
 ## Priority
 

@@ -57,7 +57,7 @@ On import completion, clears client-side caches (same as system reset).
 ## API Key Management
 
 - `services/api_key_service.py` — CRUD operations for API keys with permissions (READ, MANAGE) and collection scope
-- `services/api_usage_service.py` — Request logging per key, endpoint categorization, error tracking, statistics aggregation
+- `services/api_usage_service.py` — Request logging per key, endpoint categorization, error tracking, statistics aggregation. `categorize_endpoint()` matches the **longest** (most-specific) prefix in `ENDPOINT_CATEGORIES` — required so `/api/custom-inputs/{id}` resolves to `documents` rather than being swallowed by the shorter `/api/custom-input` (`upload`) prefix.
 - `services/auth_service.py` — Admin API key validation, generated API key validation against Neo4j, permission + collection access checking
 
 ### Collection-Scoped API Keys
