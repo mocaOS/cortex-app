@@ -33,7 +33,7 @@ A major overhaul of the chat/answer path. Reasoning-capable models (especially o
 
 ### Snappy chat answers
 - **Reasoning suppressed on the chat path by default.** `DEFAULT_REASONING_MODE` now defaults to **`off`** and is actually applied: the speed-mode researcher loop, the answer writer, and the non-agentic + fast-search streaming writers are all routed through `safe_chat_completion` (per-provider reasoning suppression + a 400-fallback), replacing an ad-hoc single-provider hack. On Venice this sends `disable_thinking`, cutting model time-to-first-token to **under 1 s** (a direct probe measured 13.6 s → 0.57 s for gemma). Deep-research (`quality`) mode is unaffected — it stays `AUTO` and keeps full reasoning.
-- **Fewer loop iterations.** `RESEARCHER_MAX_ITERATIONS_SPEED` lowered **5 → 2** — with thinking off, the agent loop (not the model) was the dominant latency, and two rounds (one search + answer) is plenty for conversational answers.
+- **Fewer loop iterations.** `RESEARCHER_MAX_ITERATIONS_SPEED` lowered **5 → 3** — with thinking off, the agent loop (not the model) was the dominant latency. Three rounds keep conversational answers snappy (one search + answer) while leaving room for a skill flow (activate → call → answer) to complete without truncation.
 - **Rewritten speed-writer prompt** for concise, direct, cited answers.
 - **Result:** empty-answer rate dropped to zero on previously-failing models; chat time-to-first-token fell from ~27–60 s to ~8–14 s.
 - **Caveat (OpenAI):** on GPT-5 / o-series, `off` maps to `reasoning_effort` `none`/`minimal`, which can disable parallel tool calls in the agent loop. Operators on those models should set `DEFAULT_REASONING_MODE=auto`.
