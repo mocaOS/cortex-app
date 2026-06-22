@@ -48,7 +48,8 @@ Gotchas learned the hard way:
 - `qa/cortex_qa_master.ods` — source-of-truth feature/defect inventory: **Features**, **Defects**, **Summary** sheets. 50 feature rows across all backend domains, every HTTP endpoint, and all frontend screens; each row carries a test suite, status, defect count, severity, and last-tested date.
 - `qa/features.json` — structured source; `qa/gen_ods.py` — generator (needs `odfpy`). Regenerate: `python qa/gen_ods.py qa/features.json qa/cortex_qa_master.ods`.
 - `qa/QA_REPORT.md` — iteration log (coverage, defects, confidence).
-- `qa/live_authed_journey.py`, `qa/live_ingest_journey.py` — standalone live-journey runners (env-driven; the pytest modules above are the codified versions).
+
+The live journeys are codified as the `backend/tests/test_live_e2e*.py` pytest modules above (run them via `CORTEX_E2E_API_KEY=<key> .qa-venv/bin/python -m pytest tests/test_live_e2e_authed.py`).
 
 ## Defects found & fixed by the QA pass
 
