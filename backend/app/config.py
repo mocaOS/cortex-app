@@ -435,11 +435,12 @@ class Settings(BaseSettings):
         default=True
     )  # Use agent pipeline for standard chat mode (required for skills in chat)
     researcher_max_iterations_speed: int = Field(
-        default=2
+        default=3
     )  # Max agent loop iterations in speed/chat mode. Kept low so chat stays
     #   snappy: with reasoning suppressed each call is sub-second, so the agent
-    #   loop itself is the dominant latency — 2 rounds (one search + done) is
-    #   plenty for conversational answers. Deep research uses the quality cap.
+    #   loop itself is the dominant latency. 3 rounds leave room for a skill
+    #   flow (activate → call → answer) without truncating it, while plain
+    #   Q&A still finishes in one search + done. Deep research uses the quality cap.
     researcher_max_iterations_quality: int = Field(
         default=8
     )  # Max agent loop iterations in quality/research mode

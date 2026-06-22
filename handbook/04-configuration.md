@@ -207,7 +207,7 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 |----------|---------|-------------|
 | `ENABLE_AGENT_RESEARCH` | `true` | Use agent pipeline for Deep Research mode. Set `false` for legacy fixed-step pipeline. |
 | `ENABLE_AGENT_CHAT` | `true` | Use agent pipeline for standard Chat mode (required for skills in chat). |
-| `RESEARCHER_MAX_ITERATIONS_SPEED` | `5` | Max agent loop iterations for Chat mode (speed). |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations for Chat mode (speed). |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations for Deep Research (quality). |
 | `WRITER_MAX_TOKENS_SPEED` | `1200` | Max output tokens for Chat answers. |
 | `WRITER_MAX_TOKENS_QUALITY` | `4000` | Max output tokens for Deep Research answers. |

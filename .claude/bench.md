@@ -270,7 +270,7 @@ initial batch surfaced widespread *empty* answers (e.g. gemma 8/10, minimax-m27
 - **Residual snappiness lever = the agent loop, not the model.** With thinking
   off a single model call is <1s, but the speed chat still runs
   `agent_rag_stream(speed)` for up to `RESEARCHER_MAX_ITERATIONS_SPEED` (default
-  5) tool-loop rounds + retrieval, so TTFT stays ~15–20s. Lowering that, or
+  3) tool-loop rounds + retrieval, so TTFT stays ~15–20s. Lowering that, or
   bypassing the loop when no skills are active, is the next lever.
 
 ⚠️ **Heartbeats defeat read timeouts (key gotcha).** `with_sse_heartbeat`

@@ -24,7 +24,7 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 - All tools with reasoning transparency
 
 ### Iteration Caps
-- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5)
+- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3)
 - `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8)
 
 ## Streaming feedback (status + heartbeat)

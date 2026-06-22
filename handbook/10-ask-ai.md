@@ -252,7 +252,7 @@ ENABLE_AGENT_RESEARCH=true       # Agent for Deep Research
 ENABLE_AGENT_CHAT=true            # Agent for Chat (enables skills in chat mode)
 
 # Iteration limits
-RESEARCHER_MAX_ITERATIONS_SPEED=2    # Chat: 2 iterations
+RESEARCHER_MAX_ITERATIONS_SPEED=3    # Chat: 3 iterations
 RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Research: up to 8 iterations
 
 # Writer output limits

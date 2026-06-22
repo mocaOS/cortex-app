@@ -36,7 +36,7 @@ Agent calls: http_request(method="GET", url="https://api.example.com/search?q=Et
 
 ### Speed Mode (Chat) with Skills
 
-When skills are active, speed mode (chat) gains the `reasoning` tool (normally quality-only) so the agent can process large API responses before deciding its next step. Max iterations are bumped to 5 (configurable via `RESEARCHER_MAX_ITERATIONS_SPEED`). Agent-based chat is enabled by default (`ENABLE_AGENT_CHAT=true`).
+When skills are active, speed mode (chat) gains the `reasoning` tool (normally quality-only) so the agent can process large API responses before deciding its next step. Max iterations are bumped to 3 (configurable via `RESEARCHER_MAX_ITERATIONS_SPEED`). Agent-based chat is enabled by default (`ENABLE_AGENT_CHAT=true`).
 
 ## Installing Skills
 
@@ -214,7 +214,7 @@ When a skill is enabled but needs setup:
 | `MAX_SKILL_TOOLS` | `10` | Maximum total legacy skill-provided tools in the researcher agent |
 | `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions in the system prompt |
 | `ENABLE_AGENT_CHAT` | `true` | Enable agent-based chat mode (required for skills in chat) |
-| `RESEARCHER_MAX_ITERATIONS_SPEED` | `5` | Max agent loop iterations in speed/chat mode |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations in speed/chat mode |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations in quality/deep research mode |
 
 ### Docker Persistence
