@@ -354,6 +354,48 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class RunningTaskSummary(BaseModel):
+    """Compact view of an in-flight background task for the instance status report."""
+    task_id: str
+    task_type: str
+    status: str
+    progress_percent: float = 0.0
+    message: str = ""
+    started_at: Optional[str] = None
+
+
+class InstanceStatusResponse(BaseModel):
+    """Operational snapshot used to decide whether an instance is safe to redeploy.
+
+    `safe_to_redeploy` is False whenever destructible work is in flight:
+    documents currently being processed/extracted, running background tasks
+    (held in an in-memory store that a restart would lose), or an active
+    AskAI/research query (a restart kills the stream). `reasons` enumerates
+    each active blocker. Pending documents persist across restarts and resume,
+    so they are reported as informational and do NOT flip the flag.
+    """
+    safe_to_redeploy: bool
+    reasons: List[str] = Field(default_factory=list, description="Active blockers; empty when safe")
+    # Document pipeline state
+    processing_count: int = Field(default=0, description="Documents currently processing/extracting (blocks redeploy)")
+    pending_count: int = Field(default=0, description="Documents queued (informational; resumes after restart)")
+    failed_count: int = Field(default=0, description="Documents in failed state")
+    # Background jobs (in-memory task store)
+    running_task_count: int = Field(default=0, description="Pending/running background tasks (blocks redeploy)")
+    running_tasks: List[RunningTaskSummary] = Field(default_factory=list)
+    # AskAI / research activity
+    active_query_count: int = Field(default=0, description="In-flight AskAI/research queries (blocks redeploy)")
+    last_query_at: Optional[str] = Field(default=None, description="ISO timestamp of the most recent AskAI query")
+    # Last pipeline operations (informational)
+    last_relationship_analysis_at: Optional[str] = None
+    last_community_detection_at: Optional[str] = None
+    last_entity_merge_at: Optional[str] = None
+    # Connectivity / meta
+    neo4j_connected: bool = True
+    version: str
+    checked_at: str = Field(..., description="ISO timestamp when this snapshot was taken")
+
+
 class ReprocessRequest(BaseModel):
     """Request model for reprocessing documents."""
     document_ids: List[str] = Field(..., description="List of document IDs to reprocess")

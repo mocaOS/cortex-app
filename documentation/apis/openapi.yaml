@@ -1518,6 +1518,99 @@ paths:
         '409':
           description: An export or import is already in progress
 
+  /api/instance/status:
+    get:
+      tags: [Admin]
+      summary: Instance status (redeploy safety)
+      description: >
+        Single-call operational snapshot for deploy automation to decide whether
+        this instance can be safely restarted/upgraded. `safe_to_redeploy` is
+        false while destructible work is in flight — documents being
+        processed/extracted, running background tasks (held in an in-memory store
+        a restart would lose), or an active AskAI/research query (a restart kills
+        the stream). Pending documents persist and resume after a restart, so they
+        are reported but never block. Requires `manage` permission.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Instance status snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  safe_to_redeploy:
+                    type: boolean
+                    description: False while any destructible work is in flight
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    description: Active blockers; empty when safe to redeploy
+                  processing_count:
+                    type: integer
+                    description: Documents currently processing/extracting (blocks redeploy)
+                  pending_count:
+                    type: integer
+                    description: Documents queued (informational; resumes after restart)
+                  failed_count:
+                    type: integer
+                    description: Documents in failed state
+                  running_task_count:
+                    type: integer
+                    description: Pending/running background tasks (blocks redeploy)
+                  running_tasks:
+                    type: array
+                    description: Summaries of in-flight background tasks
+                    items:
+                      type: object
+                      properties:
+                        task_id:
+                          type: string
+                        task_type:
+                          type: string
+                        status:
+                          type: string
+                        progress_percent:
+                          type: number
+                        message:
+                          type: string
+                        started_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  active_query_count:
+                    type: integer
+                    description: In-flight AskAI/research queries (blocks redeploy)
+                  last_query_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: ISO timestamp of the most recent AskAI query
+                  last_relationship_analysis_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_community_detection_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_entity_merge_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  neo4j_connected:
+                    type: boolean
+                  version:
+                    type: string
+                  checked_at:
+                    type: string
+                    format: date-time
+                    description: ISO timestamp when this snapshot was taken
+        '401':
+          description: Manage authentication required
+
 components:
   securitySchemes:
     ApiKeyAuth:

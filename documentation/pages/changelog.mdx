@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 23, 2026 (Instance status endpoint — redeploy safety)
+
+A new admin endpoint, **`GET /api/instance/status`**, gives deploy automation a single call to decide whether an instance can be safely restarted or upgraded.
+
+It returns `safe_to_redeploy` (with a `reasons` list of any active blockers) plus the supporting detail: documents currently processing/extracting, running background tasks, in-flight AskAI/research queries, and last-activity timestamps (`last_query_at`, last relationship analysis, community detection, entity merge).
+
+`safe_to_redeploy` is `false` while any **destructible** work is in flight — documents mid-processing, background tasks (held in an in-memory store a restart would lose), or an active AskAI query (a restart kills the stream). Pending documents persist in Neo4j and resume after a restart, so they're reported but never block. AskAI activity is tracked across `/api/ask`, `/api/ask/stream`, and `/api/ask/stream/thinking`.
+
+Requires `manage` permission. **No API or schema breakage** — the endpoint is additive. See the [Deployment guide](/guides/deployment) for the redeploy-safety polling pattern.
+
+---
+
 ## June 22, 2026 (Web Import — MDHarvest powered by Crawl4ai)
 
 A new way to get web content into your knowledge base: **Web Import** harvests web pages into clean markdown and ingests them exactly like uploaded documents — chunked, embedded, and run through entity/relationship extraction, so they show up in Search, Ask AI, and the knowledge graph. It supersedes the standalone `mdharvest` tool.

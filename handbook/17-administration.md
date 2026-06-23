@@ -31,6 +31,29 @@ Returns comprehensive metrics:
 - Average entity mentions
 - Staleness timestamps (last relationship analysis, community detection, entity merge)
 
+### Redeploy Safety Status
+
+Before restarting or upgrading an instance (e.g. a version rollout), check whether it is safe to redeploy without losing in-flight work:
+
+```bash
+curl http://localhost:8000/api/instance/status \
+  -H "X-API-Key: your-admin-key"
+```
+
+Returns a single snapshot designed for deploy automation:
+- `safe_to_redeploy` — `false` while any destructible work is in flight
+- `reasons` — list of active blockers (empty when safe)
+- `processing_count` — documents currently being processed/extracted (blocks redeploy)
+- `pending_count` — documents queued; **informational only** — these persist in Neo4j and resume after a restart, so they never block
+- `failed_count` — documents in failed state
+- `running_task_count` / `running_tasks` — background jobs (batch processing, relationship analysis, community detection) held in an in-memory store that a restart would lose (blocks redeploy)
+- `active_query_count` — in-flight AskAI/research queries; a restart kills the stream (blocks redeploy)
+- `last_query_at` — timestamp of the most recent AskAI query
+- `last_relationship_analysis_at`, `last_community_detection_at`, `last_entity_merge_at` — last pipeline operations (informational)
+- `neo4j_connected`, `version`, `checked_at`
+
+Poll this endpoint and wait for `safe_to_redeploy: true` before triggering a graceful shutdown. Requires an API key with `manage` permission.
+
 ### API Usage Analytics
 
 Enable tracking with `TRACK_ADMIN_API_KEY_USAGE=true`, then:

@@ -54,6 +54,20 @@ On import completion, clears client-side caches (same as system reset).
 
 `POST /api/documents/download-zip` — Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. Requires `read` permission; restricted keys can only download documents from their allowed collections. Accessible via Download button in bulk actions toolbar on Documents page.
 
+## Instance Status (redeploy safety)
+
+`GET /api/instance/status` (`main.py`, `require_manage_permission`) — single-call operational snapshot for deploy automation to decide whether a customer instance can be safely restarted/upgraded. Returns `InstanceStatusResponse` with a `safe_to_redeploy` boolean plus a `reasons` list of active blockers.
+
+`safe_to_redeploy` is **False** while destructible work is in flight:
+- `processing_count > 0` — documents mid-processing/extraction (a restart strands them in `processing` state).
+- running/pending tasks in the in-memory `_task_store` (`running_tasks`/`running_task_count`) — a restart loses them.
+- `active_query_count > 0` — in-flight AskAI/research queries (a restart kills the stream).
+- Neo4j unreachable — state can't be verified, so treated as unsafe.
+
+`pending_count` is reported but **never** blocks: pending docs persist in Neo4j and resume after restart.
+
+AskAI activity is tracked via the `track_ask_activity` FastAPI `yield` dependency on `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking` — it increments an in-memory `_active_query_count` (reset to 0 on restart, which is correct) and writes `last_query_at` to the `SystemMeta` node (`set_meta`). The dependency teardown runs after a streamed response is fully consumed (or the client disconnects), so the counter decrements reliably. `last_query_at` and the `last_relationship_analysis_at`/`last_community_detection_at`/`last_entity_merge_at` timestamps are surfaced for informational "when was it last active" checks.
+
 ## API Key Management
 
 - `services/api_key_service.py` — CRUD operations for API keys with permissions (READ, MANAGE) and collection scope

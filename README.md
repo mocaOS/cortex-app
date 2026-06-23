@@ -295,6 +295,7 @@ npm run dev
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts, `per_chunk_relationship_count` for Step 1 relations) |
+| GET | `/api/instance/status` | Redeploy-safety snapshot — `safe_to_redeploy` plus in-flight processing/tasks/AskAI activity and last-activity timestamps (`manage` permission) |
 | POST | `/api/upload` | Upload a document (supports `start_processing` and `collection_id` params) |
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |

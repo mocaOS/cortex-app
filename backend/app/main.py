@@ -33,6 +33,8 @@ from app.models import (
     RAGRequest,
     RAGResponse,
     HealthResponse,
+    InstanceStatusResponse,
+    RunningTaskSummary,
     ProcessingStatus,
     GraphStatsResponse,
     GraphContext,
@@ -639,6 +641,41 @@ async def prometheus_metrics(auth: AuthResult = Depends(require_admin)):
 _task_store: Dict[str, TaskProgress] = {}
 
 
+# =============================================================================
+# AskAI activity tracking (for redeploy-safety reporting)
+# =============================================================================
+
+# Count of in-flight AskAI/research queries. The event loop is single-threaded,
+# so plain int +=/-= is safe here without a lock. Reset to 0 on process restart,
+# which is correct: a restart has no in-flight queries by definition.
+_active_query_count: int = 0
+
+
+async def track_ask_activity():
+    """FastAPI dependency that marks an AskAI query as in-flight.
+
+    Used as a `yield` dependency on the ask endpoints. The teardown after
+    `yield` runs only once the response (including a fully-consumed
+    StreamingResponse) is sent or the client disconnects, so the decrement is
+    guaranteed for both buffered and streamed answers. While any query is in
+    flight, GET /api/instance/status reports the instance as unsafe to redeploy.
+    """
+    global _active_query_count
+    _active_query_count += 1
+    try:
+        await asyncio.to_thread(
+            get_neo4j_service().set_meta,
+            "last_query_at",
+            datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:  # never block a query on bookkeeping
+        logger.warning(f"Failed to record last_query_at: {e}")
+    try:
+        yield
+    finally:
+        _active_query_count = max(0, _active_query_count - 1)
+
+
 def create_task(task_type: str) -> TaskProgress:
     """Create a new task and return its progress tracker."""
     task_id = f"task_{uuid.uuid4().hex[:12]}"
@@ -923,6 +960,88 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/instance/status", response_model=InstanceStatusResponse)
+async def get_instance_status(auth: AuthResult = Depends(require_manage_permission)):
+    """Operational snapshot for redeploy-safety decisions.
+
+    Consolidates the signals deploy automation needs to decide whether it can
+    safely restart/upgrade this customer instance. `safe_to_redeploy` is False
+    while destructible work is in flight — documents being processed/extracted,
+    background tasks in the in-memory store (which a restart would lose), or an
+    active AskAI/research query (a restart kills the stream). Pending documents
+    persist and resume after a restart, so they are reported but never block.
+    """
+    neo4j = get_neo4j_service()
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    connected = await asyncio.to_thread(neo4j.verify_connectivity)
+
+    stats: dict = {}
+    last_query_at: Optional[str] = None
+    if connected:
+        try:
+            stats = await asyncio.to_thread(neo4j.get_stats)
+            last_query_at = await asyncio.to_thread(neo4j._get_meta, "last_query_at")
+        except Exception as e:
+            logger.error(f"instance/status: failed to read graph state: {e}")
+
+    processing_count = stats.get("processing_count", 0)
+    pending_count = stats.get("pending_count", 0)
+    failed_count = stats.get("failed_count", 0)
+
+    # In-flight background jobs from the in-memory task store.
+    running = [
+        t for t in _task_store.values()
+        if t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+    ]
+    running_tasks = [
+        RunningTaskSummary(
+            task_id=t.task_id,
+            task_type=t.task_type,
+            status=t.status.value,
+            progress_percent=t.progress_percent,
+            message=t.message,
+            started_at=t.started_at.isoformat() if t.started_at else None,
+        )
+        for t in running
+    ]
+
+    reasons: List[str] = []
+    if not connected:
+        reasons.append("Neo4j not reachable — instance state cannot be verified")
+    if processing_count > 0:
+        reasons.append(f"{processing_count} document(s) currently processing")
+    if running_tasks:
+        reasons.append(f"{len(running_tasks)} background task(s) running")
+    if _active_query_count > 0:
+        reasons.append(f"{_active_query_count} AskAI query(ies) in flight")
+
+    safe = (
+        connected
+        and processing_count == 0
+        and not running_tasks
+        and _active_query_count == 0
+    )
+
+    return InstanceStatusResponse(
+        safe_to_redeploy=safe,
+        reasons=reasons,
+        processing_count=processing_count,
+        pending_count=pending_count,
+        failed_count=failed_count,
+        running_task_count=len(running_tasks),
+        running_tasks=running_tasks,
+        active_query_count=_active_query_count,
+        last_query_at=last_query_at,
+        last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
+        last_community_detection_at=stats.get("last_community_detection_at"),
+        last_entity_merge_at=stats.get("last_entity_merge_at"),
+        neo4j_connected=connected,
+        version="1.0.0",
+        checked_at=checked_at,
+    )
 
 
 @app.post("/api/upload", response_model=UploadResponse)
@@ -2184,6 +2303,7 @@ async def ask_question(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Ask a question using enhanced GraphRAG.
@@ -2327,6 +2447,7 @@ async def ask_question_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Stream the RAG response for better UX.
@@ -3814,6 +3935,7 @@ async def ask_with_thinking_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Stream the RAG response with extended thinking visibility.
