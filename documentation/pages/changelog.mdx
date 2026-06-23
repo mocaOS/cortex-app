@@ -7,6 +7,16 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 23, 2026 (LLM observability — Langfuse tracing)
+
+Optional, env-driven **LLM tracing and cost tracking** via a self-hosted [Langfuse](https://langfuse.com) instance. When `LANGFUSE_BASE_URL` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors), and each agentic Q&A is grouped into one inspectable trace — across Venice, OpenRouter, and any OpenAI-compatible provider.
+
+Activation is fully env-gated: with no keys the same image runs **identically untraced** (plain OpenAI client, zero overhead). Coverage spans the whole stack — the agentic researcher/writer loop, graph extraction, the Haystack embedders, and the vision analyzer. `LANGFUSE_TRACING_ENABLED` (master off-switch) and `LANGFUSE_SAMPLE_RATE` (0.0–1.0) tune it.
+
+For accurate USD cost, add your Venice/OpenRouter models under the Langfuse project's **Models** settings (token counts are tracked regardless). **No API or schema breakage** — purely additive. See the [Configuration guide](/configuration#observability-langfuse).
+
+---
+
 ## June 23, 2026 (Instance status endpoint — redeploy safety)
 
 A new admin endpoint, **`GET /api/instance/status`**, gives deploy automation a single call to decide whether an instance can be safely restarted or upgraded.

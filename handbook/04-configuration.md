@@ -309,6 +309,20 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 | `STREAM_REASONING_STEPS` | `true` | Stream reasoning steps in agentic mode (visible thinking). |
 | `SHOW_RETRIEVAL_STATS` | `true` | Show retrieval statistics in responses. |
 
+## Observability (Langfuse)
+
+Optional LLM tracing and cost tracking via a self-hosted [Langfuse](https://langfuse.com) instance. When configured, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors) and each agentic Q&A is grouped into a single trace you can open and inspect — works across Venice, OpenRouter, and any OpenAI-compatible provider. Leave these blank to run without tracing; Cortex behaves identically either way (no keys = no tracing, no overhead).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LANGFUSE_BASE_URL` | — | URL of your Langfuse instance (e.g. `https://langfuse.example.com`). Tracing activates only when this **and** both keys are set. |
+| `LANGFUSE_PUBLIC_KEY` | — | Langfuse **project** public key (Langfuse → Project Settings → API Keys). |
+| `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key (paired with the public key). |
+| `LANGFUSE_TRACING_ENABLED` | `true` | Master off-switch — set `false` to disable tracing even when keys are present. |
+| `LANGFUSE_SAMPLE_RATE` | `1.0` | Fraction of requests traced (`0.0`–`1.0`). Lower it on high-traffic instances to reduce volume. |
+
+> **Accurate cost:** Langfuse prices a call by matching the model name against price definitions in your project. Venice/OpenRouter models aren't in Langfuse's built-in catalog, so add them under the project's **Models** settings to get USD cost (token counts are tracked regardless).
+
 ## Security Configuration
 
 | Variable | Default | Description |
