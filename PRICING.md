@@ -25,9 +25,9 @@ Each tier is a different env-var configuration applied to a fresh instance. When
 | Tier | Price | Files | Entities | Queries/mo | Collections | Premium Apps | Advanced Security |
 |---|---|---|---|---|---|---|---|
 | **Free** | $0 | 20 | 500 | 1,000 | 1 | No | No |
-| **Individual** | $19/mo | 500 | 10,000 | 10,000 | 10 | No | No |
-| **Enthusiast** ⭐ (Most Popular) | $79/mo | 3,000 | 100,000 | 100,000 | 100 | Select | No |
-| **Business** | $249/mo | 25,000 | 1,000,000 | Unlimited | Unlimited | All | Yes |
+| **Individual** | $29/mo | 500 | 10,000 | 10,000 | 10 | No | No |
+| **Enthusiast** ⭐ (Most Popular) | $99/mo | 3,000 | 100,000 | 100,000 | 100 | Select | No |
+| **Business** | $299/mo | 25,000 | 1,000,000 | Unlimited | Unlimited | All | Yes |
 | **Enterprise** | Custom | Unlimited | Unlimited | Unlimited | Unlimited | All | Yes |
 | **MOCA Flatrate** (DeCC0 / $MOCA staking) | Free | = Enthusiast values | | | | | |
 
