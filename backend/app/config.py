@@ -209,6 +209,18 @@ class Settings(BaseSettings):
         default=""
     )  # API key for relationship extraction model (defaults to extraction API key if empty)
 
+    # Observability (Langfuse) — optional. When public+secret+base_url are all
+    # set, every LLM/embedding/vision call is traced and costed in Langfuse and
+    # agentic flows are grouped into one trace per request. Leave empty to run
+    # the exact same image untraced (no keys → tracing_active is False). In
+    # multi-tenant deployments these are injected per-tenant by the control
+    # plane. See .claude/domain/observability.md.
+    langfuse_public_key: str = Field(default="")  # LANGFUSE_PUBLIC_KEY
+    langfuse_secret_key: str = Field(default="")  # LANGFUSE_SECRET_KEY
+    langfuse_base_url: str = Field(default="")  # LANGFUSE_BASE_URL e.g. https://langfuse.example.com
+    langfuse_tracing_enabled: bool = Field(default=True)  # master off-switch even when keys are set
+    langfuse_sample_rate: float = Field(default=1.0)  # 0.0–1.0; dial down on hot tenants
+
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
     # Defaults: extraction/relationship/vision OFF (reasoning hurts structured
@@ -691,6 +703,21 @@ class Settings(BaseSettings):
     def fast_mode_model(self) -> str:
         """Get the model to use for Fast Mode in Ask AI."""
         return self.openai_model_fast_mode or self.openai_model
+
+    @property
+    def langfuse_tracing_active(self) -> bool:
+        """True when Langfuse tracing should be wired up.
+
+        Requires all three credentials AND the master switch. When False the
+        OpenAI client factory returns the plain (untraced) client, so the same
+        image runs identically with or without observability configured.
+        """
+        return bool(
+            self.langfuse_public_key
+            and self.langfuse_secret_key
+            and self.langfuse_base_url
+            and self.langfuse_tracing_enabled
+        )
 
     @property
     def extraction_model(self) -> str:

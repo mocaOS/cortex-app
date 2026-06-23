@@ -48,7 +48,14 @@ from app.models import (
     ThinkingEvent,
 )
 from app.services.graph_extractor import get_graph_extractor
-from app.services.llm_config import get_llm_config, build_chat_params
+from app.services.llm_config import (
+    get_llm_config,
+    build_chat_params,
+    make_openai_client,
+    make_async_openai_client,
+    stream_usage_kwargs,
+)
+from app.services.observability import record_generation
 from app.services.neo4j_service import get_neo4j_service
 from app.services.prompt_security import (
     get_anti_injection_instruction,
@@ -1461,6 +1468,13 @@ class DocumentProcessor:
                 functools.partial(self.embedder.run, documents=chunks),
             )
             embedded_chunks = embed_result.get("documents", [])
+            # Haystack embedders bypass the OpenAI drop-in — record cost manually.
+            record_generation(
+                name="embedding.documents",
+                model=self.settings.embedding_model,
+                usage=(embed_result.get("meta") or {}).get("usage"),
+                metadata={"stage": "ingestion", "chunks": len(chunks)},
+            )
 
             # Check for cancellation after embedding
             self._check_cancellation(doc_id)
@@ -3064,6 +3078,12 @@ class QueryProcessor:
     def embed_query(self, query: str) -> list[float]:
         """Generate embedding for a query."""
         result = self.text_embedder.run(text=query)
+        record_generation(
+            name="embedding.query",
+            model=self.settings.embedding_model,
+            usage=(result.get("meta") or {}).get("usage"),
+            metadata={"stage": "query"},
+        )
         return result["embedding"]
 
     def embed_queries(self, queries: list[str]) -> list[list[float]]:
@@ -3078,6 +3098,12 @@ class QueryProcessor:
 
         docs = [Document(content=q) for q in queries]
         result = self.batch_embedder.run(documents=docs)
+        record_generation(
+            name="embedding.queries",
+            model=self.settings.embedding_model,
+            usage=(result.get("meta") or {}).get("usage"),
+            metadata={"stage": "query", "count": len(queries)},
+        )
         return [doc.embedding for doc in result["documents"]]
 
     def search(
@@ -3348,11 +3374,9 @@ class QueryProcessor:
 
         # Generate answer with enhanced prompts
         try:
-            from openai import OpenAI
-
             # Resolve the LLM config from settings
             llm_config = get_llm_config()
-            client = OpenAI(
+            client = make_openai_client(
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
             )
@@ -3480,8 +3504,6 @@ Response Style:
         """
         import re
 
-        from openai import OpenAI
-
         def emit_thinking(event_type: str, content: str, metadata: dict = None):
             """Helper to emit thinking events."""
             if thinking_callback:
@@ -3504,7 +3526,7 @@ Response Style:
 
         # Resolve the LLM config from settings
         llm_config = get_llm_config()
-        client = OpenAI(
+        client = make_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -3874,8 +3896,6 @@ Response Style:
         """
         import re
 
-        from openai import AsyncOpenAI
-
         # Validate user input for prompt injection (if enabled)
         processed_question, was_blocked, reason = validate_and_process_input(
             question, strict_mode=True, enabled=self.settings.prompt_security
@@ -3896,7 +3916,7 @@ Response Style:
             yield {"error": "OpenAI API key required for streaming"}
             return
 
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -4125,6 +4145,7 @@ Comprehensive Answer:""",
             model=llm_config.model,
             messages=messages,
             stream=True,
+            **stream_usage_kwargs(),
             **build_chat_params(llm_config.model, temperature=0.3, max_tokens=2000),
         )
 

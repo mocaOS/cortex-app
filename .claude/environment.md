@@ -232,6 +232,15 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 
 - `ENCRYPTION_KEY` (default: empty = disabled) — comma-separated Fernet keys for at-rest encryption of user-supplied secrets: git connector PATs (Neo4j `GitConnection.pat`) and secret-typed skill config fields (`config.json`). First key encrypts, all keys decrypt (MultiFernet). Ciphertext is `enc:`-prefixed; plaintext values pass through reads, so enabling the key later is safe — an idempotent startup migration encrypts existing plaintext (and re-encrypts rotated-key values with the primary key). Unset → loud startup warning + plaintext storage. Malformed key → startup fails fast. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Rotation: prepend new key (`ENCRYPTION_KEY=<new>,<old>`), restart, then drop the old key.
 
+## Observability (Langfuse)
+
+Optional LLM tracing/cost. All empty = disabled; the same image runs identically traced or untraced. See [`.claude/domain/observability.md`](domain/observability.md) for the instrumentation map.
+
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (default: empty) — a Langfuse **project** key pair (Project Settings → API Keys). Both required to activate.
+- `LANGFUSE_BASE_URL` (default: empty) — Langfuse instance URL, e.g. `https://langfuse.example.com`. The SDK reads this name natively. All three of key/secret/base_url must be set for `Settings.langfuse_tracing_active` to be True; otherwise the OpenAI client factory (`llm_config.make_*_openai_client`) returns the plain, untraced client.
+- `LANGFUSE_TRACING_ENABLED` (default: `true`) — master off-switch; set `false` to disable tracing even when keys are present.
+- `LANGFUSE_SAMPLE_RATE` (default: `1.0`) — 0.0–1.0 trace sampling; lower on high-traffic instances. Passed to the SDK at init (`observability.init_langfuse`).
+
 ## Document Processing
 
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing

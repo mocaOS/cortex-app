@@ -556,6 +556,23 @@ When no vision model is configured, Docling's built-in image description (SmolDo
 
 ---
 
+## Observability (Langfuse)
+
+Optional LLM tracing and cost tracking via a self-hosted [Langfuse](https://langfuse.com) instance. When the three credentials are set, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors) and agentic Q&A flows are grouped into one trace per request — including Venice and OpenRouter traffic. Leave them blank to run untraced; the same image behaves identically with or without tracing (no keys = no tracing).
+
+```bash
+# All optional. Activation requires BASE_URL + PUBLIC_KEY + SECRET_KEY together.
+LANGFUSE_BASE_URL=https://langfuse.example.com  # Langfuse instance URL
+LANGFUSE_PUBLIC_KEY=pk-lf-...                    # project public key
+LANGFUSE_SECRET_KEY=sk-lf-...                    # project secret key
+LANGFUSE_TRACING_ENABLED=true                    # master off-switch (default true)
+LANGFUSE_SAMPLE_RATE=1.0                         # 0.0–1.0 trace sampling
+```
+
+Get the key pair from Langfuse → **Project Settings → API Keys**. Accurate USD cost requires per-model price definitions in the Langfuse project (Venice/OpenRouter models aren't in Langfuse's built-in catalog).
+
+---
+
 ## Security
 
 ### Deployment hardening & CORS
@@ -672,6 +689,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `ADMIN_API_KEY` | Yes | - | Admin API key |
 | `SESSION_SECRET` | Yes | - | JWT session secret |
 | `ENCRYPTION_KEY` | No | - | At-rest encryption for git PATs + skill secrets (comma-separated Fernet keys; first encrypts, all decrypt) |
+| `LANGFUSE_BASE_URL` | No | - | Langfuse instance URL (enables LLM tracing when set with the key pair) |
+| `LANGFUSE_PUBLIC_KEY` | No | - | Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | No | - | Langfuse project secret key |
+| `LANGFUSE_TRACING_ENABLED` | No | `true` | Master off-switch for tracing even when keys are set |
+| `LANGFUSE_SAMPLE_RATE` | No | `1.0` | Trace sampling rate (0.0–1.0) |
 | `NEXT_PUBLIC_LOGO_URL` | No | - | Custom logo URL |
 | `NEXT_PUBLIC_ACCENT_COLOR` | No | - | Custom UI accent color (CSS) |
 

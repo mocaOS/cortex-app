@@ -103,7 +103,8 @@ from app.services.prompt_security import (
     filter_output,
     get_safe_refusal_message,
 )
-from app.services.llm_config import get_llm_config, build_chat_params
+from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
+from app.services.observability import traced_sse
 from app.services.reasoning_config import safe_chat_completion, ReasoningMode
 from app.services.auth_service import (
     require_api_key,
@@ -313,6 +314,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Secret encryption migration failed: {e}")
 
+    # Initialize Langfuse observability (no-op unless LANGFUSE_* creds are set).
+    # Done before processor warm-up so the global client is registered before
+    # any traced LLM call can fire.
+    try:
+        from app.services.observability import init_langfuse
+        init_langfuse()
+    except Exception as e:
+        logger.warning(f"Langfuse init failed; continuing untraced: {e}")
+
     # Start the git scheduled-sync poller
     git_scheduler_task = None
     if settings.enable_git_integration:
@@ -378,6 +388,14 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.crawl_client import close_async_client as close_crawl_client
         await close_crawl_client()
+    except Exception:
+        pass
+
+    # Flush + shut down Langfuse so buffered traces are delivered (no-op when
+    # tracing is inactive). The lifespan has the stop grace period to drain.
+    try:
+        from app.services.observability import shutdown_langfuse
+        shutdown_langfuse()
     except Exception:
         pass
 
@@ -1170,11 +1188,9 @@ async def generate_filename_with_llm(content: str, input_type: str, title: Optio
         return f"custom_{input_type}_{content_hash}"
     
     try:
-        from openai import AsyncOpenAI
-        
         # Use fast mode config which has thinking disabled
         llm_config = get_llm_config(fast_mode=True)
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -1309,11 +1325,9 @@ async def generate_topic_hint(request: TopicHintRequest, auth: AuthResult = Depe
         return TopicHintResponse(topic_hint=topic_hint, existing_similar=existing_similar)
     
     try:
-        from openai import AsyncOpenAI
-        
         # Use fast mode config which has thinking disabled
         llm_config = get_llm_config(fast_mode=True)
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -2526,7 +2540,12 @@ async def ask_question_stream(
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return StreamingResponse(
-            with_sse_heartbeat(generate_agentic()),
+            with_sse_heartbeat(traced_sse(
+                generate_agentic(),
+                "ask.agentic",
+                user_id=auth.key_id,
+                tags=["endpoint:ask_stream", "mode:agentic"],
+            )),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2538,8 +2557,6 @@ async def ask_question_stream(
     if request.use_fast_search:
         async def generate_fast():
             try:
-                from openai import AsyncOpenAI
-                
                 # Validate user input for prompt injection (if enabled)
                 processed_question, was_blocked, reason = validate_and_process_input(
                     request.question, strict_mode=True, enabled=settings.prompt_security
@@ -2593,7 +2610,7 @@ Question: {request.question}"""
                 
                 # For fast mode, use the fast mode model (OPENAI_MODEL_FAST_MODE)
                 llm_config = get_llm_config(fast_mode=True)
-                client = AsyncOpenAI(
+                client = make_async_openai_client(
                     api_key=llm_config.api_key,
                     base_url=llm_config.base_url,
                 )
@@ -2610,6 +2627,7 @@ Question: {request.question}"""
                     overrides=settings.parsed_reasoning_overrides,
                     messages=messages,
                     stream=True,
+                    **stream_usage_kwargs(),
                     # Lower temperature / capped tokens for faster, more deterministic
                     # responses (params adapted per model family — GPT-5/o-series).
                     **build_chat_params(llm_config.model, temperature=0.2, max_tokens=600),
@@ -2627,7 +2645,12 @@ Question: {request.question}"""
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
         return StreamingResponse(
-            with_sse_heartbeat(generate_fast()),
+            with_sse_heartbeat(traced_sse(
+                generate_fast(),
+                "ask.fast",
+                user_id=auth.key_id,
+                tags=["endpoint:ask_stream", "mode:fast"],
+            )),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2665,8 +2688,6 @@ Question: {request.question}"""
                 return
 
             # Legacy standard streaming path (hybrid search + reranking + writer)
-            from openai import AsyncOpenAI
-
             conversation_history = request.conversation_history
 
             graph_context = None
@@ -2777,7 +2798,7 @@ Question: {request.question}"""
 
             # Stream the response using async client
             llm_config = get_llm_config()
-            client = AsyncOpenAI(
+            client = make_async_openai_client(
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
             )
@@ -2793,6 +2814,7 @@ Question: {request.question}"""
                 overrides=settings.parsed_reasoning_overrides,
                 messages=messages,
                 stream=True,
+                **stream_usage_kwargs(),
                 **build_chat_params(
                     llm_config.model,
                     temperature=0.3,
@@ -2812,7 +2834,12 @@ Question: {request.question}"""
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        with_sse_heartbeat(generate()),
+        with_sse_heartbeat(traced_sse(
+            generate(),
+            "ask.standard",
+            user_id=auth.key_id,
+            tags=["endpoint:ask_stream", "mode:standard"],
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -3083,7 +3110,6 @@ class MergeEntitiesRequest(BaseModel):
 
 async def _generate_merged_description(canonical: str, all_names: List[str], entity_data: dict) -> Optional[str]:
     """Generate a combined description for merged entities using the main LLM."""
-    from openai import AsyncOpenAI
     from app.services.llm_config import get_llm_config
 
     # Collect non-empty descriptions
@@ -3105,7 +3131,7 @@ async def _generate_merged_description(canonical: str, all_names: List[str], ent
 
     try:
         config = get_llm_config()
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=30.0,
@@ -4004,7 +4030,12 @@ async def ask_with_thinking_stream(
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        with_sse_heartbeat(generate()),
+        with_sse_heartbeat(traced_sse(
+            generate(),
+            "ask.thinking",
+            user_id=auth.key_id,
+            tags=["endpoint:ask_stream_thinking", "mode:agentic"],
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

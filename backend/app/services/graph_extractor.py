@@ -17,7 +17,13 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
-from app.services.llm_config import get_llm_config, get_extraction_llm_config, get_relationship_llm_config
+from app.services.llm_config import (
+    get_llm_config,
+    get_extraction_llm_config,
+    get_relationship_llm_config,
+    make_openai_client,
+    make_async_openai_client,
+)
 from app.services.reasoning_config import (
     ReasoningMode,
     safe_chat_completion,
@@ -417,7 +423,7 @@ class GraphExtractor:
         
         config = get_llm_config()
         if self._client is None and config.api_key:
-            self._client = OpenAI(
+            self._client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
@@ -435,7 +441,7 @@ class GraphExtractor:
         
         config = get_llm_config()
         if self._async_client is None and config.api_key:
-            self._async_client = AsyncOpenAI(
+            self._async_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=600.0,
@@ -453,7 +459,7 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._extraction_client is None and config.api_key:
-            self._extraction_client = OpenAI(
+            self._extraction_client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
@@ -472,7 +478,7 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._async_extraction_client is None and config.api_key:
-            self._async_extraction_client = AsyncOpenAI(
+            self._async_extraction_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
@@ -497,7 +503,7 @@ class GraphExtractor:
 
         config = get_relationship_llm_config()
         if self._async_relationship_client is None and config.api_key:
-            self._async_relationship_client = AsyncOpenAI(
+            self._async_relationship_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
@@ -1864,9 +1870,7 @@ Respond with ONLY the community name, nothing else."""
         text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
 
         try:
-            from openai import OpenAI
-
-            client = OpenAI(
+            client = make_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
             )
@@ -1894,7 +1898,7 @@ Respond with ONLY the community name, nothing else."""
 
         # Lazy-init dedicated async embedding client
         if self._async_embed_client is None:
-            self._async_embed_client = AsyncOpenAI(
+            self._async_embed_client = make_async_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
                 timeout=120.0,
@@ -1939,7 +1943,7 @@ Respond with ONLY the community name, nothing else."""
             return [None] * len(entities)
 
         if self._async_embed_client is None:
-            self._async_embed_client = AsyncOpenAI(
+            self._async_embed_client = make_async_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
                 timeout=120.0,

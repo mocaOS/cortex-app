@@ -35,6 +35,11 @@ Pillow>=10.0.0  # PIL - Python Imaging Library for image manipulation
 openai>=1.12.0
 tiktoken>=0.6.0
 
+# Observability (Langfuse) — optional, activated only when LANGFUSE_* env vars
+# are set. Ships an OpenAI drop-in + @observe decorator (no extra OTel collector
+# needed). Pinned to the v3 line to match the self-hosted server major (:3).
+langfuse>=3.0.0,<4.0.0
+
 # Utilities
 python-dotenv>=1.0.1
 aiofiles>=23.2.1

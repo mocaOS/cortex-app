@@ -24,7 +24,7 @@ from typing import AsyncGenerator, Literal, Optional, List
 from dataclasses import dataclass, field
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI  # used in type annotations; clients built via factory
 
 from app.models import ConversationMessage, GraphContext
 from app.services.research_prompts import (
@@ -55,7 +55,7 @@ def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
         return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
     return ReasoningMode.AUTO
 from app.services.prompt_security import get_anti_injection_instruction
-from app.services.llm_config import build_chat_params
+from app.services.llm_config import build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services.context_curator import (
     build_context,
     clamp_memory_blob,
@@ -1281,7 +1281,7 @@ async def run_research_pipeline(
         else settings.writer_max_tokens_quality
     )
 
-    client = AsyncOpenAI(
+    client = make_async_openai_client(
         api_key=llm_config.api_key,
         base_url=llm_config.base_url,
     )
@@ -1481,6 +1481,7 @@ async def run_research_pipeline(
             overrides=settings.parsed_reasoning_overrides,
             messages=writer_messages,
             stream=True,
+            **stream_usage_kwargs(),
             **build_chat_params(
                 llm_config.model, temperature=0.3, max_tokens=writer_max_tokens
             ),

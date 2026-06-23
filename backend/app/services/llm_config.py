@@ -115,3 +115,46 @@ def get_llm_config_tuple() -> Tuple[str, str, str]:
     """
     config = get_llm_config()
     return (config.api_key, config.base_url, config.model)
+
+
+def _use_langfuse() -> bool:
+    """Whether to return the Langfuse-wrapped OpenAI client."""
+    return get_settings().langfuse_tracing_active
+
+
+def stream_usage_kwargs() -> dict:
+    """Kwargs to request token usage on *streamed* completions, when traced.
+
+    OpenAI-compatible streams omit usage unless ``stream_options.include_usage``
+    is set — without it Langfuse records a streamed generation with zero cost.
+    Gated on tracing being active so untraced deployments (and any gateway that
+    might reject the param) see no behavior change. Spread into a streaming
+    ``create`` call: ``**stream_usage_kwargs()``.
+    """
+    return {"stream_options": {"include_usage": True}} if _use_langfuse() else {}
+
+
+def make_openai_client(*, api_key: str, base_url: str, **kwargs):
+    """Construct a sync OpenAI client, Langfuse-wrapped when tracing is active.
+
+    Single decision point for the whole backend: every call site builds its
+    client through here, so observability is on/off in one place. The Langfuse
+    drop-in is API-compatible with the stock client and base_url-agnostic, so
+    Venice/OpenRouter gateways work unchanged. Calls routed through
+    ``safe_chat_completion_sync`` (which takes ``client.chat.completions.create``
+    as ``create_fn``) are auto-traced transparently.
+    """
+    if _use_langfuse():
+        from langfuse.openai import OpenAI  # drop-in: same API, auto-traces
+    else:
+        from openai import OpenAI
+    return OpenAI(api_key=api_key, base_url=base_url, **kwargs)
+
+
+def make_async_openai_client(*, api_key: str, base_url: str, **kwargs):
+    """Async twin of :func:`make_openai_client`."""
+    if _use_langfuse():
+        from langfuse.openai import AsyncOpenAI
+    else:
+        from openai import AsyncOpenAI
+    return AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)

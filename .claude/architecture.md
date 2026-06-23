@@ -28,7 +28,8 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/library_transfer_service.py` — Full library export/import. See [`.claude/domain/admin-features.md`](domain/admin-features.md)
 - `services/skill_service.py` — Agent Skills integration. See [`.claude/domain/skills.md`](domain/skills.md)
 - `services/git_connector_service.py` + `services/git_providers/` — Git connector (GitHub/GitLab/Gitea): incremental clone+diff sync into the pipeline, provider abstraction, agent `git_repo` write tool. See [`.claude/domain/git-integration.md`](domain/git-integration.md)
-- `services/llm_config.py` — LLM configuration utility (extraction/relationship model config). See [`.claude/domain/relationships.md`](domain/relationships.md)
+- `services/llm_config.py` — LLM configuration utility (extraction/relationship model config) **and the OpenAI client factory** (`make_openai_client` / `make_async_openai_client`) — single decision point for Langfuse-wrapped vs plain clients. See [`.claude/domain/relationships.md`](domain/relationships.md), [`.claude/domain/observability.md`](domain/observability.md)
+- `services/observability.py` — Langfuse wiring: client lifecycle (`init_langfuse`/`shutdown_langfuse`), agentic-trace grouping (`observed_trace`/`traced_sse`), manual generation records for non-SDK calls (`record_generation`). Env-driven; no-op when unconfigured. See [`.claude/domain/observability.md`](domain/observability.md)
 - `services/helper_client.py` — transport layer for cortex-helper calls: shared HTTP client, retries with backoff, circuit breaker, `HELPER_STRICT_REMOTE`, `X-Tenant-ID`/`X-Request-ID` headers
 - `services/rate_limiter.py` — opt-in per-API-key token bucket (`RATE_LIMIT_QPM`) on ask/upload endpoints
 - `logging_setup.py` — `LOG_FORMAT=plain|json` + `X-Request-ID` correlation (contextvar stamped on every log line, echoed on responses, forwarded to cortex-helper)
