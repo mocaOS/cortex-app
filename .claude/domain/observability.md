@@ -67,11 +67,38 @@ same task while the span is the current context.
 
 - **Cost by model / endpoint / provider** — generations carry the model + token
   usage; traces carry `endpoint:*`, `mode:*` tags. Accurate USD requires model
-  price definitions in the Langfuse project (Models config / Models API) since
-  Venice/OpenRouter aren't in Langfuse's built-in catalog.
+  price definitions in the Langfuse project (Venice/OpenRouter aren't in
+  Langfuse's built-in catalog) — see Cost catalog below.
 - **Agentic debugging** — open a trace → researcher iterations, retrieval, and
   each generation (prompt/completion/tokens/cost), grouped per request.
 - **Per-tenant isolation** — one project per tenant; org dashboards aggregate.
+
+## Cost catalog (USD pricing)
+
+Langfuse prices a generation by regex-matching the recorded model name to a
+price definition. Venice/OpenRouter models aren't in Langfuse's built-in
+catalog, so without seeding, cost shows `$0` (token usage is still tracked).
+
+- **`backend/scripts/langfuse-models.json`** — versioned price catalog, single
+  source of truth. Prices are **USD per 1M tokens** (as on the provider's pricing
+  page); embeddings use `output_per_1m: 0`. Edit here when prices change.
+- **`backend/scripts/seed_langfuse_models.py`** — idempotent seeder. POSTs each
+  entry to a project's `POST /api/public/models` (Basic auth with the project
+  key), converting per-1M → Langfuse's per-token `inputPrice`/`outputPrice`.
+  Skips models already priced identically; reusable against **any** project
+  (point the keys at a tenant project to backfill it — meta-cortex uses this).
+
+```bash
+# Seed the project named in .env (dry-run first):
+cd backend && python scripts/seed_langfuse_models.py --env-file ../.env --dry-run
+python scripts/seed_langfuse_models.py --env-file ../.env
+# Seed an arbitrary tenant project:
+python scripts/seed_langfuse_models.py --base-url https://lf... --public-key pk-lf-... --secret-key sk-lf-...
+```
+
+Pricing applies to generations recorded **after** seeding. When you add/change a
+deployment's model (`OPENAI_MODEL`, `GRAPH_EXTRACTION_MODEL`, `VISION_MODEL`,
+`EMBEDDING_MODEL`), add it to the catalog and re-run the seeder.
 
 ## Not covered / future
 
