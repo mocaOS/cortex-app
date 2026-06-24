@@ -61,6 +61,11 @@ services:
       context: ../backend
       dockerfile: Dockerfile.prod
     environment:
+      # Pinned: this is the production Dokploy deployment. Without this, the
+      # backend defaults to "development" — interactive API docs (/docs,
+      # /redoc, /openapi.json) stay publicly exposed and the startup check
+      # that refuses weak NEO4J_PASSWORD/SESSION_SECRET never runs.
+      - ENVIRONMENT=production
       # --- Database (required) ---
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_PASSWORD=${NEO4J_PASSWORD}
@@ -82,6 +87,9 @@ services:
       # --- Admin authentication ---
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
+      # Required with ENVIRONMENT=production above: startup refuses to boot
+      # if this is unset/short while ADMIN_PASSWORD is set.
+      - SESSION_SECRET=${SESSION_SECRET}
       # --- Shared cortex-helper (offload reranker + Docling to one per-host service) ---
       # Injected per-tenant by meta-cortex (control-plane CORTEX_HELPER_* config).
       # Empty => cortex-app uses its built-in local reranker/Docling subprocess.
@@ -92,6 +100,31 @@ services:
       - HELPER_SERVICE_TOKEN=${HELPER_SERVICE_TOKEN:-}
       - HELPER_STRICT_REMOTE=${HELPER_STRICT_REMOTE:-false}
       - INSTANCE_ID=${INSTANCE_ID:-}
+      # --- Per-plan overrides (model tiers, processing, resource limits) ---
+      # Forwarded from the subscription-plan env so plan tiers actually differ.
+      # Dokploy only interpolates DECLARED vars, so each knob a plan controls
+      # needs a line here. Every :- default equals backend/app/config.py's
+      # built-in default, so a tenant that doesn't set the var is unchanged.
+      # Empty string on a model field = "inherit OPENAI_*" (config.py resolves
+      # the chain). Add more lines below for any other config.py knob you want
+      # a plan to drive.
+      - OPENAI_MAX_CONTEXT=${OPENAI_MAX_CONTEXT:-32768}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
+      - VISION_MODEL=${VISION_MODEL:-}
+      - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-3}
+      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
+      - GRAPH_EXTRACTION_MAX_CONTEXT=${GRAPH_EXTRACTION_MAX_CONTEXT:-0}
+      - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-0}
+      - RELATIONSHIP_ANALYSIS_BATCH_SIZE=${RELATIONSHIP_ANALYSIS_BATCH_SIZE:-100}
+      - CONCURRENT_EXTRACTIONS=${CONCURRENT_EXTRACTIONS:-3}
+      - CONCURRENT_RELATIONS=${CONCURRENT_RELATIONS:-3}
+      - BATCH_PROCESSING_CONCURRENCY=${BATCH_PROCESSING_CONCURRENCY:-2}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+      - MAX_FILES=${MAX_FILES:-0}
+      - MAX_ENTITIES=${MAX_ENTITIES:-0}
+      - MAX_COLLECTIONS=${MAX_COLLECTIONS:-0}
+      - MAX_QUERIES_PER_MONTH=${MAX_QUERIES_PER_MONTH:-0}
     expose:
       - "8000"
     volumes:
