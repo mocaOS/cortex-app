@@ -16,6 +16,18 @@ for the vars. The modern Langfuse Python SDK reads `LANGFUSE_BASE_URL` natively
 (not `LANGFUSE_HOST`), but we construct the client explicitly from settings so
 `.env`-loaded values work even when they never reach `os.environ`.
 
+**Environment segmentation.** `init_langfuse()` passes `environment=` to the
+`Langfuse(...)` constructor, resolved as `LANGFUSE_TRACING_ENVIRONMENT or
+ENVIRONMENT`. In multi-tenant deployments the control plane injects
+`LANGFUSE_TRACING_ENVIRONMENT=<tenant-slug>` so every tenant's traces share one
+Langfuse project but are filterable by environment; single-tenant/self-host
+deployments leave it unset and fall back to the deployment `ENVIRONMENT`
+(`production`/`development`). Passing it explicitly is required — the SDK only
+auto-reads `LANGFUSE_TRACING_ENVIRONMENT` from `os.environ`, which the explicit
+construction above otherwise bypasses. The value must be lowercase alphanumeric
+with hyphens/underscores and not start with `langfuse` (the SDK warns + ignores
+invalid values).
+
 SDK: `langfuse>=3.0.0,<4.0.0` (`requirements-base.txt`) — ships the OpenAI
 drop-in + `@observe`; no extra OTel collector needed. Pinned to the v3 line to
 match the self-hosted server major (`langfuse:3`).

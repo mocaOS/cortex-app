@@ -47,6 +47,15 @@ def init_langfuse() -> Optional[Any]:
         logger.info("Langfuse tracing disabled (no LANGFUSE_* credentials set).")
         return None
 
+    # Per-tenant trace segmentation: the control plane injects
+    # LANGFUSE_TRACING_ENVIRONMENT=<tenant-slug>, so each tenant's traces land under
+    # their own "environment" filter in a shared Langfuse project. Fall back to the
+    # deployment ENVIRONMENT (production/development) when unset (single-tenant /
+    # self-host). We must pass this explicitly — the SDK only auto-reads
+    # LANGFUSE_TRACING_ENVIRONMENT from os.environ, which pydantic-settings' .env
+    # loading can bypass (the same reason the keys/base_url are passed explicitly).
+    tracing_environment = settings.langfuse_tracing_environment or settings.environment
+
     try:
         from langfuse import Langfuse
 
@@ -55,7 +64,7 @@ def init_langfuse() -> Optional[Any]:
             secret_key=settings.langfuse_secret_key,
             base_url=settings.langfuse_base_url,
             sample_rate=settings.langfuse_sample_rate,
-            environment=settings.environment,
+            environment=tracing_environment,
         )
         # Eagerly apply the global OpenAI instrumentation so EVERY openai-SDK
         # call is auto-traced — including libraries that build their own client
@@ -67,7 +76,7 @@ def init_langfuse() -> Optional[Any]:
             "Langfuse tracing ACTIVE → %s (sample_rate=%s, environment=%s)",
             settings.langfuse_base_url,
             settings.langfuse_sample_rate,
-            settings.environment,
+            tracing_environment,
         )
     except Exception as exc:  # noqa: BLE001 — observability must never break boot
         logger.warning("Failed to initialize Langfuse; continuing untraced: %s", exc)

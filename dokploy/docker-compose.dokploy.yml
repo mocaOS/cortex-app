@@ -85,6 +85,10 @@ services:
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
       - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-true}
       - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-1.0}
+      # Per-tenant trace segmentation (control plane injects the tenant slug).
+      # Without this declaration the value never reaches the container, so every
+      # tenant's traces collapse into one environment.
+      - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs

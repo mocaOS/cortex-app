@@ -63,6 +63,9 @@ services:
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
       - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-true}
       - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-1.0}
+      # Optional trace-environment label (e.g. set per self-host instance).
+      # Empty → backend falls back to the deployment ENVIRONMENT at init.
+      - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs

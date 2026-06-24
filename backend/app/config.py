@@ -220,6 +220,13 @@ class Settings(BaseSettings):
     langfuse_base_url: str = Field(default="")  # LANGFUSE_BASE_URL e.g. https://langfuse.example.com
     langfuse_tracing_enabled: bool = Field(default=True)  # master off-switch even when keys are set
     langfuse_sample_rate: float = Field(default=1.0)  # 0.0–1.0; dial down on hot tenants
+    # Langfuse "environment" segmentation. The control plane injects
+    # LANGFUSE_TRACING_ENVIRONMENT=<tenant-slug> so each tenant's traces are
+    # filterable by environment in a shared Langfuse project. Empty → fall back to
+    # `environment` (production/development) at init time. Must be lowercase
+    # alphanumeric with hyphens/underscores and not start with "langfuse" (the SDK
+    # warns + ignores invalid values); the control plane sanitizes slugs to match.
+    langfuse_tracing_environment: str = Field(default="")  # LANGFUSE_TRACING_ENVIRONMENT
 
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
