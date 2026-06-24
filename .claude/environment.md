@@ -143,7 +143,7 @@ Web→markdown harvesting (the "Web Import" feature; supersedes the deprecated s
 
 - `ENABLE_WEB_CRAWL` (default: false) — master switch for the Web Import endpoints + UI. The UI is shown only when this is true **and** `CRAWL_SERVICE_URL` is set (the `/api/features` flag AND-s both).
 - `CRAWL_SERVICE_URL` (default: empty) — base URL of the crawl4ai service, e.g. `http://crawl4ai:11235` (self-host) or `http://<host>:11235` (the shared per-server instance). Empty = disabled.
-- `CRAWL_SERVICE_TOKEN` (default: empty) — optional bearer token sent as `Authorization: Bearer <token>`; must match crawl4ai's `security.api_token`. Empty = no auth header (crawl4ai on a trusted/internal network).
+- `CRAWL_SERVICE_TOKEN` (default: empty) — bearer token sent as `Authorization: Bearer <token>`; must match crawl4ai's `CRAWL4AI_API_TOKEN` (`security.api_token`). **Required for crawl4ai ≥ 0.9.0**: without a token crawl4ai serves its API only on `127.0.0.1`, so any cross-container/shared deployment is unreachable without it. A startup WARN fires when `ENABLE_WEB_CRAWL` + `CRAWL_SERVICE_URL` are set but this is empty (see `main.py` lifespan). Empty only works for an older tokenless crawl4ai or a same-host loopback URL.
 - `CRAWL_HTTP_TIMEOUT` (default: 60) — per-request timeout (s) for crawl4ai calls (browser rendering of a slow page can take tens of seconds).
 - `CRAWL_CONTENT_FILTER` (default: `fit`) — crawl4ai `/md` filter: `fit` (readability — clean main content), `raw` (full DOM→markdown), or `bm25` (query-ranked; needs a query). Per-request override via the API.
 - `CRAWL_CONCURRENCY` (default: 5) — max URLs crawled concurrently within one Web Import job (the shared crawl4ai enforces its own browser-pool limits).

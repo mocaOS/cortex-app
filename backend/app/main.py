@@ -323,6 +323,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Langfuse init failed; continuing untraced: {e}")
 
+    # Web crawl: crawl4ai >= 0.9.0 requires an API token — without one it binds
+    # its API to 127.0.0.1 only, so a cross-container/shared deployment can't
+    # reach it. Warn loudly rather than fail (older tokenless crawl4ai or a
+    # same-host loopback URL is still valid).
+    if settings.enable_web_crawl and settings.crawl_service_url and not settings.crawl_service_token:
+        logger.warning(
+            "ENABLE_WEB_CRAWL is on with CRAWL_SERVICE_URL=%s but no "
+            "CRAWL_SERVICE_TOKEN set. crawl4ai >= 0.9.0 requires an API token "
+            "(CRAWL4AI_API_TOKEN) and serves its API only on 127.0.0.1 without "
+            "one — Web Import will fail unless crawl4ai is reachable tokenless. "
+            "Set CRAWL_SERVICE_TOKEN to match crawl4ai's CRAWL4AI_API_TOKEN.",
+            settings.crawl_service_url,
+        )
+
     # Start the git scheduled-sync poller
     git_scheduler_task = None
     if settings.enable_git_integration:

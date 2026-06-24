@@ -377,8 +377,13 @@ class Settings(BaseSettings):
     #   = feature disabled.
     crawl_service_token: str = Field(
         default=""
-    )  # Optional bearer token for crawl4ai (Authorization: Bearer <token>).
-    #   Empty = no auth header (crawl4ai bound to an internal/trusted network).
+    )  # Bearer token for crawl4ai (Authorization: Bearer <token>); must match
+    #   crawl4ai's CRAWL4AI_API_TOKEN / security.api_token. Required in practice
+    #   for crawl4ai >= 0.9.0: with no token set, crawl4ai serves its API only on
+    #   127.0.0.1 (unreachable from another container), so a cross-container or
+    #   shared deployment MUST set this. Empty only works if crawl4ai itself runs
+    #   tokenless (older versions, or same-host loopback). A startup WARN fires
+    #   when web crawl is enabled with a URL but no token (see main.py lifespan).
     crawl_http_timeout: int = Field(
         default=60
     )  # Per-request timeout (s) for crawl4ai calls. Browser rendering of a slow

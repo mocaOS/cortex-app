@@ -260,7 +260,7 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 |----------|---------|-------------|
 | `ENABLE_WEB_CRAWL` | `false` | Master switch for Web Import. The UI appears only when this is true **and** `CRAWL_SERVICE_URL` is set. |
 | `CRAWL_SERVICE_URL` | _(empty)_ | Base URL of the crawl4ai service, e.g. `http://crawl4ai:11235`. Empty = feature off (there is no built-in crawler fallback). |
-| `CRAWL_SERVICE_TOKEN` | _(empty)_ | Bearer token sent as `Authorization: Bearer …`; must match crawl4ai's `security.api_token`. Empty = no auth header. |
+| `CRAWL_SERVICE_TOKEN` | _(empty)_ | Bearer token sent as `Authorization: Bearer …`; must match crawl4ai's `CRAWL4AI_API_TOKEN` (`security.api_token`). **Required for crawl4ai ≥ 0.9.0** — without a token crawl4ai serves its API only on `127.0.0.1`, unreachable from the Cortex container. |
 | `CRAWL_HTTP_TIMEOUT` | `60` | Per-page crawl timeout in seconds (browser rendering of slow pages can take a while). |
 | `CRAWL_CONTENT_FILTER` | `fit` | Default content filter: `fit` (readable main content), `raw` (full page), or `bm25` (relevance-ranked; needs a query). |
 | `CRAWL_CONCURRENCY` | `5` | How many URLs in one import job are crawled at once. |

@@ -31,7 +31,7 @@ cortex-app                                  crawl4ai service (own / shared)
 
 ## Client (`services/crawl_client.py`)
 
-Mirrors `helper_client.py`'s transport discipline: one shared `httpx.AsyncClient`, 3 retries with backoff+jitter on transient failures, and its own `CircuitBreaker("crawl")` (reused from `helper_client`; surfaced as op `crawl` in `/metrics`). Auth: `Authorization: Bearer <CRAWL_SERVICE_TOKEN>` when set (crawl4ai's scheme — NOT the helper's `X-Helper-Token`); also sends `X-Tenant-ID` + `X-Request-ID`.
+Mirrors `helper_client.py`'s transport discipline: one shared `httpx.AsyncClient`, 3 retries with backoff+jitter on transient failures, and its own `CircuitBreaker("crawl")` (reused from `helper_client`; surfaced as op `crawl` in `/metrics`). Auth: `Authorization: Bearer <CRAWL_SERVICE_TOKEN>` when set (crawl4ai's scheme — NOT the helper's `X-Helper-Token`); also sends `X-Tenant-ID` + `X-Request-ID`. The token is effectively mandatory for crawl4ai ≥ 0.9.0 — tokenless, crawl4ai binds its API to `127.0.0.1` only and is unreachable cross-container. `main.py`'s lifespan logs a WARN when `ENABLE_WEB_CRAWL` + `CRAWL_SERVICE_URL` are set but `CRAWL_SERVICE_TOKEN` is empty.
 
 - **`crawl_markdown(url, content_filter=None, query=None)`** → POST `/md` with `{url, f, c:"0"}` (+ `q` for bm25). `f` defaults to `CRAWL_CONTENT_FILTER` (`fit`). Returns `{url, title, markdown}`. Title is best-effort: first `# ` H1 in the markdown, else derived from the URL path. Raises `CrawlUnavailableError` on circuit-open / network / 4xx / empty markdown. `c="0"` = cache-bypass (defense-in-depth; see Privacy).
 - **`discover_links(url)`** → POST `/crawl` with `{urls:[url]}`, reads `results[0].links.internal`. Filters to **same-host** http(s) links, drops `_SKIP_PATTERNS` (login/cart/legal/…) and asset extensions, dedups, caps at `CRAWL_DISCOVER_MAX_LINKS`. Returns `{source_url, domain, links:[{url,title}]}`.
@@ -71,7 +71,7 @@ A hard requirement, satisfied by construction. The controls live where the opera
 1. **No persistent volume** on the crawl4ai container → cache/results are ephemeral, gone on restart, never browsable.
 2. **Sync endpoints only** (`/md`, `/crawl`) — never the async `/crawl/job/{id}` API whose results live (TTL'd) in Redis and are addressable by id. The shared deployment runs no Redis.
 3. **Cache-bypass per request** (`c="0"`) so one tenant is never served another's cached page.
-4. **Network isolation + optional token** — crawl4ai binds a private interface, firewalled off the public net; `CRAWL_SERVICE_TOKEN` ↔ crawl4ai `security.api_token`.
+4. **Network isolation + token** — crawl4ai binds a private interface, firewalled off the public net; `CRAWL_SERVICE_TOKEN` ↔ crawl4ai `CRAWL4AI_API_TOKEN` (`security.api_token`). For crawl4ai ≥ 0.9.0 the token is required (tokenless it binds `127.0.0.1` only).
 
 There is no crawl-history surface to leak; 1–3 make cross-tenant visibility impossible, 4 controls who can call it. **SSRF**: crawl4ai fetches any URL given — on shared hosts, add egress rules blocking RFC1918 + `169.254.169.254` at the network layer (see `cortex-helper/README.md`).
 

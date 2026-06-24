@@ -24,10 +24,12 @@ Every imported page carries a provenance header recording its source URL and the
 
 ## Self-hosting the crawler
 
-Run a crawl4ai container and point Cortex at it:
+Run a crawl4ai container and point Cortex at it. **crawl4ai 0.9.0 and newer require an API token** — start it without one and crawl4ai binds its API to `127.0.0.1` only, so the Cortex container can't reach it. Pick a token and pass it to crawl4ai as `CRAWL4AI_API_TOKEN`:
 
 ```bash
-docker run -d --name crawl4ai -p 11235:11235 --shm-size=1g unclecode/crawl4ai:0.7.4
+docker run -d --name crawl4ai -p 11235:11235 --shm-size=1g \
+  -e CRAWL4AI_API_TOKEN=your-strong-token \
+  unclecode/crawl4ai:0.9.0
 ```
 
 Then in the Cortex backend configuration:
@@ -35,10 +37,10 @@ Then in the Cortex backend configuration:
 ```
 ENABLE_WEB_CRAWL=true
 CRAWL_SERVICE_URL=http://crawl4ai:11235
-# CRAWL_SERVICE_TOKEN=...   # only if crawl4ai is run with a bearer token
+CRAWL_SERVICE_TOKEN=your-strong-token   # must match crawl4ai's CRAWL4AI_API_TOKEN
 ```
 
-The crawl service must be reachable from the Cortex backend (use a shared Docker network or the host IP). crawl4ai uses a headless browser pool — give it roughly 4 GB of memory and `--shm-size=1g`, and keep port 11235 on a private network, never exposed to the public internet.
+`CRAWL_SERVICE_TOKEN` must match the `CRAWL4AI_API_TOKEN` you gave the crawler; Cortex sends it as `Authorization: Bearer <token>`. The crawl service must be reachable from the Cortex backend (use a shared Docker network or the host IP). crawl4ai uses a headless browser pool — give it roughly 4 GB of memory and `--shm-size=1g`, and keep port 11235 on a private network, never exposed to the public internet.
 
 ## Configuration knobs
 
@@ -46,7 +48,7 @@ The crawl service must be reachable from the Cortex backend (use a shared Docker
 |---|---|---|
 | `ENABLE_WEB_CRAWL` | `false` | Master switch for Web Import. |
 | `CRAWL_SERVICE_URL` | _(empty)_ | Base URL of the crawl4ai service. Empty = feature off. |
-| `CRAWL_SERVICE_TOKEN` | _(empty)_ | Bearer token, if crawl4ai requires one. |
+| `CRAWL_SERVICE_TOKEN` | _(empty)_ | Bearer token; must match crawl4ai's `CRAWL4AI_API_TOKEN`. Required for crawl4ai ≥ 0.9.0 (tokenless binds 127.0.0.1 only). |
 | `CRAWL_CONTENT_FILTER` | `fit` | Default content filter (`fit` / `raw` / `bm25`). |
 | `CRAWL_CONCURRENCY` | `5` | URLs crawled at once per job. |
 | `CRAWL_MAX_URLS_PER_JOB` | `100` | Maximum URLs per import. |

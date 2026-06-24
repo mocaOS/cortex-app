@@ -791,7 +791,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 |----------|-------------|----------|---------|
 | `ENABLE_WEB_CRAWL` | Master switch for Web Import (UI shows only when this **and** `CRAWL_SERVICE_URL` are set) | No | `false` |
 | `CRAWL_SERVICE_URL` | crawl4ai service base URL, e.g. `http://crawl4ai:11235` (empty = feature off) | No | _(empty)_ |
-| `CRAWL_SERVICE_TOKEN` | Bearer token, if crawl4ai requires one (matches its `security.api_token`) | No | _(empty)_ |
+| `CRAWL_SERVICE_TOKEN` | Bearer token matching crawl4ai's `CRAWL4AI_API_TOKEN`. Required for crawl4ai ≥ 0.9.0 (tokenless binds 127.0.0.1 only, unreachable cross-container) | If crawl enabled | _(empty)_ |
 | `CRAWL_CONTENT_FILTER` | Default content filter: `fit` / `raw` / `bm25` | No | `fit` |
 | `CRAWL_HTTP_TIMEOUT` | Per-page crawl timeout (seconds) | No | `60` |
 | `CRAWL_CONCURRENCY` | URLs crawled at once per import job | No | `5` |
