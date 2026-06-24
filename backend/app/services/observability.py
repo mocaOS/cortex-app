@@ -57,6 +57,12 @@ def init_langfuse() -> Optional[Any]:
             sample_rate=settings.langfuse_sample_rate,
             environment=settings.environment,
         )
+        # Eagerly apply the global OpenAI instrumentation so EVERY openai-SDK
+        # call is auto-traced — including libraries that build their own client
+        # (Haystack's embedders). Done at startup so it's active before the first
+        # embedding/LLM call, independent of order. (The client factory's
+        # langfuse.openai import is then belt-and-suspenders.)
+        import langfuse.openai  # noqa: F401
         logger.info(
             "Langfuse tracing ACTIVE → %s (sample_rate=%s, environment=%s)",
             settings.langfuse_base_url,

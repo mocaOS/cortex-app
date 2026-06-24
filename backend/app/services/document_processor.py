@@ -55,7 +55,6 @@ from app.services.llm_config import (
     make_async_openai_client,
     stream_usage_kwargs,
 )
-from app.services.observability import record_generation
 from app.services.neo4j_service import get_neo4j_service
 from app.services.prompt_security import (
     get_anti_injection_instruction,
@@ -1468,13 +1467,6 @@ class DocumentProcessor:
                 functools.partial(self.embedder.run, documents=chunks),
             )
             embedded_chunks = embed_result.get("documents", [])
-            # Haystack embedders bypass the OpenAI drop-in — record cost manually.
-            record_generation(
-                name="embedding.documents",
-                model=self.settings.embedding_model,
-                usage=(embed_result.get("meta") or {}).get("usage"),
-                metadata={"stage": "ingestion", "chunks": len(chunks)},
-            )
 
             # Check for cancellation after embedding
             self._check_cancellation(doc_id)
@@ -3078,12 +3070,6 @@ class QueryProcessor:
     def embed_query(self, query: str) -> list[float]:
         """Generate embedding for a query."""
         result = self.text_embedder.run(text=query)
-        record_generation(
-            name="embedding.query",
-            model=self.settings.embedding_model,
-            usage=(result.get("meta") or {}).get("usage"),
-            metadata={"stage": "query"},
-        )
         return result["embedding"]
 
     def embed_queries(self, queries: list[str]) -> list[list[float]]:
@@ -3098,12 +3084,6 @@ class QueryProcessor:
 
         docs = [Document(content=q) for q in queries]
         result = self.batch_embedder.run(documents=docs)
-        record_generation(
-            name="embedding.queries",
-            model=self.settings.embedding_model,
-            usage=(result.get("meta") or {}).get("usage"),
-            metadata={"stage": "query", "count": len(queries)},
-        )
         return [doc.embedding for doc in result["documents"]]
 
     def search(

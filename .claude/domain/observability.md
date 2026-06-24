@@ -43,6 +43,13 @@ on/off decision point — ~19 call sites across `graph_extractor`,
 `main.py`. All chat completions funnel through `reasoning_config.safe_chat_completion(create_fn=client.chat.completions.create, ...)`,
 so the wrapped client's method is auto-traced with **no wrapper changes**.
 
+> **Global instrumentation:** `init_langfuse()` imports `langfuse.openai` at
+> startup, which patches the openai SDK **process-wide**. So *any* openai-SDK
+> call is auto-traced — including libraries that build their own client
+> (Haystack's embedders, see below). The factory's per-call import is then just
+> belt-and-suspenders; the eager startup import guarantees the patch is active
+> before the first embedding/LLM call regardless of order.
+
 **2. Streaming usage.** OpenAI-compatible streams omit token usage unless
 `stream_options.include_usage` is set. `llm_config.stream_usage_kwargs()` adds it
 **only when traced** (gated, so untraced behavior and finicky gateways are
@@ -56,12 +63,19 @@ tagged `endpoint:* / mode:*` and `user_id=auth.key_id`. Every nested generation
 (researcher iterations, writer) attaches to that one trace because it runs in the
 same task while the span is the current context.
 
-**4. Non-SDK calls** (manual `record_generation`):
-- **Haystack embeddings** — `document_processor.py` `embed_query` / `embed_queries`
-  and the ingestion chunk embed (`self.embedder.run`). Token usage is read from the
-  Haystack result `meta.usage`.
-- **Vision** — `vision_analyzer.py` makes a raw `httpx` POST to `/chat/completions`;
-  the 200-path records model + `usage` + prompt/output.
+**4. Haystack embeddings — auto-traced (no manual record).** The embedders
+(`document_processor.py` `embed_query` / `embed_queries` / ingestion
+`self.embedder.run`) use the openai SDK internally, so the global patch from
+step 1 traces them automatically as `OpenAI-embedding` generations with model +
+usage + cost. **Do not** add a manual `record_generation` for these — it
+double-counts (one manual + one auto for the same call). This was tried and
+removed; see git history.
+
+**5. Vision — manual `record_generation` (the one genuine non-SDK path).**
+`vision_analyzer.py` makes a raw `httpx` POST to `/chat/completions`, bypassing
+the openai SDK, so the global patch can't see it. The 200-path records model +
+`usage` + prompt/output via `record_generation` (`name="vision.analyze"`). This
+is the only place `record_generation` is still used.
 
 ## What you get
 
