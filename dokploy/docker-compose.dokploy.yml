@@ -75,6 +75,16 @@ services:
       # --- Admin authentication ---
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
+      # --- Shared cortex-helper (offload reranker + Docling to one per-host service) ---
+      # Injected per-tenant by meta-cortex (control-plane CORTEX_HELPER_* config).
+      # Empty => cortex-app uses its built-in local reranker/Docling subprocess.
+      # These MUST be declared here: Dokploy interpolates ${VAR} from its shell but
+      # writes no .env, so a var only reaches the container if listed under environment.
+      - DOCLING_SERVICE_URL=${DOCLING_SERVICE_URL:-}
+      - RERANKER_SERVICE_URL=${RERANKER_SERVICE_URL:-}
+      - HELPER_SERVICE_TOKEN=${HELPER_SERVICE_TOKEN:-}
+      - HELPER_STRICT_REMOTE=${HELPER_STRICT_REMOTE:-false}
+      - INSTANCE_ID=${INSTANCE_ID:-}
     expose:
       - "8000"
     volumes:
