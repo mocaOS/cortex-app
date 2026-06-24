@@ -7,11 +7,16 @@
 #
 # Only REQUIRED env vars are declared below. Everything else — embedding settings,
 # vision/graph-extraction overrides, relationship & community tuning, feature
-# flags, chunking, resource caps, agent research, skills, branding (logo/accent color),
-# admin email, etc. — defaults to sensible values in backend/app/config.py. To override
-# one, add it as a Dokploy env var AND add a matching `- VAR=${VAR}` line under
-# `environment:` below (and a `- VAR=${VAR}` under `build.args:` too if it is a NEXT_PUBLIC_*
-# var that needs build-time inlining). See handbook/04-configuration.md for the full catalogue.
+# flags, chunking, resource caps, agent research, skills, etc. — defaults to sensible
+# values in backend/app/config.py. To override one, add it as a Dokploy env var AND
+# add a matching `- VAR=${VAR}` line under `environment:` below (and a `- VAR=${VAR}`
+# under `build.args:` too if it is a NEXT_PUBLIC_* var that needs build-time inlining).
+# See handbook/04-configuration.md for the full catalogue.
+#
+# Branding (NEXT_PUBLIC_LOGO_URL/NEXT_PUBLIC_ACCENT_COLOR) and ADMIN_EMAIL are declared
+# below even though config.py defaults them — they're consumed by the frontend app, not
+# backend, so trimming them (as a past commit did) silently breaks per-tenant branding
+# and admin login. Don't re-trim these.
 #
 # Domain routing: Configure in Dokploy UI (Domains tab) per service,
 # or uncomment the Traefik labels below for GitOps-style domain config.
@@ -170,6 +175,8 @@ services:
       args:
         # Build-time args for Next.js (set NEXT_PUBLIC_API_URL in Dokploy env vars)
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
         # Server-side API URL baked into next.config.mjs rewrites at build time
         - API_URL=http://backend:8000
     environment:
@@ -177,7 +184,14 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      # Admin authentication (must match backend)
+      # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
+      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      - ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      # Admin authentication (must match backend). ADMIN_EMAIL is compared literally
+      # by the frontend (frontend/src/lib/auth.ts) — without it, it falls back to its
+      # hardcoded "admin@example.com" default and every real login is rejected.
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}

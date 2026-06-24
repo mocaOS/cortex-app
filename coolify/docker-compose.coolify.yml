@@ -106,6 +106,8 @@ services:
       args:
         # Build-time arg for the public API URL (set BACKEND_URL in Coolify)
         - NEXT_PUBLIC_API_URL=${BACKEND_URL}
+        - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+        - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
     environment:
       # Expose frontend at kg subdomain on port 3000 (set FRONTEND_URL in Coolify)
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
@@ -113,7 +115,14 @@ services:
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}
       # Internal API URL for server-side requests
       - API_URL=http://backend:8000
-      # Admin authentication (must match backend)
+      # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
+      - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
+      - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      - ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+      # Admin authentication (must match backend). ADMIN_EMAIL is compared literally
+      # by the frontend (frontend/src/lib/auth.ts) — without it, it falls back to its
+      # hardcoded "admin@example.com" default and every real login is rejected.
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
