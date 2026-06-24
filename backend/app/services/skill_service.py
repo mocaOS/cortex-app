@@ -804,8 +804,7 @@ class SkillService:
         the Neo4j node. base_url is used by researcher_agent to scope auth headers
         so multiple installed skills can't overwrite each other's Authorization.
         """
-        from openai import AsyncOpenAI
-        from app.services.llm_config import build_chat_params
+        from app.services.llm_config import build_chat_params, make_async_openai_client
         from app.config import get_settings
 
         detail = self.get_skill(skill_id)
@@ -819,7 +818,7 @@ class SkillService:
             return {"variables": [], "base_url": None}
 
         settings = get_settings()
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=settings.openai_api_key,
             base_url=settings.openai_api_base or None,
         )

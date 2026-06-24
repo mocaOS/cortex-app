@@ -245,6 +245,32 @@ Expected response:
 curl https://api.yourdomain.com/api/stats
 ```
 
+### Redeploy Safety
+
+Before restarting or upgrading an instance (e.g. rolling out a new version), confirm it isn't mid-flight on destructible work:
+
+```bash
+curl https://api.yourdomain.com/api/instance/status \
+  -H "X-API-Key: your-manage-key"
+```
+
+```json
+{
+  "safe_to_redeploy": false,
+  "reasons": ["2 document(s) currently processing", "1 AskAI query(ies) in flight"],
+  "processing_count": 2,
+  "pending_count": 5,
+  "running_task_count": 0,
+  "active_query_count": 1,
+  "last_query_at": "2026-06-23T10:14:02+00:00",
+  "neo4j_connected": true,
+  "version": "1.0.0",
+  "checked_at": "2026-06-23T10:15:00+00:00"
+}
+```
+
+`safe_to_redeploy` is `false` while documents are processing/extracting, background tasks are running (the task store is in-memory and a restart loses them), or an AskAI/research query is in flight (a restart kills the stream). Pending documents persist in Neo4j and resume after a restart, so they never block. Poll this endpoint in deploy automation and proceed only once `safe_to_redeploy` is `true`. Requires `manage` permission.
+
 ## Scaling
 
 ### Horizontal Scaling

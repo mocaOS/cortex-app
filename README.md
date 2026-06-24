@@ -30,13 +30,14 @@ Cortex sits at the center of your setup. Curate your base knowledge in the defau
 
 The beauty? Your data isn't trapped. When a hot new agent framework drops next month, just wait for an official plugin OR write a migration script and connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
-> **💡 Pro Tip:** Use our lightweight scraper kit [**mdharvest**](https://github.com/mocaOS/mdharvest) (built on Crawlee) to turn any URL into beautifully formatted Markdown files ready for ingestion.
+> **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
 
 ## ✨ Features
 
 ### Core Features
 - **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
+- **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
@@ -77,6 +78,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🧹 Smart Cleanup**: Automatic task cancellation and complete graph cleanup on document deletion
 - **⚡ Opt-in Efficiency Flags**: UNWIND-batched graph writes, chunk-batched relationship extraction (÷~4 LLM calls), Phase-B crash-resume checkpointing, unchanged-document reprocess skip, and provider prompt caching — all flag-gated with bench-validated rollout (see the [configuration docs](documentation/pages/configuration.mdx) and `bench/BASELINE.md`)
 - **🩺 Production Operations**: Prometheus `GET /metrics` (admin-protected), optional JSON logs with `X-Request-ID` correlation, per-key rate limiting, graceful shutdown with SSE drain, per-service memory caps, an opt-in backup sidecar (`docker-compose.backup.yml`), and a **slim torch-free image variant** (`INSTALL_LOCAL_ML=false`) for stacks backed by the shared `cortex-helper`
+- **🔭 LLM Observability (optional)**: point `LANGFUSE_*` at a self-hosted [Langfuse](https://langfuse.com) instance to trace every LLM/embedding/vision call (cost, tokens, latency, errors) and group agentic Q&A flows into one trace per request — Venice/OpenRouter included. Env-driven; no keys = no tracing, identical image. See [`.claude/domain/observability.md`](.claude/domain/observability.md)
 
 ## 🏗️ Architecture
 
@@ -140,10 +142,10 @@ Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community su
 **Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
 
 ```env
-# Primary — agentic Q&A / researcher (MiniMax-M27: 192K context window)
+# Primary — agentic Q&A / researcher (MiniMax-M3: 192K context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m27
+OPENAI_MODEL=minimax-m3
 OPENAI_MAX_CONTEXT=196608
 
 # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
@@ -173,7 +175,7 @@ Or configure each tier explicitly:
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
-# Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
+# Powerful reasoning models recommended (e.g. Minimax M3, GLM5, Kimi K2.5)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.example.com/v1
 OPENAI_MODEL=
@@ -207,7 +209,7 @@ RELATIONSHIP_MAX_CONTEXT=196608              # must match RELATIONSHIP_EXTRACTIO
 EXTRACTION_REASONING_MODE=off                # extraction, summaries, communities
 RELATIONSHIP_REASONING_MODE=off              # candidate scan + relationship extraction
 VISION_REASONING_MODE=off                    # vision-model image descriptions
-DEFAULT_REASONING_MODE=auto                  # Q&A / researcher agent (stays AUTO)
+DEFAULT_REASONING_MODE=off                   # chat path: thinking off → snappy first token, no empty answers (deep-research stays AUTO)
 # REASONING_MODEL_OVERRIDES=gpt-5.8:none,custom:minimal  # escape hatch for novel models
 
 # ── Vision (image analysis during document ingestion) ────────────
@@ -294,6 +296,7 @@ npm run dev
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts, `per_chunk_relationship_count` for Step 1 relations) |
+| GET | `/api/instance/status` | Redeploy-safety snapshot — `safe_to_redeploy` plus in-flight processing/tasks/AskAI activity and last-activity timestamps (`manage` permission) |
 | POST | `/api/upload` | Upload a document (supports `start_processing` and `collection_id` params) |
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
@@ -669,12 +672,13 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 |----------|-------------|----------|---------|
 | `ENVIRONMENT` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD`, `SESSION_SECRET`) | No | `development` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist in production | No | `*` |
+| `EXPOSE_API_DOCS` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in dev, off in production (avoids unauthenticated API-schema disclosure); `true`/`false` to force | No | `auto` |
 | `NEO4J_URI` | Neo4j connection URI | Yes | `bolt://localhost:7687` |
 | `NEO4J_USER` | Neo4j username | Yes | `neo4j` |
 | `NEO4J_PASSWORD` | Neo4j password (rejected as default `password123` when `ENVIRONMENT=production`) | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (powerful reasoning models recommended, e.g. Minimax M2.7, GLM5, Kimi K2.5) | No | `openai/minimax-m21` |
+| `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (powerful reasoning models recommended, e.g. Minimax M3, GLM5, Kimi K2.5) | No | `openai/minimax-m3` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
 | `CUSTOM_INPUTS_DIR` | Directory for custom input files | No | `./custom_inputs` |
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
@@ -750,7 +754,7 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 |----------|-------------|----------|---------|
 | `ENABLE_AGENT_RESEARCH` | Use agent pipeline for deep research mode (set `false` for legacy) | No | `true` |
 | `ENABLE_AGENT_CHAT` | Use agent pipeline for standard chat mode (required for skill usage in chat) | No | `true` |
-| `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `5` |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | Max agent loop iterations for chat mode | No | `3` |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `8` |
 | `WRITER_MAX_TOKENS_SPEED` | Max output tokens for chat answers | No | `1200` |
 | `WRITER_MAX_TOKENS_QUALITY` | Max output tokens for deep research answers | No | `4000` |
@@ -778,6 +782,21 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `GIT_SYNC_POLL_INTERVAL` | Minutes between scheduled-sync checks | No | `5` |
 | `GIT_HTTP_TIMEOUT` | Timeout (seconds) for git provider REST calls | No | `30` |
 | `GIT_HTTP_INSECURE_HOSTS` | Comma-separated hosts allowed to skip TLS verification (self-hosted self-signed) | No | _(empty)_ |
+
+#### Web Import (MDHarvest powered by Crawl4ai)
+
+Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — it never runs a browser itself. Run crawl4ai once and point Cortex at it; one instance can serve many deployments. See [Web Import](handbook/23-web-import.md).
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `ENABLE_WEB_CRAWL` | Master switch for Web Import (UI shows only when this **and** `CRAWL_SERVICE_URL` are set) | No | `false` |
+| `CRAWL_SERVICE_URL` | crawl4ai service base URL, e.g. `http://crawl4ai:11235` (empty = feature off) | No | _(empty)_ |
+| `CRAWL_SERVICE_TOKEN` | Bearer token matching crawl4ai's `CRAWL4AI_API_TOKEN`. Required for crawl4ai ≥ 0.9.0 (tokenless binds 127.0.0.1 only, unreachable cross-container) | If crawl enabled | _(empty)_ |
+| `CRAWL_CONTENT_FILTER` | Default content filter: `fit` / `raw` / `bm25` | No | `fit` |
+| `CRAWL_HTTP_TIMEOUT` | Per-page crawl timeout (seconds) | No | `60` |
+| `CRAWL_CONCURRENCY` | URLs crawled at once per import job | No | `5` |
+| `CRAWL_MAX_URLS_PER_JOB` | Max URLs per import (0 = unlimited) | No | `100` |
+| `CRAWL_DISCOVER_MAX_LINKS` | Cap on links returned by Discover | No | `200` |
 
 #### Batch Processing
 
@@ -894,15 +913,30 @@ Custom inputs are processed through the same GraphRAG pipeline as uploaded docum
 
 ## 🧪 Testing
 
-```bash
-# Backend tests
-cd backend
-pytest
+The backend suite is fully hermetic — LLM, Neo4j, and the ML stack are mocked in `conftest.py`, so it runs with no external services. The system Python has no pytest; create a torch-free venv from the base requirements:
 
-# Frontend tests
+```bash
+# Backend unit/contract suite
+cd backend
+python3 -m venv .qa-venv
+.qa-venv/bin/pip install -r requirements-base.txt    # torch-free; includes pytest
+.qa-venv/bin/python -m pytest -q
+.qa-venv/bin/python -m ruff check --select E9,F63,F7,F82 app/ tests/   # CI lint gate
+
+# Frontend gate (no test runner — type-check + lint)
 cd frontend
-npm test
+npm ci
+npx tsc --noEmit
+npm run lint
 ```
+
+**Live end-to-end journeys** (`backend/tests/test_live_e2e*.py`) run real HTTP requests against a running stack and auto-skip when none is reachable. Authenticated journeys read the key from `CORTEX_E2E_API_KEY` (never hard-coded):
+
+```bash
+CORTEX_E2E_API_KEY=<key> .qa-venv/bin/python -m pytest tests/test_live_e2e_authed.py
+```
+
+The canonical QA feature/defect inventory lives in [`qa/cortex_qa_master.ods`](qa/) with a written summary in [`qa/QA_REPORT.md`](qa/QA_REPORT.md); see [`.claude/qa.md`](.claude/qa.md) for the full harness reference.
 
 ## 📊 Neo4j Schema
 

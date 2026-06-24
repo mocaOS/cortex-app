@@ -7,11 +7,13 @@ import time
 import uuid
 import shutil
 import glob
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +33,8 @@ from app.models import (
     RAGRequest,
     RAGResponse,
     HealthResponse,
+    InstanceStatusResponse,
+    RunningTaskSummary,
     ProcessingStatus,
     GraphStatsResponse,
     GraphContext,
@@ -83,6 +87,12 @@ from app.models import (
     GitVerifyResponse,
     GitRepoBrowseItem,
     GitSyncTriggerResponse,
+    # MDHarvest powered by Crawl4ai models
+    WebImportRequest,
+    WebImportResponse,
+    WebDiscoverRequest,
+    WebDiscoverResponse,
+    WebDiscoverLink,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -93,8 +103,9 @@ from app.services.prompt_security import (
     filter_output,
     get_safe_refusal_message,
 )
-from app.services.compute3_service import get_compute3_service
-from app.services.llm_config import get_llm_config, is_turbo_mode_active, build_chat_params
+from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
+from app.services.observability import traced_sse
+from app.services.reasoning_config import safe_chat_completion, ReasoningMode
 from app.services.auth_service import (
     require_api_key,
     require_read_permission,
@@ -303,6 +314,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Secret encryption migration failed: {e}")
 
+    # Initialize Langfuse observability (no-op unless LANGFUSE_* creds are set).
+    # Done before processor warm-up so the global client is registered before
+    # any traced LLM call can fire.
+    try:
+        from app.services.observability import init_langfuse
+        init_langfuse()
+    except Exception as e:
+        logger.warning(f"Langfuse init failed; continuing untraced: {e}")
+
+    # Web crawl: crawl4ai >= 0.9.0 requires an API token — without one it binds
+    # its API to 127.0.0.1 only, so a cross-container/shared deployment can't
+    # reach it. Warn loudly rather than fail (older tokenless crawl4ai or a
+    # same-host loopback URL is still valid).
+    if settings.enable_web_crawl and settings.crawl_service_url and not settings.crawl_service_token:
+        logger.warning(
+            "ENABLE_WEB_CRAWL is on with CRAWL_SERVICE_URL=%s but no "
+            "CRAWL_SERVICE_TOKEN set. crawl4ai >= 0.9.0 requires an API token "
+            "(CRAWL4AI_API_TOKEN) and serves its API only on 127.0.0.1 without "
+            "one — Web Import will fail unless crawl4ai is reachable tokenless. "
+            "Set CRAWL_SERVICE_TOKEN to match crawl4ai's CRAWL4AI_API_TOKEN.",
+            settings.crawl_service_url,
+        )
+
     # Start the git scheduled-sync poller
     git_scheduler_task = None
     if settings.enable_git_integration:
@@ -364,6 +398,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Close the shared crawl4ai HTTP client (no-op when unused).
+    try:
+        from app.services.crawl_client import close_async_client as close_crawl_client
+        await close_crawl_client()
+    except Exception:
+        pass
+
+    # Flush + shut down Langfuse so buffered traces are delivered (no-op when
+    # tracing is inactive). The lifespan has the stop grace period to drain.
+    try:
+        from app.services.observability import shutdown_langfuse
+        shutdown_langfuse()
+    except Exception:
+        pass
+
     if _api_executor:
         # Bounded: give blocked DB threads a moment to finish, but never hang
         # shutdown past the stop grace period. The shutdown itself must run on
@@ -391,11 +440,18 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown complete")
 
 
+# Interactive docs are disabled in production by default (EXPOSE_API_DOCS=auto)
+# so a directly-exposed backend doesn't leak its full API schema to anonymous
+# callers. Set EXPOSE_API_DOCS=true to force them on.
+_docs_on = get_settings().docs_enabled
 app = FastAPI(
     title="Cortex",
     description="A Neo4j + Haystack powered GraphRAG knowledge base with entity extraction, knowledge graph construction, and semantic search",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_on else None,
+    redoc_url="/redoc" if _docs_on else None,
+    openapi_url="/openapi.json" if _docs_on else None,
 )
 
 # CORS middleware
@@ -615,6 +671,41 @@ async def prometheus_metrics(auth: AuthResult = Depends(require_admin)):
 
 # In-memory task store (for production, consider Redis or database)
 _task_store: Dict[str, TaskProgress] = {}
+
+
+# =============================================================================
+# AskAI activity tracking (for redeploy-safety reporting)
+# =============================================================================
+
+# Count of in-flight AskAI/research queries. The event loop is single-threaded,
+# so plain int +=/-= is safe here without a lock. Reset to 0 on process restart,
+# which is correct: a restart has no in-flight queries by definition.
+_active_query_count: int = 0
+
+
+async def track_ask_activity():
+    """FastAPI dependency that marks an AskAI query as in-flight.
+
+    Used as a `yield` dependency on the ask endpoints. The teardown after
+    `yield` runs only once the response (including a fully-consumed
+    StreamingResponse) is sent or the client disconnects, so the decrement is
+    guaranteed for both buffered and streamed answers. While any query is in
+    flight, GET /api/instance/status reports the instance as unsafe to redeploy.
+    """
+    global _active_query_count
+    _active_query_count += 1
+    try:
+        await asyncio.to_thread(
+            get_neo4j_service().set_meta,
+            "last_query_at",
+            datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:  # never block a query on bookkeeping
+        logger.warning(f"Failed to record last_query_at: {e}")
+    try:
+        yield
+    finally:
+        _active_query_count = max(0, _active_query_count - 1)
 
 
 def create_task(task_type: str) -> TaskProgress:
@@ -903,6 +994,88 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/instance/status", response_model=InstanceStatusResponse)
+async def get_instance_status(auth: AuthResult = Depends(require_manage_permission)):
+    """Operational snapshot for redeploy-safety decisions.
+
+    Consolidates the signals deploy automation needs to decide whether it can
+    safely restart/upgrade this customer instance. `safe_to_redeploy` is False
+    while destructible work is in flight — documents being processed/extracted,
+    background tasks in the in-memory store (which a restart would lose), or an
+    active AskAI/research query (a restart kills the stream). Pending documents
+    persist and resume after a restart, so they are reported but never block.
+    """
+    neo4j = get_neo4j_service()
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    connected = await asyncio.to_thread(neo4j.verify_connectivity)
+
+    stats: dict = {}
+    last_query_at: Optional[str] = None
+    if connected:
+        try:
+            stats = await asyncio.to_thread(neo4j.get_stats)
+            last_query_at = await asyncio.to_thread(neo4j._get_meta, "last_query_at")
+        except Exception as e:
+            logger.error(f"instance/status: failed to read graph state: {e}")
+
+    processing_count = stats.get("processing_count", 0)
+    pending_count = stats.get("pending_count", 0)
+    failed_count = stats.get("failed_count", 0)
+
+    # In-flight background jobs from the in-memory task store.
+    running = [
+        t for t in _task_store.values()
+        if t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+    ]
+    running_tasks = [
+        RunningTaskSummary(
+            task_id=t.task_id,
+            task_type=t.task_type,
+            status=t.status.value,
+            progress_percent=t.progress_percent,
+            message=t.message,
+            started_at=t.started_at.isoformat() if t.started_at else None,
+        )
+        for t in running
+    ]
+
+    reasons: List[str] = []
+    if not connected:
+        reasons.append("Neo4j not reachable — instance state cannot be verified")
+    if processing_count > 0:
+        reasons.append(f"{processing_count} document(s) currently processing")
+    if running_tasks:
+        reasons.append(f"{len(running_tasks)} background task(s) running")
+    if _active_query_count > 0:
+        reasons.append(f"{_active_query_count} AskAI query(ies) in flight")
+
+    safe = (
+        connected
+        and processing_count == 0
+        and not running_tasks
+        and _active_query_count == 0
+    )
+
+    return InstanceStatusResponse(
+        safe_to_redeploy=safe,
+        reasons=reasons,
+        processing_count=processing_count,
+        pending_count=pending_count,
+        failed_count=failed_count,
+        running_task_count=len(running_tasks),
+        running_tasks=running_tasks,
+        active_query_count=_active_query_count,
+        last_query_at=last_query_at,
+        last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
+        last_community_detection_at=stats.get("last_community_detection_at"),
+        last_entity_merge_at=stats.get("last_entity_merge_at"),
+        neo4j_connected=connected,
+        version="1.0.0",
+        checked_at=checked_at,
+    )
+
+
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
@@ -1029,11 +1202,9 @@ async def generate_filename_with_llm(content: str, input_type: str, title: Optio
         return f"custom_{input_type}_{content_hash}"
     
     try:
-        from openai import AsyncOpenAI
-        
         # Use fast mode config which has thinking disabled
         llm_config = get_llm_config(fast_mode=True)
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -1168,11 +1339,9 @@ async def generate_topic_hint(request: TopicHintRequest, auth: AuthResult = Depe
         return TopicHintResponse(topic_hint=topic_hint, existing_similar=existing_similar)
     
     try:
-        from openai import AsyncOpenAI
-        
         # Use fast mode config which has thinking disabled
         llm_config = get_llm_config(fast_mode=True)
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=llm_config.api_key,
             base_url=llm_config.base_url,
         )
@@ -2162,6 +2331,7 @@ async def ask_question(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Ask a question using enhanced GraphRAG.
@@ -2201,54 +2371,47 @@ async def ask_question(
         if request.conversation_history:
             conversation_history = request.conversation_history
 
-        # Use agent pipeline for agentic requests if enabled
+        # Agentic deep research routinely runs ~60-90s. The non-streaming
+        # endpoint buffers the entire run and sends no bytes until done, so it
+        # always races the edge-proxy read timeout and dies as a bare 500.
+        # Fail fast with structured guidance to the SSE endpoint (which stays
+        # alive via heartbeats) instead of making the client wait for a 504.
         if request.use_agentic and settings.enable_agent_research:
-            result = await processor.agent_rag_query(
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "agentic_requires_streaming",
+                    "message": (
+                        "Agentic deep research is not supported on the "
+                        "non-streaming POST /api/ask endpoint (it routinely "
+                        "exceeds the gateway timeout). Use POST /api/ask/stream "
+                        "(SSE) for use_agentic:true requests."
+                    ),
+                    "use_endpoint": "/api/ask/stream",
+                },
+            )
+
+        # Legacy path for non-agent requests. Bound it with an app-level
+        # deadline so a slow request returns a clean 504 JSON {detail} rather
+        # than letting the edge proxy (Traefik) cut the silent socket and emit
+        # a bare plain-text 500. Keep ASK_DEADLINE_SECONDS just below the proxy
+        # read timeout. NOTE: the underlying to_thread work (neo4j/LLM) cannot
+        # be cancelled and runs to completion in the background even after we
+        # return 504 — acceptable for now; raising workers/queueing is Tier 1.
+        deadline = settings.ask_deadline_seconds
+        result = await asyncio.wait_for(
+            processor.rag_query(
                 question=request.question,
-                mode="quality",
+                top_k=request.top_k,
+                use_graph=request.use_graph,
+                max_hops=request.max_hops,
                 conversation_history=conversation_history,
+                use_reranking=request.use_reranking,
+                use_agentic=request.use_agentic,
                 collection_id=effective_collection_id,
                 allowed_collection_ids=allowed_collection_ids,
-            )
-
-            # Build sources from agent result (already formatted)
-            sources = [
-                SearchResult(
-                    document_id=s.get("document_id", ""),
-                    chunk_id=s.get("chunk_id", ""),
-                    content=s.get("content", ""),
-                    score=s.get("score", 0),
-                    metadata=s.get("metadata", {}),
-                )
-                for s in result.get("sources", [])
-            ]
-
-            graph_context = None
-            if result.get("graph_context"):
-                graph_context = GraphContext(**result["graph_context"])
-
-            return RAGResponse(
-                question=result["question"],
-                answer=result["answer"],
-                sources=sources,
-                graph_context=graph_context,
-                reranked=result.get("reranked", False),
-                reasoning_steps=result.get("reasoning_steps"),
-                communities_used=result.get("communities_used"),
-                retrieval_stats=result.get("retrieval_stats"),
-            )
-
-        # Legacy path for non-agent requests
-        result = await processor.rag_query(
-            question=request.question,
-            top_k=request.top_k,
-            use_graph=request.use_graph,
-            max_hops=request.max_hops,
-            conversation_history=conversation_history,
-            use_reranking=request.use_reranking,
-            use_agentic=request.use_agentic,
-            collection_id=effective_collection_id,
-            allowed_collection_ids=allowed_collection_ids,
+            ),
+            timeout=deadline if deadline and deadline > 0 else None,
         )
 
         sources = [
@@ -2279,6 +2442,28 @@ async def ask_question(
             reranked=result.get("reranked", False),
             reasoning_steps=result.get("reasoning_steps")
         )
+    except asyncio.TimeoutError:
+        deadline = get_settings().ask_deadline_seconds
+        logger.warning(
+            f"/api/ask exceeded {deadline}s deadline for question: {request.question[:80]!r}"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "deadline_exceeded",
+                "message": (
+                    f"The request exceeded the server-side deadline "
+                    f"({deadline}s). Retry, simplify the question, or use "
+                    f"POST /api/ask/stream which streams incrementally and is "
+                    f"not subject to this deadline."
+                ),
+                "deadline_seconds": deadline,
+            },
+        )
+    except HTTPException:
+        # Preserve intended status codes (e.g. 400 agentic guard, 403 collection
+        # access, 504 deadline) instead of re-wrapping them as a generic 500.
+        raise
     except Exception as e:
         logger.error(f"Error in GraphRAG query: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2290,6 +2475,7 @@ async def ask_question_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Stream the RAG response for better UX.
@@ -2368,7 +2554,12 @@ async def ask_question_stream(
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return StreamingResponse(
-            with_sse_heartbeat(generate_agentic()),
+            with_sse_heartbeat(traced_sse(
+                generate_agentic(),
+                "ask.agentic",
+                user_id=auth.key_id,
+                tags=["endpoint:ask_stream", "mode:agentic"],
+            )),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2380,8 +2571,6 @@ async def ask_question_stream(
     if request.use_fast_search:
         async def generate_fast():
             try:
-                from openai import AsyncOpenAI
-                
                 # Validate user input for prompt injection (if enabled)
                 processed_question, was_blocked, reason = validate_and_process_input(
                     request.question, strict_mode=True, enabled=settings.prompt_security
@@ -2433,33 +2622,30 @@ Question: {request.question}"""
                     
                     messages.append({"role": "user", "content": prompt})
                 
-                # Use turbo mode config if active, otherwise default settings
                 # For fast mode, use the fast mode model (OPENAI_MODEL_FAST_MODE)
                 llm_config = get_llm_config(fast_mode=True)
-                client = AsyncOpenAI(
+                client = make_async_openai_client(
                     api_key=llm_config.api_key,
                     base_url=llm_config.base_url,
                 )
                 
-                # Build request kwargs
-                request_kwargs = {
-                    "model": llm_config.model,
-                    "messages": messages,
-                    "stream": True,
+                # Compose the answer with hidden reasoning suppressed on the chat
+                # path (centralized per-provider dispatch — incl. Venice
+                # disable_thinking — replaces the old deepseek-only hack) for a
+                # snappy first token; auto-falls-back if a model rejects the param.
+                stream = await safe_chat_completion(
+                    client.chat.completions.create,
+                    base_url=llm_config.base_url,
+                    model=llm_config.model,
+                    reasoning_mode=ReasoningMode.parse(settings.default_reasoning_mode),
+                    overrides=settings.parsed_reasoning_overrides,
+                    messages=messages,
+                    stream=True,
+                    **stream_usage_kwargs(),
                     # Lower temperature / capped tokens for faster, more deterministic
                     # responses (params adapted per model family — GPT-5/o-series).
                     **build_chat_params(llm_config.model, temperature=0.2, max_tokens=600),
-                }
-                
-                # Only add thinking-related params for models that support them
-                model_lower = llm_config.model.lower()
-                if "deepseek" in model_lower or "r1" in model_lower:
-                    request_kwargs["extra_body"] = {
-                        "enable_thinking": False,  # DeepSeek-R1 style
-                        "reasoning_effort": "none",
-                    }
-                
-                stream = await client.chat.completions.create(**request_kwargs)
+                )
                 
                 async for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content:
@@ -2473,7 +2659,12 @@ Question: {request.question}"""
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
         return StreamingResponse(
-            with_sse_heartbeat(generate_fast()),
+            with_sse_heartbeat(traced_sse(
+                generate_fast(),
+                "ask.fast",
+                user_id=auth.key_id,
+                tags=["endpoint:ask_stream", "mode:fast"],
+            )),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2511,8 +2702,6 @@ Question: {request.question}"""
                 return
 
             # Legacy standard streaming path (hybrid search + reranking + writer)
-            from openai import AsyncOpenAI
-
             conversation_history = request.conversation_history
 
             graph_context = None
@@ -2623,7 +2812,7 @@ Question: {request.question}"""
 
             # Stream the response using async client
             llm_config = get_llm_config()
-            client = AsyncOpenAI(
+            client = make_async_openai_client(
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
             )
@@ -2631,10 +2820,15 @@ Question: {request.question}"""
             if _emit_status:
                 yield f"data: {json.dumps({'status': {'stage': 'generating', 'message': 'Writing the answer'}})}\n\n"
 
-            stream = await client.chat.completions.create(
+            stream = await safe_chat_completion(
+                client.chat.completions.create,
+                base_url=llm_config.base_url,
                 model=llm_config.model,
+                reasoning_mode=ReasoningMode.parse(settings.default_reasoning_mode),
+                overrides=settings.parsed_reasoning_overrides,
                 messages=messages,
                 stream=True,
+                **stream_usage_kwargs(),
                 **build_chat_params(
                     llm_config.model,
                     temperature=0.3,
@@ -2654,7 +2848,12 @@ Question: {request.question}"""
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        with_sse_heartbeat(generate()),
+        with_sse_heartbeat(traced_sse(
+            generate(),
+            "ask.standard",
+            user_id=auth.key_id,
+            tags=["endpoint:ask_stream", "mode:standard"],
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2925,7 +3124,6 @@ class MergeEntitiesRequest(BaseModel):
 
 async def _generate_merged_description(canonical: str, all_names: List[str], entity_data: dict) -> Optional[str]:
     """Generate a combined description for merged entities using the main LLM."""
-    from openai import AsyncOpenAI
     from app.services.llm_config import get_llm_config
 
     # Collect non-empty descriptions
@@ -2947,7 +3145,7 @@ async def _generate_merged_description(canonical: str, all_names: List[str], ent
 
     try:
         config = get_llm_config()
-        client = AsyncOpenAI(
+        client = make_async_openai_client(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=30.0,
@@ -3777,6 +3975,7 @@ async def ask_with_thinking_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _track: None = Depends(track_ask_activity),
 ):
     """
     Stream the RAG response with extended thinking visibility.
@@ -3845,7 +4044,12 @@ async def ask_with_thinking_stream(
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        with_sse_heartbeat(generate()),
+        with_sse_heartbeat(traced_sse(
+            generate(),
+            "ask.thinking",
+            user_id=auth.key_id,
+            tags=["endpoint:ask_stream_thinking", "mode:agentic"],
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -3855,295 +4059,25 @@ async def ask_with_thinking_stream(
 
 
 # =============================================================================
-# Turbo Mode Endpoints (Compute3 GPU Acceleration)
+# Public Feature Flags Endpoint
 # =============================================================================
 
-@app.get("/api/turbo/status")
-async def get_turbo_status(auth: AuthResult = Depends(require_read_permission)):
+@app.get("/api/features")
+async def get_feature_flags(auth: AuthResult = Depends(require_read_permission)):
+    """UI-relevant feature flags for non-admin clients.
+
+    The full /api/admin/config is admin-only; this lightweight endpoint lets
+    manage-permission UIs (e.g. the Add/Web Import page) gate features without
+    exposing the rest of the system configuration.
     """
-    Get Turbo Mode status.
-    
-    Returns whether Turbo Mode is available (API key configured),
-    currently active (GPU job running), ready (vLLM server responding),
-    and job details if active.
-    
-    IMPORTANT: This endpoint never exposes the actual API key.
-    
-    Fields:
-    - available: True if COMPUTE3_API_KEY is configured
-    - active: True if a GPU job is running
-    - ready: True if the vLLM inference server is ready for requests
-    - job: Details of the active job (if any)
-    - config: GPU configuration settings
-    """
-    try:
-        settings = get_settings()
-        c3 = get_compute3_service()
-        
-        # Check for active job (this also checks vLLM readiness)
-        active_job = await c3.get_active_turbo_job()
-        
-        is_running = active_job is not None and active_job.is_running
-        is_ready = active_job is not None and active_job.is_ready
-        
-        return {
-            "available": c3.is_available,
-            "active": is_running,  # GPU job is running
-            "ready": is_ready,     # vLLM server is ready for inference
-            "job": active_job.to_dict() if active_job else None,
-            "config": {
-                "gpu_type": settings.compute3_gpu_type,
-                "gpu_count": settings.compute3_gpu_count,
-                "model": settings.compute3_model,
-                "default_runtime": settings.compute3_default_runtime,
-            } if c3.is_available else None,
-        }
-    except Exception as e:
-        logger.error(f"Error getting turbo status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/turbo/balance")
-async def get_turbo_balance(auth: AuthResult = Depends(require_admin)):
-    """Get Compute3 account balance."""
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        balance = await c3.get_balance()
-        
-        # Check for error in response
-        if "error" in balance:
-            return {"error": balance["error"]}
-        
-        # Transform Compute3 API response to frontend-expected format
-        # Compute3 returns string values, convert to floats
-        try:
-            total = float(balance.get("total_balance", 0))
-            available = float(balance.get("available_balance", 0))
-            reserved = float(balance.get("pending_reservations", 0))
-        except (ValueError, TypeError):
-            total = 0.0
-            available = 0.0
-            reserved = 0.0
-        
-        return {
-            "total": total,
-            "available": available,
-            "reserved": reserved,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting turbo balance: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/turbo/start")
-async def start_turbo_mode(
-    runtime: Optional[int] = Query(default=None, ge=60, le=86400, description="Runtime in seconds (1 min to 24 hours)"),
-    gpu_type: Optional[str] = Query(default=None, description="GPU type (h100, a100, l40s, etc.)"),
-    gpu_count: Optional[int] = Query(default=None, ge=1, le=8, description="Number of GPUs (1-8)"),
-    auth: AuthResult = Depends(require_admin)
-):
-    """
-    Start Turbo Mode by launching a GPU job on Compute3.
-    
-    This creates a high-performance vLLM inference server on dedicated GPUs
-    for faster document processing and LLM queries.
-    
-    Default configuration:
-    - Model: minimax-m21
-    - GPUs: 4 x H100
-    - Runtime: 1 hour
-    """
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        # Check if already running
-        active_job = await c3.get_active_turbo_job()
-        if active_job and active_job.is_running:
-            return {
-                "message": "Turbo Mode already active",
-                "job": active_job.to_dict(),
-            }
-        
-        # Create new turbo job
-        job = await c3.create_turbo_job(
-            runtime=runtime,
-            gpu_type=gpu_type,
-            gpu_count=gpu_count,
-        )
-        
-        if not job:
-            raise HTTPException(status_code=500, detail="Failed to create Turbo Mode job")
-        
-        return {
-            "message": "Turbo Mode starting",
-            "job": job.to_dict(),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting turbo mode: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/turbo/stop")
-async def stop_turbo_mode(
-    job_id: Optional[str] = Query(default=None, description="Specific job ID to stop (optional)"),
-    auth: AuthResult = Depends(require_admin)
-):
-    """
-    Stop Turbo Mode by cancelling the active GPU job.
-    
-    If job_id is not specified, stops the currently active turbo mode job.
-    """
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        # Get job to cancel
-        if job_id:
-            target_job_id = job_id
-        else:
-            active_job = await c3.get_active_turbo_job()
-            if not active_job:
-                return {"message": "No active Turbo Mode job to stop"}
-            target_job_id = active_job.job_id
-        
-        success = await c3.cancel_job(target_job_id)
-        
-        if not success:
-            raise HTTPException(status_code=500, detail=f"Failed to cancel job {target_job_id}")
-        
-        return {
-            "message": "Turbo Mode stopped",
-            "job_id": target_job_id,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error stopping turbo mode: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/turbo/extend")
-async def extend_turbo_mode(
-    additional_seconds: int = Query(..., ge=60, le=86400, description="Additional runtime in seconds"),
-    job_id: Optional[str] = Query(default=None, description="Specific job ID to extend (optional)"),
-    auth: AuthResult = Depends(require_admin)
-):
-    """
-    Extend the runtime of an active Turbo Mode job.
-    """
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        # Get job to extend
-        if job_id:
-            target_job_id = job_id
-        else:
-            active_job = await c3.get_active_turbo_job()
-            if not active_job:
-                raise HTTPException(status_code=404, detail="No active Turbo Mode job to extend")
-            target_job_id = active_job.job_id
-        
-        job = await c3.extend_job(target_job_id, additional_seconds)
-        
-        if not job:
-            raise HTTPException(status_code=500, detail=f"Failed to extend job {target_job_id}")
-        
-        return {
-            "message": f"Extended Turbo Mode by {additional_seconds} seconds",
-            "job": job.to_dict(),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error extending turbo mode: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/turbo/jobs")
-async def list_turbo_jobs(
-    state: Optional[str] = Query(default=None, description="Filter by state (running, pending, succeeded, failed, canceled)"),
-    auth: AuthResult = Depends(require_admin)
-):
-    """
-    List all Turbo Mode jobs (current and historical).
-    """
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        jobs = await c3.list_jobs(state=state)
-        
-        # Filter to only vLLM jobs (turbo mode jobs)
-        turbo_jobs = [j for j in jobs if "vllm" in j.docker_image.lower()]
-        
-        return {
-            "jobs": [j.to_dict() for j in turbo_jobs],
-            "total": len(turbo_jobs),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing turbo jobs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/turbo/jobs/{job_id}")
-async def get_turbo_job(job_id: str, auth: AuthResult = Depends(require_admin)):
-    """Get details of a specific Turbo Mode job."""
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        job = await c3.get_job(job_id)
-        
-        if not job:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        
-        return job.to_dict()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting turbo job: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/turbo/jobs/{job_id}/logs")
-async def get_turbo_job_logs(job_id: str, auth: AuthResult = Depends(require_admin)):
-    """Get logs from a Turbo Mode job."""
-    try:
-        c3 = get_compute3_service()
-        
-        if not c3.is_available:
-            raise HTTPException(status_code=400, detail="Turbo Mode not available - COMPUTE3_API_KEY not configured")
-        
-        logs = await c3.get_job_logs(job_id)
-        
-        return {"job_id": job_id, "logs": logs}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting turbo job logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    settings = get_settings()
+    return {
+        "enable_collections": settings.enable_collections,
+        "enable_skills": settings.enable_skills,
+        "enable_git_integration": settings.enable_git_integration,
+        # Web import needs both the master switch AND a configured crawl service.
+        "enable_web_crawl": settings.enable_web_crawl and bool(settings.crawl_service_url),
+    }
 
 
 # =============================================================================
@@ -4251,13 +4185,6 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         
         # Security
         prompt_security=settings.prompt_security,
-        
-        # Turbo Mode (Compute3)
-        turbo_mode_available=settings.turbo_mode_available,
-        compute3_gpu_type=settings.compute3_gpu_type,
-        compute3_gpu_count=settings.compute3_gpu_count,
-        compute3_model=settings.compute3_model,
-        compute3_default_runtime=settings.compute3_default_runtime,
 
         # Agent Skills
         enable_skills=settings.enable_skills,
@@ -4266,6 +4193,9 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
 
         # Git Integration
         enable_git_integration=settings.enable_git_integration,
+
+        # MDHarvest powered by Crawl4ai
+        enable_web_crawl=settings.enable_web_crawl,
     )
 
 
@@ -4429,6 +4359,206 @@ async def save_skill_config(
         return {"message": "Configuration saved", "skill_id": skill_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# =============================================================================
+# MDHarvest powered by Crawl4ai — web → markdown import
+# =============================================================================
+#
+# Batch-harvest URLs into the knowledge base as clean markdown. cortex-app
+# never embeds a browser/crawler stack; it calls a crawl4ai service over HTTP
+# (services/crawl_client.py). Self-host points CRAWL_SERVICE_URL at the user's
+# own crawl4ai; cloud points it at the shared per-host instance. Empty URL =>
+# feature disabled (404). See .claude/domain/web-crawl.md.
+
+def _require_web_crawl_enabled():
+    settings = get_settings()
+    if not settings.enable_web_crawl or not settings.crawl_service_url:
+        raise HTTPException(status_code=404, detail="Web crawling is disabled")
+
+
+def _crawl_slugify(text: str) -> str:
+    """Filesystem-safe slug from a title (lowercase, hyphenated, <=100 chars)."""
+    text = (text or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return (text or "page")[:100]
+
+
+def _format_crawl_markdown(title: str, url: str, body: str) -> str:
+    """Wrap crawled markdown with the canonical MDHarvest provenance header."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"# {title}\n\n> Source: {url}\n> Extracted: {today}\n\n---\n\n{body}\n"
+
+
+async def _run_web_import_task(
+    task_id: str,
+    urls: List[str],
+    collection_id: Optional[str],
+    content_filter: Optional[str],
+    query: Optional[str],
+):
+    """Background runner: crawl each URL → store as markdown → process pending.
+
+    Mirrors the git connector's two-phase shape: stage every harvested page as
+    a PENDING document, then run the shared processing pass once at the end.
+    """
+    from app.services import crawl_client
+
+    settings = get_settings()
+    processor = get_document_processor()
+    total = len(urls)
+    succeeded: List[dict] = []
+    failed: List[dict] = []
+    update_task_progress(task_id, 0, total, "Starting web import...")
+
+    sem = asyncio.Semaphore(max(1, int(settings.crawl_concurrency or 5)))
+    done = 0
+    counter_lock = asyncio.Lock()
+
+    async def harvest_one(url: str):
+        nonlocal done
+        async with sem:
+            try:
+                res = await crawl_client.crawl_markdown(
+                    url, content_filter=content_filter, query=query
+                )
+                file_content = _format_crawl_markdown(res["title"], url, res["markdown"])
+                doc_id = str(uuid.uuid4())
+                filename = f"{_crawl_slugify(res['title'])}.md"
+                file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
+                async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                    await f.write(file_content)
+                file_size = len(file_content.encode("utf-8"))
+                await processor.store_file_only(
+                    file_path, filename, file_size, collection_id,
+                    source=f"crawl:{urlparse(url).netloc}",
+                )
+                succeeded.append({"url": url, "title": res["title"]})
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"web import failed for {url}: {e}")
+                failed.append({"url": url, "error": str(e)})
+            finally:
+                async with counter_lock:
+                    done += 1
+                    update_task_progress(
+                        task_id, done, total,
+                        f"Crawled {done}/{total} ({len(failed)} failed)",
+                    )
+
+    await asyncio.gather(*[harvest_one(u) for u in urls])
+
+    if not succeeded:
+        fail_task(task_id, f"All {total} URL(s) failed to crawl")
+        return
+
+    # Phase 2: extract/embed the staged pages (shared with uploads/git).
+    def progress(cur, tot, msg):
+        update_task_progress(task_id, cur, tot, f"Processing: {msg}")
+
+    try:
+        proc_result = await processor.process_pending_documents(progress_callback=progress)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"web import processing failed: {e}")
+        fail_task(task_id, f"Processing failed: {e}")
+        return
+
+    complete_task(task_id, {
+        "imported": len(succeeded),
+        "failed": len(failed),
+        "total": total,
+        "succeeded": succeeded,
+        "failures": failed,
+        "processing": proc_result,
+    })
+
+
+@app.post("/api/web-import", response_model=WebImportResponse)
+async def web_import(
+    request: WebImportRequest,
+    auth: AuthResult = Depends(require_manage_permission),
+):
+    """Harvest one or more URLs into the knowledge base as markdown.
+
+    Returns a task_id immediately; poll GET /api/tasks/{task_id} for progress.
+    """
+    _require_web_crawl_enabled()
+    settings = get_settings()
+
+    target_collection = request.collection_id or "default"
+    validate_collection_access(auth, target_collection, "add content to")
+
+    # Normalize + validate URLs (http/https only, dedup, preserve order).
+    seen: set = set()
+    urls: List[str] = []
+    for raw in request.urls:
+        u = (raw or "").strip()
+        if not u:
+            continue
+        parsed = urlparse(u)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(status_code=400, detail=f"Invalid URL: {raw}")
+        if u not in seen:
+            seen.add(u)
+            urls.append(u)
+    if not urls:
+        raise HTTPException(status_code=400, detail="No valid http(s) URLs provided")
+
+    cap = int(settings.crawl_max_urls_per_job or 0)
+    if cap > 0 and len(urls) > cap:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many URLs ({len(urls)}); this plan allows {cap} per job.",
+        )
+
+    # Enforce graph file/entity limits (same gate as custom-input).
+    neo4j = get_neo4j_service()
+    if settings.max_files > 0:
+        stats = await asyncio.to_thread(neo4j.get_stats)
+        if stats["document_count"] + len(urls) > settings.max_files:
+            raise HTTPException(
+                status_code=403,
+                detail=f"File limit reached (max: {settings.max_files}). Upgrade your plan to add more documents.",
+            )
+
+    collection_id = request.collection_id
+    if collection_id is None and settings.enable_collections:
+        collection_id = settings.default_collection
+
+    task = create_task("web_import")
+    _spawn_chain_task(_run_web_import_task(
+        task.task_id, urls, collection_id, request.content_filter, request.query
+    ))
+    return WebImportResponse(
+        task_id=task.task_id,
+        accepted_urls=len(urls),
+        message=f"Web import started for {len(urls)} URL(s)",
+    )
+
+
+@app.post("/api/web-import/discover", response_model=WebDiscoverResponse)
+async def web_import_discover(
+    request: WebDiscoverRequest,
+    auth: AuthResult = Depends(require_manage_permission),
+):
+    """Discover same-site candidate links on a page for selective import."""
+    _require_web_crawl_enabled()
+    from app.services import crawl_client
+
+    url = (request.url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    try:
+        result = await crawl_client.discover_links(url)
+    except crawl_client.CrawlUnavailableError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return WebDiscoverResponse(
+        source_url=result["source_url"],
+        domain=result["domain"],
+        links=[WebDiscoverLink(**l) for l in result["links"]],
+    )
 
 
 # =============================================================================

@@ -21,7 +21,10 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | [`.claude/domain/skills.md`](.claude/domain/skills.md) | AgentSkills standard, auto-activation, http_request, config wizard |
 | [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
 | [`.claude/domain/git-integration.md`](.claude/domain/git-integration.md) | Git connector (GitHub/GitLab/Gitea): provider abstraction, incremental sync engine, document provenance, `git_repo` write tool, scheduled polling |
+| [`.claude/domain/web-crawl.md`](.claude/domain/web-crawl.md) | MDHarvest powered by Crawl4ai — web→markdown harvesting via a (self-hosted or shared) crawl4ai service, crawl client, Web Import endpoints/UI, multi-tenant privacy model |
+| [`.claude/domain/observability.md`](.claude/domain/observability.md) | Langfuse LLM tracing & cost — env-driven activation, OpenAI client factory, agentic-trace grouping (`observed_trace`/`traced_sse`), manual records for Haystack embeddings + raw-httpx vision, streaming usage capture |
 | [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
+| [`.claude/qa.md`](.claude/qa.md) | QA & testing — backend pytest suite (`.qa-venv`, conftest fixtures, coverage map), live E2E harness (`test_live_e2e*.py`), canonical QA spreadsheet (`qa/`), defect log |
 
 ## File-Path Routing
 
@@ -32,31 +35,33 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/main.py` | `architecture.md` + relevant `domain/*.md` for the endpoint area |
 | `backend/app/config.py`, `.env*` | `environment.md` |
 | `backend/app/models.py` | `architecture.md` |
-| `backend/app/services/document_processor.py`, `docling_worker.py`, `vision_analyzer.py` | `domain/document-pipeline.md` |
+| `backend/app/services/document_processor.py`, `docling_worker.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
+| `backend/app/services/observability.py` | `domain/observability.md` |
 | `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |
 | `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md` |
-| `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md` |
+| `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md`, `domain/observability.md` (trace grouping) |
 | `backend/app/services/skill_service.py` | `domain/skills.md` |
 | `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |
-| `backend/app/services/llm_config.py`, `compute3_service.py` | `environment.md`, `domain/relationships.md` |
+| `backend/app/services/crawl_client.py` | `domain/web-crawl.md` |
+| `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md`, `domain/observability.md` (OpenAI client factory) |
 | `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
 | `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md` |
 | `backend/app/services/prompt_security.py` | `architecture.md` |
 | `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |
-| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md` |
+| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md`, `domain/web-crawl.md` (Web Import modal) |
 | `frontend/src/app/deduplicate/**` | `domain/entities.md` |
 | `frontend/src/app/explore/**`, `components/explore/**` | `frontend-patterns.md`, `domain/entities.md` |
 | `frontend/src/app/ask/**`, `components/ask/**` | `domain/rag-pipeline.md`, `frontend-patterns.md` |
 | `frontend/src/app/admin/**`, `components/admin/**` | `domain/admin-features.md`, `domain/skills.md`, `domain/git-integration.md` |
 | `frontend/src/app/collections/**`, `components/collections/**` | `frontend-patterns.md` |
 | `frontend/src/app/add/**` | `domain/document-pipeline.md` |
-| `frontend/src/app/turbo/**` | `environment.md` |
 | `frontend/src/components/layout/**` | `architecture.md`, `frontend-patterns.md` |
 | `frontend/src/lib/**` | `architecture.md` |
 | `design-system/**` | `design-system.md` |
 | `documentation/**`, `handbook/**` | `maintenance.md` |
 | `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
 | `bench/**` | `bench.md` |
+| `backend/tests/**`, `qa/**` | `qa.md` |
 
 ## Priority
 

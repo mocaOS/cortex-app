@@ -9,8 +9,9 @@ All methods authenticate with the admin API key passed into the constructor.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 
@@ -210,6 +211,35 @@ class CortexClient:
             raise CortexError(f"GET /api/stats → {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    # ----- graph sampling (for graph-sourced question generation) -----------
+
+    async def list_entities(
+        self, *, limit: int = 50, skip: int = 0,
+        entity_type: Optional[str] = None, search: Optional[str] = None,
+    ) -> dict:
+        """GET /api/graph/entities — paginated. Returns {entities: [...], ...}."""
+        params: dict = {"limit": limit, "skip": skip}
+        if entity_type:
+            params["entity_type"] = entity_type
+        if search:
+            params["search"] = search
+        r = await self._client.get(f"{self.base_url}/api/graph/entities", params=params)
+        if r.status_code != 200:
+            raise CortexError(f"GET /api/graph/entities → {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    async def list_communities(
+        self, *, limit: int = 50, skip: int = 0, search: Optional[str] = None,
+    ) -> dict:
+        """GET /api/graph/communities — paginated. Returns {communities: [...], ...}."""
+        params: dict = {"limit": limit, "skip": skip}
+        if search:
+            params["search"] = search
+        r = await self._client.get(f"{self.base_url}/api/graph/communities", params=params)
+        if r.status_code != 200:
+            raise CortexError(f"GET /api/graph/communities → {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     # ----- Q+A retrieval ----------------------------------------------------
 
     async def ask(
@@ -243,6 +273,55 @@ class CortexClient:
         if r.status_code != 200:
             raise CortexError(f"POST /api/ask → {r.status_code}: {r.text[:200]}")
         return r.json()
+
+    async def ask_stream_events(
+        self,
+        question: str,
+        *,
+        use_agentic: bool = False,
+        top_k: int = 5,
+        use_graph: bool = True,
+        use_reranking: bool = True,
+        timeout_s: float = 180.0,
+    ) -> AsyncIterator[dict]:
+        """POST /api/ask/stream and yield parsed SSE event dicts as they arrive.
+
+        SSE comment/heartbeat lines (`: ping`) and blank lines are skipped;
+        only `data: {json}` payloads are parsed and yielded. `timeout_s` is the
+        httpx read timeout — a stalled server raises httpx.ReadTimeout, which
+        the caller treats as a timeout. Event shapes (non-agentic path):
+        {"status": {...}}, {"sources": [...]}, {"graph_context": {...}},
+        {"content": "token"} (repeated), {"done": true}, {"error": "..."}.
+        """
+        body = {
+            "question": question,
+            "top_k": top_k,
+            "use_graph": use_graph,
+            "use_reranking": use_reranking,
+            "use_agentic": use_agentic,
+        }
+        url = f"{self.base_url}/api/ask/stream"
+        async with self._client.stream(
+            "POST", url, json=body, timeout=timeout_s,
+            headers={"Accept": "text/event-stream"},
+        ) as r:
+            if r.status_code != 200:
+                raw = await r.aread()
+                raise CortexError(
+                    f"POST /api/ask/stream → {r.status_code}: {raw[:200]!r}"
+                )
+            async for line in r.aiter_lines():
+                if not line or line.startswith(":"):
+                    continue  # blank separator or heartbeat comment
+                if not line.startswith("data:"):
+                    continue
+                payload = line[len("data:"):].strip()
+                if not payload:
+                    continue
+                try:
+                    yield json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
 
     # ----- library export (used for pre-batch safety backup) ----------------
 

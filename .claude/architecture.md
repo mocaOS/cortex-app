@@ -17,7 +17,6 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/neo4j_service.py` — Graph DB operations, search, entity extraction, community detection, `delete_all_entities()` (DETACH DELETE all entities). See [`.claude/domain/entities.md`](domain/entities.md), [`.claude/domain/communities.md`](domain/communities.md), [`.claude/domain/relationships.md`](domain/relationships.md)
 - `services/document_processor.py` — Ingestion pipeline. See [`.claude/domain/document-pipeline.md`](domain/document-pipeline.md)
 - `services/graph_extractor.py` — LLM-based entity/relationship extraction (`async_relationship_client` and `relationship_model_name` properties for dedicated relationship model). See [`.claude/domain/relationships.md`](domain/relationships.md), [`.claude/domain/entities.md`](domain/entities.md)
-- `services/compute3_service.py` — GPU-accelerated inference (Turbo Mode)
 - `services/vision_analyzer.py` — Image analysis and OCR. See [`.claude/domain/document-pipeline.md`](domain/document-pipeline.md)
 - `services/docling_worker.py` — Standalone Docling conversion worker (separate process for CPU-bound document conversion, memory optimizations). See [`.claude/domain/document-pipeline.md`](domain/document-pipeline.md)
 - `services/auth_service.py` — Admin JWT auth
@@ -29,7 +28,8 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/library_transfer_service.py` — Full library export/import. See [`.claude/domain/admin-features.md`](domain/admin-features.md)
 - `services/skill_service.py` — Agent Skills integration. See [`.claude/domain/skills.md`](domain/skills.md)
 - `services/git_connector_service.py` + `services/git_providers/` — Git connector (GitHub/GitLab/Gitea): incremental clone+diff sync into the pipeline, provider abstraction, agent `git_repo` write tool. See [`.claude/domain/git-integration.md`](domain/git-integration.md)
-- `services/llm_config.py` — LLM configuration utility (Turbo Mode support, extraction/relationship model config). See [`.claude/domain/relationships.md`](domain/relationships.md)
+- `services/llm_config.py` — LLM configuration utility (extraction/relationship model config) **and the OpenAI client factory** (`make_openai_client` / `make_async_openai_client`) — single decision point for Langfuse-wrapped vs plain clients. See [`.claude/domain/relationships.md`](domain/relationships.md), [`.claude/domain/observability.md`](domain/observability.md)
+- `services/observability.py` — Langfuse wiring: client lifecycle (`init_langfuse`/`shutdown_langfuse`), agentic-trace grouping (`observed_trace`/`traced_sse`), manual generation records for non-SDK calls (`record_generation`). Env-driven; no-op when unconfigured. See [`.claude/domain/observability.md`](domain/observability.md)
 - `services/helper_client.py` — transport layer for cortex-helper calls: shared HTTP client, retries with backoff, circuit breaker, `HELPER_STRICT_REMOTE`, `X-Tenant-ID`/`X-Request-ID` headers
 - `services/rate_limiter.py` — opt-in per-API-key token bucket (`RATE_LIMIT_QPM`) on ask/upload endpoints
 - `logging_setup.py` — `LOG_FORMAT=plain|json` + `X-Request-ID` correlation (contextvar stamped on every log line, echoed on responses, forwarded to cortex-helper)
@@ -46,7 +46,6 @@ Next.js App Router with unified navigation structure:
 - `/` redirects to `/documents`
 - `/entities`, `/relationships`, `/communities` redirect to their Explore tabs
 - `/login` — Authentication page
-- `/turbo` — Turbo Mode page
 
 ### Key Component Directories
 - `lib/api.ts` — API client with auth headers
@@ -66,7 +65,6 @@ Next.js App Router with unified navigation structure:
 - Streaming responses for `/api/ask/stream` and `/api/ask/stream/thinking` endpoints
 - Frontend uses `"use client"` directive for interactive components; API calls go through `lib/api.ts`
 - All API endpoints are in `main.py` (no separate router modules)
-- Turbo mode overrides both extraction and main model configs
 - **Security defaults**: CORS is allowlist-driven (`CORS_ALLOWED_ORIGINS`; wildcard disables credentials). `ENVIRONMENT=production` fails fast on weak/default secrets via `config.py:_enforce_production_secrets`. See [`environment.md`](environment.md).
 - **Per-instance footprint**: the heavy models (cross-encoder reranker, docling) are lazy-loaded and can be offloaded to a shared per-host service (`cortex-helper` repo) via `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` — key for packing many tenant stacks per machine. The **slim image** (`Dockerfile.prod` build arg `INSTALL_LOCAL_ML=false`) drops torch/docling entirely (~1.2GB vs full image) for helper-backed deployments. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md), [`domain/document-pipeline.md`](domain/document-pipeline.md).
 - **Efficiency flags (v-next)**: batched KG writes, chunk-batched relationship extraction, Phase B checkpointing, reprocess delta, prompt-cache discipline — all default-off behind env flags, gated on `bench/BASELINE.md` A/B runs. See [`environment.md`](environment.md#efficiency-flags-v-next--default-off-until-bench-validated-see-benchbaselinemd).

@@ -112,4 +112,12 @@ def render() -> tuple[bytes, str]:
                 HELPER_BREAKER_OPEN.labels(op=op).set(1 if state == "open" else 0)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from app.services.crawl_client import get_breaker_state
+
+            HELPER_BREAKER_OPEN.labels(op="crawl").set(
+                1 if get_breaker_state() == "open" else 0
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return generate_latest(), CONTENT_TYPE_LATEST

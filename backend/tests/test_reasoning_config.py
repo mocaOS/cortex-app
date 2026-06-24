@@ -95,7 +95,7 @@ def test_reasoning_mode_parse_unknown_falls_back_to_auto():
         ("deepseek_v3-base", ModelFamily.DEEPSEEK_V3),
         ("granite-3.2", ModelFamily.GRANITE),
         ("mistral-small-24b", ModelFamily.UNKNOWN),
-        ("openai/minimax-m21", ModelFamily.UNKNOWN),
+        ("openai/minimax-m3", ModelFamily.UNKNOWN),
         ("", ModelFamily.UNKNOWN),
     ],
 )
@@ -115,7 +115,7 @@ def test_parse_model_family(model, expected):
         ("https://api.venice.ai/api/v1", "venice"),
         ("https://api.anthropic.com/v1", "anthropic_native"),
         ("http://localhost:8000/v1", "vllm_or_compatible"),
-        ("https://compute3.example.com/v1", "vllm_or_compatible"),
+        ("https://vllm.example.com/v1", "vllm_or_compatible"),
         ("", "vllm_or_compatible"),
         (None, "vllm_or_compatible"),
     ],
@@ -134,7 +134,7 @@ def test_auto_mode_returns_empty_for_all_backends():
         "https://openrouter.ai/api/v1",
         "https://api.venice.ai/api/v1",
         "https://api.anthropic.com/v1",
-        "https://compute3.example.com/v1",
+        "https://vllm.example.com/v1",
     ]:
         assert build_reasoning_kwargs(base_url, "any-model", ReasoningMode.AUTO) == {}
 
@@ -233,24 +233,24 @@ def test_anthropic_opus_47_off_omits_thinking():
     assert kwargs == {}
 
 
-def test_compute3_qwen3_off_disables_thinking():
+def test_vllm_qwen3_off_disables_thinking():
     kwargs = build_reasoning_kwargs(
-        "https://compute3.example.com/v1", "qwen3-32b", ReasoningMode.OFF
+        "https://vllm.example.com/v1", "qwen3-32b", ReasoningMode.OFF
     )
     assert kwargs == {
         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
     }
 
 
-def test_compute3_deepseek_off_is_empty():
+def test_vllm_deepseek_off_is_empty():
     """DeepSeek-V3.1 default is OFF; no param needed."""
     kwargs = build_reasoning_kwargs(
-        "https://compute3.example.com/v1", "deepseek-v3", ReasoningMode.OFF
+        "https://vllm.example.com/v1", "deepseek-v3", ReasoningMode.OFF
     )
     assert kwargs == {}
 
 
-def test_compute3_unknown_sends_both_keys_defensively():
+def test_vllm_unknown_sends_both_keys_defensively():
     """Unknown OpenAI-compatible model: send both chat_template_kwargs defensively."""
     kwargs = build_reasoning_kwargs(
         "https://my-llm.example.com/v1", "unknown-future-model", ReasoningMode.OFF
@@ -286,10 +286,10 @@ def test_override_beats_heuristic():
 
 def test_override_can_disable_for_known_off_model():
     """Override to AUTO forces empty kwargs even if mode would normally inject."""
-    overrides = {"openai/minimax-m21": ReasoningMode.AUTO}
+    overrides = {"openai/minimax-m3": ReasoningMode.AUTO}
     kwargs = build_reasoning_kwargs(
         "https://openrouter.ai/api/v1",
-        "openai/minimax-m21",
+        "openai/minimax-m3",
         ReasoningMode.OFF,
         overrides=overrides,
     )
@@ -555,7 +555,7 @@ def test_safe_chat_completion_sync_happy_path():
 
     result = safe_chat_completion_sync(
         create_fn,
-        base_url="https://compute3.example.com/v1",
+        base_url="https://vllm.example.com/v1",
         model="qwen3-32b",
         reasoning_mode=ReasoningMode.OFF,
         messages=[{"role": "user", "content": "hi"}],

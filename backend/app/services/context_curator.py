@@ -34,10 +34,9 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
-
+from openai import AsyncOpenAI  # used in type annotations; clients built via factory
 from app.models import ConversationMessage
-from app.services.llm_config import get_llm_config, build_chat_params
+from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client
 from app.services.reasoning_config import build_reasoning_kwargs, ReasoningMode
 
 logger = logging.getLogger(__name__)
@@ -354,7 +353,7 @@ async def is_memory_answerable(
     try:
         llm_config = get_llm_config(fast_mode=True)
         model = settings.conversation_memory_compaction_model or llm_config.model
-        client = AsyncOpenAI(api_key=llm_config.api_key, base_url=llm_config.base_url)
+        client = make_async_openai_client(api_key=llm_config.api_key, base_url=llm_config.base_url)
         system = (
             "You decide whether a user's new message can be fully answered using ONLY "
             "the provided conversation memory, with NO new document/database search. "
@@ -497,7 +496,7 @@ async def compact_memory(
     try:
         llm_config = get_llm_config(fast_mode=True)
         model = settings.conversation_memory_compaction_model or llm_config.model
-        client = AsyncOpenAI(api_key=llm_config.api_key, base_url=llm_config.base_url)
+        client = make_async_openai_client(api_key=llm_config.api_key, base_url=llm_config.base_url)
         updated = await _update_buckets(
             prior={
                 "summary": summary,

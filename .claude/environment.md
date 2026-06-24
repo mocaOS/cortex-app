@@ -13,7 +13,7 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
 ## Primary LLM
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: gpt-4o-mini) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M2.7, GLM5, Kimi K2.5)
+- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: openai/minimax-m3) — Primary LLM for Q&A, research, and chat. Powerful reasoning models recommended (e.g. Minimax M3, GLM5, Kimi K2.5)
 - `OPENAI_API_BASE` — for LiteLLM-compatible providers
 - `OPENAI_MAX_OUTPUT_TOKENS` (default: 8000) — floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0. 8000 is generous enough that verbose-XML models (Qwen3-family) don't truncate `<relationship>` output; tighter models simply finish under cap with no cost penalty. See [Budget Fallback Chain](#budget-fallback-chain).
 - `OPENAI_MAX_CONTEXT` (default: 32768) — floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0.
@@ -41,14 +41,14 @@ See [`.claude/domain/relationships.md`](domain/relationships.md) for how these a
 
 ## Reasoning Control (ingestion)
 
-Force reasoning OFF on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax) so they can be used for structured extraction without the drift, hidden-token cost, latency, and malformed JSON that reasoning causes on these tasks. Implementation: `backend/app/services/reasoning_config.py`. Backend detected from `base_url`; model family by regex on the model string. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3.
+Force reasoning OFF on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax) so they can be used for structured extraction without the drift, hidden-token cost, latency, and malformed JSON that reasoning causes on these tasks. Implementation: `backend/app/services/reasoning_config.py`. Backend detected from `base_url`; model family by regex on the model string. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM.
 
 Accepted values for all three modes: `off | minimal | auto | low | medium | high` (also accepts `none`/`disabled` as aliases for OFF, and `default` as alias for AUTO).
 
 - `EXTRACTION_REASONING_MODE` (default `off`) — applied to entity extraction, document summaries, community summarization, community naming, entity enrichment, query-side entity extraction.
 - `RELATIONSHIP_REASONING_MODE` (default `off`) — applied to candidate-pair scan (Phase 1), gleaning pass, per-chunk relationship extraction, batch relationship analysis (Phase 2).
 - `VISION_REASONING_MODE` (default `off`) — applied to the vision-model call in `vision_analyzer.py`. Lets you use the same reasoning-capable multimodal model (e.g. Qwen3-VL-27B) as both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` without `<think>` tokens leaking into image descriptions. Vision uses raw httpx (not the OpenAI SDK), so the helper flattens `extra_body` into the top-level JSON body and runs its own one-shot 400-fallback (`is_reasoning_unsupported` / `mark_reasoning_unsupported`).
-- `DEFAULT_REASONING_MODE` (default `auto`) — used by `get_llm_config()` for the non-ingestion / Q&A path. Researcher agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI.
+- `DEFAULT_REASONING_MODE` (default `off`) — the **chat/answer path**: the speed-mode researcher loop + the answer writer (`researcher_agent.py`) and the non-agentic streaming writer + fast-search path (`main.py`), all routed through `safe_chat_completion`. Default `off` because on reasoning-capable models (esp. Venice) hidden chain-of-thought streams in a separate `reasoning_content` channel — adding 3–14s before the first answer token and, across the multi-iteration agent loop, frequently exhausting the budget into **empty/timeout answers**. `off` (Venice `disable_thinking`) cuts model time-to-first-token to <1s. Deep-research (`quality`) mode is unaffected — it stays AUTO and keeps reasoning. Caveat: on **OpenAI** GPT-5/o-series, `off` maps to `reasoning_effort` `none`/`minimal`, which can disable parallel tool calls in the agent loop — OpenAI-backed operators who rely on that can set `DEFAULT_REASONING_MODE=auto` to restore provider-default thinking on chat.
 - `REASONING_MODEL_OVERRIDES` (default empty) — escape hatch for novel models the heuristics get wrong. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom-llm:minimal`. Applies to all four modes above (extraction, relationship, vision, default).
 
 ### New model releases
@@ -84,8 +84,8 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 Recommended minimal config when running a 3-tier stack:
 ```env
-OPENAI_MODEL=minimax-m27            # primary / agentic (192K window)
-OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M27 full input window
+OPENAI_MODEL=minimax-m3            # primary / agentic (192K window)
+OPENAI_MAX_CONTEXT=196608                # unlock MiniMax-M3 full input window
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.7-27B full input window; relationship_max_context inherits
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
@@ -104,7 +104,7 @@ CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3
 CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
 VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 ```
-`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / Compute3 / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
+`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
 
 **Migration:** the env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` was previously the Phase 2 batch budget (16000). It now drives **per-chunk + candidate scan** instead, and the Phase 2 batch value lives in the new `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` will see per-chunk extraction also get 16000 tokens (overkill but harmless — model finishes well below cap).
 
@@ -137,6 +137,21 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 
 **Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors.
 
+## MDHarvest powered by Crawl4ai (web → markdown)
+
+Web→markdown harvesting (the "Web Import" feature; supersedes the deprecated standalone `mdharvest` tool). cortex-app never embeds a browser — it calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP via `services/crawl_client.py`. Self-host points at the user's own crawl4ai; cloud points at the shared per-host crawl4ai (hosted in `cortex-helper`). See [`domain/web-crawl.md`](domain/web-crawl.md) and `cortex-helper/README.md`. There is **no** local crawl fallback — empty URL ⇒ feature off (no in-process browser stack, by design).
+
+- `ENABLE_WEB_CRAWL` (default: false) — master switch for the Web Import endpoints + UI. The UI is shown only when this is true **and** `CRAWL_SERVICE_URL` is set (the `/api/features` flag AND-s both).
+- `CRAWL_SERVICE_URL` (default: empty) — base URL of the crawl4ai service, e.g. `http://crawl4ai:11235` (self-host) or `http://<host>:11235` (the shared per-server instance). Empty = disabled.
+- `CRAWL_SERVICE_TOKEN` (default: empty) — bearer token sent as `Authorization: Bearer <token>`; must match crawl4ai's `CRAWL4AI_API_TOKEN` (`security.api_token`). **Required for crawl4ai ≥ 0.9.0**: without a token crawl4ai serves its API only on `127.0.0.1`, so any cross-container/shared deployment is unreachable without it. A startup WARN fires when `ENABLE_WEB_CRAWL` + `CRAWL_SERVICE_URL` are set but this is empty (see `main.py` lifespan). Empty only works for an older tokenless crawl4ai or a same-host loopback URL.
+- `CRAWL_HTTP_TIMEOUT` (default: 60) — per-request timeout (s) for crawl4ai calls (browser rendering of a slow page can take tens of seconds).
+- `CRAWL_CONTENT_FILTER` (default: `fit`) — crawl4ai `/md` filter: `fit` (readability — clean main content), `raw` (full DOM→markdown), or `bm25` (query-ranked; needs a query). Per-request override via the API.
+- `CRAWL_CONCURRENCY` (default: 5) — max URLs crawled concurrently within one Web Import job (the shared crawl4ai enforces its own browser-pool limits).
+- `CRAWL_MAX_URLS_PER_JOB` (default: 100) — hard cap on URLs per job; **the per-tenant plan lever** (the AaaS operator lowers it via env). 0 = unlimited.
+- `CRAWL_DISCOVER_MAX_LINKS` (default: 200) — cap on candidate links returned by `/api/web-import/discover`.
+
+All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 retries with backoff+jitter, its own circuit breaker (op `crawl` in `/metrics`), and cache-bypass (`c="0"`) per request. Only the synchronous `/md` + `/crawl` endpoints are used (never the addressable async `/crawl/job` API) so nothing is retained or cross-tenant-visible.
+
 ## Efficiency Flags (v-next — default off until bench-validated, see `bench/BASELINE.md`)
 
 - `ENTITY_DEDUP_PREFILTER` (default: false) — Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every Entity node (O(50) vs O(all) per stored entity).
@@ -151,9 +166,11 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 
 - `LOG_FORMAT` (default: `plain`) — `plain` keeps the legacy log format byte-identical; `json` emits one JSON object/line with `request_id` (read from / echoed as `X-Request-ID`, forwarded to cortex-helper).
 - `METRICS_ENABLED` (default: true) — Prometheus metrics at `GET /metrics` (admin-key protected, not routed through the prod nginx). Requires `prometheus-client` (in requirements; older images degrade to 501).
+- `EXPOSE_API_DOCS` (default: `auto`) — interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` enables them in development and **disables them in production** (resolved via `config.docs_enabled`, keyed off `ENVIRONMENT`) so a directly-reachable backend doesn't disclose its full API schema to anonymous callers — the prod nginx routes root paths to the frontend, but the per-tenant container model exposes the backend directly. Set `EXPOSE_API_DOCS=true`/`false` to force either way. Wired into `FastAPI(docs_url/redoc_url/openapi_url)` in `main.py`.
 - `RATE_LIMIT_QPM` (default: 0 = off) + `RATE_LIMIT_BURST` (default: 10) — per-API-key token-bucket guardrail on ask/upload endpoints (429 + `Retry-After`). Billing remains `MAX_QUERIES_PER_MONTH`.
 - `RESEARCHER_WALL_CLOCK_SECONDS` (default: 0 = unlimited) — wall-clock budget for the researcher loop; on expiry the writer synthesizes from what was gathered.
 - `RERANK_TOP_K` (default: 15) — candidates kept/reranked per knowledge_search; lower on remote rerankers to trade recall for latency.
+- `ASK_DEADLINE_SECONDS` (default: 28) — app-level wall-clock deadline for the **non-streaming** `POST /api/ask`. On expiry returns a clean `504` JSON `{detail}` instead of letting the edge proxy (Traefik) cut the silent socket and emit a bare plain-text 500. Keep it just **below** the proxy read timeout (~30s); raise both in lockstep. Does not apply to `/api/ask/stream` (SSE heartbeats keep that alive). `0` = no deadline. (Agentic on non-streaming `/api/ask` is rejected with a `400` pointing to `/api/ask/stream`.)
 - `NEO4J_MAX_POOL_SIZE` (default: 100), `NEO4J_CONNECTION_TIMEOUT` (default: 10), `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` (default: 60) — driver pool tuning.
 - Compose-level: `CORTEX_NEO4J_MEM_LIMIT` (4g), `CORTEX_NEO4J_HEAP_INITIAL/MAX`, `CORTEX_NEO4J_PAGECACHE`, `FRONTEND_MEM_LIMIT` (1g), `stop_grace_period` — every service is memory-capped so one tenant's blowup can't OOM another stack's container. The neo4j caps are deliberately **not** `NEO4J_`-prefixed: Coolify/Dokploy inject every env var into every container, and neo4j's entrypoint parses any `NEO4J_*` var as a config setting (`NEO4J_HEAP_INITIAL` → `HEAP.INITIAL`), which `strict_validation` rejects → neo4j won't boot. Opt-in backups: `docker-compose.backup.yml` overlay (`BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS`, `NEO4J_ENTERPRISE_BACKUP`; see `ops/backup/backup.sh` for the restore runbook).
 
@@ -166,7 +183,7 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 
 ## Agent Configuration
 
-- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 5), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
+- `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
 - `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
 - `MAX_CONVERSATION_HISTORY` (default: 6) — legacy message-count cap; used only when no `conversation_memory` blob is sent
 
@@ -214,6 +231,15 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 ## Secret Encryption
 
 - `ENCRYPTION_KEY` (default: empty = disabled) — comma-separated Fernet keys for at-rest encryption of user-supplied secrets: git connector PATs (Neo4j `GitConnection.pat`) and secret-typed skill config fields (`config.json`). First key encrypts, all keys decrypt (MultiFernet). Ciphertext is `enc:`-prefixed; plaintext values pass through reads, so enabling the key later is safe — an idempotent startup migration encrypts existing plaintext (and re-encrypts rotated-key values with the primary key). Unset → loud startup warning + plaintext storage. Malformed key → startup fails fast. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Rotation: prepend new key (`ENCRYPTION_KEY=<new>,<old>`), restart, then drop the old key.
+
+## Observability (Langfuse)
+
+Optional LLM tracing/cost. All empty = disabled; the same image runs identically traced or untraced. See [`.claude/domain/observability.md`](domain/observability.md) for the instrumentation map.
+
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (default: empty) — a Langfuse **project** key pair (Project Settings → API Keys). Both required to activate.
+- `LANGFUSE_BASE_URL` (default: empty) — Langfuse instance URL, e.g. `https://langfuse.example.com`. The SDK reads this name natively. All three of key/secret/base_url must be set for `Settings.langfuse_tracing_active` to be True; otherwise the OpenAI client factory (`llm_config.make_*_openai_client`) returns the plain, untraced client.
+- `LANGFUSE_TRACING_ENABLED` (default: `true`) — master off-switch; set `false` to disable tracing even when keys are present.
+- `LANGFUSE_SAMPLE_RATE` (default: `1.0`) — 0.0–1.0 trace sampling; lower on high-traffic instances. Passed to the SDK at init (`observability.init_langfuse`).
 
 ## Document Processing
 

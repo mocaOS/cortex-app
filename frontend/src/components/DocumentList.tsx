@@ -13,13 +13,15 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ChevronDown,
   Upload,
+  Globe,
   XCircle,
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Collection } from "@/types";
-import { DocumentCard, DocumentFilters, DocumentBulkActions } from "./documents";
+import { DocumentCard, DocumentFilters, DocumentBulkActions, WebImportModal } from "./documents";
 import { UploadModal } from "./upload";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +106,9 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [isMoving, setIsMoving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showWebImportModal, setShowWebImportModal] = useState(false);
+  const [webCrawlEnabled, setWebCrawlEnabled] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFileEntry[]>([]);
   const [isStartingProcessing, setIsStartingProcessing] = useState(false);
 
@@ -211,6 +216,10 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     if (!isAuthReady) return;
     fetchDocuments();
     fetchCollections();
+    api
+      .getFeatures()
+      .then((f) => setWebCrawlEnabled(f.enable_web_crawl))
+      .catch(() => setWebCrawlEnabled(false));
     const interval = setInterval(fetchDocuments, 5000);
     return () => clearInterval(interval);
   }, [isAuthReady]);
@@ -652,13 +661,47 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
             />
           </div>
         </div>
-        <button
-          onClick={() => setShowUploadModal(true)}
-          className="flex items-center gap-2 px-4 py-3 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors shrink-0"
-        >
-          <Upload className="w-4 h-4" />
-          Upload
-        </button>
+        <div className="flex items-stretch shrink-0">
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-3 bg-accent text-accent-foreground text-sm font-medium hover:bg-accent/90 transition-colors",
+              webCrawlEnabled ? "rounded-l-lg" : "rounded-lg"
+            )}
+          >
+            <Upload className="w-4 h-4" />
+            Upload
+          </button>
+          {webCrawlEnabled && (
+            <div className="relative">
+              <button
+                onClick={() => setShowAddMenu((v) => !v)}
+                aria-label="More import options"
+                className="flex items-center h-full px-2 bg-accent text-accent-foreground rounded-r-lg border-l border-accent-foreground/20 hover:bg-accent/90 transition-colors"
+              >
+                <ChevronDown className={cn("w-4 h-4 transition-transform", showAddMenu && "rotate-180")} />
+              </button>
+              {showAddMenu && (
+                <>
+                  {/* click-away backdrop */}
+                  <div className="fixed inset-0 z-40" onClick={() => setShowAddMenu(false)} />
+                  <div className="absolute right-0 mt-2 w-48 z-50 rounded-lg border border-border bg-card shadow-xl overflow-hidden py-1">
+                    <button
+                      onClick={() => {
+                        setShowAddMenu(false);
+                        setShowWebImportModal(true);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left"
+                    >
+                      <Globe className="w-4 h-4 text-accent" />
+                      Web Import
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Unified toolbar with filters and actions */}
@@ -1002,6 +1045,18 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         onClose={() => setShowUploadModal(false)}
         onFilesSelected={handleFilesSelected}
       />
+
+      {/* Web Import (MDHarvest powered by Crawl4ai) */}
+      {webCrawlEnabled && (
+        <WebImportModal
+          isOpen={showWebImportModal}
+          onClose={() => setShowWebImportModal(false)}
+          onImported={() => {
+            fetchDocuments();
+            fetchCollections();
+          }}
+        />
+      )}
     </div>
   );
 }

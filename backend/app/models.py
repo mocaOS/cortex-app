@@ -354,6 +354,48 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class RunningTaskSummary(BaseModel):
+    """Compact view of an in-flight background task for the instance status report."""
+    task_id: str
+    task_type: str
+    status: str
+    progress_percent: float = 0.0
+    message: str = ""
+    started_at: Optional[str] = None
+
+
+class InstanceStatusResponse(BaseModel):
+    """Operational snapshot used to decide whether an instance is safe to redeploy.
+
+    `safe_to_redeploy` is False whenever destructible work is in flight:
+    documents currently being processed/extracted, running background tasks
+    (held in an in-memory store that a restart would lose), or an active
+    AskAI/research query (a restart kills the stream). `reasons` enumerates
+    each active blocker. Pending documents persist across restarts and resume,
+    so they are reported as informational and do NOT flip the flag.
+    """
+    safe_to_redeploy: bool
+    reasons: List[str] = Field(default_factory=list, description="Active blockers; empty when safe")
+    # Document pipeline state
+    processing_count: int = Field(default=0, description="Documents currently processing/extracting (blocks redeploy)")
+    pending_count: int = Field(default=0, description="Documents queued (informational; resumes after restart)")
+    failed_count: int = Field(default=0, description="Documents in failed state")
+    # Background jobs (in-memory task store)
+    running_task_count: int = Field(default=0, description="Pending/running background tasks (blocks redeploy)")
+    running_tasks: List[RunningTaskSummary] = Field(default_factory=list)
+    # AskAI / research activity
+    active_query_count: int = Field(default=0, description="In-flight AskAI/research queries (blocks redeploy)")
+    last_query_at: Optional[str] = Field(default=None, description="ISO timestamp of the most recent AskAI query")
+    # Last pipeline operations (informational)
+    last_relationship_analysis_at: Optional[str] = None
+    last_community_detection_at: Optional[str] = None
+    last_entity_merge_at: Optional[str] = None
+    # Connectivity / meta
+    neo4j_connected: bool = True
+    version: str
+    checked_at: str = Field(..., description="ISO timestamp when this snapshot was taken")
+
+
 class ReprocessRequest(BaseModel):
     """Request model for reprocessing documents."""
     document_ids: List[str] = Field(..., description="List of document IDs to reprocess")
@@ -411,6 +453,51 @@ class CustomInputResponse(BaseModel):
     message: str
     input_type: CustomInputType
     source: str = Field(default="custom_input", description="Origin of the document")
+
+
+# =============================================================================
+# MDHarvest powered by Crawl4ai — web → markdown import
+# =============================================================================
+
+class WebImportRequest(BaseModel):
+    """Request to harvest one or more URLs into the knowledge base as markdown."""
+    urls: List[str] = Field(..., min_length=1, description="Absolute http(s) URLs to crawl")
+    collection_id: Optional[str] = Field(default=None, description="Collection to add the harvested documents to")
+    content_filter: Optional[str] = Field(default=None, description="crawl4ai filter: 'fit' (readability, default), 'raw', or 'bm25'")
+    query: Optional[str] = Field(default=None, description="Relevance query (only used by the 'bm25' filter)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "urls": ["https://example.com/article", "https://example.com/guide"],
+                "collection_id": "default",
+                "content_filter": "fit"
+            }
+        }
+
+
+class WebImportResponse(BaseModel):
+    """Response when a web-import job is accepted (poll /api/tasks/{task_id})."""
+    task_id: str = Field(..., description="Background task id to poll for progress")
+    accepted_urls: int = Field(..., description="Number of URLs accepted into the job")
+    message: str
+
+
+class WebDiscoverRequest(BaseModel):
+    """Request to discover same-site candidate links on a page."""
+    url: str = Field(..., description="Page URL to scan for same-host links")
+
+
+class WebDiscoverLink(BaseModel):
+    url: str
+    title: str
+
+
+class WebDiscoverResponse(BaseModel):
+    """Discovered candidate links for selective import."""
+    source_url: str
+    domain: str
+    links: List[WebDiscoverLink]
 
 
 # =============================================================================
@@ -1002,13 +1089,6 @@ class SystemConfigResponse(BaseModel):
     
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
-    
-    # Turbo Mode (Compute3)
-    turbo_mode_available: bool = Field(..., description="Whether turbo mode is available")
-    compute3_gpu_type: str = Field(..., description="GPU type for turbo mode")
-    compute3_gpu_count: int = Field(..., description="Number of GPUs for turbo mode")
-    compute3_model: str = Field(..., description="Model for turbo mode")
-    compute3_default_runtime: int = Field(..., description="Default runtime in seconds")
 
     # Agent Skills
     enable_skills: bool = Field(default=False, description="Whether agent skills are enabled")
@@ -1017,6 +1097,9 @@ class SystemConfigResponse(BaseModel):
 
     # Git Integration
     enable_git_integration: bool = Field(default=False, description="Whether the git repo connector is enabled")
+
+    # MDHarvest powered by Crawl4ai (web → markdown)
+    enable_web_crawl: bool = Field(default=False, description="Whether web→markdown harvesting (Web Import) is enabled")
 
     class Config:
         json_schema_extra = {
@@ -1056,11 +1139,6 @@ class SystemConfigResponse(BaseModel):
                 "default_collection": "default",
                 "stream_reasoning_steps": True,
                 "show_retrieval_stats": True,
-                "prompt_security": True,
-                "turbo_mode_available": False,
-                "compute3_gpu_type": "h100",
-                "compute3_gpu_count": 4,
-                "compute3_model": "MiniMaxAI/MiniMax-M2.1",
-                "compute3_default_runtime": 3600
+                "prompt_security": True
             }
         }

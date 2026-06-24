@@ -17,7 +17,13 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
-from app.services.llm_config import get_llm_config, get_extraction_llm_config, get_relationship_llm_config, is_turbo_mode_active
+from app.services.llm_config import (
+    get_llm_config,
+    get_extraction_llm_config,
+    get_relationship_llm_config,
+    make_openai_client,
+    make_async_openai_client,
+)
 from app.services.reasoning_config import (
     ReasoningMode,
     safe_chat_completion,
@@ -357,7 +363,7 @@ class GraphExtractor:
         self._async_extraction_client: Optional[AsyncOpenAI] = None
         self._async_embed_client: Optional[AsyncOpenAI] = None
         self._async_relationship_client: Optional[AsyncOpenAI] = None
-        self._last_config_hash: Optional[str] = None  # Track config changes for turbo mode
+        self._last_config_hash: Optional[str] = None  # Track LLM config changes
         self._last_extraction_config_hash: Optional[str] = None
         self._last_relationship_config_hash: Optional[str] = None
         self.entity_types = DEFAULT_ENTITY_TYPES
@@ -367,7 +373,7 @@ class GraphExtractor:
             logger.warning("OpenAI API key not configured - graph extraction will be disabled")
     
     def _get_config_hash(self) -> str:
-        """Get a hash of current LLM config to detect changes (e.g., turbo mode toggle)."""
+        """Get a hash of current LLM config to detect changes."""
         config = get_llm_config()
         return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
 
@@ -377,10 +383,10 @@ class GraphExtractor:
         return f"{config.base_url}:{config.api_key[:8] if config.api_key else 'none'}"
 
     def _reset_clients_if_config_changed(self):
-        """Reset clients if the LLM configuration has changed (e.g., turbo mode toggled)."""
+        """Reset clients if the LLM configuration has changed."""
         current_hash = self._get_config_hash()
         if self._last_config_hash and self._last_config_hash != current_hash:
-            logger.info("LLM configuration changed (turbo mode toggle), recreating clients")
+            logger.info("LLM configuration changed, recreating clients")
             self._client = None
             self._async_client = None
         self._last_config_hash = current_hash
@@ -411,40 +417,36 @@ class GraphExtractor:
     def client(self) -> Optional[OpenAI]:
         """
         Lazy initialization of synchronous OpenAI client.
-        Uses turbo mode URL when active, otherwise falls back to default settings.
+        Uses the default OpenAI-compatible settings.
         """
         self._reset_clients_if_config_changed()
         
         config = get_llm_config()
         if self._client is None and config.api_key:
-            self._client = OpenAI(
+            self._client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
                 max_retries=2,
             )
-            if config.is_turbo:
-                logger.info(f"Graph extractor using Turbo Mode: {config.base_url}")
         return self._client
     
     @property
     def async_client(self) -> Optional[AsyncOpenAI]:
         """
         Lazy initialization of async OpenAI client for concurrent processing.
-        Uses turbo mode URL when active, otherwise falls back to default settings.
+        Uses the default OpenAI-compatible settings.
         """
         self._reset_clients_if_config_changed()
         
         config = get_llm_config()
         if self._async_client is None and config.api_key:
-            self._async_client = AsyncOpenAI(
+            self._async_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=600.0,
                 max_retries=2,
             )
-            if config.is_turbo:
-                logger.info(f"Async graph extractor using Turbo Mode: {config.base_url}")
         return self._async_client
     
     @property
@@ -457,16 +459,13 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._extraction_client is None and config.api_key:
-            self._extraction_client = OpenAI(
+            self._extraction_client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
                 max_retries=2,
             )
-            if config.is_turbo:
-                logger.info(f"Extraction client using Turbo Mode: {config.base_url}")
-            else:
-                logger.info(f"Extraction client initialized: {config.base_url} / {config.model}")
+            logger.info(f"Extraction client initialized: {config.base_url} / {config.model}")
         return self._extraction_client
 
     @property
@@ -479,14 +478,12 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._async_extraction_client is None and config.api_key:
-            self._async_extraction_client = AsyncOpenAI(
+            self._async_extraction_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
                 max_retries=2,
             )
-            if config.is_turbo:
-                logger.info(f"Async extraction client using Turbo Mode: {config.base_url}")
         return self._async_extraction_client
 
     @property
@@ -506,16 +503,13 @@ class GraphExtractor:
 
         config = get_relationship_llm_config()
         if self._async_relationship_client is None and config.api_key:
-            self._async_relationship_client = AsyncOpenAI(
+            self._async_relationship_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
                 timeout=120.0,
                 max_retries=2,
             )
-            if config.is_turbo:
-                logger.info(f"Async relationship client using Turbo Mode: {config.base_url}")
-            else:
-                logger.info(f"Relationship client initialized: {config.base_url} / {config.model}")
+            logger.info(f"Relationship client initialized: {config.base_url} / {config.model}")
         return self._async_relationship_client
 
     @property
@@ -526,7 +520,7 @@ class GraphExtractor:
 
     @property
     def current_model(self) -> str:
-        """Get the current model to use (turbo model if active, otherwise default)."""
+        """Get the current model to use."""
         config = get_llm_config()
         return config.model
 
@@ -586,7 +580,7 @@ class GraphExtractor:
     def _extract_response_content(self, response) -> Optional[str]:
         """Extract usable text content from an LLM response.
 
-        Handles reasoning models (MiniMax-M2.1, DeepSeek-R1, etc.) that may
+        Handles reasoning models (MiniMax-M3, DeepSeek-R1, etc.) that may
         put output in ``reasoning_content`` or wrap it in ``<think>`` tags
         instead of using the standard ``content`` field.
         """
@@ -1876,9 +1870,7 @@ Respond with ONLY the community name, nothing else."""
         text = f"{entity_name} ({entity_type}): {description}" if description else f"{entity_name} ({entity_type})"
 
         try:
-            from openai import OpenAI
-
-            client = OpenAI(
+            client = make_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
             )
@@ -1906,7 +1898,7 @@ Respond with ONLY the community name, nothing else."""
 
         # Lazy-init dedicated async embedding client
         if self._async_embed_client is None:
-            self._async_embed_client = AsyncOpenAI(
+            self._async_embed_client = make_async_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
                 timeout=120.0,
@@ -1951,7 +1943,7 @@ Respond with ONLY the community name, nothing else."""
             return [None] * len(entities)
 
         if self._async_embed_client is None:
-            self._async_embed_client = AsyncOpenAI(
+            self._async_embed_client = make_async_openai_client(
                 api_key=self.settings.embed_api_key,
                 base_url=self.settings.embed_api_base,
                 timeout=120.0,

@@ -20,7 +20,6 @@ body:
         - Search & RAG
         - Ask AI / Chat Experience
         - Collections
-        - Turbo Mode / GPU Inference
         - Admin & Auth
         - Vision / OCR
         - Graph Visualization

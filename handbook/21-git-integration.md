@@ -1,4 +1,4 @@
-# Chapter 22: Git Integration
+# Chapter 21: Git Integration
 
 Git Integration connects Cortex directly to your code and documentation repositories on **GitHub, GitLab, and Gitea** (including self-hosted instances). A connected repository becomes a living, bidirectional interface: Cortex ingests the repo's files and wiki into the knowledge graph so they're searchable and queryable, and — when you allow it — the research agent can act on the repository by opening pull requests.
 
@@ -127,5 +127,5 @@ Expand any connection and click **Edit** to change its access level, branch, aut
 - [Chapter 7: Document Management](07-documents.md) — how ingested content is managed
 - [Chapter 8: The Knowledge Graph](08-knowledge-graph.md) — re-running extraction after a sync
 - [Chapter 10: Ask AI](10-ask-ai.md) — querying ingested repo content and the agent
-- [Chapter 18: Administration](18-administration.md) — admin settings overview
-- [Chapter 19: Agent Skills](19-skills.md) — the other way to extend the agent
+- [Chapter 17: Administration](17-administration.md) — admin settings overview
+- [Chapter 18: Agent Skills](18-skills.md) — the other way to extend the agent

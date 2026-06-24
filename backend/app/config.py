@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # hardening at startup (see _enforce_production_secrets).
     environment: str = Field(default="development")
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). "auto" (default)
+    # enables them in development and disables them in production to avoid
+    # unauthenticated API-schema disclosure on a directly-exposed backend.
+    # Set EXPOSE_API_DOCS=true/false to force either way.
+    expose_api_docs: str = Field(default="auto")
+
     # Comma-separated list of allowed CORS origins (e.g.
     # "https://app.example.com,https://admin.example.com"). The default "*"
     # allows any origin but, per the CORS spec, only without credentials —
@@ -60,7 +66,7 @@ class Settings(BaseSettings):
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = Field(default="")
     openai_api_base: str = Field(default="https://api.openai.com/v1")
-    openai_model: str = Field(default="openai/minimax-m21")
+    openai_model: str = Field(default="openai/minimax-m3")
     openai_model_fast_mode: str = Field(
         default=""
     )  # Model for "Fast Mode" in Ask AI (defaults to openai_model if empty)
@@ -203,12 +209,30 @@ class Settings(BaseSettings):
         default=""
     )  # API key for relationship extraction model (defaults to extraction API key if empty)
 
+    # Observability (Langfuse) — optional. When public+secret+base_url are all
+    # set, every LLM/embedding/vision call is traced and costed in Langfuse and
+    # agentic flows are grouped into one trace per request. Leave empty to run
+    # the exact same image untraced (no keys → tracing_active is False). In
+    # multi-tenant deployments these are injected per-tenant by the control
+    # plane. See .claude/domain/observability.md.
+    langfuse_public_key: str = Field(default="")  # LANGFUSE_PUBLIC_KEY
+    langfuse_secret_key: str = Field(default="")  # LANGFUSE_SECRET_KEY
+    langfuse_base_url: str = Field(default="")  # LANGFUSE_BASE_URL e.g. https://langfuse.example.com
+    langfuse_tracing_enabled: bool = Field(default=True)  # master off-switch even when keys are set
+    langfuse_sample_rate: float = Field(default=1.0)  # 0.0–1.0; dial down on hot tenants
+
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
     # Defaults: extraction/relationship/vision OFF (reasoning hurts structured
-    # extraction and image-description tasks); default mode AUTO (don't inject
-    # anything for the general Q&A path).
-    default_reasoning_mode: str = Field(default="auto")
+    # extraction and image-description tasks). The chat/answer path (speed-mode
+    # researcher loop + writer) also defaults OFF: on reasoning-capable models
+    # (esp. Venice) hidden chain-of-thought streams in a separate
+    # `reasoning_content` channel and adds 3–14s before the first answer token —
+    # often blowing the request budget into empty/timeout answers. OFF (Venice
+    # `disable_thinking`) cuts time-to-first-token to <1s. Deep-research
+    # (quality) mode is unaffected and keeps reasoning. Set to `auto` to restore
+    # provider-default thinking on chat.
+    default_reasoning_mode: str = Field(default="off")
     extraction_reasoning_mode: str = Field(default="off")
     relationship_reasoning_mode: str = Field(default="off")
     vision_reasoning_mode: str = Field(default="off")
@@ -332,6 +356,56 @@ class Settings(BaseSettings):
     )  # Identifies this stack to the shared helper (X-Tenant-ID header, used
     #   for fair queuing). Empty = container hostname.
 
+    # ==========================================================================
+    # MDHarvest powered by Crawl4ai — web → markdown harvesting.
+    # cortex-app NEVER embeds a browser/crawler stack; it speaks crawl4ai's
+    # native REST API (/md, /crawl) over HTTP. One code path, two deployments:
+    #   - self-host : CRAWL_SERVICE_URL -> the user's own crawl4ai (:11235)
+    #   - cloud     : CRAWL_SERVICE_URL -> the shared per-host crawl4ai (set by
+    #                 the AaaS operator; one container per server, many tenants)
+    # Empty URL => feature OFF (no in-process fallback — that browser stack is
+    # exactly the per-tenant footprint we refuse to pay). See cortex-helper.
+    # ==========================================================================
+    enable_web_crawl: bool = Field(
+        default=False
+    )  # Master switch for web→markdown harvesting (Web Import UI + endpoints).
+    #   Auto-treated as enabled by the UI only when crawl_service_url is also set.
+    crawl_service_url: str = Field(
+        default=""
+    )  # Base URL of the crawl4ai service, e.g. http://crawl4ai:11235 (self-host)
+    #   or http://<host>:11235 / the shared per-server instance (cloud). Empty
+    #   = feature disabled.
+    crawl_service_token: str = Field(
+        default=""
+    )  # Bearer token for crawl4ai (Authorization: Bearer <token>); must match
+    #   crawl4ai's CRAWL4AI_API_TOKEN / security.api_token. Required in practice
+    #   for crawl4ai >= 0.9.0: with no token set, crawl4ai serves its API only on
+    #   127.0.0.1 (unreachable from another container), so a cross-container or
+    #   shared deployment MUST set this. Empty only works if crawl4ai itself runs
+    #   tokenless (older versions, or same-host loopback). A startup WARN fires
+    #   when web crawl is enabled with a URL but no token (see main.py lifespan).
+    crawl_http_timeout: int = Field(
+        default=60
+    )  # Per-request timeout (s) for crawl4ai calls. Browser rendering of a slow
+    #   page can take tens of seconds; keep this generous.
+    crawl_content_filter: str = Field(
+        default="fit"
+    )  # crawl4ai /md filter strategy: "fit" (readability — clean main content,
+    #   the Trafilatura replacement), "raw" (full DOM→markdown), or "bm25"
+    #   (query-relevance ranked; needs a query). Default fit for KB ingestion.
+    crawl_concurrency: int = Field(
+        default=5
+    )  # Max URLs crawled concurrently within one Web Import job. The shared
+    #   crawl4ai enforces its own global browser-pool limits; this just bounds
+    #   how hard a single tenant pushes it.
+    crawl_max_urls_per_job: int = Field(
+        default=100
+    )  # Hard cap on URLs accepted per Web Import job (plan-limit lever — the
+    #   AaaS operator lowers this per tenant via env). 0 = unlimited.
+    crawl_discover_max_links: int = Field(
+        default=200
+    )  # Cap on candidate links returned by /api/web-import/discover.
+
     enable_hybrid_search: bool = Field(
         default=True
     )  # Enable hybrid (vector + keyword) search
@@ -378,8 +452,12 @@ class Settings(BaseSettings):
         default=True
     )  # Use agent pipeline for standard chat mode (required for skills in chat)
     researcher_max_iterations_speed: int = Field(
-        default=5
-    )  # Max agent loop iterations in speed/chat mode
+        default=3
+    )  # Max agent loop iterations in speed/chat mode. Kept low so chat stays
+    #   snappy: with reasoning suppressed each call is sub-second, so the agent
+    #   loop itself is the dominant latency. 3 rounds leave room for a skill
+    #   flow (activate → call → answer) without truncating it, while plain
+    #   Q&A still finishes in one search + done. Deep research uses the quality cap.
     researcher_max_iterations_quality: int = Field(
         default=8
     )  # Max agent loop iterations in quality/research mode
@@ -398,6 +476,15 @@ class Settings(BaseSettings):
     )  # Candidates kept per knowledge_search after pooling the parallel
     #   queries; also the rerank input size. Lower it on remote rerankers
     #   (RERANKER_SERVICE_URL) to trade recall for latency.
+    ask_deadline_seconds: int = Field(
+        default=28
+    )  # Hard wall-clock deadline for the non-streaming POST /api/ask handler.
+    #   On expiry the request returns a clean 504 JSON {detail} instead of the
+    #   edge proxy (Traefik) cutting the silent socket and emitting a bare
+    #   plain-text 500. Keep this just BELOW the edge proxy read timeout
+    #   (~30s by default); raise it in lockstep when the Traefik timeout is
+    #   raised. Does NOT apply to /api/ask/stream — SSE heartbeats keep that
+    #   connection alive. 0 = no app-level deadline.
 
     # ==========================================================================
     # Agent Skills (agentskills.io standard)
@@ -601,30 +688,6 @@ class Settings(BaseSettings):
     # Empty = encryption disabled (plaintext fallback). Generate a key with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-    # ==========================================================================
-    # Compute3 Turbo Mode Configuration
-    # ==========================================================================
-    compute3_api_key: str = Field(default="")  # Compute3 API key for turbo mode
-    compute3_api_base: str = Field(
-        default="https://api.compute3.ai"
-    )  # Compute3 API base URL
-    compute3_gpu_type: str = Field(default="h100")  # GPU type for turbo mode jobs
-    compute3_gpu_count: int = Field(default=4)  # Number of GPUs for turbo mode
-    compute3_model: str = Field(
-        default="MiniMaxAI/MiniMax-M2.1"
-    )  # Model to run on Compute3 (HuggingFace model ID)
-    compute3_docker_image: str = Field(
-        default="vllm/vllm-openai:nightly"
-    )  # Docker image for vLLM (nightly required for MiniMax-M2.1)
-    compute3_default_runtime: int = Field(
-        default=3600
-    )  # Default job runtime in seconds (1 hour)
-
-    @property
-    def turbo_mode_available(self) -> bool:
-        """Check if turbo mode is available (Compute3 API key is set)."""
-        return bool(self.compute3_api_key)
-
     @property
     def vision_model_available(self) -> bool:
         """Check if a vision model is configured."""
@@ -645,6 +708,21 @@ class Settings(BaseSettings):
     def fast_mode_model(self) -> str:
         """Get the model to use for Fast Mode in Ask AI."""
         return self.openai_model_fast_mode or self.openai_model
+
+    @property
+    def langfuse_tracing_active(self) -> bool:
+        """True when Langfuse tracing should be wired up.
+
+        Requires all three credentials AND the master switch. When False the
+        OpenAI client factory returns the plain (untraced) client, so the same
+        image runs identically with or without observability configured.
+        """
+        return bool(
+            self.langfuse_public_key
+            and self.langfuse_secret_key
+            and self.langfuse_base_url
+            and self.langfuse_tracing_enabled
+        )
 
     @property
     def extraction_model(self) -> str:
@@ -760,6 +838,21 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """True when running with ENVIRONMENT=production (or "prod")."""
         return self.environment.strip().lower() in ("production", "prod")
+
+    @property
+    def docs_enabled(self) -> bool:
+        """Whether to serve interactive API docs (/docs, /redoc, /openapi.json).
+
+        Default "auto": on in development, off in production (avoids exposing the
+        full API schema unauthenticated on a directly-reachable backend). An
+        explicit EXPOSE_API_DOCS=true/false overrides the auto behaviour.
+        """
+        raw = self.expose_api_docs.strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+        if raw in ("0", "false", "no", "off"):
+            return False
+        return not self.is_production
 
     @property
     def cors_origins_list(self) -> list[str]:

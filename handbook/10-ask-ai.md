@@ -14,6 +14,19 @@ The Library provides two AI-powered question-answering modes, both accessible th
 | **Latency** | 3-8 seconds | 15-60 seconds |
 | **Best for** | Factual lookups, follow-up questions | Comparisons, analysis, multi-topic questions |
 
+### Why Chat Is Snappy
+
+On the chat path, hidden model "thinking" is suppressed by default
+(`DEFAULT_REASONING_MODE=off`). Reasoning-capable models otherwise stream
+chain-of-thought in a side channel the user never sees — adding seconds before
+the first answer token and, across the agent loop, sometimes exhausting the
+budget into an empty answer. With it off, the first token arrives in well under
+a second on a capable model, and the chat writer is tuned to lead with the
+answer and stay concise. Deep Research (quality) mode is unaffected — it keeps
+reasoning for thorough, multi-hop work. To restore provider-default thinking on
+chat (e.g. on OpenAI models that disable parallel tool calls at low reasoning),
+set `DEFAULT_REASONING_MODE=auto`. See Chapter 4 and Chapter 22.
+
 ## How the Pipeline Works
 
 ### Phase 1: Researcher Agent
@@ -239,7 +252,7 @@ ENABLE_AGENT_RESEARCH=true       # Agent for Deep Research
 ENABLE_AGENT_CHAT=true            # Agent for Chat (enables skills in chat mode)
 
 # Iteration limits
-RESEARCHER_MAX_ITERATIONS_SPEED=2    # Chat: 2 iterations
+RESEARCHER_MAX_ITERATIONS_SPEED=3    # Chat: 3 iterations
 RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Research: up to 8 iterations
 
 # Writer output limits
@@ -253,8 +266,9 @@ VECTOR_WEIGHT=0.5
 KEYWORD_WEIGHT=0.3
 GRAPH_WEIGHT=0.2
 
-# Reasoning visibility
-STREAM_REASONING_STEPS=true      # Show thinking in stream
+# Reasoning control + visibility
+DEFAULT_REASONING_MODE=off       # Chat: suppress hidden thinking → snappy, no empty answers (deep-research stays AUTO)
+STREAM_REASONING_STEPS=true      # Show researcher steps in stream
 SHOW_RETRIEVAL_STATS=true        # Show retrieval stats
 
 # Security

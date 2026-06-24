@@ -19,9 +19,6 @@ import type {
   GraphData,
   EntityDetails,
   EntityRelationshipsResponse,
-  TurboStatus,
-  TurboJob,
-  TurboBalance,
   CustomInputCreate,
   CustomInputResponse,
   CustomInputItem,
@@ -43,6 +40,10 @@ import type {
   SkillInfo,
   SkillDetail,
   SkillRegistryItem,
+  FeatureFlags,
+  WebImportRequest,
+  WebImportResponse,
+  WebDiscoverResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -966,102 +967,6 @@ class ApiClient {
       }
     }
   }
-  // ===========================================================================
-  // Turbo Mode API (Compute3 GPU Acceleration)
-  // ===========================================================================
-
-  /**
-   * Get Turbo Mode status.
-   * Returns whether Turbo Mode is available (API key configured) and active (GPU job running).
-   */
-  async getTurboStatus(): Promise<TurboStatus> {
-    return this.request<TurboStatus>("/api/turbo/status");
-  }
-
-  /**
-   * Get Compute3 account balance.
-   */
-  async getTurboBalance(): Promise<TurboBalance> {
-    return this.request<TurboBalance>("/api/turbo/balance");
-  }
-
-  /**
-   * Start Turbo Mode by launching a GPU job on Compute3.
-   * 
-   * @param options - Optional configuration for the GPU job
-   */
-  async startTurboMode(options?: {
-    runtime?: number;
-    gpuType?: string;
-    gpuCount?: number;
-  }): Promise<{ message: string; job: TurboJob }> {
-    const params = new URLSearchParams();
-    if (options?.runtime) params.set("runtime", String(options.runtime));
-    if (options?.gpuType) params.set("gpu_type", options.gpuType);
-    if (options?.gpuCount) params.set("gpu_count", String(options.gpuCount));
-    
-    const queryString = params.toString();
-    const url = `/api/turbo/start${queryString ? `?${queryString}` : ""}`;
-    
-    return this.request<{ message: string; job: TurboJob }>(url, { method: "POST" });
-  }
-
-  /**
-   * Stop Turbo Mode by cancelling the active GPU job.
-   */
-  async stopTurboMode(jobId?: string): Promise<{ message: string; job_id?: string }> {
-    const params = new URLSearchParams();
-    if (jobId) params.set("job_id", jobId);
-    
-    const queryString = params.toString();
-    const url = `/api/turbo/stop${queryString ? `?${queryString}` : ""}`;
-    
-    return this.request<{ message: string; job_id?: string }>(url, { method: "POST" });
-  }
-
-  /**
-   * Extend Turbo Mode runtime.
-   * 
-   * @param additionalSeconds - Additional runtime in seconds
-   * @param jobId - Optional specific job ID to extend
-   */
-  async extendTurboMode(additionalSeconds: number, jobId?: string): Promise<{ message: string; job: TurboJob }> {
-    const params = new URLSearchParams();
-    params.set("additional_seconds", String(additionalSeconds));
-    if (jobId) params.set("job_id", jobId);
-    
-    return this.request<{ message: string; job: TurboJob }>(
-      `/api/turbo/extend?${params}`,
-      { method: "POST" }
-    );
-  }
-
-  /**
-   * List all Turbo Mode jobs (current and historical).
-   */
-  async listTurboJobs(state?: string): Promise<{ jobs: TurboJob[]; total: number }> {
-    const params = new URLSearchParams();
-    if (state) params.set("state", state);
-    
-    const queryString = params.toString();
-    const url = `/api/turbo/jobs${queryString ? `?${queryString}` : ""}`;
-    
-    return this.request<{ jobs: TurboJob[]; total: number }>(url);
-  }
-
-  /**
-   * Get details of a specific Turbo Mode job.
-   */
-  async getTurboJob(jobId: string): Promise<TurboJob> {
-    return this.request<TurboJob>(`/api/turbo/jobs/${jobId}`);
-  }
-
-  /**
-   * Get logs from a Turbo Mode job.
-   */
-  async getTurboJobLogs(jobId: string): Promise<{ job_id: string; logs: string }> {
-    return this.request<{ job_id: string; logs: string }>(`/api/turbo/jobs/${jobId}/logs`);
-  }
 
   // ===========================================================================
   // Admin API Key Management
@@ -1178,6 +1083,48 @@ class ApiClient {
    */
   async getSystemConfig(): Promise<SystemConfig> {
     return this.request<SystemConfig>("/api/admin/config");
+  }
+
+  // ===========================================================================
+  // Feature Flags
+  // ===========================================================================
+
+  /**
+   * Get enabled feature flags (read permission).
+   *
+   * Returns which optional features are enabled for this instance.
+   * `enable_web_crawl` is already AND-ed with "crawl service configured".
+   */
+  async getFeatures(): Promise<FeatureFlags> {
+    return this.request<FeatureFlags>("/api/features");
+  }
+
+  // ===========================================================================
+  // Web Import (MDHarvest powered by Crawl4ai)
+  // ===========================================================================
+
+  /**
+   * Import one or more web pages as markdown documents.
+   *
+   * Returns a task id to poll via `pollTask`. The backend caps the number of
+   * URLs per job and may reject with a 400 (invalid/too many URLs) or 403
+   * (plan limits) — surface the thrown error text to the user.
+   */
+  async webImport(req: WebImportRequest): Promise<WebImportResponse> {
+    return this.request<WebImportResponse>("/api/web-import", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  /**
+   * Discover crawlable links on a given page (one level deep).
+   */
+  async webDiscover(url: string): Promise<WebDiscoverResponse> {
+    return this.request<WebDiscoverResponse>("/api/web-import/discover", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
   }
 
   // ===========================================================================

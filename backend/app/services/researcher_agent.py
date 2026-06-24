@@ -24,7 +24,7 @@ from typing import AsyncGenerator, Literal, Optional, List
 from dataclasses import dataclass, field
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI  # used in type annotations; clients built via factory
 
 from app.models import ConversationMessage, GraphContext
 from app.services.research_prompts import (
@@ -37,9 +37,25 @@ from app.services.research_prompts import (
     build_skill_catalog_block,
     build_activated_skills_block,
 )
-from app.services.reasoning_config import apply_cache_control
+from app.services.reasoning_config import (
+    apply_cache_control,
+    safe_chat_completion,
+    ReasoningMode,
+)
+
+
+def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
+    """Reasoning level for the chat/answer LLM calls.
+
+    Speed/chat → DEFAULT_REASONING_MODE (default OFF → Venice disable_thinking,
+    snappy first token). Deep-research (quality) → AUTO (provider default;
+    hidden reasoning preserved). See config.default_reasoning_mode.
+    """
+    if mode == "speed":
+        return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
+    return ReasoningMode.AUTO
 from app.services.prompt_security import get_anti_injection_instruction
-from app.services.llm_config import build_chat_params
+from app.services.llm_config import build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services.context_curator import (
     build_context,
     clamp_memory_blob,
@@ -489,8 +505,12 @@ async def _run_researcher_loop(
             )
 
         try:
-            response = await client.chat.completions.create(
+            response = await safe_chat_completion(
+                client.chat.completions.create,
+                base_url=llm_config.base_url,
                 model=llm_config.model,
+                reasoning_mode=_chat_reasoning_mode(mode, settings),
+                overrides=settings.parsed_reasoning_overrides,
                 messages=call_messages,
                 tools=tools,
                 tool_choice="auto",
@@ -693,8 +713,12 @@ async def _run_researcher_loop(
                 query = args.get("query", "")
                 if query and neo4j_service:
                     try:
-                        communities = neo4j_service.search_communities_by_content(
-                            query, limit=3
+                        # Sync neo4j driver — offload so it doesn't block the
+                        # event loop and starve other in-flight requests.
+                        communities = await asyncio.to_thread(
+                            neo4j_service.search_communities_by_content,
+                            query,
+                            limit=3,
                         )
                     except Exception as e:
                         logger.warning(f"Community search failed: {e}")
@@ -731,7 +755,11 @@ async def _run_researcher_loop(
                 names = args.get("names", [])
                 if names and neo4j_service:
                     try:
-                        entities = neo4j_service.find_entities_by_name(names[:5])
+                        # Sync neo4j driver — offload so it doesn't block the
+                        # event loop and starve other in-flight requests.
+                        entities = await asyncio.to_thread(
+                            neo4j_service.find_entities_by_name, names[:5]
+                        )
                     except Exception as e:
                         logger.warning(f"Entity lookup failed: {e}")
                         entities = []
@@ -1253,7 +1281,7 @@ async def run_research_pipeline(
         else settings.writer_max_tokens_quality
     )
 
-    client = AsyncOpenAI(
+    client = make_async_openai_client(
         api_key=llm_config.api_key,
         base_url=llm_config.base_url,
     )
@@ -1442,10 +1470,18 @@ async def run_research_pipeline(
     writer_messages.append({"role": "user", "content": writer_user})
 
     try:
-        stream = await client.chat.completions.create(
+        # Writer composes the final answer from already-gathered context — it
+        # never needs hidden reasoning, so suppress it for a snappy first token
+        # (mode-aware: quality stays AUTO). See _chat_reasoning_mode.
+        stream = await safe_chat_completion(
+            client.chat.completions.create,
+            base_url=llm_config.base_url,
             model=llm_config.model,
+            reasoning_mode=_chat_reasoning_mode(mode, settings),
+            overrides=settings.parsed_reasoning_overrides,
             messages=writer_messages,
             stream=True,
+            **stream_usage_kwargs(),
             **build_chat_params(
                 llm_config.model, temperature=0.3, max_tokens=writer_max_tokens
             ),

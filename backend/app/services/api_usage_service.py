@@ -57,9 +57,6 @@ ENDPOINT_CATEGORIES = {
     # Admin endpoints
     "/api/admin": "admin",
     "/api/stats": "stats",
-    
-    # Turbo mode
-    "/api/turbo": "turbo",
 }
 
 
@@ -77,10 +74,13 @@ def categorize_endpoint(path: str) -> str:
     if path in ENDPOINT_CATEGORIES:
         return ENDPOINT_CATEGORIES[path]
     
-    # Check for prefix matches
-    for prefix, category in ENDPOINT_CATEGORIES.items():
+    # Check for prefix matches, most-specific (longest) prefix first. Dict order
+    # alone is unsafe: "/api/custom-input" (upload) is a string prefix of
+    # "/api/custom-inputs/{id}" (documents), so iterating in insertion order
+    # would mislabel the latter. Longest-prefix-wins resolves the collision.
+    for prefix in sorted(ENDPOINT_CATEGORIES, key=len, reverse=True):
         if path.startswith(prefix):
-            return category
+            return ENDPOINT_CATEGORIES[prefix]
     
     return "other"
 

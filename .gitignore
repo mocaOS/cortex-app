@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.qa-venv/
 
 # Build outputs
 .next/
@@ -69,6 +70,8 @@ bench/backups/*
 !bench/backups/.gitkeep
 bench/models.yaml
 bench/combos.yaml
+bench/qa_models.yaml
+bench/_probe_thinking.py
 bench/__pycache__/
 
 # Skills *.zip

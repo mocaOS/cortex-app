@@ -302,12 +302,12 @@ def test_recommended_minimal_setup_inherits_everything(monkeypatch):
         "RELATIONSHIP_EXTRACTION_MODEL", "VISION_MODEL",
     ):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("OPENAI_MODEL", "MiniMaxAI/MiniMax-M2.7")
+    monkeypatch.setenv("OPENAI_MODEL", "MiniMaxAI/MiniMax-M3")
     monkeypatch.setenv("GRAPH_EXTRACTION_MODEL", "qwen/qwen3-7-27b")
     s = _fresh_settings()
 
     # Models honor user's explicit values
-    assert s.openai_model == "MiniMaxAI/MiniMax-M2.7"
+    assert s.openai_model == "MiniMaxAI/MiniMax-M3"
     assert s.extraction_model == "qwen/qwen3-7-27b"
     # Relationship + vision inherit the extraction model (string fallback)
     assert s.rel_extraction_model == "qwen/qwen3-7-27b"

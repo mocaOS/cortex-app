@@ -1,4 +1,4 @@
-# Chapter 17: Integration Patterns
+# Chapter 16: Integration Patterns
 
 This chapter provides complete code examples for integrating the Library into your applications and workflows.
 

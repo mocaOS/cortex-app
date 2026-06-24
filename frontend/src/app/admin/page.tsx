@@ -17,7 +17,6 @@ import {
   Search,
   Network,
   Shield,
-  Zap,
   Eye,
   Check,
   X,
@@ -135,7 +134,7 @@ function ConfigSection({
 }
 
 // Config section IDs for expand/collapse tracking
-type ConfigSectionId = "llm" | "documents" | "search" | "graph" | "features" | "turbo";
+type ConfigSectionId = "llm" | "documents" | "search" | "graph" | "features";
 
 export default function AdminPage() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -160,11 +159,8 @@ export default function AdminPage() {
     });
   };
 
-  const allSectionIds: ConfigSectionId[] = ["llm", "documents", "search", "graph", "features", "turbo"];
-  const visibleSectionIds = allSectionIds.filter(id => {
-    if (id === "turbo" && !config?.turbo_mode_available) return false;
-    return true;
-  });
+  const allSectionIds: ConfigSectionId[] = ["llm", "documents", "search", "graph", "features"];
+  const visibleSectionIds = allSectionIds;
   const allExpanded = visibleSectionIds.every(id => openSections.has(id));
 
   const toggleAllSections = () => {
@@ -463,7 +459,7 @@ export default function AdminPage() {
                     {/* Primary Model */}
                     <div className="mb-4">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M2.7, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M3, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
                       <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
                       <ConfigItem label="API Base" value={config.openai_api_base} tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.openai_max_context.toLocaleString()} tooltip="Input context budget for the primary model. Floor of the context-budget fallback chain — sub-tier *_MAX_CONTEXT knobs inherit from this when set to 0 (OPENAI_MAX_CONTEXT)" />
@@ -565,16 +561,6 @@ export default function AdminPage() {
                     <ConfigItem label="Show Retrieval Stats" value={config.show_retrieval_stats} type="boolean" />
                     <ConfigItem label="Prompt Security" value={config.prompt_security} type="boolean" />
                   </ConfigSection>
-
-                  {/* Turbo Mode - only show if available */}
-                  {config.turbo_mode_available && (
-                    <ConfigSection title="Turbo Mode (GPU)" icon={Zap} isOpen={openSections.has("turbo")} onToggle={() => toggleSection("turbo")}>
-                      <ConfigItem label="GPU Type" value={config.compute3_gpu_type} />
-                      <ConfigItem label="GPU Count" value={config.compute3_gpu_count} />
-                      <ConfigItem label="Model" value={config.compute3_model} />
-                      <ConfigItem label="Default Runtime" value={`${Math.round(config.compute3_default_runtime / 60)} min`} />
-                    </ConfigSection>
-                  )}
 
                 </div>
               ) : null}

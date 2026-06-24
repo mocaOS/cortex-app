@@ -11,7 +11,7 @@ The Library's web interface is built with Next.js 15 and React 19, featuring a d
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Header                                                          │
-│  [Logo]              [Manage] [Explore]          [Turbo] [⚙]   │
+│  [Logo]              [Manage] [Explore]                 [⚙]   │
 ├─────────────────────────────────────────────────────────────────┤
 │  SubMenu (contextual tabs)                                       │
 │  [Documents] [Knowledge Graph] [Deduplicate] [Collections] [Add] │
@@ -31,7 +31,6 @@ The Library's web interface is built with Next.js 15 and React 19, featuring a d
 The sticky top navigation bar contains:
 - **Logo** (left) — Links to the Documents page. Customizable via `NEXT_PUBLIC_LOGO_URL`.
 - **Primary Navigation** (center) — Glass morphism pills for Manage and Explore sections
-- **Turbo Mode Indicator** (right, conditional) — Green dot when GPU active and ready, yellow pulsing when warming up. Only visible when Compute3 is configured.
 - **Settings Icon** (right) — Gear icon linking to `/admin`
 
 ### SubMenu

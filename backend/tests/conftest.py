@@ -56,7 +56,6 @@ def _isolate_env(tmp_path, monkeypatch):
         "upload_dir": settings.upload_dir,
         "custom_inputs_dir": settings.custom_inputs_dir,
         "openai_api_key": settings.openai_api_key,
-        "compute3_api_key": getattr(settings, "compute3_api_key", ""),
         "vision_model": getattr(settings, "vision_model", ""),
         "admin_api_key": settings.admin_api_key,
         "enable_skills": settings.enable_skills,
@@ -70,8 +69,6 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.upload_dir = str(upload_dir)
     settings.custom_inputs_dir = str(custom_inputs_dir)
     settings.openai_api_key = ""
-    if hasattr(settings, "compute3_api_key"):
-        settings.compute3_api_key = ""
     if hasattr(settings, "vision_model"):
         settings.vision_model = ""
     settings.admin_api_key = "test-admin-key"
@@ -101,7 +98,7 @@ def mock_llm(monkeypatch):
     - app.services.graph_extractor.OpenAI / AsyncOpenAI (top-level imports)
     - app.services.researcher_agent.AsyncOpenAI (top-level import)
     - haystack.components.embedders.OpenAIDocumentEmbedder / OpenAITextEmbedder
-    - httpx.AsyncClient.post (vision_analyzer + compute3)
+    - httpx.AsyncClient.post (vision_analyzer)
     """
 
     def _raiser(*args, **kwargs):

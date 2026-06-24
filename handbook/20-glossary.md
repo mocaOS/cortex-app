@@ -1,4 +1,4 @@
-# Chapter 21: Glossary
+# Chapter 20: Glossary
 
 | Term | Definition |
 |------|-----------|
@@ -8,7 +8,6 @@
 | **Collection** | An organizational container for documents with scoped search and knowledge graph. Enables multi-tenancy, team separation, and focused queries. |
 | **Community** | A cluster of related entities detected by graph algorithms (Leiden/Louvain), with an LLM-generated name and summary. Communities provide high-level thematic context for search. |
 | **Community Detection** | Step 3 of the Knowledge Graph pipeline. Uses the Leiden algorithm (preferred) to discover groups of tightly connected entities. |
-| **Compute3** | A distributed GPU compute platform used by Turbo Mode. Provides dedicated H100/A100 GPUs running vLLM for accelerated inference. |
 | **Cortex** | MOCA's managed Agent as a Service platform and the open-source knowledge engine at its core. Available as both a managed cloud service and self-hosted open-source deployment. |
 | **Cross-Encoder** | A re-ranking model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) that evaluates (query, document) pairs directly for improved search precision. Applied after RRF fusion. |
 | **DETACH DELETE** | A Neo4j Cypher operation that deletes nodes and all their relationships. Used for entity and document cleanup. |
@@ -39,8 +38,7 @@
 | **Staleness** | When a knowledge graph pipeline step is out of date relative to its dependencies. Tracked via SystemMeta Neo4j nodes storing timestamps for relationship analysis, community detection, and entity merges. |
 | **Star Clustering** | The clustering method used in entity deduplication. Each group has one central entity (canonical) — prevents transitive chain explosions where A≈B and B≈C would incorrectly merge A and C. |
 | **SystemMeta** | Neo4j nodes that store key-value timestamps for staleness tracking. Keys: `last_relationship_analysis_at`, `last_community_detection_at`, `last_entity_merge_at`. |
-| **Turbo Mode** | GPU-accelerated LLM inference via Compute3. Overrides both the primary and extraction model configurations to route all LLM requests through a dedicated vLLM instance on rented GPUs. |
-| **vLLM** | A high-performance LLM inference engine used by Turbo Mode. Supports tensor parallelism across multiple GPUs for fast model serving. |
+| **vLLM** | A high-performance, OpenAI-compatible LLM inference engine for self-hosted model serving. Supports tensor parallelism across multiple GPUs for fast inference. |
 | **Writer** | The second stage of the Q&A pipeline. An LLM that synthesizes all context gathered by the Researcher into a coherent, cited answer. Speed mode: up to 1,200 tokens. Quality mode: up to 4,000 tokens. |
 
 ---

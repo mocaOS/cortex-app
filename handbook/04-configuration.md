@@ -18,7 +18,7 @@ The Library uses Pydantic BaseSettings for configuration. Environment variables 
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | — | API key for the primary LLM provider. Required for Q&A, research, and graph operations. |
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | Base URL for the LLM API. Change for LiteLLM, Azure, or local providers. |
-| `OPENAI_MODEL` | `openai/minimax-m21` | Model name for Q&A, research, and chat. Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5). |
+| `OPENAI_MODEL` | `openai/minimax-m3` | Model name for Q&A, research, and chat. Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5). |
 | `OPENAI_MODEL_FAST_MODE` | Same as `OPENAI_MODEL` | Optional faster/cheaper model for the "Fast Mode" search in Ask AI. |
 | `OPENAI_MAX_OUTPUT_TOKENS` | `8000` | Floor of the output-token budget chain. All sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit from here when set to 0. 8000 covers Qwen3-family verbose XML; tighter models simply finish under cap. See [Budget Fallback Chain](#budget-fallback-chain). |
 | `OPENAI_MAX_CONTEXT` | `32768` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0. |
@@ -50,14 +50,14 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 
 ## Reasoning Control (ingestion pipelines)
 
-Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M2) be used for ingestion while forcing their thinking OFF. Provider is auto-detected from `base_url`; model family is parsed from the model name. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM/Compute3. Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for `off`).
+Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M3) be used for ingestion while forcing their thinking OFF. Provider is auto-detected from `base_url`; model family is parsed from the model name. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM. Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for `off`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EXTRACTION_REASONING_MODE` | `off` | Reasoning mode for entity extraction, document summaries, community summarization, community naming, entity enrichment, and query-side entity extraction. |
 | `RELATIONSHIP_REASONING_MODE` | `off` | Reasoning mode for candidate-pair scan (Phase 1), gleaning pass, per-chunk relationship extraction, and batch relationship analysis (Phase 2). |
 | `VISION_REASONING_MODE` | `off` | Reasoning mode for the vision-model image-description call. Lets a reasoning multimodal model (e.g. Qwen3-VL-27B) be used as `VISION_MODEL` without `<think>` tokens leaking into descriptions. |
-| `DEFAULT_REASONING_MODE` | `auto` | Reasoning mode for the Q&A path. Researcher agent stays on AUTO because `reasoning_effort=minimal` disables parallel tool calls on OpenAI. |
+| `DEFAULT_REASONING_MODE` | `off` | Reasoning mode for the chat/answer path (speed researcher loop + writer + non-agentic/fast streaming). `off` suppresses hidden reasoning (Venice `disable_thinking`) for a sub-second first token and to avoid empty/timeout answers; deep-research (quality) stays AUTO. On OpenAI GPT-5/o-series, `off` can disable parallel tool calls — set `auto` there. |
 | `REASONING_MODEL_OVERRIDES` | empty | Per-model override for novel models the heuristics get wrong. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom-llm:minimal`. |
 
 ### Handling new model releases
@@ -91,8 +91,8 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=minimax-m27              # primary / agentic (192K window)
-OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M27's full input window
+OPENAI_MODEL=minimax-m3              # primary / agentic (192K window)
+OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M3's full input window
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B's full input window; relationship_max_context inherits
@@ -106,7 +106,7 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 # Self-hosted vLLM users running Qwen3-Embedding-8B can lift to 32768.
 ```
 
-Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting MiniMax-M27 and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting MiniMax-M3 and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
 **Performance tuning (Venice-validated)** — bench-validated against Venice as the LLM provider, paired with the recommended stack above. Cranks ingestion throughput at the cost of much higher peak concurrency:
 
@@ -119,7 +119,7 @@ VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 
 **Compounding behavior.** `BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs because they're *per-document* limits — each in-flight document can run its own pool of extraction / relationship threads. `VISION_MAX_CONCURRENT` is a global semaphore and does *not* compound. The pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual concurrent in-flight calls stays meaningfully below the worst-case theoretical product — you won't see the full multiplication hit a single provider at one moment.
 
-Safe on Venice, Compute3, or a large self-hosted vLLM endpoint. On stock OpenAI or a small box you'll still want to dial `CONCURRENT_EXTRACTIONS` down first (biggest multiplier, heaviest call). `VISION_MAX_CONCURRENT` is independent and safe to keep at 5 even on smaller stacks.
+Safe on Venice or a large self-hosted vLLM endpoint. On stock OpenAI or a small box you'll still want to dial `CONCURRENT_EXTRACTIONS` down first (biggest multiplier, heaviest call). `VISION_MAX_CONCURRENT` is independent and safe to keep at 5 even on smaller stacks.
 
 **Targeted overrides:**
 - Constrain extraction tier output independently → `EXTRACTION_MAX_OUTPUT_TOKENS=2000` (the inherited 8000 covers Qwen3-family verbose XML by default — only override to tighten or further loosen this specific tier)
@@ -147,7 +147,7 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 | `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model name. |
 | `EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension. Must match the model's output dimension. |
 | `EMBEDDING_SEND_DIMENSIONS` | `true` | Send `dimensions` parameter to the embedding API. Set `false` for models with fixed output dimensions (e.g., `qwen3-vl-embedding-2b`). |
-| `USE_OPENAI_EMBEDDINGS` | `true` | Controls embedding *transport*, not provider. `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP endpoint (works for OpenAI, OpenRouter, vLLM, Compute3, any `/v1/embeddings` server). `false` = ignore `EMBEDDING_MODEL` entirely and run `sentence-transformers/all-MiniLM-L6-v2` locally inside the container. Keep `true` for Qwen3-Embedding-8B and any remote embedding model. |
+| `USE_OPENAI_EMBEDDINGS` | `true` | Controls embedding *transport*, not provider. `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP endpoint (works for OpenAI, OpenRouter, vLLM, any `/v1/embeddings` server). `false` = ignore `EMBEDDING_MODEL` entirely and run `sentence-transformers/all-MiniLM-L6-v2` locally inside the container. Keep `true` for Qwen3-Embedding-8B and any remote embedding model. |
 | `EMBEDDING_API_BASE` | Same as `OPENAI_API_BASE` | Optional separate endpoint for embeddings. |
 | `EMBEDDING_API_KEY` | Same as `OPENAI_API_KEY` | Optional separate API key for embeddings. |
 
@@ -207,7 +207,7 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 |----------|---------|-------------|
 | `ENABLE_AGENT_RESEARCH` | `true` | Use agent pipeline for Deep Research mode. Set `false` for legacy fixed-step pipeline. |
 | `ENABLE_AGENT_CHAT` | `true` | Use agent pipeline for standard Chat mode (required for skills in chat). |
-| `RESEARCHER_MAX_ITERATIONS_SPEED` | `5` | Max agent loop iterations for Chat mode (speed). |
+| `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations for Chat mode (speed). |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations for Deep Research (quality). |
 | `WRITER_MAX_TOKENS_SPEED` | `1200` | Max output tokens for Chat answers. |
 | `WRITER_MAX_TOKENS_QUALITY` | `4000` | Max output tokens for Deep Research answers. |
@@ -235,7 +235,7 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 | `MAX_SKILL_TOOLS` | `10` | Maximum total skill-provided tools injected into the researcher agent's tool list. |
 | `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for activated skill instruction bodies in the system prompt. |
 
-See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installing, configuring, and creating skills.
+See [Chapter 18: Agent Skills](18-skills.md) for full documentation on installing, configuring, and creating skills.
 
 ## Git Integration Configuration
 
@@ -250,7 +250,22 @@ See [Chapter 19: Agent Skills](19-skills.md) for full documentation on installin
 | `GIT_HTTP_TIMEOUT` | `30` | Timeout in seconds for git provider REST API calls. |
 | `GIT_HTTP_INSECURE_HOSTS` | _(empty)_ | Comma-separated hostnames for which git REST calls and clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts. |
 
-The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22-git-integration.md) for the full feature guide.
+The backend image bundles the `git` binary. See [Chapter 21: Git Integration](21-git-integration.md) for the full feature guide.
+
+## Web Import Configuration (MDHarvest powered by Crawl4ai)
+
+Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — it never runs a browser itself. See [Chapter 23: Web Import](23-web-import.md) for the full guide.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_WEB_CRAWL` | `false` | Master switch for Web Import. The UI appears only when this is true **and** `CRAWL_SERVICE_URL` is set. |
+| `CRAWL_SERVICE_URL` | _(empty)_ | Base URL of the crawl4ai service, e.g. `http://crawl4ai:11235`. Empty = feature off (there is no built-in crawler fallback). |
+| `CRAWL_SERVICE_TOKEN` | _(empty)_ | Bearer token sent as `Authorization: Bearer …`; must match crawl4ai's `CRAWL4AI_API_TOKEN` (`security.api_token`). **Required for crawl4ai ≥ 0.9.0** — without a token crawl4ai serves its API only on `127.0.0.1`, unreachable from the Cortex container. |
+| `CRAWL_HTTP_TIMEOUT` | `60` | Per-page crawl timeout in seconds (browser rendering of slow pages can take a while). |
+| `CRAWL_CONTENT_FILTER` | `fit` | Default content filter: `fit` (readable main content), `raw` (full page), or `bm25` (relevance-ranked; needs a query). |
+| `CRAWL_CONCURRENCY` | `5` | How many URLs in one import job are crawled at once. |
+| `CRAWL_MAX_URLS_PER_JOB` | `100` | Maximum URLs accepted per import. `0` = unlimited. |
+| `CRAWL_DISCOVER_MAX_LINKS` | `200` | Cap on candidate links returned by the Discover sub-flow. |
 
 ## Community Detection Configuration
 
@@ -294,12 +309,27 @@ The backend image bundles the `git` binary. See [Chapter 22: Git Integration](22
 | `STREAM_REASONING_STEPS` | `true` | Stream reasoning steps in agentic mode (visible thinking). |
 | `SHOW_RETRIEVAL_STATS` | `true` | Show retrieval statistics in responses. |
 
+## Observability (Langfuse)
+
+Optional LLM tracing and cost tracking via a self-hosted [Langfuse](https://langfuse.com) instance. When configured, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors) and each agentic Q&A is grouped into a single trace you can open and inspect — works across Venice, OpenRouter, and any OpenAI-compatible provider. Leave these blank to run without tracing; Cortex behaves identically either way (no keys = no tracing, no overhead).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LANGFUSE_BASE_URL` | — | URL of your Langfuse instance (e.g. `https://langfuse.example.com`). Tracing activates only when this **and** both keys are set. |
+| `LANGFUSE_PUBLIC_KEY` | — | Langfuse **project** public key (Langfuse → Project Settings → API Keys). |
+| `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key (paired with the public key). |
+| `LANGFUSE_TRACING_ENABLED` | `true` | Master off-switch — set `false` to disable tracing even when keys are present. |
+| `LANGFUSE_SAMPLE_RATE` | `1.0` | Fraction of requests traced (`0.0`–`1.0`). Lower it on high-traffic instances to reduce volume. |
+
+> **Accurate cost:** Langfuse prices a call by matching the model name against price definitions in your project. Venice/OpenRouter models aren't in Langfuse's built-in catalog, so add them under the project's **Models** settings to get USD cost (token counts are tracked regardless).
+
 ## Security Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENVIRONMENT` | `development` | Set to `production` to fail fast at startup on weak/default secrets (`NEO4J_PASSWORD` empty/`password123`, or `SESSION_SECRET` < 32 chars when `ADMIN_PASSWORD` is set). |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist for production. |
+| `EXPOSE_API_DOCS` | `auto` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in development, off in production (prevents unauthenticated API-schema disclosure). Set `true`/`false` to force. See [Chapter 5](05-security.md#api-documentation-exposure). |
 | `PROMPT_SECURITY` | `true` | Enable prompt injection detection and protection. |
 | `ADMIN_EMAIL` | `admin@example.com` | Admin login email for the web interface. |
 | `ADMIN_PASSWORD` | — | Admin login password. **Required.** |
@@ -335,20 +365,6 @@ Behavior:
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API URL (used by the frontend to make API calls). |
 | `NEXT_PUBLIC_LOGO_URL` | Cortex logo | Custom logo image URL. |
 | `NEXT_PUBLIC_ACCENT_COLOR` | Cortex theme color | Custom accent color. Accepts any CSS color value: hex (`#ff6600`), rgb, hsl, or oklch (`oklch(0.79 0.18 70.67)`). |
-
-## Compute3 Turbo Mode Configuration
-
-> ⚠️ **On hold — not currently available.** Compute3 partnership prepared in 2025; their service is not yet in production. The variables below are kept in the codebase against future activation but have no runtime effect today. Setting `COMPUTE3_API_KEY` makes the UI toggle appear, but no live endpoint is reachable. Safe to leave all of these unset. See [Chapter 15: Turbo Mode](15-turbo-mode.md) for the full feature description (preserved for reference).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COMPUTE3_API_KEY` | — | Compute3 API key. Presence of this key enables Turbo Mode in the UI. |
-| `COMPUTE3_API_BASE` | `https://api.compute3.ai` | Compute3 API base URL. |
-| `COMPUTE3_GPU_TYPE` | `h100` | GPU type: `h100` (recommended) or `a100`. |
-| `COMPUTE3_GPU_COUNT` | `4` | Number of GPUs to allocate per job. |
-| `COMPUTE3_MODEL` | `MiniMaxAI/MiniMax-M2.1` | Model to run on GPU. |
-| `COMPUTE3_DOCKER_IMAGE` | `vllm/vllm-openai:latest` | vLLM Docker image for inference. |
-| `COMPUTE3_DEFAULT_RUNTIME` | `3600` | Default GPU job runtime in seconds (1 hour). |
 
 ## Resource Limits
 

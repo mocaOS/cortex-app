@@ -3,7 +3,7 @@
 # Deploy this via Coolify's Docker Compose resource
 #
 # Only REQUIRED env vars are declared below. Everything else — embedding settings,
-# vision/graph-extraction overrides, Compute3, relationship & community tuning, feature
+# vision/graph-extraction overrides, relationship & community tuning, feature
 # flags, pricing caps, branding (logo/accent color), admin email, etc. — defaults to
 # sensible values in backend/app/config.py. To override one, add it as a Coolify env
 # var AND add a matching `- VAR=${VAR}` line under `environment:` below (and a `- VAR=${VAR}`
@@ -57,6 +57,12 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
+      # --- Observability (Langfuse) — optional (no keys = no tracing) ---
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+      - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-true}
+      - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-1.0}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs

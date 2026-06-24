@@ -7,6 +7,105 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 23, 2026 (LLM observability — Langfuse tracing)
+
+Optional, env-driven **LLM tracing and cost tracking** via a self-hosted [Langfuse](https://langfuse.com) instance. When `LANGFUSE_BASE_URL` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors), and each agentic Q&A is grouped into one inspectable trace — across Venice, OpenRouter, and any OpenAI-compatible provider.
+
+Activation is fully env-gated: with no keys the same image runs **identically untraced** (plain OpenAI client, zero overhead). Coverage spans the whole stack — the agentic researcher/writer loop, graph extraction, the Haystack embedders, and the vision analyzer. `LANGFUSE_TRACING_ENABLED` (master off-switch) and `LANGFUSE_SAMPLE_RATE` (0.0–1.0) tune it.
+
+For accurate USD cost, add your Venice/OpenRouter models under the Langfuse project's **Models** settings (token counts are tracked regardless). **No API or schema breakage** — purely additive. See the [Configuration guide](/configuration#observability-langfuse).
+
+---
+
+## June 23, 2026 (Instance status endpoint — redeploy safety)
+
+A new admin endpoint, **`GET /api/instance/status`**, gives deploy automation a single call to decide whether an instance can be safely restarted or upgraded.
+
+It returns `safe_to_redeploy` (with a `reasons` list of any active blockers) plus the supporting detail: documents currently processing/extracting, running background tasks, in-flight AskAI/research queries, and last-activity timestamps (`last_query_at`, last relationship analysis, community detection, entity merge).
+
+`safe_to_redeploy` is `false` while any **destructible** work is in flight — documents mid-processing, background tasks (held in an in-memory store a restart would lose), or an active AskAI query (a restart kills the stream). Pending documents persist in Neo4j and resume after a restart, so they're reported but never block. AskAI activity is tracked across `/api/ask`, `/api/ask/stream`, and `/api/ask/stream/thinking`.
+
+Requires `manage` permission. **No API or schema breakage** — the endpoint is additive. See the [Deployment guide](/guides/deployment) for the redeploy-safety polling pattern.
+
+---
+
+## June 22, 2026 (Web Import — MDHarvest powered by Crawl4ai)
+
+A new way to get web content into your knowledge base: **Web Import** harvests web pages into clean markdown and ingests them exactly like uploaded documents — chunked, embedded, and run through entity/relationship extraction, so they show up in Search, Ask AI, and the knowledge graph. It supersedes the standalone `mdharvest` tool.
+
+Cortex never embeds a browser. It calls an open-source [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — you run crawl4ai once and a single instance can serve many Cortex deployments (in hosted setups, one per server, shared across tenants). There is no local crawler fallback, which keeps the per-instance footprint small.
+
+### Using it
+
+On the **Documents** page, the **Upload** button now has a **▾** menu beside it with a **Web Import** option (it appears only when the feature is enabled). It opens a modal where you:
+
+- pick a **collection**,
+- paste **URLs** (one per line) — or use **Discover links** to crawl a page and pick same-site links from a checklist,
+- choose a **content filter** (Readable / Full page / Relevance-ranked),
+- and click **Import from Web**.
+
+A progress bar tracks the crawl and processing; when it finishes you get a clear "imported N of M — close this window to see your documents" summary, and the document list refreshes automatically. Each imported page carries a provenance header recording its source URL and the extraction date.
+
+### Enabling it
+
+```bash
+ENABLE_WEB_CRAWL=true
+CRAWL_SERVICE_URL=http://crawl4ai:11235   # your own, or a shared crawl4ai
+# CRAWL_SERVICE_TOKEN=...                  # only if crawl4ai requires a token
+```
+
+With the flag off or no service URL set, the feature stays hidden. See the [Web Import guide](/features/web-import) for self-hosting crawl4ai and the full tuning reference (`CRAWL_CONTENT_FILTER`, `CRAWL_CONCURRENCY`, `CRAWL_MAX_URLS_PER_JOB`, …).
+
+**Privacy on shared crawl4ai instances**: when several deployments share one crawler, no crawl history is retained and no deployment can see another's crawls — storage is ephemeral, only request-scoped endpoints are used (never the async job API), and every request bypasses the cache.
+
+**No API or schema breakage** — the feature is additive and off by default.
+
+---
+
+## June 22, 2026 (QA pass — test coverage, fixes & docs hardening)
+
+A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_master.ods` — Features/Defects/Summary sheets), a large expansion of the backend test suite, a live end-to-end harness, and four fixes.
+
+### New config
+- **`EXPOSE_API_DOCS`** (default `auto`) — gates the interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` keeps them on in development and **off in production**, so a directly-reachable backend no longer discloses its full API schema to anonymous callers. Set `true`/`false` to force. (Closes D-004 below.)
+
+### Fixes
+- **D-001 (Medium)** — the git connector's extension check (`GitConnectorService._supported`) instantiated a full `DocumentProcessor` (building the embedder) just to read a class-level constant; it now reads the class attribute directly. This also restored hermetic test isolation on machines with a real `.env`.
+- **D-003 (Low)** — API-usage endpoint categorization used dict-order prefix matching, mislabeling `/api/custom-inputs/{id}` as `upload` instead of `documents`; now longest-prefix-wins (analytics data integrity).
+- **D-004 (Low)** — interactive API docs were served unauthenticated; now gated by `EXPOSE_API_DOCS` (see above).
+
+### Testing
+- Backend suite expanded from 322 to **458 hermetic tests** (new modules for auth, API-usage, vision image-prep, context-curator memory, library-transfer NDJSON round-trip, researcher-agent helpers, skill-service parsing, RRF fusion, and FastAPI endpoint contracts).
+- New **live end-to-end harness** (`backend/tests/test_live_e2e*.py`) exercises real journeys (health, auth boundary, collections CRUD, hybrid search, streaming chat, full document ingestion→extraction) against a running stack; auto-skips when none is reachable. Authenticated runs read the key from `CORTEX_E2E_API_KEY`.
+
+**No API or schema breakage** — `EXPOSE_API_DOCS` is additive; the only behavior change is that interactive docs default off under `ENVIRONMENT=production` (re-enable with `EXPOSE_API_DOCS=true`).
+
+---
+
+## June 18, 2026 (fast, grounded, concise chat)
+
+A major overhaul of the chat/answer path. Reasoning-capable models (especially on Venice) were returning **empty or 30–90 s answers**: the chat path never suppressed model "thinking", so hidden chain-of-thought streamed in a separate `reasoning_content` channel the answer stream ignores — adding seconds before the first token and, across the multi-iteration agent loop, frequently exhausting the budget into empty/timeout answers. This update makes chat answers fast, grounded, concise, and deterministic.
+
+### Snappy chat answers
+- **Reasoning suppressed on the chat path by default.** `DEFAULT_REASONING_MODE` now defaults to **`off`** and is actually applied: the speed-mode researcher loop, the answer writer, and the non-agentic + fast-search streaming writers are all routed through `safe_chat_completion` (per-provider reasoning suppression + a 400-fallback), replacing an ad-hoc single-provider hack. On Venice this sends `disable_thinking`, cutting model time-to-first-token to **under 1 s** (a direct probe measured 13.6 s → 0.57 s for gemma). Deep-research (`quality`) mode is unaffected — it stays `AUTO` and keeps full reasoning.
+- **Fewer loop iterations.** `RESEARCHER_MAX_ITERATIONS_SPEED` lowered **5 → 3** — with thinking off, the agent loop (not the model) was the dominant latency. Three rounds keep conversational answers snappy (one search + answer) while leaving room for a skill flow (activate → call → answer) to complete without truncation.
+- **Rewritten speed-writer prompt** for concise, direct, cited answers.
+- **Result:** empty-answer rate dropped to zero on previously-failing models; chat time-to-first-token fell from ~27–60 s to ~8–14 s.
+- **Caveat (OpenAI):** on GPT-5 / o-series, `off` maps to `reasoning_effort` `none`/`minimal`, which can disable parallel tool calls in the agent loop. Operators on those models should set `DEFAULT_REASONING_MODE=auto`.
+
+### Structured timeouts & a non-blocking agent loop on `/api/ask`
+- **New `ASK_DEADLINE_SECONDS`** (default `28`) — the non-streaming `POST /api/ask` now wraps its work in a deadline and returns a clean **`504` JSON `{detail}`** on expiry, instead of the edge proxy (Coolify/Traefik) cutting the silent socket at ~30 s and emitting a bare plain-text `500`. Keep it just below the proxy read timeout and raise both in lockstep; `0` disables. Does not apply to `/api/ask/stream` (SSE heartbeats keep that alive).
+- **Agentic requires streaming** — a non-streaming `use_agentic` request now fails fast with a `400 {error: "agentic_requires_streaming", use_endpoint: "/api/ask/stream"}` rather than racing the proxy timeout (deep research routinely runs much longer than 30 s and only survives over SSE).
+- **Cleaner error surfacing** — `4xx`/`504` responses (and the existing collection-access `403`) are no longer swallowed and re-wrapped as `500`.
+- **Event-loop unblock** — the last two synchronous Neo4j tool calls in the researcher (`community_search`, `entity_lookup`) now run off the event loop, so they no longer stall concurrent requests during agentic runs.
+
+### Docs
+- New handbook chapter **"The Cortex Standard"** — state-of-the-art knowledge graphs, the open-systems/portable-memory ethos, and the fast/grounded/concise answer principles. Chapter 10 (Ask AI), Chapter 4 (Configuration), `environment.md`, `configuration.mdx`, and the README were synced for the new reasoning default.
+
+**Behavior change to note:** the chat/answer path now suppresses model reasoning by default (`DEFAULT_REASONING_MODE=off`). Restore provider-default thinking on chat with `DEFAULT_REASONING_MODE=auto` (recommended on OpenAI GPT-5/o-series). No API or schema breakage; everything else is additive.
+
+---
+
 ## June 10, 2026 (v-next efficiency & hardening)
 
 ### LLM-stack efficiency (flag-gated, default off)
@@ -166,9 +265,9 @@ VISION_MAX_CONCURRENT=4
 
 A subsequent 52-doc batch on the new values processed clean: **0 × 429s, 0 × Levenshtein fallbacks, 0 × event-loop block warnings, 52/52 succeeded**. Updated in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, `handbook/{03-getting-started.md, 04-configuration.md}` — eight locations total. The old values remain reasonable on bigger self-hosted vLLM endpoints where you control the rate-limit policy; they were just too hot for Venice's gateway.
 
-### Recommended stack switches to DeepSeek-V4-Flash + Qwen3-Embedding-8B native context
+### Recommended stack standardizes on MiniMax-M3 + Qwen3-Embedding-8B native context
 
-The bench-validated primary moves from MiniMax-M2.7 (196K window, inlined `<think>` issues on Venice for relationship-tier calls) to DeepSeek-V4-Flash (1M window). The recommended block in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` now reads `OPENAI_MODEL=deepseek-v4-flash` / `OPENAI_MAX_CONTEXT=1000000`.
+The bench-validated primary is MiniMax-M3 (192K window). The recommended block in `.env.recommended`, `.env.example`, `README.md`, `.claude/environment.md`, `documentation/pages/{configuration.mdx, quickstart.mdx}`, and `handbook/{03-getting-started.md, 04-configuration.md}` reads `OPENAI_MODEL=minimax-m3` / `OPENAI_MAX_CONTEXT=196608`. Keep MiniMax confined to the primary Q&A/research tier — it inlines `<think>` tokens on ingestion paths despite disable_thinking, so extraction/vision stay on Qwen3.
 
 ### `EMBEDDING_MAX_INPUT_TOKENS` env var + post-chunker token-cap sub-splitter
 
@@ -210,14 +309,14 @@ Clicking **Generate Graph** on the Documents page previously navigated to `/extr
 
 ### Reasoning Suppression Control (Provider-Agnostic)
 
-Modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax M2) over-think on structured-extraction tasks, inline `<think>` tokens that corrupt XML output, and burn token budget on chain-of-thought that the parser never sees. A new provider-agnostic switch forces reasoning OFF (or any other level) on every LLM call inside the knowledge-graph pipeline while leaving the researcher/writer Q&A path on AUTO.
+Modern reasoning models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM, Kimi, MiniMax M3) over-think on structured-extraction tasks, inline `<think>` tokens that corrupt XML output, and burn token budget on chain-of-thought that the parser never sees. A new provider-agnostic switch forces reasoning OFF (or any other level) on every LLM call inside the knowledge-graph pipeline while leaving the researcher/writer Q&A path on AUTO.
 
 - New `backend/app/services/reasoning_config.py` — `ReasoningMode` enum, regex-based model-family classifier, and a per-backend dispatch table. Each backend gets the correct kwargs:
   - **OpenAI** → `reasoning_effort` (`none`/`minimal`/`low`/…)
   - **OpenRouter** → `extra_body.reasoning.effort`
   - **Venice** → `extra_body.venice_parameters.disable_thinking`
   - **Anthropic** → `extra_body.thinking={"type":"disabled"}` (omitted on Opus 4.7+ adaptive thinking)
-  - **vLLM / Compute3** → `extra_body.chat_template_kwargs.enable_thinking=false`
+  - **vLLM** → `extra_body.chat_template_kwargs.enable_thinking=false`
 - `safe_chat_completion` / `safe_chat_completion_sync` wrappers handle a runtime fallback: if a model 400s on the reasoning param, the wrapper retries without it and caches the `(base_url, model)` pair so future calls skip the param upfront — one wasted call per misclassified model, then nothing.
 - All 14 LLM call sites in `graph_extractor.py` route through the wrappers — entity extraction, document summaries, community naming, entity enrichment, candidate scan, gleaning pass, per-chunk + Phase-2 relationship extraction.
 - **Vision-model image analysis** uses the same switch via a `flatten_reasoning_body()` helper that converts OpenAI-SDK-style `extra_body` into a raw-HTTP body dict (vision uses `httpx`, not the OpenAI client). One-shot 400-fallback works the same way.
@@ -277,7 +376,7 @@ The model + budget inheritance chains compress a 3-model 12-env-var stack down t
 ```env
 OPENAI_API_KEY=...
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m27
+OPENAI_MODEL=minimax-m3
 OPENAI_MAX_CONTEXT=196608
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
@@ -357,10 +456,8 @@ A comprehensive security audit remediation that closes every gap in the collecti
 
 All endpoints now require an `X-API-Key` header. Previously unprotected endpoints now enforce appropriate permission levels:
 
-- *Read* — `GET /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/result`, `GET /api/turbo/status`
+- *Read* — `GET /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/result`
 - *Manage* — `POST /api/documents/{id}/reprocess` (+ per-document collection validation), `POST /api/documents/reprocess` (+ per-document collection check in loop), `POST /api/documents/process-pending`, `POST /api/cleanup/orphaned-entities`, `PATCH /api/graph/entity/{name}`, `POST /api/entities/merge`, `POST /api/graph/relationships/analyze` (+ `collection_id` validated if supplied), `DELETE /api/graph/relationships`, `DELETE /api/graph/entities`, `POST /api/graph/communities/detect` (+ `collection_id` validated if supplied), `DELETE /api/graph/communities/{id}`, `DELETE /api/graph/communities`, `POST /api/graph/communities/summarize`, `DELETE /api/tasks/{id}`, `POST /api/tasks/cleanup`, `POST /api/custom-input/generate-topic`
-- *Admin* — `GET /api/turbo/balance`, `POST /api/turbo/start`, `POST /api/turbo/stop`, `POST /api/turbo/extend`, `GET /api/turbo/jobs`, `GET /api/turbo/jobs/{id}`, `GET /api/turbo/jobs/{id}/logs` (Turbo Mode manages billing-sensitive GPU resources — elevated from unprotected to admin-only)
-
 **Collection scoping propagated to all read endpoints**
 
 Restricted keys now receive automatically filtered results across every read endpoint — no endpoint leaks cross-collection data:
@@ -577,7 +674,6 @@ Restricted keys now receive automatically filtered results across every read end
 - Relationship analysis runs as a background task with progress tracking via `/api/tasks/{id}`
 - Added relationship provenance: `extracted_at`, `extraction_method`, `source_document_id` properties on relationships
 - New auto-trigger options: `AUTO_RELATIONSHIP_ANALYSIS_AFTER_BATCH` and `AUTO_COMMUNITY_DETECTION_AFTER_BATCH` for automated pipeline after batch processing
-- Turbo mode always overrides both extraction and main model configs for massive-scale ingestion
 
 ### Community Deletion and Graph Cleanup
 
@@ -764,7 +860,7 @@ Restricted keys now receive automatically filtered results across every read end
 
 - Launched the full documentation site built with Zudoku, featuring:
   - Getting Started guides (Introduction, Quickstart, Configuration)
-  - Core Features documentation (Document Upload, Search, Ask AI, Knowledge Graph, Collections, Communities, Turbo Mode)
+  - Core Features documentation (Document Upload, Search, Ask AI, Knowledge Graph, Collections, Communities)
   - Guides (Deployment, Authentication, Security)
   - Code examples (Python, cURL, Integration)
   - OpenAPI-powered API Reference

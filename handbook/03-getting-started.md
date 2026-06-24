@@ -25,13 +25,13 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M27 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M3 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
 >
 > ```env
-> # Primary — agentic Q&A / researcher (MiniMax-M27: 192K context window)
+> # Primary — agentic Q&A / researcher (MiniMax-M3: 192K context window)
 > OPENAI_API_KEY=
 > OPENAI_API_BASE=https://api.venice.ai/api/v1
-> OPENAI_MODEL=minimax-m27
+> OPENAI_MODEL=minimax-m3
 > OPENAI_MAX_CONTEXT=196608
 >
 > # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
@@ -48,7 +48,7 @@ cp .env.example .env
 > # Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
 > ```
 >
-> **Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Safe on Venice / Compute3 / large vLLM endpoints; dial `CONCURRENT_EXTRACTIONS` down first if you're on stock OpenAI or a smaller host.
+> **Performance tuning (Venice-validated)** — pair with the stack above to crank ingestion throughput. Safe on Venice / large vLLM endpoints; dial `CONCURRENT_EXTRACTIONS` down first if you're on stock OpenAI or a smaller host.
 >
 > ```env
 > BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
@@ -57,7 +57,7 @@ cp .env.example .env
 > VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 > ```
 >
-> You still need to set `NEO4J_PASSWORD` and the `ADMIN_*` / `SESSION_SECRET` block from Step 2 (those are infrastructure, not part of the LLM stack choice). Requires a provider hosting both models (OpenRouter, self-hosted vLLM, Compute3, etc.).
+> You still need to set `NEO4J_PASSWORD` and the `ADMIN_*` / `SESSION_SECRET` block from Step 2 (those are infrastructure, not part of the LLM stack choice). Requires a provider hosting both models (OpenRouter, self-hosted vLLM, etc.).
 
 ### Step 2: Set Required Environment Variables
 
@@ -100,7 +100,7 @@ This starts three services:
 - **Backend** (FastAPI) on port 8000
 - **Frontend** (Next.js) on port 3000
 
-> **After any `.env` change**, use `docker compose up -d --force-recreate backend` (not `docker compose restart backend`). Restart only restarts the process — it does NOT re-read the `env_file:`. See [Troubleshooting → Env Var Changes Don't Take Effect](20-troubleshooting.md#env-var-changes-dont-take-effect-after-docker-compose-restart) for details.
+> **After any `.env` change**, use `docker compose up -d --force-recreate backend` (not `docker compose restart backend`). Restart only restarts the process — it does NOT re-read the `env_file:`. See [Troubleshooting → Env Var Changes Don't Take Effect](19-troubleshooting.md#env-var-changes-dont-take-effect-after-docker-compose-restart) for details.
 
 ### Step 4: Verify the Deployment
 
@@ -280,7 +280,7 @@ The Library is LLM-agnostic. Each capability can point to a different model or p
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ─────────────────────────
-# Recommended: powerful reasoning models (e.g. Minimax M2.7, GLM5, Kimi K2.5)
+# Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5)
 OPENAI_API_KEY=sk-your-key
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini

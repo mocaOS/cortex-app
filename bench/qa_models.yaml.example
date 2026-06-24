@@ -1,0 +1,26 @@
+# Q+A chat benchmark — candidate answer-generation models.
+#
+# Used by `run_qa_bench.py` (NOT the ingestion combos in combos.yaml). Each
+# entry is benchmarked as the PRIMARY/chat model only — the knowledge graph is
+# held fixed, so extraction/relationship tiers are irrelevant here.
+#
+# `context` is pinned to the SAME value for every model so the comparison is
+# fair (override globally with --context). base_url/api_key default to the
+# operator's live OPENAI_API_BASE/OPENAI_API_KEY in .env when omitted, so a pure
+# Venice set needs only model_id + context.
+#
+# Copy to qa_models.yaml (gitignored) and edit freely. `first_is_baseline: true`
+# marks the row compared against in the report (the model currently in prod).
+
+context: 198000          # applied to every model unless a row overrides it
+first_is_baseline: true  # treat the first model as the current/prod baseline
+
+models:
+  - minimax-m3                            # current prod model (baseline)
+  - minimax-m27
+  - olafangensan-glm-4.7-flash-heretic
+  - zai-org-glm-4.7
+  - google-gemma-4-26b-a4b-it
+  - xiaomi-mimo-v2-5
+  - nvidia-nemotron-cascade-2-30b-a3b
+  - qwen3-5-35b-a3b

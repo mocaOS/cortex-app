@@ -23,6 +23,7 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from PIL import Image
 
 from app.config import get_settings
+from app.services.observability import record_generation
 from app.services.reasoning_config import (
     ReasoningMode,
     build_reasoning_kwargs,
@@ -382,6 +383,15 @@ class VisionAnalyzer:
                 if response.status_code == 200:
                     result = response.json()
                     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    # Raw-httpx call bypasses the OpenAI drop-in — record manually.
+                    record_generation(
+                        name="vision.analyze",
+                        model=result.get("model") or model,
+                        usage=result.get("usage"),
+                        input=analysis_prompt,
+                        output=content,
+                        metadata={"stage": "vision"},
+                    )
                     logger.info(f"Successfully analyzed image with vision model: {model}")
                     return content
 
