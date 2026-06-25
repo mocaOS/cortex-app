@@ -132,11 +132,26 @@ services:
       # the chain). Add more lines below for any other config.py knob you want
       # a plan to drive.
       - OPENAI_MAX_CONTEXT=${OPENAI_MAX_CONTEXT:-32768}
+      # Per-stage inference routing. cortex-app is OpenAI-compatible only: each
+      # stage picks its provider via its own *_API_BASE + *_API_KEY, both falling
+      # back to OPENAI_* when empty (config.py resolves the inherit chain). The
+      # plan's env_vars supply the *_API_BASE + *_MODEL; meta-cortex's control
+      # plane MINTS and injects the per-tenant *_API_KEY (one OpenAI key for the
+      # primary model, one Venice key reused across embedding/graph/vision). These
+      # MUST be declared here or Dokploy never interpolates the injected values.
+      # (RELATIONSHIP_EXTRACTION_* is intentionally NOT declared — it inherits
+      # GRAPH_EXTRACTION_*, so declaring it empty would only re-trigger inherit.)
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-openai/text-embedding-3-small}
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
+      - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - VISION_MODEL=${VISION_MODEL:-}
+      - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
+      - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
       - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-3}
       - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
+      - GRAPH_EXTRACTION_API_BASE=${GRAPH_EXTRACTION_API_BASE:-}
+      - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
       - GRAPH_EXTRACTION_MAX_CONTEXT=${GRAPH_EXTRACTION_MAX_CONTEXT:-0}
       - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-0}
       - RELATIONSHIP_ANALYSIS_BATCH_SIZE=${RELATIONSHIP_ANALYSIS_BATCH_SIZE:-100}
