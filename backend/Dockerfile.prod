@@ -2,10 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for Docling (PDF/image processing requires X11 libs, OCR)
+# Install system dependencies for Docling (PDF/image processing requires X11 libs, OCR).
+# gosu lets the entrypoint drop from root to the app user after fixing volume ownership.
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    gosu \
     libxcb1 \
     libx11-6 \
     libxext6 \
@@ -54,9 +56,14 @@ COPY . .
 # Create uploads and custom_inputs directories
 RUN mkdir -p /app/uploads /app/custom_inputs
 
-# Create non-root user
+# Create the non-root user and chown the build-time tree. The runtime entrypoint
+# re-applies ownership to the *volume mounts* (which shadow this chown), so we
+# deliberately do NOT `USER appuser` here — the container must start as root for
+# the entrypoint to chown root-owned volumes, then it drops to UID 1000 via gosu.
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+
+# Entrypoint fixes volume ownership then drops privileges (see the script header).
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Expose port
 EXPOSE 8000
@@ -65,4 +72,6 @@ EXPOSE 8000
 # Increase workers via UVICORN_WORKERS env var if you have enough RAM (each worker uses ~1-2GB)
 # --timeout-graceful-shutdown drains in-flight requests/SSE streams on SIGTERM
 # (pair with compose stop_grace_period > this value).
+# The CMD is passed as args to docker-entrypoint.sh, which execs it via gosu as UID 1000.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1} --timeout-graceful-shutdown 30"]

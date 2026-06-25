@@ -61,6 +61,10 @@ Use `dokploy/docker-compose.dokploy.yml`. Configure domains in Dokploy UI (Domai
 
 `docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`).
 
+### Container user & volume ownership (prod)
+
+`backend/Dockerfile.prod` (used by **all three** prod deploys — Coolify, Dokploy, Standalone) runs the app as non-root `appuser` (UID 1000), but PaaS named volumes mount **root-owned**, shadowing the build-time `chown` and causing `[Errno 13] Permission denied` on the first write to a mount (uploads, **downloaded skills** `/app/.agents/skills`, custom_inputs, HF cache). Fix: the image starts as **root** and `backend/docker-entrypoint.sh` chowns those mounts to `1000:1000`, then `exec gosu 1000:1000` drops to the app user (self-heals on every start; the `stat`-guard skips the recursive chown once ownership is already correct, so restarts stay fast). The standalone `backend/Dockerfile` (dev) runs as root and needs none of this. Immediate unblock on a live box without redeploy: `docker exec -u 0 <backend> chown -R 1000:1000 /app/uploads /app/custom_inputs /app/.agents/skills`.
+
 ### Slim image & backups
 
 - **Slim backend image** (helper-backed stacks): `docker build -f backend/Dockerfile.prod --build-arg INSTALL_LOCAL_ML=false` → no torch/docling (~1.2GB vs full). Requires OpenAI embeddings + `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` (recommended `HELPER_STRICT_REMOTE=true`). CI smoke-builds it on every PR. **The Dokploy deploy (`dokploy/docker-compose.dokploy.yml`) defaults the `backend` build to slim** (`INSTALL_LOCAL_ML=${INSTALL_LOCAL_ML:-false}`) since every cloud tenant offloads to `cortex-helper`; override with `INSTALL_LOCAL_ML=true` in the Dokploy env for a stack that runs models locally.
