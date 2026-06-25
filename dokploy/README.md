@@ -72,6 +72,30 @@ Cross-document relationship discovery settings.
 | `RELATIONSHIP_MAX_CONTEXT` | Max context window tokens for relationship analysis (default: `65536`) | No |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max output tokens for relationship responses (default: `16000`) | No |
 
+### Shared Model Service — cortex-helper (Optional)
+
+Offload the cross-encoder reranker and Docling document conversion to a single
+[`cortex-helper`](https://github.com/mocaOS/cortex-helper) service hosted once per
+host, instead of loading those models inside every tenant backend. The `meta-cortex`
+control plane injects these automatically when `CORTEX_HELPER_URL` is set; for a
+standalone Dokploy deploy, set them yourself.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `RERANKER_SERVICE_URL` | Helper base URL for reranking (e.g. `https://helper.cortex.qwellco.de`). Empty → local in-process cross-encoder | No |
+| `DOCLING_SERVICE_URL` | Helper base URL for document conversion (usually the same URL). Empty → local Docling subprocess | No |
+| `HELPER_SERVICE_TOKEN` | Shared secret sent as `X-Helper-Token`; **must equal the helper's `HELPER_TOKEN`** | No |
+| `HELPER_STRICT_REMOTE` | `true` = a failed remote conversion fails the doc instead of falling back to local Docling (default `false`; recommended `true` on slim images) | No |
+| `INSTANCE_ID` | Per-tenant identity sent as `X-Tenant-ID` for the helper's fair queuing (default: container hostname) | No |
+
+> **Slim image (default for this compose).** The `backend` build sets
+> `INSTALL_LOCAL_ML=false` by default, producing a torch-free image (~1 GB smaller, no
+> local model predownload). A slim backend has **no local fallback**, so it requires the
+> helper URLs above **and** OpenAI embeddings (`EMBEDDING_MODEL=openai/*`, which is the
+> default — do **not** set `USE_OPENAI_EMBEDDINGS=false` on a slim tenant). To build the
+> full image with local torch/Docling instead, set `INSTALL_LOCAL_ML=true` in the
+> Environment tab (and don't point at the helper).
+
 ### Admin Authentication
 
 | Variable | Description | Required |

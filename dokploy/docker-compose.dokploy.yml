@@ -65,6 +65,20 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile.prod
+      # Slim image by default. This is the cloud/AaaS deployment, where every
+      # tenant offloads reranking + Docling to the shared cortex-helper (see the
+      # RERANKER_SERVICE_URL / DOCLING_SERVICE_URL block below). So the local ML
+      # stack (torch/sentence-transformers/docling/easyocr, ~1GB) and the
+      # build-time model predownload are pure dead weight — INSTALL_LOCAL_ML=false
+      # drops both. Slim has NO local fallback, so a slim tenant MUST reach the
+      # helper (HELPER_STRICT_REMOTE recommended) and MUST use OpenAI embeddings
+      # (EMBEDDING_MODEL defaults to openai/* below — do not set
+      # USE_OPENAI_EMBEDDINGS=false on a slim tenant). Override per tenant with
+      # INSTALL_LOCAL_ML=true in the Dokploy env ONLY for a stack that runs models
+      # locally and does NOT use the helper. Dokploy interpolates ${VAR} into
+      # build args from its env, same as the frontend's NEXT_PUBLIC_* below.
+      args:
+        - INSTALL_LOCAL_ML=${INSTALL_LOCAL_ML:-false}
     environment:
       # Pinned: this is the production Dokploy deployment. Without this, the
       # backend defaults to "development" — interactive API docs (/docs,
