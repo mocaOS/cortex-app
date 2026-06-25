@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   Database,
@@ -35,13 +34,6 @@ const navItems: NavItem[] = [
 export default function Header() {
   const pathname = usePathname();
 
-  // Helper to extract file extension from URL
-  const getLogoExtension = (url: string): string => {
-    const urlPath = url.split("?")[0];
-    const ext = urlPath.split(".").pop() || "svg";
-    return ext;
-  };
-
   // Check if a nav item is active
   const isNavActive = (item: NavItem): boolean => {
     if (item.basePaths.includes("/")) {
@@ -60,18 +52,16 @@ export default function Header() {
       <div className="max-w-7xl mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           <Link href="/documents" className="flex items-center gap-3">
-            <Image
-              src={
-                process.env.NEXT_PUBLIC_LOGO_URL
-                  ? `/custom-logo.${getLogoExtension(process.env.NEXT_PUBLIC_LOGO_URL)}`
-                  : "/logo.svg"
-              }
+            {/* Plain <img> (not next/image) so an arbitrary external logo URL works
+                without images.remotePatterns config. The origin server supplies the
+                content-type, so extension-less asset URLs (e.g. /assets/<uuid>) render. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={process.env.NEXT_PUBLIC_LOGO_URL || "/logo.svg"}
               alt="Logo"
               width={45}
               height={45}
               className="h-7 w-auto"
-              priority
-              unoptimized
             />
           </Link>
 

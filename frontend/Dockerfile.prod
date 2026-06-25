@@ -12,9 +12,6 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 
-# Install curl for downloading custom logo
-RUN apk add --no-cache curl
-
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -34,21 +31,6 @@ ENV NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
 # Defaults to Docker Compose internal service name
 ARG API_URL=http://backend:8000
 ENV API_URL=${API_URL}
-
-# Download custom logo if NEXT_PUBLIC_LOGO_URL is set
-# Falls back to default logo on failure (e.g. unreachable URL during build)
-RUN if [ -n "$NEXT_PUBLIC_LOGO_URL" ]; then \
-        echo "Downloading custom logo from $NEXT_PUBLIC_LOGO_URL"; \
-        EXT="${NEXT_PUBLIC_LOGO_URL##*.}"; \
-        EXT=$(echo "$EXT" | cut -d'?' -f1); \
-        if curl -fsSL --connect-timeout 10 "$NEXT_PUBLIC_LOGO_URL" -o "/app/public/custom-logo.$EXT"; then \
-            echo "Custom logo downloaded successfully as custom-logo.$EXT"; \
-        else \
-            echo "WARNING: Failed to download custom logo from $NEXT_PUBLIC_LOGO_URL - continuing with default logo"; \
-        fi; \
-    else \
-        echo "No custom logo URL provided, using default logo"; \
-    fi
 
 RUN npm run build
 
