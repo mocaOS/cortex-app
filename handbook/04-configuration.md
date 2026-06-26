@@ -321,6 +321,7 @@ Optional LLM tracing and cost tracking via a self-hosted [Langfuse](https://lang
 | `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key (paired with the public key). |
 | `LANGFUSE_TRACING_ENABLED` | `true` | Master off-switch — set `false` to disable tracing even when keys are present. |
 | `LANGFUSE_SAMPLE_RATE` | `1.0` | Fraction of requests traced (`0.0`–`1.0`). Lower it on high-traffic instances to reduce volume. |
+| `LANGFUSE_LOG_EXTENDED` | `false` | Content logging mode. `false` (default) redacts **all** prompt/completion/tool/embedding/vision text before it leaves the app — only structure (roles, model, tool names + arg keys, tokens, cost, latency) reaches Langfuse. Set `true` to log full content for local debugging. |
 
 > **Accurate cost:** Langfuse prices a call by matching the model name against price definitions in your project. Venice/OpenRouter models aren't in Langfuse's built-in catalog, so add them under the project's **Models** settings to get USD cost (token counts are tracked regardless).
 

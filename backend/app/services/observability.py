@@ -29,6 +29,230 @@ logger = logging.getLogger(__name__)
 # Module-level singleton. None when tracing is inactive or not yet initialized.
 _langfuse_client: Optional[Any] = None
 
+# Sentinel substituted for any user/model authored text when content masking is
+# on (LANGFUSE_LOG_EXTENDED=false, the default).
+_REDACTED = "[REDACTED]"
+
+# Keys whose VALUES are structural and safe to keep verbatim. Everything else is
+# treated as authored content and redacted. Kept deliberately small + explicit
+# so the policy is deny-by-default.
+_KEEP_MESSAGE_KEYS = frozenset(
+    {"role", "name", "tool_call_id", "finish_reason", "type", "index", "id"}
+)
+_KEEP_METADATA_KEYS = frozenset({"stage", "endpoint", "mode", "provider"})
+# Top-level chat-request parameters that are structural (NOT authored content) and
+# kept verbatim. Numerics/bools survive regardless; this list covers string-valued
+# params (chiefly `model`). Unknown string params still fail closed.
+_KEEP_PARAM_KEYS = frozenset(
+    {
+        "model",
+        "tool_choice",
+        "reasoning_effort",
+        "service_tier",
+        "user",
+    }
+)
+
+
+def _mask_content(*, data: Any) -> Any:
+    """Redact all authored text from a Langfuse field, keeping only structure.
+
+    Registered as the SDK's legacy ``mask=`` hook, so it runs **client-side
+    before export** once per field (``input`` / ``output`` / ``metadata``) and is
+    NOT told which field it is — classification is purely structural (object
+    shape + keys + message ``role``). Receives the real Python object (dict /
+    list / str), not stringified JSON.
+
+    Policy (deny-by-default): redact every message ``content``, tool-call
+    argument **values**, tool/function **description** strings, embedding inputs,
+    vision text, and any unclassifiable string leaf. Keep roles, names,
+    tool/function names + argument/parameter **keys**, allow-listed metadata
+    keys, and all numeric/bool values (tokens, cost, latency).
+
+    **Total** — never raises. On any internal error or ambiguity it returns
+    ``_REDACTED`` (fail closed). The SDK also fails closed if a mask hook raises,
+    but we keep structure rather than nuke the whole field.
+    """
+    try:
+        return _mask(data)
+    except Exception:  # noqa: BLE001 — masking must never raise (fail closed)
+        return _REDACTED
+
+
+def _mask(data: Any) -> Any:
+    # Pass through structural scalars untouched (token usage, cost, latency, flags).
+    if data is None or isinstance(data, (bool, int, float)):
+        return data
+    # Any bare string is authored content (embedding input, XML/JSON output, vision).
+    if isinstance(data, str):
+        return _REDACTED
+    if isinstance(data, list):
+        return [_mask(item) for item in data]
+    if isinstance(data, dict):
+        return _mask_dict(data)
+    # Unknown leaf type → fail closed.
+    return _REDACTED
+
+
+def _mask_dict(data: dict) -> dict:
+    keys = data.keys()
+    # Chat input: a request dict carrying messages / tools / functions.
+    if "messages" in keys or "tools" in keys or "functions" in keys:
+        out: dict[str, Any] = {}
+        for key, value in data.items():
+            if key == "messages":
+                out[key] = [_mask_message(m) for m in value] if isinstance(value, list) else _mask(value)
+            elif key in ("tools", "functions"):
+                out[key] = [_mask_tool_def(t) for t in value] if isinstance(value, list) else _mask(value)
+            elif key in _KEEP_PARAM_KEYS:
+                out[key] = value  # structural request param (e.g. model)
+            else:
+                # Other request params: keep numerics/bools/nested numerics, redact
+                # stray strings (fail closed for anything unexpected).
+                out[key] = _mask_metadata_value(key, value)
+        return out
+    # A single chat message or a completion output (content / tool_calls).
+    if "role" in keys or "content" in keys or "tool_calls" in keys or "function_call" in keys:
+        return _mask_message(data)
+    # A tool/function definition standing alone.
+    if "function" in keys or "parameters" in keys:
+        return _mask_tool_def(data)
+    # Otherwise treat as a metadata dict: keep allow-listed keys + numerics.
+    return {k: _mask_metadata_value(k, v) for k, v in data.items()}
+
+
+def _mask_message(msg: Any) -> Any:
+    """Mask one chat message / completion: keep role & friends, redact content."""
+    if not isinstance(msg, dict):
+        return _mask(msg)
+    out: dict[str, Any] = {}
+    for key, value in msg.items():
+        if key in _KEEP_MESSAGE_KEYS:
+            out[key] = value
+        elif key == "content":
+            out[key] = _REDACTED if value is not None else None
+        elif key == "tool_calls":
+            out[key] = [_mask_tool_call(tc) for tc in value] if isinstance(value, list) else _mask(value)
+        elif key == "function_call":
+            out[key] = _mask_tool_call({"function": value}).get("function") if isinstance(value, dict) else _mask(value)
+        else:
+            # Unknown message field → fail closed.
+            out[key] = _mask(value)
+    return out
+
+
+def _mask_tool_call(tc: Any) -> Any:
+    """Keep a tool call's function name + argument KEYS; redact argument values."""
+    if not isinstance(tc, dict):
+        return _mask(tc)
+    out: dict[str, Any] = {}
+    for key, value in tc.items():
+        if key == "function" and isinstance(value, dict):
+            fn: dict[str, Any] = {}
+            for fk, fv in value.items():
+                if fk == "name":
+                    fn[fk] = fv
+                elif fk == "arguments":
+                    fn[fk] = _mask_arguments(fv)
+                else:
+                    fn[fk] = _mask(fv)
+            out[key] = fn
+        elif key in ("id", "type", "index"):
+            out[key] = value
+        else:
+            out[key] = _mask(value)
+    return out
+
+
+def _mask_arguments(args: Any) -> Any:
+    """Redact tool-call argument VALUES while keeping the KEYS.
+
+    Arguments arrive either as a dict or as a JSON string (the OpenAI SDK shape).
+    For a JSON string we parse to recover the keys, then re-emit them with redacted
+    values; if it won't parse, fail closed.
+    """
+    if isinstance(args, dict):
+        return {k: _REDACTED for k in args}
+    if isinstance(args, str):
+        import json
+
+        try:
+            parsed = json.loads(args)
+        except Exception:  # noqa: BLE001
+            return _REDACTED
+        if isinstance(parsed, dict):
+            return json.dumps({k: _REDACTED for k in parsed})
+        return _REDACTED
+    return _REDACTED
+
+
+def _mask_tool_def(tool: Any) -> Any:
+    """Keep a tool/function definition's name + parameter property KEYS; redact
+    all description strings and any default/example values."""
+    if not isinstance(tool, dict):
+        return _mask(tool)
+    out: dict[str, Any] = {}
+    for key, value in tool.items():
+        if key == "type":
+            out[key] = value
+        elif key == "function" and isinstance(value, dict):
+            out[key] = _mask_function_spec(value)
+        elif key in ("name", "parameters"):
+            # A bare function spec (no "function" wrapper).
+            out.update(_mask_function_spec(tool))
+            return out
+        else:
+            out[key] = _mask(value)
+    return out
+
+
+def _mask_function_spec(spec: dict) -> dict:
+    out: dict[str, Any] = {}
+    for key, value in spec.items():
+        if key == "name":
+            out[key] = value
+        elif key == "description":
+            out[key] = _REDACTED
+        elif key == "parameters":
+            out[key] = _mask_json_schema(value)
+        else:
+            out[key] = _mask(value)
+    return out
+
+
+def _mask_json_schema(schema: Any) -> Any:
+    """Keep JSON-schema structure (property KEYS, ``type``, ``required``); redact
+    ``description``/``enum``/``default``/``example`` and any other string leaf."""
+    if isinstance(schema, list):
+        return [_mask_json_schema(s) for s in schema]
+    if not isinstance(schema, dict):
+        return schema if isinstance(schema, (bool, int, float)) or schema is None else _REDACTED
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in ("type", "required", "additionalProperties"):
+            out[key] = value
+        elif key == "properties" and isinstance(value, dict):
+            # Keep property NAMES; recurse into each property's schema.
+            out[key] = {prop: _mask_json_schema(sub) for prop, sub in value.items()}
+        elif key in ("items", "$defs", "definitions"):
+            out[key] = _mask_json_schema(value)
+        else:
+            # description / enum / default / example / title → authored, redact.
+            out[key] = _mask(value)
+    return out
+
+
+def _mask_metadata_value(key: str, value: Any) -> Any:
+    """Keep allow-listed metadata keys and numerics/bools; redact other strings."""
+    if key in _KEEP_METADATA_KEYS:
+        return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (dict, list)):
+        # Recurse: nested numerics survive, nested strings get redacted.
+        return _mask(value)
+    return _REDACTED
+
 
 def init_langfuse() -> Optional[Any]:
     """Initialize the global Langfuse client from settings (idempotent).
@@ -56,6 +280,15 @@ def init_langfuse() -> Optional[Any]:
     # loading can bypass (the same reason the keys/base_url are passed explicitly).
     tracing_environment = settings.langfuse_tracing_environment or settings.environment
 
+    # Content masking. By default (LANGFUSE_LOG_EXTENDED=false) we wire the
+    # client-side `mask` hook so ALL user/model authored text is redacted before
+    # export — only structure (roles, model/params, tool names + arg keys,
+    # tokens, cost, latency) reaches the server. Set LANGFUSE_LOG_EXTENDED=true to
+    # log full content for local debugging (no mask hook). The hook covers every
+    # call site at once because the langfuse.openai drop-in routes input/output
+    # through it; no per-call-site changes needed.
+    mask = None if settings.langfuse_log_extended else _mask_content
+
     try:
         from langfuse import Langfuse
 
@@ -65,6 +298,7 @@ def init_langfuse() -> Optional[Any]:
             base_url=settings.langfuse_base_url,
             sample_rate=settings.langfuse_sample_rate,
             environment=tracing_environment,
+            mask=mask,
         )
         # Eagerly apply the global OpenAI instrumentation so EVERY openai-SDK
         # call is auto-traced — including libraries that build their own client
@@ -73,10 +307,11 @@ def init_langfuse() -> Optional[Any]:
         # langfuse.openai import is then belt-and-suspenders.)
         import langfuse.openai  # noqa: F401
         logger.info(
-            "Langfuse tracing ACTIVE → %s (sample_rate=%s, environment=%s)",
+            "Langfuse tracing ACTIVE → %s (sample_rate=%s, environment=%s, content=%s)",
             settings.langfuse_base_url,
             settings.langfuse_sample_rate,
             tracing_environment,
+            "extended" if settings.langfuse_log_extended else "masked",
         )
     except Exception as exc:  # noqa: BLE001 — observability must never break boot
         logger.warning("Failed to initialize Langfuse; continuing untraced: %s", exc)

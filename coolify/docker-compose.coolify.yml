@@ -63,6 +63,9 @@ services:
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
       - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-true}
       - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-1.0}
+      # Content masking: false (default) redacts all prompt/completion text before
+      # export; true logs full content for debugging.
+      - LANGFUSE_LOG_EXTENDED=${LANGFUSE_LOG_EXTENDED:-false}
       # Optional trace-environment label (e.g. set per self-host instance).
       # Empty → backend falls back to the deployment ENVIRONMENT at init.
       - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}

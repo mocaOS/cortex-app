@@ -227,6 +227,13 @@ class Settings(BaseSettings):
     # alphanumeric with hyphens/underscores and not start with "langfuse" (the SDK
     # warns + ignores invalid values); the control plane sanitizes slugs to match.
     langfuse_tracing_environment: str = Field(default="")  # LANGFUSE_TRACING_ENVIRONMENT
+    # Content logging mode. Default False → redact ALL user/model authored text
+    # (prompts, completions, tool args/results, embedding inputs, vision text,
+    # extraction text) before export via a client-side `mask` hook; only the
+    # structure (roles, model/params, tool names + arg keys, tokens, cost,
+    # latency, tags) reaches Langfuse. Set True to log full content for local
+    # debugging. See .claude/domain/observability.md (content masking).
+    langfuse_log_extended: bool = Field(default=False)  # LANGFUSE_LOG_EXTENDED
 
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high

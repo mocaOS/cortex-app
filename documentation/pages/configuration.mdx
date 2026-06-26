@@ -574,9 +574,12 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...                    # project public key
 LANGFUSE_SECRET_KEY=sk-lf-...                    # project secret key
 LANGFUSE_TRACING_ENABLED=true                    # master off-switch (default true)
 LANGFUSE_SAMPLE_RATE=1.0                         # 0.0–1.0 trace sampling
+LANGFUSE_LOG_EXTENDED=false                      # false (default) redacts all content; true logs full text
 ```
 
 Get the key pair from Langfuse → **Project Settings → API Keys**. Accurate USD cost requires per-model price definitions in the Langfuse project (Venice/OpenRouter models aren't in Langfuse's built-in catalog).
+
+**Content privacy.** By default (`LANGFUSE_LOG_EXTENDED=false`) Cortex redacts **all** prompt, completion, tool, embedding, and vision text **before it leaves the app** — only structure reaches Langfuse (roles, model + params, tool names + argument keys, tokens, cost, latency, tags). This protects user content and keeps trace storage small. Set `LANGFUSE_LOG_EXTENDED=true` to log full content for local debugging.
 
 ---
 
@@ -701,6 +704,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `LANGFUSE_SECRET_KEY` | No | - | Langfuse project secret key |
 | `LANGFUSE_TRACING_ENABLED` | No | `true` | Master off-switch for tracing even when keys are set |
 | `LANGFUSE_SAMPLE_RATE` | No | `1.0` | Trace sampling rate (0.0–1.0) |
+| `LANGFUSE_LOG_EXTENDED` | No | `false` | Content logging mode. `false` redacts all prompt/completion/tool/embedding/vision text before export (structure only); `true` logs full content for debugging |
 | `NEXT_PUBLIC_LOGO_URL` | No | - | Custom logo URL |
 | `NEXT_PUBLIC_ACCENT_COLOR` | No | - | Custom UI accent color (CSS) |
 

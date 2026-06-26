@@ -7,6 +7,14 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 26, 2026 (Langfuse content masking — privacy by default)
+
+Langfuse tracing now **redacts all prompt, completion, tool, embedding, and vision text by default**. A new `LANGFUSE_LOG_EXTENDED` flag (default **`false`**) wires a client-side `mask` hook so authored content never leaves the app — only structure reaches the Langfuse server: message roles, model + parameters, tool names + argument keys, parameter keys, token usage, cost, latency, and tags. This protects user content (we don't store what users prompt) and sharply cuts trace storage.
+
+Set `LANGFUSE_LOG_EXTENDED=true` to log full content for local debugging (the previous behavior). Masking is **deny-by-default and fail-closed** — any unclassifiable text is redacted, never leaked. The **Admin → System Configuration** panel now has a **Privacy** section showing "Prompt & Content Redaction" and "LLM Tracing" status, so an operator (or a customer auditing a hosted instance) can verify at a glance that prompt content never leaves the box. **No API or schema breakage** — purely additive, and tracing stays fully env-gated (no keys = no tracing). See the [Configuration guide](/configuration#observability-langfuse).
+
+---
+
 ## June 26, 2026 (Admin System Config — curated view)
 
 The **Admin → System Configuration** panel can now show a curated view. A new `DISPLAY_FULL_SYSTEM_CONFIG` flag (default **`false`**) hides advanced tuning knobs — output-token budgets, concurrency counts, chunking parameters, hybrid-search weights, graph hops, community sizes, and similarity thresholds — leaving models, API bases, context windows, dimensions, and feature toggles. Set it to `true` to reveal every knob.

@@ -712,6 +712,10 @@ export interface SystemConfig {
   // Security
   prompt_security: boolean;
 
+  // Privacy (LLM observability content handling)
+  langfuse_tracing_active: boolean;
+  langfuse_log_extended: boolean;
+
   // Agent Skills
   enable_skills: boolean;
   enable_skill_scripts: boolean;

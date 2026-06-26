@@ -437,6 +437,13 @@ The **Admin → System Configuration** panel renders the same settings in the UI
 
 Set `DISPLAY_FULL_SYSTEM_CONFIG=true` to reveal every knob in the panel. This is **display-only** — it changes what the admin UI renders, not the values themselves or what the `/api/admin/config` endpoint returns.
 
+The panel also includes a **Privacy** section (always shown, even in the curated view) reporting the LLM-tracing content policy:
+
+- **Prompt & Content Redaction** — *Enabled* means all prompts, completions, tool calls, embeddings, and image-analysis text are stripped to `[REDACTED]` before any trace leaves the instance (only structure — models, roles, token counts, cost, latency — is exported). This is the default; it is *Disabled* only when the operator sets `LANGFUSE_LOG_EXTENDED=true` for debugging.
+- **LLM Tracing (Langfuse)** — whether tracing is active at all (`LANGFUSE_*` configured). When *Disabled*, nothing is exported anywhere.
+
+Together these let an operator — or a customer auditing a hosted instance — confirm at a glance that the host is not logging prompt or completion content. See [Configuration → Observability](04-configuration.md) and `.claude/domain/observability.md` for the masking policy.
+
 ## Maintenance Checklist
 
 ### Weekly

@@ -17,6 +17,7 @@ import {
   Search,
   Network,
   Shield,
+  Lock,
   Eye,
   Check,
   X,
@@ -115,10 +116,10 @@ function ConfigSection({
   onToggle: () => void;
 }) {
   return (
-    <div className="border border-border/50 rounded-lg overflow-hidden">
+    <div className="border border-border/50 rounded-lg">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors"
+        className={`w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors rounded-t-lg ${isOpen ? "" : "rounded-b-lg"}`}
       >
         <div className="flex items-center gap-3">
           <Icon className="w-4 h-4 text-accent" />
@@ -128,13 +129,16 @@ function ConfigSection({
       </button>
       <AnimatePresence initial={false}>
         {isOpen && (
+          // overflow is hidden during the height animation (so the collapse clips
+          // cleanly) but set to visible once open, so hover tooltips on the bottom
+          // rows can escape the card instead of being cut off at its border.
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0, overflow: "hidden" }}
+            animate={{ height: "auto", opacity: 1, transitionEnd: { overflow: "visible" } }}
+            exit={{ height: 0, opacity: 0, overflow: "hidden" }}
             transition={{ duration: 0.2 }}
           >
-            <div className="px-4 py-3 bg-card">
+            <div className="px-4 py-3 bg-card rounded-b-lg">
               {description && (
                 <p className="text-muted-foreground text-xs mb-3">{description}</p>
               )}
@@ -148,7 +152,7 @@ function ConfigSection({
 }
 
 // Config section IDs for expand/collapse tracking
-type ConfigSectionId = "llm" | "documents" | "search" | "graph" | "features";
+type ConfigSectionId = "llm" | "documents" | "search" | "graph" | "features" | "privacy";
 
 export default function AdminPage() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -173,7 +177,7 @@ export default function AdminPage() {
     });
   };
 
-  const allSectionIds: ConfigSectionId[] = ["llm", "documents", "search", "graph", "features"];
+  const allSectionIds: ConfigSectionId[] = ["llm", "documents", "search", "graph", "features", "privacy"];
   const visibleSectionIds = allSectionIds;
   const allExpanded = visibleSectionIds.every(id => openSections.has(id));
 
@@ -575,6 +579,22 @@ export default function AdminPage() {
                     <ConfigItem label="Stream Reasoning Steps" value={config.stream_reasoning_steps} type="boolean" />
                     <ConfigItem label="Show Retrieval Stats" value={config.show_retrieval_stats} type="boolean" />
                     <ConfigItem label="Prompt Security" value={config.prompt_security} type="boolean" />
+                  </ConfigSection>
+
+                  {/* Privacy — proves whether prompt/completion content ever leaves this instance */}
+                  <ConfigSection title="Privacy" icon={Lock} isOpen={openSections.has("privacy")} onToggle={() => toggleSection("privacy")}>
+                    <ConfigItem
+                      label="LLM Tracing (Langfuse)"
+                      value={config.langfuse_tracing_active}
+                      type="boolean"
+                      tooltip="Whether LLM/embedding/vision calls are traced to a Langfuse instance at all. When Disabled, nothing is exported anywhere. When Enabled, only structural metadata is sent unless 'Prompt & Content Redaction' below is Disabled (LANGFUSE_BASE_URL + key pair + LANGFUSE_TRACING_ENABLED)."
+                    />
+                    <ConfigItem
+                      label="Prompt & Content Redaction"
+                      value={!config.langfuse_log_extended}
+                      type="boolean"
+                      tooltip="When Enabled, every prompt, completion, tool call, embedding, and image-analysis text is stripped to [REDACTED] before any trace leaves this instance — only structure (model, roles, token counts, cost, latency) is ever exported. This is how you prove the host does not log what users ask or what the models reply. It is on by default; it only turns off when the operator explicitly sets LANGFUSE_LOG_EXTENDED=true for local debugging."
+                    />
                   </ConfigSection>
 
                 </div>

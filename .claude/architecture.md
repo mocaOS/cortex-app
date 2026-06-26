@@ -42,7 +42,7 @@ Next.js App Router with unified navigation structure:
 ### Routes
 - **Manage** section: Documents (`/documents`, default — "Generate Graph" button navigates to `/extract`), Knowledge Graph (`/extract`), Deduplicate (`/deduplicate`), Collections (`/collections`), Add (`/add`)
 - **Explore** section: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat (all tab-based on `/explore` with `?tab=graph|entities|relationships|communities|research|chat`)
-- **Settings** (`/admin`): Statistics dashboard, system configuration (LLM Configuration with 5 sub-areas: Primary Model, Extraction Model, Relationship Model, Vision Model, Embeddings via `GET /api/admin/config`; no API keys exposed), API key management, data management, danger zone. Stats bar hidden on this page.
+- **Settings** (`/admin`): Statistics dashboard, system configuration (LLM Configuration with 5 sub-areas: Primary Model, Extraction Model, Relationship Model, Vision Model, Embeddings via `GET /api/admin/config`; no API keys exposed), API key management, data management, danger zone. Stats bar hidden on this page. The config panel includes a **Privacy** section surfacing the Langfuse content-masking state (`langfuse_tracing_active` + `langfuse_log_extended`) so an operator can prove prompt/completion text is redacted before export — see [`.claude/domain/observability.md`](domain/observability.md#content-masking).
 - `/` redirects to `/documents`
 - `/entities`, `/relationships`, `/communities` redirect to their Explore tabs
 - `/login` — Authentication page

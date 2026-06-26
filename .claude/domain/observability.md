@@ -89,6 +89,55 @@ the openai SDK, so the global patch can't see it. The 200-path records model +
 `usage` + prompt/output via `record_generation` (`name="vision.analyze"`). This
 is the only place `record_generation` is still used.
 
+## Content masking (`LANGFUSE_LOG_EXTENDED`)
+
+By **default** (`LANGFUSE_LOG_EXTENDED=false`) Cortex redacts **all** user- and
+model-authored text **client-side, before export** — raw content never hits the
+network. This is both a privacy measure (we don't store what users prompt) and a
+storage one (prompt/completion text dominates ClickHouse cost). Set
+`LANGFUSE_LOG_EXTENDED=true` to log full content for local debugging.
+
+**Wiring.** `init_langfuse()` passes `mask=_mask_content` to the `Langfuse(...)`
+constructor when masking is on (`None` when `LANGFUSE_LOG_EXTENDED=true`). The
+SDK's **legacy `mask` hook** (v3 line — `mask_otel_spans` does **not** exist in
+v3 and isn't used) runs once per field (`input` / `output` / `metadata`). Because
+the `langfuse.openai` drop-in routes `generation.update(input=…, output=…)`
+through this hook, **one `mask=` arg covers every call site** — all chat
+completions, embeddings, the vision `record_generation`, and `observed_trace`
+metadata. No per-call-site edits.
+
+**The hook is not told which field it's masking**, so classification is purely
+**structural** (object shape + keys + message `role`). It receives the real
+Python object (dict/list/str), not stringified JSON. `_mask_content` is **total**
+— on any internal error or ambiguity it returns `"[REDACTED]"` (fail closed) and
+never raises. (The SDK also fails closed if a mask hook raises, replacing the
+whole field; we keep structure instead.)
+
+**Policy (deny-by-default).**
+
+- **KEEP (structural):** message `role`/`name`/`tool_call_id`/`finish_reason`/`type`;
+  `model` + params (temperature, etc.); tool **calls** — function `name` + argument
+  **keys** (not values); tool/function **definitions** — function `name` + parameter
+  property **keys** (descriptions redacted); metadata keys `stage`/`endpoint`/`mode`/`provider`;
+  all numeric/bool values (tokens, cost, latency).
+- **REDACT → `"[REDACTED]"`:** every message `content` (system/user/assistant/tool);
+  tool-call argument **values**; tool/function description strings; embedding inputs
+  (`str` / `list[str]`); vision prompt + output; graph-extraction document/chunk text
+  and XML/JSON output; any unclassifiable string leaf.
+
+Implemented in `observability.py` (`_mask_content` + `_mask*` helpers); covered by
+pure-function tests in `tests/test_langfuse.py` (no network), including a planted
+`SECRET_*` leak check across messages, tool args, tool defs, and metadata.
+
+**Surfaced in the admin UI.** `GET /api/admin/config` returns
+`langfuse_tracing_active` + `langfuse_log_extended`, rendered in a **Privacy**
+section on the `/admin` System Config panel (`frontend/src/app/admin/page.tsx`):
+"Prompt & Content Redaction" (Enabled = `!langfuse_log_extended`) and "LLM Tracing
+(Langfuse)". This lets an operator (or a customer auditing a hosted instance)
+verify at a glance that prompt/completion content is redacted before export. The
+section is always visible — it ignores the `DISPLAY_FULL_SYSTEM_CONFIG` advanced
+gate.
+
 ## What you get
 
 - **Cost by model / endpoint / provider** — generations carry the model + token

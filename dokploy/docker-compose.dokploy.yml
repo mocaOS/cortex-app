@@ -99,6 +99,9 @@ services:
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
       - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-true}
       - LANGFUSE_SAMPLE_RATE=${LANGFUSE_SAMPLE_RATE:-1.0}
+      # Content masking: false (default) redacts all prompt/completion text before
+      # export; true logs full content for debugging.
+      - LANGFUSE_LOG_EXTENDED=${LANGFUSE_LOG_EXTENDED:-false}
       # Per-tenant trace segmentation (control plane injects the tenant slug).
       # Without this declaration the value never reaches the container, so every
       # tenant's traces collapse into one environment.

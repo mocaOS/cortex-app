@@ -1091,6 +1091,11 @@ class SystemConfigResponse(BaseModel):
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
 
+    # Privacy — LLM observability content handling. Lets an admin verify the
+    # host is not storing prompt/completion text in external tracing.
+    langfuse_tracing_active: bool = Field(default=False, description="Whether Langfuse LLM tracing is active (credentials set + enabled)")
+    langfuse_log_extended: bool = Field(default=False, description="Whether full prompt/completion content is logged to traces. False (default) = all content redacted before export")
+
     # Agent Skills
     enable_skills: bool = Field(default=False, description="Whether agent skills are enabled")
     enable_skill_scripts: bool = Field(default=False, description="Whether skill script execution is allowed")

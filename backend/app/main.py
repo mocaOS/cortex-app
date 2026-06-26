@@ -4187,6 +4187,10 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         # Security
         prompt_security=settings.prompt_security,
 
+        # Privacy (LLM observability content handling)
+        langfuse_tracing_active=settings.langfuse_tracing_active,
+        langfuse_log_extended=settings.langfuse_log_extended,
+
         # Agent Skills
         enable_skills=settings.enable_skills,
         enable_skill_scripts=settings.enable_skill_scripts,

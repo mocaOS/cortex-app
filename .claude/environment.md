@@ -241,6 +241,7 @@ Optional LLM tracing/cost. All empty = disabled; the same image runs identically
 - `LANGFUSE_BASE_URL` (default: empty) — Langfuse instance URL, e.g. `https://langfuse.example.com`. The SDK reads this name natively. All three of key/secret/base_url must be set for `Settings.langfuse_tracing_active` to be True; otherwise the OpenAI client factory (`llm_config.make_*_openai_client`) returns the plain, untraced client.
 - `LANGFUSE_TRACING_ENABLED` (default: `true`) — master off-switch; set `false` to disable tracing even when keys are present.
 - `LANGFUSE_SAMPLE_RATE` (default: `1.0`) — 0.0–1.0 trace sampling; lower on high-traffic instances. Passed to the SDK at init (`observability.init_langfuse`).
+- `LANGFUSE_LOG_EXTENDED` (default: `false`) — content logging mode. When `false` (default) a client-side `mask` hook redacts **all** user/model authored text (prompts, completions, tool-call arg values, tool descriptions, embedding inputs, vision text, extraction text) before export → only structure reaches the server (roles, model + params, tool names + arg/param keys, allow-listed metadata, tokens, cost, latency, tags). Set `true` to log full content for local debugging. See [`.claude/domain/observability.md`](domain/observability.md#content-masking) for the redaction policy.
 
 ## Document Processing
 
