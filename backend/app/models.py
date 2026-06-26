@@ -1086,6 +1086,7 @@ class SystemConfigResponse(BaseModel):
     # Visibility/UX
     stream_reasoning_steps: bool = Field(..., description="Whether to stream reasoning steps")
     show_retrieval_stats: bool = Field(..., description="Whether to show retrieval stats")
+    display_full_system_config: bool = Field(default=False, description="Whether to show advanced tuning knobs in the admin System Config panel")
     
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")

@@ -707,7 +707,8 @@ export interface SystemConfig {
   // Visibility/UX
   stream_reasoning_steps: boolean;
   show_retrieval_stats: boolean;
-  
+  display_full_system_config: boolean;
+
   // Security
   prompt_security: boolean;
 

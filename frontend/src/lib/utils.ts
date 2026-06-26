@@ -23,6 +23,29 @@ export function formatDate(dateString: string): string {
   });
 }
 
+/**
+ * Clean a provider-prefixed model identifier for display.
+ * Providers like Cloudflare Workers AI namespace models behind a path
+ * (e.g. "workers-ai/@cf/google/gemma-4-26b-a4b-it") — show just the model id.
+ */
+export function formatModelName(model: string): string {
+  if (!model) return model;
+  const segments = model.split("/").filter(Boolean);
+  return segments.length ? segments[segments.length - 1] : model;
+}
+
+/**
+ * Clean an OpenAI-compatible API base for display.
+ * Cloudflare AI Gateway URLs embed the account id, gateway name, and provider
+ * path (".../v1/<account>/<gateway>/compat") — show just the gateway origin + /v1/.
+ * Non-Cloudflare bases are returned unchanged.
+ */
+export function formatApiBase(apiBase: string): string {
+  if (!apiBase) return apiBase;
+  const match = apiBase.match(/^(https?:\/\/gateway\.ai\.cloudflare\.com\/v1\/)/i);
+  return match ? match[1] : apiBase;
+}
+
 export function getFileTypeIcon(fileType: string): string {
   const types: Record<string, string> = {
     // Office documents

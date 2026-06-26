@@ -7,6 +7,14 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 26, 2026 (Admin System Config — curated view)
+
+The **Admin → System Configuration** panel can now show a curated view. A new `DISPLAY_FULL_SYSTEM_CONFIG` flag (default **`false`**) hides advanced tuning knobs — output-token budgets, concurrency counts, chunking parameters, hybrid-search weights, graph hops, community sizes, and similarity thresholds — leaving models, API bases, context windows, dimensions, and feature toggles. Set it to `true` to reveal every knob.
+
+This is **display-only** — settings, the `/api/admin/config` response shape, and ingestion/RAG behavior are unchanged. **No API or schema breakage.** See the [Configuration guide](/configuration#reasoning-visibility).
+
+---
+
 ## June 23, 2026 (LLM observability — Langfuse tracing)
 
 Optional, env-driven **LLM tracing and cost tracking** via a self-hosted [Langfuse](https://langfuse.com) instance. When `LANGFUSE_BASE_URL` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors), and each agentic Q&A is grouped into one inspectable trace — across Venice, OpenRouter, and any OpenAI-compatible provider.

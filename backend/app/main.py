@@ -4182,6 +4182,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         # Visibility/UX
         stream_reasoning_steps=settings.stream_reasoning_steps,
         show_retrieval_stats=settings.show_retrieval_stats,
+        display_full_system_config=settings.display_full_system_config,
         
         # Security
         prompt_security=settings.prompt_security,

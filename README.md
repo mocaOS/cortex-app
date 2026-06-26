@@ -843,6 +843,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 |----------|-------------|----------|---------|
 | `STREAM_REASONING_STEPS` | Stream reasoning steps in agentic mode | No | `true` |
 | `SHOW_RETRIEVAL_STATS` | Show retrieval statistics in responses | No | `true` |
+| `DISPLAY_FULL_SYSTEM_CONFIG` | Show advanced tuning knobs in the admin System Config panel (`false` = curated view). Display-only. | No | `false` |
 
 #### Prompt Security
 

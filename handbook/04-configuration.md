@@ -308,6 +308,7 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 |----------|---------|-------------|
 | `STREAM_REASONING_STEPS` | `true` | Stream reasoning steps in agentic mode (visible thinking). |
 | `SHOW_RETRIEVAL_STATS` | `true` | Show retrieval statistics in responses. |
+| `DISPLAY_FULL_SYSTEM_CONFIG` | `false` | Show advanced tuning knobs (output-token budgets, concurrency counts, chunking params, hybrid-search weights, graph hops, community sizes, similarity thresholds) in the admin **System Configuration** panel. When `false`, a curated view is shown — models, API bases, context windows, dimensions, and feature toggles stay visible. Display-only; the underlying settings are unchanged. |
 
 ## Observability (Langfuse)
 

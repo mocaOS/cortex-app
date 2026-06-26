@@ -668,6 +668,9 @@ class Settings(BaseSettings):
     show_retrieval_stats: bool = Field(
         default=True
     )  # Show retrieval statistics in responses
+    display_full_system_config: bool = Field(
+        default=False
+    )  # Show advanced tuning knobs in the admin System Config panel (off = curated view)
 
     # ==========================================================================
     # Prompt Security (protection against prompt injection attacks)

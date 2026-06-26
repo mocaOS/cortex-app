@@ -431,6 +431,12 @@ curl http://localhost:8000/api/admin/config \
 
 Returns all model names, API base URLs, context windows, feature flags, concurrency settings, and search weights — useful for verifying configuration after deployment.
 
+### System Config panel: curated vs. full view
+
+The **Admin → System Configuration** panel renders the same settings in the UI. By default it shows a **curated view**: models, API bases, context windows, embedding dimensions, and feature toggles. Advanced tuning knobs — output-token budgets, concurrency counts (extractions/relations/batches/vision), chunking parameters, hybrid-search weights, graph hops, community sizes, and similarity thresholds — are hidden to keep the panel readable for operators who don't tune internals.
+
+Set `DISPLAY_FULL_SYSTEM_CONFIG=true` to reveal every knob in the panel. This is **display-only** — it changes what the admin UI renders, not the values themselves or what the `/api/admin/config` endpoint returns.
+
 ## Maintenance Checklist
 
 ### Weekly

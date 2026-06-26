@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { PageTransition } from "@/components/layout";
 import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,11 +34,19 @@ import {
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { api, clearAdminApiKey } from "@/lib/api";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes, formatModelName, formatApiBase } from "@/lib/utils";
 import type { SystemConfig, Stats } from "@/types";
 
 // Helper component for displaying config items with optional tooltip
-function ConfigItem({ label, value, type = "text", tooltip }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list"; tooltip?: string }) {
+// When false, advanced tuning knobs are hidden from the System Config panel.
+// Driven by the DISPLAY_FULL_SYSTEM_CONFIG backend flag. Defaults to true so a
+// ConfigItem rendered outside a provider always shows.
+const DisplayFullConfigContext = createContext(true);
+
+function ConfigItem({ label, value, type = "text", tooltip, format, advanced }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list"; tooltip?: string; format?: "model" | "apiBase"; advanced?: boolean }) {
+  const displayFull = useContext(DisplayFullConfigContext);
+  if (advanced && !displayFull) return null;
+
   if (type === "boolean") {
     return (
       <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
@@ -66,6 +74,10 @@ function ConfigItem({ label, value, type = "text", tooltip }: { label: string; v
     );
   }
 
+  const rawValue = String(value);
+  const displayValue =
+    format === "model" ? formatModelName(rawValue) : format === "apiBase" ? formatApiBase(rawValue) : rawValue;
+
   return (
     <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
       <span className="text-muted-foreground text-sm flex items-center gap-1.5">
@@ -79,7 +91,9 @@ function ConfigItem({ label, value, type = "text", tooltip }: { label: string; v
           </span>
         )}
       </span>
-      <span className="text-foreground text-sm font-mono">{String(value)}</span>
+      <span className="text-foreground text-sm font-mono" title={displayValue !== rawValue ? rawValue : undefined}>
+        {displayValue}
+      </span>
     </div>
   );
 }
@@ -453,6 +467,7 @@ export default function AdminPage() {
                   <span>{configError}</span>
                 </div>
               ) : config ? (
+                <DisplayFullConfigContext.Provider value={config.display_full_system_config ?? false}>
                 <div className="space-y-3">
                   {/* LLM Configuration */}
                   <ConfigSection title="LLM Configuration" icon={Brain} isOpen={openSections.has("llm")} onToggle={() => toggleSection("llm")}>
@@ -460,34 +475,34 @@ export default function AdminPage() {
                     <div className="mb-4">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
                       <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M3, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
-                      <ConfigItem label="Model" value={config.openai_model} tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
-                      <ConfigItem label="API Base" value={config.openai_api_base} tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
+                      <ConfigItem label="Model" value={config.openai_model} format="model" tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
+                      <ConfigItem label="API Base" value={config.openai_api_base} format="apiBase" tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.openai_max_context.toLocaleString()} tooltip="Input context budget for the primary model. Floor of the context-budget fallback chain — sub-tier *_MAX_CONTEXT knobs inherit from this when set to 0 (OPENAI_MAX_CONTEXT)" />
-                      <ConfigItem label="Output Tokens" value={config.openai_max_output_tokens.toLocaleString()} tooltip="Output-token budget for the primary model. Floor of the output-budget fallback chain — sub-tier *_MAX_OUTPUT_TOKENS knobs inherit from this when set to 0 (OPENAI_MAX_OUTPUT_TOKENS)" />
+                      <ConfigItem advanced label="Output Tokens" value={config.openai_max_output_tokens.toLocaleString()} tooltip="Output-token budget for the primary model. Floor of the output-budget fallback chain — sub-tier *_MAX_OUTPUT_TOKENS knobs inherit from this when set to 0 (OPENAI_MAX_OUTPUT_TOKENS)" />
                     </div>
 
                     {/* Extraction Model */}
                     <div className="mb-4 pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Extraction Model</h4>
                       <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion, and generates community summaries. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to the primary model if not set separately.</p>
-                      <ConfigItem label="Model" value={config.extraction_model} tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
-                      <ConfigItem label="API Base" value={config.extraction_api_base} tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
+                      <ConfigItem label="Model" value={config.extraction_model} format="model" tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
+                      <ConfigItem label="API Base" value={config.extraction_api_base} format="apiBase" tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Inherits OPENAI_MAX_CONTEXT when GRAPH_EXTRACTION_MAX_CONTEXT is 0 (GRAPH_EXTRACTION_MAX_CONTEXT)" />
-                      <ConfigItem label="Output Tokens" value={config.extraction_max_output_tokens.toLocaleString()} tooltip="Output budget for entity-extraction LLM calls. Inherits OPENAI_MAX_OUTPUT_TOKENS when EXTRACTION_MAX_OUTPUT_TOKENS is 0 (EXTRACTION_MAX_OUTPUT_TOKENS)" />
-                      <ConfigItem label="Concurrent Extractions" value={config.concurrent_extractions} tooltip="How many chunks are extracted in parallel per document. Thread pool size for entity-extraction LLM calls (CONCURRENT_EXTRACTIONS)" />
+                      <ConfigItem advanced label="Output Tokens" value={config.extraction_max_output_tokens.toLocaleString()} tooltip="Output budget for entity-extraction LLM calls. Inherits OPENAI_MAX_OUTPUT_TOKENS when EXTRACTION_MAX_OUTPUT_TOKENS is 0 (EXTRACTION_MAX_OUTPUT_TOKENS)" />
+                      <ConfigItem advanced label="Concurrent Extractions" value={config.concurrent_extractions} tooltip="How many chunks are extracted in parallel per document. Thread pool size for entity-extraction LLM calls (CONCURRENT_EXTRACTIONS)" />
                     </div>
 
                     {/* Relationship Model */}
                     <div className="mb-4 pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Relationship Model</h4>
                       <p className="text-muted-foreground text-xs mb-2">Used for all relationship discovery (Step 1 per-chunk and Step 2 batch analysis). Separate rate limit from entity extraction. Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model.</p>
-                      <ConfigItem label="Model" value={config.relationship_model} tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
-                      <ConfigItem label="API Base" value={config.relationship_api_base} tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
+                      <ConfigItem label="Model" value={config.relationship_model} format="model" tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
+                      <ConfigItem label="API Base" value={config.relationship_api_base} format="apiBase" tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max input context tokens for Phase 2 batch analysis. Inherits extraction → primary when RELATIONSHIP_MAX_CONTEXT is 0 (RELATIONSHIP_MAX_CONTEXT)" />
-                      <ConfigItem label="Output Tokens (per-chunk)" value={config.relationship_max_output_tokens.toLocaleString()} tooltip="Output budget for per-chunk + candidate-scan calls. Inherits extraction → primary when RELATIONSHIP_MAX_OUTPUT_TOKENS is 0 (RELATIONSHIP_MAX_OUTPUT_TOKENS)" />
-                      <ConfigItem label="Output Tokens (batch)" value={config.relationship_batch_max_output_tokens.toLocaleString()} tooltip="Output budget for Phase 2 batch analysis — standalone, NOT in the inheritance chain. Batches process hundreds of entity pairs per call (RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS)" />
-                      <ConfigItem label="Concurrent Relations" value={config.concurrent_relations} tooltip="Phase 1 — per-chunk relationship extraction during document ingestion. Within a single document, this many chunks have their relationships extracted in parallel (the rest queue behind a per-doc semaphore). High frequency, small payloads. Example: a 50-chunk doc at 4 means 4 chunks process at once, 46 wait. This is NOT the same as 'Parallel Batches' below — that one runs in a separate post-ingestion phase (CONCURRENT_RELATIONS)" />
-                      <ConfigItem label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Phase 2 — cross-document batch analysis that runs AFTER all documents finish ingesting. Cortex takes the full entity graph, groups candidate entity pairs into batches (hundreds of pairs per batch), and asks the LLM about each batch in a single call. This knob controls how many of those big batch calls run concurrently. Low frequency, large payloads. This is NOT the same as 'Concurrent Relations' above — different phase, different work unit (PARALLEL_RELATIONSHIP_BATCHES)" />
+                      <ConfigItem advanced label="Output Tokens (per-chunk)" value={config.relationship_max_output_tokens.toLocaleString()} tooltip="Output budget for per-chunk + candidate-scan calls. Inherits extraction → primary when RELATIONSHIP_MAX_OUTPUT_TOKENS is 0 (RELATIONSHIP_MAX_OUTPUT_TOKENS)" />
+                      <ConfigItem advanced label="Output Tokens (batch)" value={config.relationship_batch_max_output_tokens.toLocaleString()} tooltip="Output budget for Phase 2 batch analysis — standalone, NOT in the inheritance chain. Batches process hundreds of entity pairs per call (RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS)" />
+                      <ConfigItem advanced label="Concurrent Relations" value={config.concurrent_relations} tooltip="Phase 1 — per-chunk relationship extraction during document ingestion. Within a single document, this many chunks have their relationships extracted in parallel (the rest queue behind a per-doc semaphore). High frequency, small payloads. Example: a 50-chunk doc at 4 means 4 chunks process at once, 46 wait. This is NOT the same as 'Parallel Batches' below — that one runs in a separate post-ingestion phase (CONCURRENT_RELATIONS)" />
+                      <ConfigItem advanced label="Parallel Batches" value={config.parallel_relationship_batches} tooltip="Phase 2 — cross-document batch analysis that runs AFTER all documents finish ingesting. Cortex takes the full entity graph, groups candidate entity pairs into batches (hundreds of pairs per batch), and asks the LLM about each batch in a single call. This knob controls how many of those big batch calls run concurrently. Low frequency, large payloads. This is NOT the same as 'Concurrent Relations' above — different phase, different work unit (PARALLEL_RELATIONSHIP_BATCHES)" />
                     </div>
 
                     {/* Vision Model */}
@@ -495,13 +510,13 @@ export default function AdminPage() {
                       <div className="mb-4 pt-3">
                         <h4 className="text-sm font-medium text-foreground mb-0.5">Vision Model</h4>
                         <p className="text-muted-foreground text-xs mb-2">Analyzes images extracted from documents during ingestion, generating descriptions and running OCR in the background.</p>
-                        <ConfigItem label="Model" value={config.vision_model} tooltip="Vision-capable model used for image analysis during document ingestion (VISION_MODEL)" />
-                        <ConfigItem label="API Base" value={config.vision_api_base} tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
-                        <ConfigItem label="Output Tokens" value={config.vision_max_output_tokens.toLocaleString()} tooltip="Output budget for vision-model image descriptions. Inherits relationship → extraction → primary when VISION_MAX_OUTPUT_TOKENS is 0 (VISION_MAX_OUTPUT_TOKENS)" />
-                        <ConfigItem label="Max Concurrent" value={config.vision_max_concurrent} tooltip="System-wide cap on concurrent vision API calls. Controls how many images are analyzed in parallel across all documents (VISION_MAX_CONCURRENT)" />
-                        <ConfigItem label="Min Image Side" value={`${config.vision_min_image_side} px`} tooltip="Skip the vision API call for images smaller than this on either side. PDFs expose bullets, icons, and separators as Docling PictureItems; hosted vision APIs reject sub-64px images with HTTP 400 'did not pass validation checks'. Below the threshold Cortex falls back to Docling's built-in description. Set 0 to disable (VISION_MIN_IMAGE_SIDE)" />
-                        <ConfigItem label="Max Image Side" value={`${config.vision_max_image_side} px`} tooltip="Downscale images so the longer side fits this many pixels before the base64 encode. Cortex renders PDF pages at 2× DPI (~2400×1700) — without this cap the base64 payload bloats and some providers tokenize it as text, blowing past context windows. 1568 matches Claude's recommended max side. Set 0 to disable downscaling (VISION_MAX_IMAGE_SIDE)" />
-                        <ConfigItem label="JPEG Quality" value={config.vision_jpeg_quality} tooltip="JPEG quality (1–95) when encoding opaque images for the vision API. 85 is visually near-lossless at ~5–10× smaller than PNG. RGBA images still use PNG to preserve alpha (VISION_JPEG_QUALITY)" />
+                        <ConfigItem label="Model" value={config.vision_model} format="model" tooltip="Vision-capable model used for image analysis during document ingestion (VISION_MODEL)" />
+                        <ConfigItem label="API Base" value={config.vision_api_base} format="apiBase" tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
+                        <ConfigItem advanced label="Output Tokens" value={config.vision_max_output_tokens.toLocaleString()} tooltip="Output budget for vision-model image descriptions. Inherits relationship → extraction → primary when VISION_MAX_OUTPUT_TOKENS is 0 (VISION_MAX_OUTPUT_TOKENS)" />
+                        <ConfigItem advanced label="Max Concurrent" value={config.vision_max_concurrent} tooltip="System-wide cap on concurrent vision API calls. Controls how many images are analyzed in parallel across all documents (VISION_MAX_CONCURRENT)" />
+                        <ConfigItem advanced label="Min Image Side" value={`${config.vision_min_image_side} px`} tooltip="Skip the vision API call for images smaller than this on either side. PDFs expose bullets, icons, and separators as Docling PictureItems; hosted vision APIs reject sub-64px images with HTTP 400 'did not pass validation checks'. Below the threshold Cortex falls back to Docling's built-in description. Set 0 to disable (VISION_MIN_IMAGE_SIDE)" />
+                        <ConfigItem advanced label="Max Image Side" value={`${config.vision_max_image_side} px`} tooltip="Downscale images so the longer side fits this many pixels before the base64 encode. Cortex renders PDF pages at 2× DPI (~2400×1700) — without this cap the base64 payload bloats and some providers tokenize it as text, blowing past context windows. 1568 matches Claude's recommended max side. Set 0 to disable downscaling (VISION_MAX_IMAGE_SIDE)" />
+                        <ConfigItem advanced label="JPEG Quality" value={config.vision_jpeg_quality} tooltip="JPEG quality (1–95) when encoding opaque images for the vision API. 85 is visually near-lossless at ~5–10× smaller than PNG. RGBA images still use PNG to preserve alpha (VISION_JPEG_QUALITY)" />
                       </div>
                     )}
 
@@ -509,10 +524,10 @@ export default function AdminPage() {
                     <div className="pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Embeddings</h4>
                       <p className="text-muted-foreground text-xs mb-2">Converts text into vector representations for semantic search, powering hybrid retrieval across chunks and entities.</p>
-                      <ConfigItem label="Model" value={config.embedding_model} tooltip="Model used to generate vector embeddings for chunks and entities (EMBEDDING_MODEL)" />
+                      <ConfigItem label="Model" value={config.embedding_model} format="model" tooltip="Model used to generate vector embeddings for chunks and entities (EMBEDDING_MODEL)" />
                       <ConfigItem label="Dimension" value={config.embedding_dimension} tooltip="Output dimension of the embedding vectors. Must match the model's supported dimensions (EMBEDDING_DIMENSION)" />
-                      <ConfigItem label="API Base" value={config.embedding_api_base} tooltip="API endpoint for the embedding model. Defaults to primary API base if not set (EMBEDDING_API_BASE)" />
-                      <ConfigItem label="Max Input Tokens" value={config.embedding_max_input_tokens.toLocaleString()} tooltip="Per-input token cap before sending to the embeddings endpoint. Inputs longer than this are char-truncated client-side (~2.8 chars/token) to avoid HTTP 400 'Input text exceeds the maximum token limit' rejections. Raise for longer-context models e.g. text-embedding-qwen3-8b → 32768 (EMBEDDING_MAX_INPUT_TOKENS)" />
+                      <ConfigItem label="API Base" value={config.embedding_api_base} format="apiBase" tooltip="API endpoint for the embedding model. Defaults to primary API base if not set (EMBEDDING_API_BASE)" />
+                      <ConfigItem advanced label="Max Input Tokens" value={config.embedding_max_input_tokens.toLocaleString()} tooltip="Per-input token cap before sending to the embeddings endpoint. Inputs longer than this are char-truncated client-side (~2.8 chars/token) to avoid HTTP 400 'Input text exceeds the maximum token limit' rejections. Raise for longer-context models e.g. text-embedding-qwen3-8b → 32768 (EMBEDDING_MAX_INPUT_TOKENS)" />
                     </div>
                   </ConfigSection>
 
@@ -520,37 +535,37 @@ export default function AdminPage() {
                   <ConfigSection title="Document Processing" icon={FileText} isOpen={openSections.has("documents")} onToggle={() => toggleSection("documents")}>
                     <ConfigItem label="Max File Size" value={`${config.max_file_size_mb} MB`} />
                     <ConfigItem label="Allowed Extensions" value={config.allowed_extensions.join(", ")} />
-                    <ConfigItem label="Chunk Size" value={config.chunk_size} />
-                    <ConfigItem label="Chunk Overlap" value={config.chunk_overlap} />
-                    <ConfigItem label="Chunk Method" value={config.chunk_by} />
-                    <ConfigItem label="Sentences per Chunk" value={config.sentences_per_chunk} />
-                    <ConfigItem label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
-                    <ConfigItem label="Thread Workers" value={config.processing_thread_workers} tooltip="Size of the thread pool for CPU-intensive processing operations (PROCESSING_THREAD_WORKERS)" />
+                    <ConfigItem advanced label="Chunk Size" value={config.chunk_size} />
+                    <ConfigItem advanced label="Chunk Overlap" value={config.chunk_overlap} />
+                    <ConfigItem advanced label="Chunk Method" value={config.chunk_by} />
+                    <ConfigItem advanced label="Sentences per Chunk" value={config.sentences_per_chunk} />
+                    <ConfigItem advanced label="Batch Concurrency" value={config.batch_processing_concurrency} tooltip="How many documents are processed through the pipeline simultaneously (BATCH_PROCESSING_CONCURRENCY)" />
+                    <ConfigItem advanced label="Thread Workers" value={config.processing_thread_workers} tooltip="Size of the thread pool for CPU-intensive processing operations (PROCESSING_THREAD_WORKERS)" />
                   </ConfigSection>
 
                   {/* Search Configuration */}
                   <ConfigSection title="Search & RAG" icon={Search} isOpen={openSections.has("search")} onToggle={() => toggleSection("search")}>
                     <ConfigItem label="Hybrid Search" value={config.enable_hybrid_search} type="boolean" />
-                    <ConfigItem label="Vector Weight" value={config.vector_weight} />
-                    <ConfigItem label="Keyword Weight" value={config.keyword_weight} />
-                    <ConfigItem label="Graph Weight" value={config.graph_weight} />
+                    <ConfigItem advanced label="Vector Weight" value={config.vector_weight} />
+                    <ConfigItem advanced label="Keyword Weight" value={config.keyword_weight} />
+                    <ConfigItem advanced label="Graph Weight" value={config.graph_weight} />
                     <ConfigItem label="Reranking" value={config.enable_reranking} type="boolean" />
                     <ConfigItem label="Reranking Model" value={config.reranking_model} />
                     <ConfigItem label="Agentic RAG" value={config.enable_agentic_rag} type="boolean" />
-                    <ConfigItem label="Max Agentic Steps" value={config.max_agentic_steps} />
-                    <ConfigItem label="Max Conversation History" value={config.max_conversation_history} />
+                    <ConfigItem advanced label="Max Agentic Steps" value={config.max_agentic_steps} />
+                    <ConfigItem advanced label="Max Conversation History" value={config.max_conversation_history} />
                   </ConfigSection>
 
                   {/* Knowledge Graph */}
                   <ConfigSection title="Knowledge Graph" icon={Network} isOpen={openSections.has("graph")} onToggle={() => toggleSection("graph")}>
                     <ConfigItem label="Graph Extraction" value={config.enable_graph_extraction} type="boolean" />
-                    <ConfigItem label="Max Graph Hops" value={config.max_graph_hops} />
+                    <ConfigItem advanced label="Max Graph Hops" value={config.max_graph_hops} />
                     <ConfigItem label="Community Detection" value={config.enable_community_detection} type="boolean" />
-                    <ConfigItem label="Min Community Size" value={config.min_community_size} />
-                    <ConfigItem label="Max Communities" value={config.max_communities} />
+                    <ConfigItem advanced label="Min Community Size" value={config.min_community_size} />
+                    <ConfigItem advanced label="Max Communities" value={config.max_communities} />
                     <ConfigItem label="Graph Summarization" value={config.enable_graph_summarization} type="boolean" />
                     <ConfigItem label="Entity Resolution" value={config.enable_semantic_entity_resolution} type="boolean" />
-                    <ConfigItem label="Similarity Threshold" value={config.entity_similarity_threshold} />
+                    <ConfigItem advanced label="Similarity Threshold" value={config.entity_similarity_threshold} />
                   </ConfigSection>
 
                   {/* Collections & Features */}
@@ -563,6 +578,7 @@ export default function AdminPage() {
                   </ConfigSection>
 
                 </div>
+                </DisplayFullConfigContext.Provider>
               ) : null}
             </div>
           </div>
