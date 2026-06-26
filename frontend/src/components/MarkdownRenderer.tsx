@@ -68,8 +68,14 @@ function CodeBlock({
   );
 }
 
-// Citation pattern: [src_1], [src_2], etc.
-const CITATION_REGEX = /\[src_(\d+)\]/g;
+// Citation patterns. The writer is instructed to cite as [src_1], [src_2], but
+// models (especially the smaller chat model) frequently group sources inside a
+// single bracket: [src_1, src_3, src_6] or [src_1, 3, 6]. Match the whole
+// bracketed group so grouped citations don't fall through as raw text, then pull
+// every number out of it and render one badge per source.
+const CITATION_GROUP_REGEX =
+  /\[\s*src_\d+(?:\s*[,;]\s*(?:src_)?\d+)*\s*\]/g;
+const CITATION_NUM_REGEX = /\d+/g;
 
 function CitationBadge({
   num,
@@ -107,20 +113,25 @@ function processCitations(
       const parts: ReactNode[] = [];
       let lastIndex = 0;
       let match: RegExpExecArray | null;
-      const regex = new RegExp(CITATION_REGEX.source, "g");
+      const regex = new RegExp(CITATION_GROUP_REGEX.source, "g");
 
       while ((match = regex.exec(node)) !== null) {
         if (match.index > lastIndex) {
           parts.push(node.slice(lastIndex, match.index));
         }
-        const num = parseInt(match[1], 10);
-        parts.push(
-          <CitationBadge
-            key={`cite-${match.index}`}
-            num={num}
-            onClick={() => onCitationClick(num - 1)}
-          />
-        );
+        // Pull every source number out of the matched bracket group so
+        // [src_1, src_3, src_6] renders three badges.
+        const nums = match[0].match(CITATION_NUM_REGEX) ?? [];
+        nums.forEach((n, i) => {
+          const num = parseInt(n, 10);
+          parts.push(
+            <CitationBadge
+              key={`cite-${match!.index}-${i}`}
+              num={num}
+              onClick={() => onCitationClick(num - 1)}
+            />
+          );
+        });
         lastIndex = regex.lastIndex;
       }
 

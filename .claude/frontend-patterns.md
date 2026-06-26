@@ -24,6 +24,10 @@ Research process blocks (Sub-Questions, Thinking Steps, Reasoning Steps) render 
 
 **ThinkingIndicator** (`ChatMessage.tsx`): shown while an assistant message streams before any content arrives. Blinking `live-dot` (CSS in `globals.css`) + a staged label + live elapsed-seconds counter + a reassurance line after 12 s. The label prefers the backend `status` event's `message` (stored on the message as `statusMessage`, set from the `status` SSE event in `AskPanel`), falling back to a heuristic over `sources`/`subQuestions`/`thinkingSteps`. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md#streaming-feedback-status--heartbeat).
 
+## Citation Rendering
+
+`MarkdownRenderer` turns `[src_N]` references in the answer into clickable `CitationBadge`s (only when `onCitationClick` is passed — chat/research via `ChatMessage`; `SearchPanel` leaves them as text). The parser matches the **whole bracket group**, so grouped citations the writer often emits — `[src_1, src_3, src_6]` or `[src_1, 3, 6]` — render one badge per number instead of falling through as raw literal text. This is model-agnostic, so both Chat (smaller model) and Deep Research render citations reliably regardless of whether the model groups them.
+
 ## Source Modal Highlighting
 
 Cited chunk is highlighted within the full document text. Uses `indexOf()` to split into three parts: before (60% opacity), cited chunk (full opacity with 3px accent left border), after (60% opacity). Auto-scrolls to highlighted chunk on load.

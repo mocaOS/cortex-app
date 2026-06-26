@@ -37,12 +37,12 @@ export function formatModelName(model: string): string {
 /**
  * Clean an OpenAI-compatible API base for display.
  * Cloudflare AI Gateway URLs embed the account id, gateway name, and provider
- * path (".../v1/<account>/<gateway>/compat") — show just the gateway origin + /v1/.
+ * path (".../v1/<account>/<gateway>/compat") — show just the gateway origin + /v1.
  * Non-Cloudflare bases are returned unchanged.
  */
 export function formatApiBase(apiBase: string): string {
   if (!apiBase) return apiBase;
-  const match = apiBase.match(/^(https?:\/\/gateway\.ai\.cloudflare\.com\/v1\/)/i);
+  const match = apiBase.match(/^(https?:\/\/gateway\.ai\.cloudflare\.com\/v1)\//i);
   return match ? match[1] : apiBase;
 }
 
