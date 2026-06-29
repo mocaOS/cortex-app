@@ -437,7 +437,11 @@ export default function AdminPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
         >
-          <div className="glass rounded-xl overflow-hidden">
+          {/* No overflow-hidden here: ConfigItem hover tooltips on the last/bottom
+              section (e.g. Privacy) open downward and extend past the card's bottom
+              edge. overflow-hidden would clip them — the section's own collapse is
+              already clipped by each ConfigSection's motion.div, not by this card. */}
+          <div className="glass rounded-xl">
             {/* Header */}
             <div className="px-6 py-4 border-b border-border/50">
               <div className="flex items-center justify-between">
