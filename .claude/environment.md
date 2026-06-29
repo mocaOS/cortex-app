@@ -134,6 +134,7 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 - `HELPER_SERVICE_TOKEN` (default: empty) — shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN`.
 - `HELPER_STRICT_REMOTE` (default: false) — when true (and `DOCLING_SERVICE_URL` set), a conversion that still fails after the helper client's retries marks the document failed instead of falling back to the local docling subprocess (protects tenant memory on packed hosts). All helper HTTP goes through `services/helper_client.py`: shared connection, 3 retries with backoff+jitter on transient failures, circuit breaker (5 failures → open 30s).
 - `INSTANCE_ID` (default: empty ⇒ container hostname) — identifies this stack to the shared helper (`X-Tenant-ID`) for per-tenant fair queuing.
+- `DOCLING_CONVERSION_TIMEOUT` (default: `600`) — hard ceiling in seconds on a single **local** docling subprocess conversion. On timeout the worker is killed and the document is marked `failed` with a clear message, instead of hanging in `processing` forever on a large/corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path (the helper client has its own timeouts).
 
 **Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors.
 

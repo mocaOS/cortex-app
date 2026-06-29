@@ -507,6 +507,34 @@ class Neo4jService:
                 message=message
             )
 
+    def reset_orphaned_processing_documents(self) -> list[str]:
+        """Reset documents stranded mid-pipeline back to 'pending'.
+
+        Document processing runs as in-process background tasks. When the
+        backend restarts (every redeploy/upgrade in the per-tenant deploy
+        model), any document in a transient state ('processing'/'extracting')
+        is orphaned: no task is tracking it, so its spinner never resolves and
+        it permanently keeps `/api/instance/status` reporting `safe_to_redeploy:
+        false`. Run once at startup — at that point no processing can legitimately
+        be in flight, so every transient-state doc is by definition orphaned.
+
+        Resets them to 'pending' (the truthful "waiting to be processed" state)
+        so they rejoin the normal pending queue and the operator can re-run
+        processing, rather than leaving them stuck forever.
+
+        Returns the list of reset document ids.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE d.processing_status IN ['processing', 'extracting']
+                SET d.processing_status = 'pending',
+                    d.progress_message = 'Reset to pending after a server restart interrupted processing — reprocess to retry',
+                    d.error_message = null
+                RETURN d.id AS id
+            """)
+            return [record["id"] for record in result]
+
     def refresh_chunk_count(self, doc_id: str) -> int:
         """Recount actual chunks from the graph and update the document's chunk_count."""
         with self.driver.session() as session:

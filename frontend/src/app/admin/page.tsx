@@ -201,21 +201,22 @@ export default function AdminPage() {
     }
   }, []);
 
-  useEffect(() => {
-    async function fetchConfig() {
-      try {
-        const data = await api.getSystemConfig();
-        setConfig(data);
-        setConfigError(null);
-      } catch (err) {
-        setConfigError(err instanceof Error ? err.message : "Failed to load configuration");
-      } finally {
-        setConfigLoading(false);
-      }
+  const fetchConfig = useCallback(async () => {
+    try {
+      const data = await api.getSystemConfig();
+      setConfig(data);
+      setConfigError(null);
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : "Failed to load configuration");
+    } finally {
+      setConfigLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
     fetchConfig();
     refreshStats();
-  }, [refreshStats]);
+  }, [refreshStats, fetchConfig]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -654,7 +655,11 @@ export default function AdminPage() {
           <SystemResetModal
             onClose={() => setShowResetModal(false)}
             onReset={() => {
-              // Could refresh stats or redirect here
+              // Refresh both panels so the dashboard reflects the wipe instead
+              // of showing stale entity/document counts (which reads as "it
+              // didn't work").
+              refreshStats();
+              fetchConfig();
             }}
           />
         )}

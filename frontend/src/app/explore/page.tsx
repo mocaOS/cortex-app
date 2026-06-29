@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useIsMounted } from "@/lib/hooks";
 import type { GraphData, GraphNode, GraphEdge } from "@/types";
 import { KnowledgeGraph, EntitiesBrowser, RelationshipsBrowser, CommunitiesBrowser } from "@/components/explore";
 import AskPanel from "@/components/AskPanel";
@@ -132,6 +133,10 @@ function ExplorePageContent() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useIsMounted();
+  // Monotonic request ids to discard stale / out-of-order responses
+  const searchReqId = useRef(0);
+  const graphReqId = useRef(0);
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -158,15 +163,21 @@ function ExplorePageContent() {
 
     setIsSearching(true);
     searchTimeoutRef.current = setTimeout(async () => {
+      const reqId = ++searchReqId.current;
       try {
         const response = await api.searchEntities(searchQuery.trim());
+        // Discard if a newer search started or we unmounted
+        if (!mounted.current || reqId !== searchReqId.current) return;
         setSearchResults(response.results);
         setShowSearchResults(true);
       } catch (err) {
         console.error("Search failed:", err);
+        if (!mounted.current || reqId !== searchReqId.current) return;
         setSearchResults([]);
       } finally {
-        setIsSearching(false);
+        if (mounted.current && reqId === searchReqId.current) {
+          setIsSearching(false);
+        }
       }
     }, 300);
 
@@ -184,17 +195,22 @@ function ExplorePageContent() {
       return;
     }
 
+    const reqId = ++graphReqId.current;
     setIsLoadingSubgraph(true);
     setError(null);
     try {
       const data = await api.getGraphSubgraph(entityNames, true);
+      if (!mounted.current || reqId !== graphReqId.current) return;
       setSearchGraphData(data);
     } catch (err) {
+      if (!mounted.current || reqId !== graphReqId.current) return;
       setError(err instanceof Error ? err.message : "Failed to load subgraph");
     } finally {
-      setIsLoadingSubgraph(false);
+      if (mounted.current && reqId === graphReqId.current) {
+        setIsLoadingSubgraph(false);
+      }
     }
-  }, []);
+  }, [mounted]);
 
   // Handle selecting an entity from search results
   const handleSelectEntity = useCallback((entity: EntitySearchResult) => {
@@ -224,21 +240,28 @@ function ExplorePageContent() {
   }, []);
 
   const fetchGraphData = useCallback(async () => {
+    const reqId = ++graphReqId.current;
     setLoading(true);
     setError(null);
     try {
       const data = await api.getGraphVisualization(nodeLimit, includeNeighbors);
+      if (!mounted.current || reqId !== graphReqId.current) return;
       setGraphData(data);
     } catch (err) {
+      if (!mounted.current || reqId !== graphReqId.current) return;
       setError(err instanceof Error ? err.message : "Failed to load graph data");
     } finally {
-      setLoading(false);
+      if (mounted.current && reqId === graphReqId.current) {
+        setLoading(false);
+      }
     }
-  }, [nodeLimit, includeNeighbors]);
+  }, [nodeLimit, includeNeighbors, mounted]);
 
+  // Only fetch the heavy full graph when the graph tab is active
   useEffect(() => {
+    if (activeTab !== "graph") return;
     fetchGraphData();
-  }, [fetchGraphData]);
+  }, [fetchGraphData, activeTab]);
 
   // Use search graph data when entities are selected, otherwise use full graph
   const activeGraphData = selectedEntities.length > 0 ? searchGraphData : graphData;

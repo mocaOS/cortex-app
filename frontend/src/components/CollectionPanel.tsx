@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
-import { FolderOpen, Plus, Loader2 } from "lucide-react";
+import { FolderOpen, Plus, Loader2, AlertCircle, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { useIsMounted } from "@/lib/hooks";
 import type { Collection, CollectionEntity, Community, TaskProgress } from "@/types";
 import { CollectionCard, CreateCollectionForm, CommunitySection } from "./collections";
 
@@ -12,7 +13,9 @@ interface CollectionPanelProps {
 }
 
 export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
+  const mounted = useIsMounted();
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -40,18 +43,23 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       const result = await api.pollTask<{ communities: Community[]; total: number }>(
         taskId,
         (progress) => {
+          if (!mounted.current) return;
           setDetectionProgress(progress);
         },
         1000
       );
+      if (!mounted.current) return;
       setCommunities(result.communities);
       localStorage.removeItem(TASK_STORAGE_KEY);
-    } catch (error) {
-      console.error("Failed to resume task polling:", error);
+    } catch (err) {
+      console.error("Failed to resume task polling:", err);
       localStorage.removeItem(TASK_STORAGE_KEY);
+      if (mounted.current) setError(err instanceof Error ? err.message : "Failed to resume community detection");
     } finally {
-      setIsDetecting(false);
-      setDetectionProgress(null);
+      if (mounted.current) {
+        setIsDetecting(false);
+        setDetectionProgress(null);
+      }
     }
   };
 
@@ -68,8 +76,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     try {
       const data = await api.getCollections();
       setCollections(data.collections);
-    } catch (error) {
-      console.error("Failed to fetch collections:", error);
+    } catch (err) {
+      console.error("Failed to fetch collections:", err);
+      setError(err instanceof Error ? err.message : "Failed to load collections");
     } finally {
       setIsLoading(false);
     }
@@ -80,8 +89,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     try {
       const data = await api.getCommunities(30);
       setCommunities(data.communities);
-    } catch (error) {
-      console.error("Failed to fetch communities:", error);
+    } catch (err) {
+      console.error("Failed to fetch communities:", err);
+      setError(err instanceof Error ? err.message : "Failed to load communities");
     } finally {
       setIsLoadingCommunities(false);
     }
@@ -93,8 +103,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     try {
       await api.deleteCommunity(id);
       setCommunities((prev) => prev.filter((c) => c.id !== id));
-    } catch (error) {
-      console.error("Failed to delete community:", error);
+    } catch (err) {
+      console.error("Failed to delete community:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete community");
     } finally {
       setDeletingCommunityId(null);
     }
@@ -106,8 +117,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     try {
       await api.deleteAllCommunities();
       setCommunities([]);
-    } catch (error) {
-      console.error("Failed to delete all communities:", error);
+    } catch (err) {
+      console.error("Failed to delete all communities:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete communities");
     } finally {
       setIsLoadingCommunities(false);
     }
@@ -127,18 +139,25 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       setNewDescription("");
       setIsCreating(false);
       onRefresh?.();
-    } catch (error) {
-      console.error("Failed to create collection:", error);
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      setError(err instanceof Error ? err.message : "Failed to create collection");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleRename = async (id: string, name: string) => {
-    const updated = await api.updateCollection(id, { name });
-    setCollections((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, name: updated.name } : c))
-    );
+    try {
+      const updated = await api.updateCollection(id, { name });
+      setCollections((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, name: updated.name } : c))
+      );
+    } catch (err) {
+      console.error("Failed to rename collection:", err);
+      setError(err instanceof Error ? err.message : "Failed to rename collection");
+      throw err;
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -153,8 +172,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       setCollections((prev) => prev.filter((c) => c.id !== id));
       if (expandedId === id) setExpandedId(null);
       onRefresh?.();
-    } catch (error) {
-      console.error("Failed to delete collection:", error);
+    } catch (err) {
+      console.error("Failed to delete collection:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete collection");
     } finally {
       setDeletingId(null);
     }
@@ -170,8 +190,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
         try {
           const data = await api.getCollectionEntities(id, 50);
           setEntities((prev) => ({ ...prev, [id]: data.entities }));
-        } catch (error) {
-          console.error("Failed to fetch entities:", error);
+        } catch (err) {
+          console.error("Failed to fetch entities:", err);
+          setError(err instanceof Error ? err.message : "Failed to load collection entities");
         } finally {
           setLoadingEntities(null);
         }
@@ -188,19 +209,24 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
       const result = await api.pollTask<{ communities: Community[]; total: number }>(
         taskStart.task_id,
         (progress) => {
+          if (!mounted.current) return;
           setDetectionProgress(progress);
         },
         1000
       );
+      if (!mounted.current) return;
       setCommunities(result.communities);
       setShowCommunities(true);
       localStorage.removeItem(TASK_STORAGE_KEY);
-    } catch (error) {
-      console.error("Failed to detect communities:", error);
+    } catch (err) {
+      console.error("Failed to detect communities:", err);
       localStorage.removeItem(TASK_STORAGE_KEY);
+      if (mounted.current) setError(err instanceof Error ? err.message : "Failed to detect communities");
     } finally {
-      setIsDetecting(false);
-      setDetectionProgress(null);
+      if (mounted.current) {
+        setIsDetecting(false);
+        setDetectionProgress(null);
+      }
     }
   };
 
@@ -209,8 +235,9 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
     try {
       await api.summarizeCommunities();
       await fetchCommunities();
-    } catch (error) {
-      console.error("Failed to summarize communities:", error);
+    } catch (err) {
+      console.error("Failed to summarize communities:", err);
+      setError(err instanceof Error ? err.message : "Failed to summarize communities");
     } finally {
       setIsSummarizing(false);
     }
@@ -248,6 +275,18 @@ export default function CollectionPanel({ onRefresh }: CollectionPanelProps) {
           New Collection
         </button>
       </div>
+
+      {error && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-destructive flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="text-sm">{error}</span>
+          </div>
+          <button onClick={() => setError(null)} className="text-destructive hover:text-destructive/80">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {isCreating && (

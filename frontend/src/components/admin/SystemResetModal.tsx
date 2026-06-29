@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { X, AlertTriangle, Loader2, Trash2, Check } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useModalDismiss } from "@/lib/hooks";
 import type { SystemResetRequest, SystemResetResponse } from "@/types";
 
 interface SystemResetModalProps {
@@ -14,6 +15,7 @@ interface SystemResetModalProps {
 
 export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
   useBodyScrollLock(true);
+  const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
 
   // Deletion options state
   const [deleteDocuments, setDeleteDocuments] = useState(true);
@@ -177,6 +179,10 @@ export function SystemResetModal({ onClose, onReset }: SystemResetModalProps) {
         exit={{ scale: 0.9, opacity: 0 }}
         className="bg-card rounded-xl border border-destructive/30 p-6 max-w-2xl w-full"
         onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
       >
         {/* Header */}
         <div className="flex items-start justify-between mb-4">

@@ -369,6 +369,12 @@ class Settings(BaseSettings):
         default=""
     )  # Identifies this stack to the shared helper (X-Tenant-ID header, used
     #   for fair queuing). Empty = container hostname.
+    docling_conversion_timeout: int = Field(
+        default=600
+    )  # Hard ceiling (seconds) on a single local docling subprocess conversion.
+    #   A hung OCR/table parse on a large/corrupt file would otherwise block
+    #   indefinitely with the document stuck in 'processing'. On timeout the
+    #   worker is killed and the document is marked failed with a clear message.
 
     # ==========================================================================
     # MDHarvest powered by Crawl4ai — web → markdown harvesting.

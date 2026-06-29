@@ -128,6 +128,10 @@ curl "http://localhost:8000/api/documents/doc_abc123" \
 A document with `status: "completed"` may still have background image analysis running. The `image_progress_current`, `image_progress_total`, and `image_progress_message` fields in the document response track this progress. The Knowledge Graph pipeline (Step 1) treats these documents as still in-progress and will not advance to relationship analysis until all image analysis completes.
 :::
 
+:::note
+**Startup recovery:** If the backend is restarted while a document is mid-processing, on startup any document left in a transient state (`processing`/`extracting`) is reset to `pending` so it rejoins the queue instead of spinning forever. A WARNING log lists the reset document ids.
+:::
+
 ## Custom Inputs
 
 In addition to file uploads, you can add knowledge manually:
@@ -285,8 +289,10 @@ This cancels all active processing tasks and removes all documents, chunks, enti
 
 Control document processing behavior via environment variables:
 
+Uploads are streamed in bounded chunks and rejected mid-stream with HTTP `413` once they exceed `MAX_FILE_SIZE_MB`, so an oversized file is never fully buffered into memory first. A multipart upload with no filename returns `400`.
+
 ```bash
-# Maximum file size
+# Maximum file size (uploads exceeding this are rejected with HTTP 413)
 MAX_FILE_SIZE_MB=50
 
 # Chunking settings

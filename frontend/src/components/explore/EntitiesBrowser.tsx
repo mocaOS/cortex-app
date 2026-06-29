@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight, Pencil, Merge } from "lucide-react";
+import { useModalDismiss } from "@/lib/hooks";
+import { Loader2, Search, Filter, Network, ChevronDown, Check, X, ArrowRight, ChevronLeft, ChevronRight, Pencil, Merge, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EntityDetails } from "@/types";
 
@@ -169,6 +170,7 @@ export default function EntitiesBrowser() {
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [entityDetails, setEntityDetails] = useState<EntityDetails | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [editName, setEditName] = useState("");
@@ -178,29 +180,43 @@ export default function EntitiesBrowser() {
 
   useBodyScrollLock(!!selectedEntity);
 
+  // Monotonic request id so a slow detail fetch can't overwrite a newer one
+  const detailReqId = useRef(0);
+
   const handleOpenDetail = async (entity: Entity) => {
+    const reqId = ++detailReqId.current;
     setSelectedEntity(entity);
     setEntityDetails(null);
+    setDetailError(null);
     setDetailLoading(true);
     setEditingName(false);
     setEditingDescription(false);
     setSaveError(null);
     try {
       const details = await api.getEntityDetails(entity.name, 1);
+      if (reqId !== detailReqId.current) return;
       setEntityDetails(details);
-    } catch {
+    } catch (err) {
+      if (reqId !== detailReqId.current) return;
       setEntityDetails(null);
+      setDetailError(err instanceof Error ? err.message : "Failed to load entity details");
     } finally {
-      setDetailLoading(false);
+      if (reqId === detailReqId.current) {
+        setDetailLoading(false);
+      }
     }
   };
 
   const handleCloseDetail = () => {
     setSelectedEntity(null);
+    setEntityDetails(null);
+    setDetailError(null);
     setEditingName(false);
     setEditingDescription(false);
     setSaveError(null);
   };
+
+  const dialogRef = useModalDismiss<HTMLDivElement>(handleCloseDetail);
 
   const handleSaveEntity = async (updates: { name?: string; description?: string }) => {
     if (!selectedEntity) return;
@@ -387,7 +403,14 @@ export default function EntitiesBrowser() {
       {/* Detail Modal */}
       {selectedEntity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={handleCloseDetail}>
-          <div className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={dialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto focus:outline-none"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between p-4 border-b border-border">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {editingName ? (
@@ -506,6 +529,17 @@ export default function EntitiesBrowser() {
               {detailLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : detailError ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+                  <AlertCircle className="w-6 h-6 text-red-400" />
+                  <p className="text-sm text-muted-foreground">{detailError}</p>
+                  <button
+                    onClick={() => handleOpenDetail(selectedEntity)}
+                    className="px-3 py-1.5 text-sm rounded-lg bg-muted hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    Retry
+                  </button>
                 </div>
               ) : entityDetails ? (
                 <>

@@ -92,11 +92,13 @@ After the Researcher finishes, the Writer synthesizes all gathered context:
 
 Navigate to **Explore > Chat**:
 
-1. Type your question in the input field
-2. The answer streams in real-time
+1. Type your question in the input field — the composer is multi-line: press **Enter** to send, **Shift+Enter** for a new line
+2. The answer streams in real-time; a **Stop** button lets you cancel generation while it's still streaming
 3. Source citations appear as clickable references
 4. Follow-up questions automatically include conversation history
 5. Use the collection selector to scope queries
+
+If the connection is interrupted while an answer is streaming (for example the server is redeployed mid-answer), the partial answer is finalized cleanly with a clear message rather than leaving an endless typing indicator. Backend errors are surfaced to you directly instead of a generic message. The same composer and behavior apply to Deep Research.
 
 ## Using Deep Research (Web Interface)
 

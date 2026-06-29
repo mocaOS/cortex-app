@@ -67,6 +67,22 @@ Runs asynchronously after text processing completes:
 - Graph extraction runs on image content if enabled. When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, each image's extracted entities are batch-embedded (one `generate_entity_embeddings_batch_async()` call per image) before `store_graph_extraction()`, so they flow through `store_entity_with_embedding()` and land in the same `entity_embedding` vector index that text entities populate. The image and text surfaces now share one dedup signal — see [`entities.md`](entities.md#fuzzy-resolution).
 - Reasoning is suppressed on capable multimodal models via `VISION_REASONING_MODE` (default `off`). `vision_analyzer.py` uses raw httpx, so it merges `flatten_reasoning_body()` output into the `/chat/completions` JSON body and falls back once on 400, marking the model via `mark_reasoning_unsupported`. Lets you point both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` at e.g. Qwen3-VL-27B with one endpoint. See [`.claude/environment.md`](../environment.md#reasoning-control-ingestion).
 
+### Startup recovery of orphaned in-flight documents
+
+Processing runs as in-process background tasks, so a backend restart (every
+redeploy/upgrade in the per-tenant deploy model) orphans any document left in a
+transient state (`processing`/`extracting`) — its spinner would never resolve
+and `/api/instance/status` would report `safe_to_redeploy: false` forever. The
+lifespan startup (`backend/app/main.py`) calls
+`Neo4jService.reset_orphaned_processing_documents()` right after schema init,
+which resets every transient-state document back to `pending` (truthful
+"waiting to be processed" state, rejoins the queue) with an explanatory
+`progress_message`. Safe because at startup no processing can legitimately be in
+flight. A `WARNING` log line lists the reset ids. Separately,
+`DOCLING_CONVERSION_TIMEOUT` (default 600s) prevents a *new* hang: a stuck local
+docling subprocess is killed and the document marked `failed` instead of pinning
+the status at `processing`.
+
 ### Step 1 Gate on Image Analysis
 
 `_run_batch_processing_task` in `backend/app/main.py` calls `_wait_for_image_analysis_complete()` after text processing finishes. That helper polls Neo4j every 3 s for any document with `processing_status == "completed" AND image_progress_current < image_progress_total`, updating the task's progress message with `"... — analyzing images: N/total across K document(s)..."` until none remain. Only then does `complete_task` run, which lets the backend chain advance to Step 2.

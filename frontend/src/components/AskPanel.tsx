@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp, FlaskConical } from "lucide-react";
+import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp, FlaskConical, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConversationMessage, GraphContext } from "@/types";
 import { ChatMessage, EmptyChat } from "./ask";
@@ -79,7 +79,16 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+  // Holds the in-flight stream so the user can Stop it (and so we can abort on
+  // unmount — otherwise navigating away leaves the backend generating).
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight stream when the panel unmounts.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   // Chat is the default surface; Deep Research is an in-session toggle (flask
   // icon) that can be flipped at any time mid-conversation. Initialized from the
@@ -142,6 +151,15 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   }, []);
 
   useEffect(() => {
+    // Only auto-scroll if the user is already near the bottom. Otherwise a user
+    // who scrolled up to read sources/earlier answers gets yanked back down on
+    // every streamed chunk.
+    const container = scrollContainerRef.current;
+    if (container) {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom > 120) return;
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -163,6 +181,9 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
     setQuestion("");
     setIsLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     const conversationHistory = getConversationHistory();
 
     if (useStreaming) {
@@ -182,6 +203,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
         let content = "";
         let thinkingSteps: string[] = [];
         let subQuestions: string[] = [];
+        let finalized = false;
 
         for await (const event of api.askStream(question, {
           conversationHistory,
@@ -190,6 +212,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
           useAgentic,
           useFastSearch: false,
           collectionId: selectedCollectionId,
+          signal: controller.signal,
         })) {
           if (event.thinking) {
             thinkingSteps = [...thinkingSteps, event.thinking as string];
@@ -268,6 +291,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
               };
               return updated;
             });
+            finalized = true;
           }
           if (event.error) {
             setMessages((prev) => {
@@ -275,20 +299,54 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
               const lastIdx = updated.length - 1;
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                content: `Error: ${event.error}`,
+                content: content
+                  ? `${content}\n\n_${event.error}_`
+                  : String(event.error),
                 isStreaming: false,
               };
               return updated;
             });
+            finalized = true;
+            break;
           }
         }
+
+        // The stream can end without a terminal `done`/`error` frame: a dropped
+        // connection, a proxy idle-timeout, or a graceful server restart (routine
+        // in per-tenant container deploys). Finalize the message so it doesn't
+        // blink with a streaming cursor forever.
+        if (!finalized) {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content:
+                content ||
+                "The connection was interrupted before the answer finished. Please try again.",
+              sources,
+              graphContext,
+              thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+              subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
+              isStreaming: false,
+            };
+            return updated;
+          });
+        }
       } catch (error) {
+        // User pressed Stop (or navigated away) — keep whatever streamed so far,
+        // just stop the cursor. Not an error to report.
+        const aborted = error instanceof DOMException && error.name === "AbortError";
         setMessages((prev) => {
           const updated = [...prev];
           const lastIdx = updated.length - 1;
           updated[lastIdx] = {
             ...updated[lastIdx],
-            content: "Sorry, I encountered an error processing your question.",
+            content: aborted
+              ? updated[lastIdx].content || "_Stopped._"
+              : error instanceof Error && error.message
+                ? error.message
+                : "Sorry, I encountered an error processing your question.",
             isStreaming: false,
           };
           return updated;
@@ -318,13 +376,21 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
       } catch (error) {
         const errorMessage: Message = {
           role: "assistant",
-          content: "Sorry, I encountered an error processing your question.",
+          content:
+            error instanceof Error && error.message
+              ? error.message
+              : "Sorry, I encountered an error processing your question.",
         };
         setMessages((prev) => [...prev, errorMessage]);
       }
     }
 
+    abortRef.current = null;
     setIsLoading(false);
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
   };
 
   const clearConversation = () => {
@@ -348,7 +414,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   return (
     <div className="flex flex-col h-[calc(100vh-340px)] min-h-[300px]">
       {/* Chat History */}
-      <div className="glass rounded-lg flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="glass rounded-lg flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyChat mode={useAgentic ? "research" : "chat"} />
         ) : (
@@ -404,17 +470,29 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
 
       {/* Input */}
       <form onSubmit={handleAsk} className="mt-3 shrink-0">
-        <div className="relative glass rounded-lg p-2 flex items-center gap-2">
-          <input
-            type="text"
+        <div className="relative glass rounded-lg p-2 flex items-end gap-2">
+          <textarea
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
+            onChange={(e) => {
+              setQuestion(e.target.value);
+              // Auto-grow up to a few lines, then scroll inside the field.
+              e.target.style.height = "auto";
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+            }}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter inserts a newline.
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleAsk(e as unknown as React.FormEvent);
+              }
+            }}
+            rows={1}
             placeholder={
               useAgentic
                 ? "Ask a complex question for deep research..."
-                : "Ask anything..."
+                : "Ask anything... (Shift+Enter for a new line)"
             }
-            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground py-2 px-3"
+            className="flex-1 bg-transparent border-none outline-none resize-none text-foreground placeholder:text-muted-foreground py-2 px-3 max-h-40 leading-relaxed"
           />
 
           <div className="flex items-center gap-1.5">
@@ -521,23 +599,31 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
               </AnimatePresence>
             </div>
 
-            {/* Send button */}
-            <button
-              type="submit"
-              disabled={isLoading || !hasInput}
-              className={cn(
-                "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
-                hasInput && !isLoading
-                  ? "bg-accent text-accent-foreground"
-                  : "bg-border text-muted-foreground opacity-30"
-              )}
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+            {/* Send / Stop button — turns into Stop while a response streams */}
+            {isLoading ? (
+              <button
+                type="button"
+                onClick={handleStop}
+                title="Stop generating"
+                aria-label="Stop generating"
+                className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors bg-accent text-accent-foreground hover:opacity-90"
+              >
+                <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!hasInput}
+                className={cn(
+                  "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                  hasInput
+                    ? "bg-accent text-accent-foreground"
+                    : "bg-border text-muted-foreground opacity-30"
+                )}
+              >
                 <ArrowUp className="w-4 h-4" strokeWidth={2.5} />
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
 

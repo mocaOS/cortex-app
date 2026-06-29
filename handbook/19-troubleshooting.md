@@ -163,6 +163,14 @@ Run the indicated step to resolve staleness.
 | Vision API | Image progress stuck | Increase `VISION_MAX_CONCURRENT`, check vision API |
 | Overall | Everything slow | Tune concurrency settings, use a faster LLM endpoint |
 
+### Documents Stuck in Processing
+
+**Symptom:** Documents show **Processing** indefinitely and never complete.
+
+**Solutions:**
+- A server restart no longer leaves documents stuck. On startup, any documents left in **Processing** are automatically reset to **Pending** so you can process them again (via the process-pending endpoint or the **Generate Graph** flow).
+- If a document repeatedly fails on a large or complex file, the local Docling conversion now times out (configurable via `DOCLING_CONVERSION_TIMEOUT`, default 600 seconds) and the document is marked **Failed** with a message instead of hanging.
+
 ### Slow Relationship Analysis
 
 Relationship analysis is the most compute-intensive step. Speed it up:

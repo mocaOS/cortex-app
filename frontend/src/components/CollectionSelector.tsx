@@ -10,6 +10,7 @@ import {
   Loader2,
   Layers,
   X,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -37,6 +38,7 @@ export default function CollectionSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,6 +63,8 @@ export default function CollectionSelector({
   }, []);
 
   const fetchCollections = async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
       const data = await api.getCollections();
       setCollections(data.collections);
@@ -72,15 +76,17 @@ export default function CollectionSelector({
       }
     } catch (error) {
       console.error("Failed to fetch collections:", error);
+      setLoadError(error instanceof Error ? error.message : "Failed to load collections");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleCreate = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setLoadError(null);
     try {
       const collection = await api.createCollection({ name: newName.trim() });
       setCollections((prev) => [collection, ...prev]);
@@ -90,6 +96,7 @@ export default function CollectionSelector({
       setIsOpen(false);
     } catch (error) {
       console.error("Failed to create collection:", error);
+      setLoadError(error instanceof Error ? error.message : "Failed to create collection");
     } finally {
       setIsSubmitting(false);
     }
@@ -151,7 +158,8 @@ export default function CollectionSelector({
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                       placeholder="Collection name..."
-                      className="flex-1 px-2 py-1.5 bg-card rounded text-sm text-foreground placeholder:text-muted-foreground border border-border focus:border-foreground focus:outline-none"
+                      disabled={isSubmitting}
+                      className="flex-1 px-2 py-1.5 bg-card rounded text-sm text-foreground placeholder:text-muted-foreground border border-border focus:border-foreground focus:outline-none disabled:opacity-50"
                       autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter") handleCreate();
@@ -240,7 +248,23 @@ export default function CollectionSelector({
                 </>
               )}
 
-              {!isLoading && collections.length === 0 && (
+              {!isLoading && loadError && (
+                <div className="px-3 py-4 text-center text-sm text-destructive">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{loadError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchCollections()}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!isLoading && !loadError && collections.length === 0 && (
                 <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                   No collections yet
                 </div>

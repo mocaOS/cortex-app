@@ -21,7 +21,7 @@ The Library supports 30+ file formats via the Docling conversion engine:
 | **Images** | `.png`, `.jpg`, `.jpeg`, `.tiff`, `.bmp` | Via vision model analysis |
 | **Audio** | `.wav`, `.mp3`, `.webvtt` | Transcription |
 
-Maximum file size: 50 MB by default (configurable via `MAX_FILE_SIZE_MB`).
+Maximum file size: 50 MB by default (configurable via `MAX_FILE_SIZE_MB`). Files exceeding the limit are rejected immediately — the upload is stopped mid-transfer rather than fully received first. An upload with no filename is rejected with a clear error.
 
 ## Uploading Documents
 
@@ -173,6 +173,10 @@ Image analysis does **not** block text processing — your document becomes sear
 ### Stage 8: Collection Assignment
 
 If a `collection_id` was specified during upload, the document is added to that collection.
+
+### Recovery After a Server Restart
+
+If the server restarts while documents are processing (for example during an upgrade or redeploy), those documents are automatically reset to **Pending** on the next startup instead of being stuck showing **Processing** forever. They simply need to be processed again — re-run them via the process-pending endpoint or the **Generate Graph** flow.
 
 ## Custom Inputs
 

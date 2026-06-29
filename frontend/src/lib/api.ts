@@ -79,6 +79,66 @@ export function clearAdminApiKey(): void {
   }
 }
 
+/**
+ * Build a human-readable message from a FastAPI error body. Handles the three
+ * shapes FastAPI emits: a plain `detail` string, a 422 validation array
+ * (`[{loc, msg, type}, ...]`), and an object `detail`. Without this, a 422
+ * surfaced to the user as the useless string "[object Object]".
+ */
+function extractErrorMessage(body: unknown, status: number): string {
+  if (body && typeof body === "object" && "detail" in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail)) {
+      const msgs = detail
+        .map((d) =>
+          d && typeof d === "object" && "msg" in d
+            ? String((d as { msg: unknown }).msg)
+            : null
+        )
+        .filter(Boolean) as string[];
+      if (msgs.length) return msgs.join("; ");
+    }
+    if (detail && typeof detail === "object" && "msg" in detail) {
+      return String((detail as { msg: unknown }).msg);
+    }
+  }
+  return `HTTP ${status}`;
+}
+
+/**
+ * Recover from an expired/revoked credential: drop the dead key and bounce to
+ * login (preserving where we were). Guards against a redirect loop on /login.
+ */
+function handleUnauthorized(): void {
+  if (typeof window === "undefined") return;
+  clearAdminApiKey();
+  if (window.location.pathname !== "/login") {
+    const from = encodeURIComponent(
+      window.location.pathname + window.location.search
+    );
+    window.location.href = `/login?from=${from}`;
+  }
+}
+
+/**
+ * Turn a failed Response into an Error with a clean, user-facing message.
+ * Detects 401 (triggers re-auth) and avoids dumping non-JSON proxy/gateway
+ * error pages (e.g. nginx 502 HTML) into the UI.
+ */
+async function toApiError(res: Response, fallback = "Request failed"): Promise<Error> {
+  if (res.status === 401) {
+    handleUnauthorized();
+    return new Error("Your session has expired. Please sign in again.");
+  }
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const body = await res.json().catch(() => null);
+    return new Error(body ? extractErrorMessage(body, res.status) : `HTTP ${res.status}`);
+  }
+  return new Error(`${fallback} (HTTP ${res.status})`);
+}
+
 class ApiClient {
   private async request<T>(
     endpoint: string,
@@ -101,8 +161,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res);
     }
 
     return res.json();
@@ -141,8 +200,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Upload failed");
     }
 
     return res.json();
@@ -270,8 +328,7 @@ class ApiClient {
       headers: apiKey ? { "X-API-Key": apiKey } : {},
     });
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Failed to fetch file" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Failed to fetch file");
     }
     return res.blob();
   }
@@ -288,8 +345,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Download failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Download failed");
     }
 
     const blob = await res.blob();
@@ -378,8 +434,7 @@ class ApiClient {
       });
 
       if (!res.ok) {
-        const error = await res.json().catch(() => ({ detail: "Reprocess failed" }));
-        throw new Error(error.detail || `HTTP ${res.status}`);
+        throw await toApiError(res, "Reprocess failed");
       }
 
       return res.json();
@@ -391,8 +446,7 @@ class ApiClient {
       });
 
       if (!res.ok) {
-        const error = await res.json().catch(() => ({ detail: "Reprocess failed" }));
-        throw new Error(error.detail || `HTTP ${res.status}`);
+        throw await toApiError(res, "Reprocess failed");
       }
 
       return res.json();
@@ -482,6 +536,7 @@ class ApiClient {
       useAgentic?: boolean;
       useFastSearch?: boolean;
       collectionId?: string;
+      signal?: AbortSignal;
     } = {}
   ): AsyncGenerator<StreamEvent, void, unknown> {
     const {
@@ -492,6 +547,7 @@ class ApiClient {
       useAgentic = false,
       useFastSearch = false,
       collectionId,
+      signal,
     } = options;
 
     const apiKey = getAdminApiKey();
@@ -501,6 +557,7 @@ class ApiClient {
         "Content-Type": "application/json",
         ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
+      signal,
       body: JSON.stringify({
         question,
         top_k: topK,
@@ -514,8 +571,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Stream failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Stream failed");
     }
 
     const reader = res.body?.getReader();
@@ -525,25 +581,42 @@ class ApiClient {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let eventName = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      
-      // Process complete SSE messages
+
+      // Process complete SSE lines
       const lines = buffer.split("\n");
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
       for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventName = line.slice(7).trim();
+          continue;
+        }
         if (line.startsWith("data: ")) {
+          // The backend emits `event: shutdown` on a graceful restart (routine
+          // in per-tenant container deploys). Surface it as a clear, retryable
+          // error instead of letting the stream end silently mid-answer.
+          if (eventName === "shutdown") {
+            yield {
+              error:
+                "The server is restarting. Please resend your question in a moment.",
+            } as StreamEvent;
+            eventName = "";
+            continue;
+          }
           try {
             const data = JSON.parse(line.slice(6));
             yield data as StreamEvent;
           } catch (e) {
             console.warn("Failed to parse SSE data:", line);
           }
+          eventName = "";
         }
       }
     }
@@ -679,8 +752,7 @@ class ApiClient {
     }
     
     if (!res.ok) {
-      const error = await res.text();
-      throw new Error(error || `Request failed with status ${res.status}`);
+      throw await toApiError(res, "Request failed");
     }
     
     return res.json();
@@ -690,7 +762,11 @@ class ApiClient {
     taskId: string,
     onProgress?: (progress: TaskProgress) => void,
     intervalMs = 1000,
-    maxAttempts = 600 // 10 minutes max
+    // ~60 min at the default 1s interval. Relationship analysis / community
+    // detection / large web imports routinely run well past the old 10-min cap;
+    // a premature "timeout" made users think a healthy job had failed (and
+    // re-trigger an expensive re-run).
+    maxAttempts = 3600
   ): Promise<T> {
     let attempts = 0;
     
@@ -716,7 +792,9 @@ class ApiClient {
       attempts++;
     }
     
-    throw new Error("Task polling timeout");
+    throw new Error(
+      "Stopped watching this task after a long wait — it may still be running in the background. Refresh to check its status."
+    );
   }
 
   async getCommunity(id: number): Promise<Community> {
@@ -905,6 +983,7 @@ class ApiClient {
       useGraph?: boolean;
       maxHops?: number;
       collectionId?: string;
+      signal?: AbortSignal;
     } = {}
   ): AsyncGenerator<ThinkingStreamEvent, void, unknown> {
     const {
@@ -913,6 +992,7 @@ class ApiClient {
       useGraph = true,
       maxHops = 2,
       collectionId,
+      signal,
     } = options;
 
     const apiKey = getAdminApiKey();
@@ -922,6 +1002,7 @@ class ApiClient {
         "Content-Type": "application/json",
         ...(apiKey ? { "X-API-Key": apiKey } : {}),
       },
+      signal,
       body: JSON.stringify({
         question,
         top_k: topK,
@@ -934,8 +1015,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Stream failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Stream failed");
     }
 
     const reader = res.body?.getReader();
@@ -945,24 +1025,38 @@ class ApiClient {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let eventName = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      
+
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
 
       for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventName = line.slice(7).trim();
+          continue;
+        }
         if (line.startsWith("data: ")) {
+          if (eventName === "shutdown") {
+            yield {
+              error:
+                "The server is restarting. Please resend your question in a moment.",
+            } as ThinkingStreamEvent;
+            eventName = "";
+            continue;
+          }
           try {
             const data = JSON.parse(line.slice(6));
             yield data as ThinkingStreamEvent;
           } catch (e) {
             console.warn("Failed to parse SSE data:", line);
           }
+          eventName = "";
         }
       }
     }
@@ -1194,8 +1288,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Download failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Download failed");
     }
 
     const blob = await res.blob();
@@ -1223,8 +1316,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Import failed" }));
-      throw new Error(error.detail || `HTTP ${res.status}`);
+      throw await toApiError(res, "Import failed");
     }
 
     return res.json();

@@ -704,7 +704,14 @@ export default function ChatMessage({
                         )}
                       </>
                     ) : documentContent ? (
-                      <MarkdownRenderer content={documentContent.full_content} />
+                      <>
+                        <div className="mb-4 p-3 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
+                          Couldn&apos;t locate the exact cited passage in this
+                          document (it may have been reformatted) — showing the
+                          full text below.
+                        </div>
+                        <MarkdownRenderer content={documentContent.full_content} />
+                      </>
                     ) : (
                       <MarkdownRenderer content={selectedSource.content} />
                     )}

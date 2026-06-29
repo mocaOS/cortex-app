@@ -67,8 +67,15 @@ export function SkillConfigModal({
             setSchema(analysis.variables);
             setAnalyzing(false);
             if (analysis.variables.length === 0) {
-              // No config needed — close after brief display
+              // No config needed — show a brief confirmation, then actually
+              // close (previously the panel just sat open with no Done button).
               setSaved(true);
+              setTimeout(() => {
+                if (!cancelled) {
+                  onSaved?.();
+                  onClose();
+                }
+              }, 1200);
             }
           }
         }

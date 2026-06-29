@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useIsMounted } from "@/lib/hooks";
 import {
   Download,
   Upload,
@@ -43,6 +44,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mounted = useIsMounted();
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -50,6 +52,10 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
       pollRef.current = null;
     }
   }, []);
+
+  // Stop the export/import poller on unmount so it doesn't keep firing
+  // getTaskStatus / setState after the user leaves Settings mid-transfer.
+  useEffect(() => stopPolling, [stopPolling]);
 
   // ==========================================================================
   // Export
@@ -68,6 +74,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
       pollRef.current = setInterval(async () => {
         try {
           const status = await api.getTaskStatus(task_id);
+          if (!mounted.current) return;
           setExportProgress(status);
 
           if (status.status === "completed") {
@@ -79,6 +86,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
             setExportState("error");
           }
         } catch {
+          if (!mounted.current) return;
           stopPolling();
           setExportError("Lost connection to server");
           setExportState("error");
@@ -144,6 +152,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
       pollRef.current = setInterval(async () => {
         try {
           const status = await api.getTaskStatus(task_id);
+          if (!mounted.current) return;
           setImportProgress(status);
 
           if (status.status === "completed") {
@@ -163,6 +172,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
             setImportState("error");
           }
         } catch {
+          if (!mounted.current) return;
           stopPolling();
           setImportError("Lost connection to server");
           setImportState("error");

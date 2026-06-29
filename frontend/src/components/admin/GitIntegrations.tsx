@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useIsMounted } from "@/lib/hooks";
 import {
   GitBranch,
   Plus,
@@ -169,6 +170,19 @@ export function GitIntegrations() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [orphaned, setOrphaned] = useState<Record<string, GitOrphanedDocument[]>>({});
 
+  const mounted = useIsMounted();
+  // Pending poll timeout(s), cleared on unmount so a long-running sync poller
+  // (up to ~20 min) stops firing getTaskStatus / setState after navigation.
+  const pollTimeouts = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    const timeouts = pollTimeouts.current;
+    return () => {
+      timeouts.forEach((t) => clearTimeout(t));
+      timeouts.clear();
+    };
+  }, []);
+
   const fetchConnections = useCallback(async () => {
     try {
       setLoading(true);
@@ -189,9 +203,17 @@ export function GitIntegrations() {
     async (connectionId: string, taskId: string) => {
       // Poll the task until it finishes, then refresh the list.
       for (let i = 0; i < 600; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(() => {
+            pollTimeouts.current.delete(t);
+            resolve();
+          }, 2000);
+          pollTimeouts.current.add(t);
+        });
+        if (!mounted.current) return;
         try {
           const task = await api.getTaskStatus(taskId);
+          if (!mounted.current) return;
           setSyncing((prev) => ({ ...prev, [connectionId]: task.message || "Syncing..." }));
           if (task.status === "completed" || task.status === "failed") {
             if (task.status === "failed") {
@@ -203,6 +225,7 @@ export function GitIntegrations() {
           break;
         }
       }
+      if (!mounted.current) return;
       setSyncing((prev) => {
         const next = { ...prev };
         delete next[connectionId];
@@ -210,7 +233,7 @@ export function GitIntegrations() {
       });
       await fetchConnections();
     },
-    [fetchConnections],
+    [fetchConnections, mounted],
   );
 
   const handleSync = async (connectionId: string) => {

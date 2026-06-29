@@ -24,6 +24,8 @@ Research process blocks (Sub-Questions, Thinking Steps, Reasoning Steps) render 
 
 **ThinkingIndicator** (`ChatMessage.tsx`): shown while an assistant message streams before any content arrives. Blinking `live-dot` (CSS in `globals.css`) + a staged label + live elapsed-seconds counter + a reassurance line after 12 s. The label prefers the backend `status` event's `message` (stored on the message as `statusMessage`, set from the `status` SSE event in `AskPanel`), falling back to a heuristic over `sources`/`subQuestions`/`thinkingSteps`. See [`domain/rag-pipeline.md`](domain/rag-pipeline.md#streaming-feedback-status--heartbeat).
 
+**Stream resilience** (`AskPanel.tsx` + `api.ts`): the streaming loop finalizes the assistant message on *any* loop exit, not only on a `done` event — a stream that ends from a dropped connection, proxy idle-timeout, or a graceful server redeploy no longer leaves a permanent typing cursor. `api.askStream`/`askStreamWithThinking` parse SSE `event:` names and turn the backend's terminal `event: shutdown` frame into a clear "server is restarting, resend" error event. Backend error frames carry a sanitized message (the raw exception is never sent — `sse_error_frame` in `main.py`), and `AskPanel` shows that `error.message` instead of a generic line. The composer is a multi-line `<textarea>` (Enter sends, Shift+Enter newline, auto-grow) and the send button becomes a **Stop** button while streaming, backed by an `AbortController` (also aborted on unmount, so navigating away stops backend generation). Auto-scroll only fires when the user is already near the bottom.
+
 ## Citation Rendering
 
 `MarkdownRenderer` turns `[src_N]` references in the answer into clickable `CitationBadge`s (only when `onCitationClick` is passed — chat/research via `ChatMessage`; `SearchPanel` leaves them as text). The parser matches the **whole bracket group**, so grouped citations the writer often emits — `[src_1, src_3, src_6]` or `[src_1, 3, 6]` — render one badge per number instead of falling through as raw literal text. This is model-agnostic, so both Chat (smaller model) and Deep Research render citations reliably regardless of whether the model groups them.
@@ -54,7 +56,7 @@ The Documents page's "Generate Graph" button uses a query-param handshake instea
 
 ## Stats Bar
 
-4 KPI cards: Documents, Entities, Relations, Communities. Refreshes every 5 seconds. Hidden on Settings page (`/admin`).
+4 KPI cards: Documents, Entities, Relations, Communities. Refreshes every 5 seconds. Hidden on Settings page (`/admin`). The loading shimmer only shows on the **first** load (tracked via an `initial` flag); the 5 s background poll updates the numbers silently so the bar doesn't flash a skeleton every cycle.
 
 ## SystemMeta Timestamps
 
@@ -67,3 +69,11 @@ The Documents page's "Generate Graph" button uses a query-param handshake instea
 - Community detection: polls task status every 2 seconds
 - Image analysis: progress polled via document data refresh every 5 seconds
 - Stats bar: refreshes every 5 seconds
+
+## Shared Resilience Hooks (`lib/hooks.ts`)
+
+Two reusable hooks back the app-wide robustness conventions:
+- `useIsMounted()` → a ref whose `.current` flips false on unmount. Pollers and async callbacks check `if (!mounted.current) return;` before `setState` so a request resolving after navigation can't update an unmounted component (used in `explore/page.tsx`, `CollectionPanel`, `GitIntegrations`, `LibraryTransferSection`, `SkillsManager`, `ApiKeyAnalytics`).
+- `useModalDismiss(onClose)` → returns a ref for the dialog container; closes on Escape, focuses the dialog/first control on open, traps Tab focus, and restores focus on close. Attach with `ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true"`. Only for **mount-on-open** modals (conditionally rendered); always-mounted/`isOpen`-toggled modals keep their own handlers. Applied to SystemResetModal, the API-key create modal, the dedup HistoryModal, ApiKeyAnalytics, and the entity/community detail modals.
+
+**Error & stale-response conventions:** data panels render an explicit error+retry state (not a silent `console.error` that masquerades as an empty result) — see `DocumentList`, `SearchPanel`, `CollectionPanel`, `CollectionSelector`, and the explore detail modals. Fetches that can race (graph load, debounced entity search, analytics range switch) capture a monotonic request-id ref at call start and discard a response if a newer request has started. The API client (`api.ts`) centralizes failure handling: FastAPI 422 arrays are flattened to readable text, a 401 clears the stored key and redirects to `/login`, and non-JSON gateway bodies don't leak into the UI.

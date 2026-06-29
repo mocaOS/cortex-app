@@ -143,6 +143,24 @@ _HEARTBEAT_DONE = object()
 SHUTTING_DOWN = asyncio.Event()
 
 
+def sse_error_frame(exc: Exception, *, context: str = "answer") -> str:
+    """Build a client-safe SSE error frame.
+
+    The raw exception text can contain internal URLs, provider error bodies,
+    connection strings, or stack-trace fragments — never send `str(exc)` to the
+    browser. We log the full exception server-side (already done by callers) and
+    return a generic, actionable message tagged with the request id so support
+    can correlate it to the server logs.
+    """
+    rid = get_request_id()
+    message = (
+        f"The assistant hit an error generating this {context}. Please try again."
+    )
+    if rid:
+        message += f" (reference: {rid})"
+    return f"data: {json.dumps({'error': message})}\n\n"
+
+
 async def with_sse_heartbeat(gen, interval: float = 8.0):
     """Wrap an SSE string generator, injecting `: ping` comment lines during
     silent windows so proxies/load balancers don't idle-timeout and the client
@@ -160,7 +178,8 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
             async for chunk in gen:
                 await queue.put(chunk)
         except Exception as e:  # surface as an error event, then end
-            await queue.put(f"data: {json.dumps({'error': str(e)})}\n\n")
+            logger.error("Error in SSE stream pump: %s", e, exc_info=True)
+            await queue.put(sse_error_frame(e))
         finally:
             await queue.put(_HEARTBEAT_DONE)
 
@@ -278,6 +297,23 @@ async def lifespan(app: FastAPI):
         logger.info("Neo4j schema initialized")
     except Exception as e:
         logger.warning(f"Could not initialize Neo4j schema: {e}")
+
+    # Recover documents orphaned mid-processing by a previous shutdown/crash.
+    # Processing runs as in-process background tasks, so anything left in a
+    # transient state at startup can never resume on its own — it would spin
+    # forever in the UI and keep `/api/instance/status` permanently
+    # unsafe-to-redeploy. Reset them to 'pending' so they rejoin the queue.
+    try:
+        reset_ids = neo4j.reset_orphaned_processing_documents()
+        if reset_ids:
+            logger.warning(
+                "Reset %d document(s) stranded mid-processing by a prior "
+                "shutdown back to 'pending': %s",
+                len(reset_ids),
+                ", ".join(reset_ids[:10]) + ("…" if len(reset_ids) > 10 else ""),
+            )
+    except Exception as e:
+        logger.warning(f"Could not reconcile orphaned processing documents: {e}")
     
     # Ensure admin API key record exists for usage tracking (only if tracking is enabled)
     if settings.track_admin_api_key_usage:
@@ -827,7 +863,15 @@ async def _wait_for_image_analysis_complete(
     Calling this from the batch_processing task keeps Step 1 in 'running'
     state — and the chain on hold — until image entities have landed.
     """
+    # Image analysis is fire-and-forget on a separate thread pool; if it dies
+    # before reaching image_progress_total (crash, exception before the final
+    # reconcile write), the documents would sit at current < total forever and
+    # this loop — and the whole pipeline chain (Steps 2/3) — would hang. Bail if
+    # image progress flatlines for STALL_TIMEOUT so the chain can advance.
+    STALL_TIMEOUT = 600.0  # seconds of zero progress before giving up
     neo4j = get_neo4j_service()
+    last_done = -1
+    last_progress_at = time.monotonic()
     while True:
         all_docs = await asyncio.to_thread(neo4j.get_all_documents)
         pending = [
@@ -840,6 +884,16 @@ async def _wait_for_image_analysis_complete(
             return
         total_imgs = sum(d.get("image_progress_total", 0) for d in pending)
         done_imgs = sum(d.get("image_progress_current", 0) for d in pending)
+        if done_imgs > last_done:
+            last_done = done_imgs
+            last_progress_at = time.monotonic()
+        elif time.monotonic() - last_progress_at > STALL_TIMEOUT:
+            logger.warning(
+                "Image analysis stalled at %d/%d across %d document(s) for >%.0fs; "
+                "no longer blocking the pipeline chain (task %s).",
+                done_imgs, total_imgs, len(pending), STALL_TIMEOUT, task_id,
+            )
+            return
         update_task_progress(
             task_id,
             done_imgs,
@@ -862,7 +916,14 @@ async def get_task_status(task_id: str, auth: AuthResult = Depends(require_read_
     """
     task = get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        # The task store is in-memory, so a known-recent task id that 404s here
+        # most likely means the backend restarted (redeploy) and dropped in-flight
+        # tasks — not a bad id. Say so, so the client/operator can re-run.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found — it may have completed and been cleaned up, "
+                   "or been interrupted by a server restart. Re-run the operation if needed.",
+        )
     return task
 
 
@@ -876,8 +937,12 @@ async def get_task_result(task_id: str, auth: AuthResult = Depends(require_read_
     """
     task = get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found — it may have completed and been cleaned up, "
+                   "or been interrupted by a server restart. Re-run the operation if needed.",
+        )
+
     if task.status == TaskStatus.PENDING or task.status == TaskStatus.RUNNING:
         return JSONResponse(
             status_code=202,
@@ -1112,6 +1177,10 @@ async def upload_file(
                 detail=f"Entity limit reached (max: {settings.max_entities}). Upgrade your plan to extract more entities."
             )
 
+    # A multipart upload can omit the filename; Path(None) would 500. Fail clean.
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="A filename is required for upload.")
+
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in settings.allowed_extensions:
@@ -1120,9 +1189,25 @@ async def upload_file(
             detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
         )
 
-    # Read file content
-    content = await file.read()
-    file_size = len(content)
+    # Read the upload in bounded chunks so an oversized file is rejected
+    # mid-stream instead of being fully buffered into memory first — a multi-GB
+    # POST would otherwise pressure a small tenant container before the size
+    # check ever ran. Memory is capped at ~max_size (+1 MiB).
+    max_size = settings.max_file_size_mb * 1024 * 1024
+    chunks: list[bytes] = []
+    file_size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1 MiB
+        if not chunk:
+            break
+        file_size += len(chunk)
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
 
     # Check for duplicate document (same filename and file size)
     neo4j = get_neo4j_service()
@@ -1132,15 +1217,7 @@ async def upload_file(
             status_code=409,
             detail=f"A document with the same name and size already exists: '{file.filename}' ({file_size} bytes)"
         )
-    
-    # Validate file size
-    max_size = settings.max_file_size_mb * 1024 * 1024
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
-        )
-    
+
     # Save file permanently
     import uuid
     doc_id = str(uuid.uuid4())
@@ -1832,10 +1909,20 @@ async def delete_documents(request: DeleteRequest, auth: AuthResult = Depends(re
         # Then delete the documents and clean up graph
         neo4j = get_neo4j_service()
         result = await asyncio.to_thread(neo4j.delete_documents, request.document_ids)
-        
+
+        deleted = result["deleted_count"]
+        requested = len(request.document_ids)
+        if deleted == 0:
+            message = "No matching documents were deleted — they may have already been removed."
+        elif deleted < requested:
+            message = f"Deleted {deleted} of {requested} document(s); {requested - deleted} were not found."
+        else:
+            message = f"Successfully deleted {deleted} document(s)"
+
         return {
-            "message": f"Successfully deleted {result['deleted_count']} document(s)",
-            "deleted_count": result["deleted_count"],
+            "message": message,
+            "deleted_count": deleted,
+            "requested_count": requested,
             "processing_cancelled": cancelled_count,
             "orphaned_entities_removed": result["orphaned_entities_removed"],
             "orphaned_communities_removed": result["orphaned_communities_removed"]
@@ -2550,8 +2637,8 @@ async def ask_question_stream(
                         yield f"data: {json.dumps(event)}\n\n"
 
             except Exception as e:
-                logger.error(f"Error in streaming agentic RAG: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                logger.error("Error in streaming agentic RAG: %s", e, exc_info=True)
+                yield sse_error_frame(e)
 
         return StreamingResponse(
             with_sse_heartbeat(traced_sse(
@@ -2655,8 +2742,8 @@ Question: {request.question}"""
                 yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
                 
             except Exception as e:
-                logger.error(f"Error in fast streaming RAG: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                logger.error("Error in fast streaming RAG: %s", e, exc_info=True)
+                yield sse_error_frame(e)
         
         return StreamingResponse(
             with_sse_heartbeat(traced_sse(
@@ -2844,8 +2931,8 @@ Question: {request.question}"""
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming RAG: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.error("Error in streaming RAG: %s", e, exc_info=True)
+            yield sse_error_frame(e)
 
     return StreamingResponse(
         with_sse_heartbeat(traced_sse(
@@ -3444,9 +3531,18 @@ async def move_documents_to_collection(request: MoveDocumentsRequest, auth: Auth
             request.document_ids, 
             request.target_collection_id,
         )
+        moved = result["moved_count"]
+        requested = len(request.document_ids)
+        if moved == 0:
+            message = "No documents were moved — none matched the given ids."
+        elif moved < requested:
+            message = f"Moved {moved} of {requested} document(s); {requested - moved} were not found."
+        else:
+            message = f"Successfully moved {moved} document(s)"
         return {
-            "message": f"Successfully moved {result['moved_count']} document(s)",
-            "moved_count": result["moved_count"]
+            "message": message,
+            "moved_count": moved,
+            "requested_count": requested,
         }
     except Exception as e:
         logger.error(f"Error moving documents to collection: {e}")
@@ -4040,8 +4136,8 @@ async def ask_with_thinking_stream(
                     yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming agentic RAG: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.error("Error in streaming agentic RAG: %s", e, exc_info=True)
+            yield sse_error_frame(e)
 
     return StreamingResponse(
         with_sse_heartbeat(traced_sse(

@@ -33,23 +33,18 @@ export default function StatsBar() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [isCleaning, setIsCleaning] = useState(false);
 
-  const fetchStats = useCallback(async () => {
-    const startTime = Date.now();
-    const minAnimationDuration = 2000;
-    setStatsLoading(true);
+  // `initial` controls the shimmer: only the first load shows the loading
+  // skeleton. The 5s background poll refreshes the numbers silently — otherwise
+  // the whole bar flashes a skeleton every 5 seconds, permanently.
+  const fetchStats = useCallback(async (initial = false) => {
+    if (initial) setStatsLoading(true);
     try {
       const data = await api.getStats();
       setStats(data);
     } catch (error) {
       console.error("Failed to fetch stats:", error);
     } finally {
-      const elapsed = Date.now() - startTime;
-      const remaining = minAnimationDuration - elapsed;
-      if (remaining > 0) {
-        setTimeout(() => setStatsLoading(false), remaining);
-      } else {
-        setStatsLoading(false);
-      }
+      if (initial) setStatsLoading(false);
     }
   }, []);
 
@@ -57,8 +52,8 @@ export default function StatsBar() {
   useEffect(() => {
     if (!isAuthReady) return;
 
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    fetchStats(true);
+    const interval = setInterval(() => fetchStats(false), 5000);
     return () => clearInterval(interval);
   }, [isAuthReady, fetchStats]);
 

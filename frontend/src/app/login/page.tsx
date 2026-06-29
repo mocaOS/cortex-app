@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useActionState, useEffect } from "react";
+import { Suspense, useActionState, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { login, LoginResult } from "@/lib/auth";
 import { setAdminApiKey } from "@/lib/api";
@@ -18,15 +18,24 @@ function LoginForm() {
     FormData
   >(login, null);
 
+  const [configError, setConfigError] = useState<string | null>(null);
+
   // Set API key and redirect on successful login
   useEffect(() => {
     if (state?.success) {
       if (state.apiKey) {
         setAdminApiKey(state.apiKey);
+        router.push(from);
+      } else {
+        // Auth succeeded but the server returned no API key — ADMIN_API_KEY is
+        // unset on the backend. Redirecting would land in an app where every
+        // request throws "Not authenticated". Surface it instead.
+        setConfigError(
+          "Signed in, but the server has no ADMIN_API_KEY configured, so the app can't make API calls. Set ADMIN_API_KEY on the backend and try again."
+        );
       }
-      router.push("/");
     }
-  }, [state?.success, state?.apiKey, router]);
+  }, [state?.success, state?.apiKey, router, from]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-6">
@@ -71,13 +80,13 @@ function LoginForm() {
         >
           <form action={formAction} className="space-y-6">
             {/* Error Message */}
-            {state?.error && (
+            {(state?.error || configError) && (
               <motion.div
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-destructive text-sm"
               >
-                {state.error}
+                {state?.error || configError}
               </motion.div>
             )}
 

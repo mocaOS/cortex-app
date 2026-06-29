@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useModalDismiss } from "@/lib/hooks";
 import type { DuplicateGroup, MergeEntitiesResponse, MergeHistoryEntry, Stats, EntityDetails } from "@/types";
 import { Loader2, Search, Star, Merge, X, AlertTriangle, Check, ChevronDown, ChevronUp, History, Info, ArrowLeft, Plus, Eye, Network, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -144,6 +145,7 @@ function HistoryModal({
   const [searchQuery, setSearchQuery] = useState("");
 
   useBodyScrollLock(true);
+  const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
 
   const filtered = searchQuery
     ? history.filter((e) => {
@@ -161,6 +163,10 @@ function HistoryModal({
       <div
         className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">

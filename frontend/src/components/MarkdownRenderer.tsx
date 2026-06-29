@@ -6,6 +6,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check } from "lucide-react";
 import { useState, ReactNode } from "react";
+import { copyToClipboard } from "@/lib/utils";
 
 interface MarkdownRendererProps {
   content: string;
@@ -23,7 +24,8 @@ function CodeBlock({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(children);
+    const ok = await copyToClipboard(children);
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

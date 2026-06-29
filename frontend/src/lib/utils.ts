@@ -46,6 +46,38 @@ export function formatApiBase(apiBase: string): string {
   return match ? match[1] : apiBase;
 }
 
+/**
+ * Copy text to the clipboard, with a fallback for insecure (non-HTTPS) origins.
+ * `navigator.clipboard` is undefined on plain-HTTP/bare-IP pages — common for
+ * self-hosted Cortex — so without the fallback a "Copy" button silently fails
+ * (and the one-time API-key reveal would lose a key the user can never see
+ * again). Returns true on success.
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function getFileTypeIcon(fileType: string): string {
   const types: Record<string, string> = {
     // Office documents

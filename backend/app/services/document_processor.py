@@ -371,7 +371,25 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
         )
 
         request_data = _json.dumps({"file_path": file_path, "use_vision": use_vision}) + "\n"
-        stdout, stderr = await proc.communicate(request_data.encode())
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(request_data.encode()),
+                timeout=settings.docling_conversion_timeout,
+            )
+        except asyncio.TimeoutError:
+            # Kill the hung worker so it can't linger holding the conversion
+            # semaphore (and memory). Raising here lands the document in FAILED
+            # with an actionable message instead of stuck in 'processing'.
+            proc.kill()
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"Docling conversion timed out after "
+                f"{settings.docling_conversion_timeout}s for "
+                f"{Path(file_path).name} (file may be too large or malformed)"
+            )
 
         if stderr:
             for line in stderr.decode(errors="replace").strip().split("\n"):

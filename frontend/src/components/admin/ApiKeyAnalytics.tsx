@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useIsMounted, useModalDismiss } from "@/lib/hooks";
 import type { APIKeyWithStats, APIKeyUsageHistoryResponse, APIKeyStats } from "@/types";
 import { UsageLineChart, EndpointBarChart } from "./UsageChart";
 
@@ -40,6 +41,8 @@ const ENDPOINT_COLORS = [
 
 export function ApiKeyAnalytics({ apiKey, onClose }: ApiKeyAnalyticsProps) {
   useBodyScrollLock(true);
+  const mounted = useIsMounted();
+  const dialogRef = useModalDismiss(onClose);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,11 +50,17 @@ export function ApiKeyAnalytics({ apiKey, onClose }: ApiKeyAnalyticsProps) {
   const [history, setHistory] = useState<APIKeyUsageHistoryResponse | null>(null);
   const [historyDays, setHistoryDays] = useState(30);
 
+  // Monotonic request id: a slower earlier range response must not overwrite a
+  // newer one when the user switches ranges (7D/14D/30D/90D) quickly.
+  const requestSeq = useRef(0);
+
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey.id, historyDays]);
 
   const fetchData = async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
 
@@ -61,12 +70,15 @@ export function ApiKeyAnalytics({ apiKey, onClose }: ApiKeyAnalyticsProps) {
         api.getApiKeyUsageHistory(apiKey.id, historyDays),
       ]);
 
+      // Discard if a newer request started or we unmounted.
+      if (!mounted.current || seq !== requestSeq.current) return;
       setStats(statsRes);
       setHistory(historyRes);
     } catch (err) {
+      if (!mounted.current || seq !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
-      setLoading(false);
+      if (mounted.current && seq === requestSeq.current) setLoading(false);
     }
   };
 
@@ -96,11 +108,15 @@ export function ApiKeyAnalytics({ apiKey, onClose }: ApiKeyAnalyticsProps) {
       onClick={onClose}
     >
       <motion.div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         initial={{ scale: 0.95, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.95, opacity: 0, y: 20 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
-        className="bg-gradient-to-b from-card to-card/95 rounded-2xl border border-border/50 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+        className="bg-gradient-to-b from-card to-card/95 rounded-2xl border border-border/50 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header with gradient background */}

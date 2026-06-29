@@ -296,7 +296,7 @@ npm run dev
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/stats` | Knowledge base statistics (includes entity/relationship counts, `per_chunk_relationship_count` for Step 1 relations) |
-| GET | `/api/instance/status` | Redeploy-safety snapshot — `safe_to_redeploy` plus in-flight processing/tasks/AskAI activity and last-activity timestamps (`manage` permission) |
+| GET | `/api/instance/status` | Redeploy-safety snapshot — `safe_to_redeploy` plus in-flight processing/tasks/AskAI activity and last-activity timestamps (`manage` permission). On startup, documents left in `processing`/`extracting` by a prior shutdown are reset to `pending`, so the snapshot no longer reports `safe_to_redeploy: false` forever after a redeploy |
 | POST | `/api/upload` | Upload a document (supports `start_processing` and `collection_id` params) |
 | GET | `/api/documents` | List all documents |
 | GET | `/api/documents/{id}` | Get document details |
@@ -736,6 +736,7 @@ Optionally offload the heavy ML components (cross-encoder reranker + Docling con
 |----------|-------------|----------|---------|
 | `RERANKER_SERVICE_URL` | Reranker service base URL (e.g. `http://cortex-helper:3030`). Set = no local cross-encoder is loaded | No | - |
 | `DOCLING_SERVICE_URL` | Docling service base URL (e.g. `http://cortex-helper:3030`). Set = convert via warm service instead of subprocess | No | - |
+| `DOCLING_CONVERSION_TIMEOUT` | Hard ceiling (seconds) on a single local Docling subprocess conversion. On timeout the worker is killed and the document is marked `failed` instead of hanging in `processing` on a large/corrupt file. Does not apply to `DOCLING_SERVICE_URL` (remote path has its own timeouts) | No | `600` |
 | `HELPER_SERVICE_TOKEN` | Shared secret sent as `X-Helper-Token`; must match the helper's `HELPER_TOKEN` | No | - |
 
 #### Agent-Based Research Pipeline
@@ -991,6 +992,8 @@ FOR (e:Entity) ON EACH [e.name, e.description]
 ## 🧠 GraphRAG Pipeline
 
 When a document is uploaded (or custom input is added), the following pipeline executes:
+
+> **Startup recovery:** On startup the backend resets any document left in a transient state (`processing`/`extracting`) by a prior shutdown or crash back to `pending`, so it rejoins the queue instead of spinning forever. A WARNING log lists the reset document ids.
 
 1. **Document Conversion** - Extract text from PDF/TXT/MD files (or use custom input content directly)
 2. **Chunking** - Split into manageable chunks (default: 500 words). URLs are protected from splitting.

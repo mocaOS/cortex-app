@@ -94,6 +94,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isReprocessing, setIsReprocessing] = useState(false);
@@ -135,8 +136,10 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     try {
       const data = await api.getDocuments();
       setDocuments(data.documents);
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch documents:", error);
+      setLoadError(error instanceof Error ? error.message : "Failed to load documents");
     } finally {
       setIsLoading(false);
     }
@@ -363,6 +366,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       onDelete();
     } catch (error) {
       console.error("Failed to delete document:", error);
+      alert(`Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setDeletingId(null);
     }
@@ -526,6 +530,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       onDelete();
     } catch (error) {
       console.error("Failed to delete documents:", error);
+      alert(`Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsDeletingSelected(false);
     }
@@ -608,6 +613,32 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       <div className="glass rounded-lg p-12 text-center">
         <Loader2 className="w-8 h-8 text-foreground animate-spin mx-auto mb-4" />
         <p className="text-muted-foreground">Loading documents...</p>
+      </div>
+    );
+  }
+
+  // Load-error state (distinct from the empty state — a failed first load must
+  // not look like "no documents")
+  if (loadError && documents.length === 0 && uploadingFiles.length === 0) {
+    return (
+      <div className="glass rounded-lg p-12 text-center border border-destructive/30">
+        <div className="w-16 h-16 mx-auto rounded-lg bg-destructive/10 flex items-center justify-center mb-6">
+          <AlertCircle className="w-8 h-8 text-destructive" />
+        </div>
+        <h3 className="text-lg font-medium text-foreground mb-2">
+          Couldn&apos;t load documents
+        </h3>
+        <p className="text-muted-foreground max-w-md mx-auto mb-6">{loadError}</p>
+        <button
+          onClick={() => {
+            setIsLoading(true);
+            fetchDocuments();
+          }}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Retry
+        </button>
       </div>
     );
   }

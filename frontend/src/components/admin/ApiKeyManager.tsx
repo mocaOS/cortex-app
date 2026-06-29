@@ -14,6 +14,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { copyToClipboard as copyTextToClipboard } from "@/lib/utils";
+import { useModalDismiss } from "@/lib/hooks";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import type {
   APIKeyWithStats,
@@ -137,9 +139,13 @@ export function ApiKeyManager() {
     }
   };
 
-  // Copy to clipboard
+  // Copy to clipboard (with an insecure-origin fallback for self-hosted HTTP)
   const copyToClipboard = async (text: string) => {
-    await navigator.clipboard.writeText(text);
+    const ok = await copyTextToClipboard(text);
+    if (!ok) {
+      alert("Couldn't copy automatically — please select and copy the key manually.");
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -323,6 +329,7 @@ function CreateKeyModal({
   const [readOnly, setReadOnly] = useState(true);
   const [manage, setManage] = useState(false);
   const [creating, setCreating] = useState(false);
+  const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
   
   // Collection scope state
   const [collectionScope, setCollectionScope] = useState<CollectionScope>(
@@ -386,6 +393,10 @@ function CreateKeyModal({
         exit={{ scale: 0.9, opacity: 0 }}
         className="bg-card rounded-xl border border-border p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
       >
         <h2 className="text-xl font-bold text-foreground mb-6">Create API Key</h2>
 

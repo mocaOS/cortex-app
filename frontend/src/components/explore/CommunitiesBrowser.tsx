@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useModalDismiss } from "@/lib/hooks";
 import type { Community } from "@/types";
-import { Loader2, Search, Users, Network, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, Search, Users, Network, X, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ITEMS_PER_PAGE = 25;
@@ -118,8 +119,17 @@ export default function CommunitiesBrowser() {
   const [totalItems, setTotalItems] = useState(0);
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const detailReqId = useRef(0);
 
   useBodyScrollLock(!!selectedCommunity);
+
+  const handleCloseDetail = () => {
+    setSelectedCommunity(null);
+    setDetailError(null);
+  };
+
+  const dialogRef = useModalDismiss<HTMLDivElement>(handleCloseDetail);
 
   // Debounce search input
   useEffect(() => {
@@ -160,21 +170,29 @@ export default function CommunitiesBrowser() {
 
   const handleOpenDetail = async (community: Community) => {
     setSelectedCommunity(community);
+    setDetailError(null);
     if (!community.entities || community.entities.length === 0) {
+      const reqId = ++detailReqId.current;
       setDetailLoading(true);
       try {
         const detail = await api.getCommunity(community.id);
+        if (reqId !== detailReqId.current) return;
         setSelectedCommunity(detail);
       } catch (error) {
         console.error("Failed to fetch community details:", error);
+        if (reqId !== detailReqId.current) return;
+        setDetailError(error instanceof Error ? error.message : "Failed to load community details");
       } finally {
-        setDetailLoading(false);
+        if (reqId === detailReqId.current) {
+          setDetailLoading(false);
+        }
       }
     }
   };
 
   const handleExploreEntity = (entityName: string) => {
     setSelectedCommunity(null);
+    setDetailError(null);
     router.push(`/explore?tab=graph&entity=${encodeURIComponent(entityName)}`);
   };
 
@@ -278,14 +296,21 @@ export default function CommunitiesBrowser() {
 
       {/* Detail Modal */}
       {selectedCommunity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setSelectedCommunity(null)}>
-          <div className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={handleCloseDetail}>
+          <div
+            ref={dialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            className="bg-card border border-border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto focus:outline-none"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between p-4 border-b border-border">
               <div>
                 <h3 className="font-semibold">{selectedCommunity.name || `Community ${selectedCommunity.id}`}</h3>
                 <p className="text-xs text-muted-foreground">{selectedCommunity.entity_count} entities</p>
               </div>
-              <button onClick={() => setSelectedCommunity(null)} className="p-1 hover:bg-muted rounded-lg transition-colors">
+              <button onClick={handleCloseDetail} className="p-1 hover:bg-muted rounded-lg transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -300,6 +325,17 @@ export default function CommunitiesBrowser() {
               {detailLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : detailError ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+                  <AlertCircle className="w-6 h-6 text-red-400" />
+                  <p className="text-sm text-muted-foreground">{detailError}</p>
+                  <button
+                    onClick={() => handleOpenDetail(selectedCommunity)}
+                    className="px-3 py-1.5 text-sm rounded-lg bg-muted hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    Retry
+                  </button>
                 </div>
               ) : (
                 <>

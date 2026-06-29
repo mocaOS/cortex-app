@@ -44,7 +44,11 @@ export async function decrypt(session: string | undefined): Promise<SessionPaylo
       expiresAt: new Date(payload.expiresAt as string),
     };
   } catch (error) {
-    console.log("Failed to verify session:", error);
+    // Expected on every unauthenticated request (no/expired cookie) — only log
+    // in development to avoid flooding production logs.
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Failed to verify session:", error);
+    }
     return null;
   }
 }

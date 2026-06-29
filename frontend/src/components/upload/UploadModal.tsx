@@ -85,7 +85,12 @@ export default function UploadModal({ isOpen, onClose, onFilesSelected }: Upload
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-3xl mx-4 bg-card border border-border rounded-2xl shadow-2xl">
+      <div
+        className="relative w-full max-w-3xl mx-4 bg-card border border-border rounded-2xl shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Upload Documents"
+      >
         <div className="flex items-center justify-between p-6 border-b border-border">
           <h2 className="text-lg font-semibold text-foreground">Upload Documents</h2>
           <button

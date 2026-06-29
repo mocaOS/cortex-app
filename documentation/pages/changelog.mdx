@@ -7,6 +7,34 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 29, 2026 (Launch-readiness hardening)
+
+A round of reliability and UX hardening across the backend pipeline and the chat experience.
+
+**Reliability**
+
+- **Startup recovery of orphaned documents** — on startup, any document left mid-processing (`processing`/`extracting`) by a prior shutdown or crash is reset to `pending` so it rejoins the queue instead of spinning forever (and `/api/instance/status` no longer reports `safe_to_redeploy: false` permanently after a redeploy). A WARNING log lists the reset ids.
+- **`DOCLING_CONVERSION_TIMEOUT`** (default `600` s) bounds a hung local Docling subprocess conversion — on timeout the worker is killed and the document is marked `failed` with a clear message instead of hanging on a large or corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path.
+- **SSE / chat errors no longer leak raw exception text** — clients get a generic message plus a request id, with the full error logged server-side.
+- **Streaming uploads** are rejected with HTTP `413` once they exceed `MAX_FILE_SIZE_MB`, instead of being fully buffered first.
+- **Clearer messages** for partial / zero-match delete and move operations, and for task lookups after a restart.
+
+**Chat UX**
+
+- Multi-line composer (Enter sends, Shift+Enter inserts a newline).
+- A **Stop** button to cancel generation mid-stream.
+- Graceful handling of interrupted streams — no endless typing cursor after a redeploy.
+- Real backend errors are now surfaced to the user.
+
+**General UX**
+
+- Error + retry states where failures were previously silent (documents, search, collections, entity/community detail).
+- Escape-to-close and focus trap on modals.
+- Stale-response guards and poller cleanup.
+- Clipboard fallback on non-HTTPS origins.
+
+---
+
 ## June 26, 2026 (Langfuse content masking — privacy by default)
 
 Langfuse tracing now **redacts all prompt, completion, tool, embedding, and vision text by default**. A new `LANGFUSE_LOG_EXTENDED` flag (default **`false`**) wires a client-side `mask` hook so authored content never leaves the app — only structure reaches the Langfuse server: message roles, model + parameters, tool names + argument keys, parameter keys, token usage, cost, latency, and tags. This protects user content (we don't store what users prompt) and sharply cuts trace storage.

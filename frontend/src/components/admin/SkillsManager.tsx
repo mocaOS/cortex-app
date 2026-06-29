@@ -25,6 +25,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useIsMounted } from "@/lib/hooks";
 import { SkillConfigModal } from "./SkillConfigModal";
 import type { SkillInfo, SkillRegistryItem } from "@/types";
 
@@ -45,6 +46,14 @@ export function SkillsManager() {
   const [registryResults, setRegistryResults] = useState<SkillRegistryItem[]>([]);
   const [searching, setSearching] = useState(false);
   const searchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const mounted = useIsMounted();
+
+  // Clear the pending search debounce on unmount.
+  useEffect(() => {
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
+  }, []);
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -149,13 +158,15 @@ export function SkillsManager() {
     setSearching(true);
     try {
       const results = await api.searchSkillRegistry(query.trim());
+      if (!mounted.current) return;
       setRegistryResults(results);
     } catch {
+      if (!mounted.current) return;
       setRegistryResults([]);
     } finally {
-      setSearching(false);
+      if (mounted.current) setSearching(false);
     }
-  }, []);
+  }, [mounted]);
 
   const handleRegistryQueryChange = (value: string) => {
     setRegistryQuery(value);

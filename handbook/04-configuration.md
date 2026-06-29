@@ -382,6 +382,7 @@ Behavior:
 | `DOCLING_PAGE_CHUNK_SIZE` | `50` | Pages per processing chunk for large PDFs. |
 | `DOCLING_MAX_PAGES_PER_CHUNK` | `50` | Threshold for triggering chunked PDF processing. |
 | `DOCLING_USE_PYPDFIUM_FOR_LARGE_MB` | `0` | Use memory-efficient PyPdfium backend for files larger than this size (MB). 0 = disabled. |
+| `DOCLING_CONVERSION_TIMEOUT` | `600` | Hard ceiling in seconds on a single **local** Docling conversion. On timeout the worker subprocess is killed and the document is marked failed (instead of hanging in "processing" on a large/corrupt file). Does not apply to the remote `DOCLING_SERVICE_URL` path. |
 
 ## Efficiency Flags & Hardening (v-next)
 

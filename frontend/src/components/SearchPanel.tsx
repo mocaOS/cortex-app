@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, FileText, Loader2, Sparkles, X } from "lucide-react";
+import { Search, FileText, Loader2, Sparkles, X, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { api } from "@/lib/api";
@@ -25,6 +25,7 @@ export default function SearchPanel() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
@@ -75,12 +76,15 @@ export default function SearchPanel() {
 
     setIsSearching(true);
     setHasSearched(true);
+    setSearchError(null);
 
     try {
       const data = await api.search(query, 10);
       setResults(data.results);
     } catch (error) {
       console.error("Search failed:", error);
+      setResults([]);
+      setSearchError(error instanceof Error ? error.message : "Search failed");
     } finally {
       setIsSearching(false);
     }
@@ -140,6 +144,18 @@ export default function SearchPanel() {
               <div className="glass rounded-lg p-12 text-center">
                 <Loader2 className="w-8 h-8 text-accent animate-spin mx-auto mb-4" />
                 <p className="text-muted-foreground">Searching...</p>
+              </div>
+            ) : searchError ? (
+              <div className="glass rounded-lg p-12 text-center">
+                <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
+                <p className="text-foreground">Search failed</p>
+                <p className="text-sm text-muted-foreground mt-2">{searchError}</p>
+                <button
+                  onClick={() => handleSearch({ preventDefault: () => {} } as React.FormEvent)}
+                  className="mt-4 px-4 py-2 rounded-lg bg-accent text-accent-foreground text-sm font-medium hover:bg-accent/90 transition-colors"
+                >
+                  Try again
+                </button>
               </div>
             ) : results.length > 0 ? (
               <>
