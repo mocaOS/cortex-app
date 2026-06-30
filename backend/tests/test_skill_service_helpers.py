@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.skill_service import (
+    _extract_json_object,
     _parse_skill_md_from_string,
     _sanitize_skill_id,
     _substitute_env_vars,
@@ -84,3 +85,38 @@ def test_substitute_env_vars_ignores_non_skill_vars(monkeypatch):
 def test_substitute_env_vars_missing_skill_var_becomes_empty(monkeypatch):
     monkeypatch.delenv("SKILL_ABSENT", raising=False)
     assert _substitute_env_vars("v=${SKILL_ABSENT}") == "v="
+
+
+# --- _extract_json_object (skill config analysis robustness) -----------------
+
+def test_extract_json_object_plain():
+    assert _extract_json_object('{"a": 1}') == {"a": 1}
+
+
+def test_extract_json_object_strips_markdown_fence():
+    assert _extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
+
+
+def test_extract_json_object_recovers_from_surrounding_prose():
+    """Small models often wrap JSON in prose; we recover the embedded object."""
+    raw = 'Here is the config:\n{"base_url": null, "variables": []}\nHope this helps!'
+    assert _extract_json_object(raw) == {"base_url": None, "variables": []}
+
+
+def test_extract_json_object_accepts_bare_array():
+    """Back-compat: the older analysis prompt returned a bare array."""
+    assert _extract_json_object('[{"name": "X"}]') == [{"name": "X"}]
+
+
+def test_extract_json_object_returns_none_on_garbage():
+    assert _extract_json_object("no json at all") is None
+
+
+def test_extract_json_object_returns_none_on_truncated():
+    """A truncated/unterminated response must not raise — caller retries."""
+    assert _extract_json_object('{"a": "unterminated') is None
+
+
+def test_extract_json_object_handles_empty_and_none():
+    assert _extract_json_object("") is None
+    assert _extract_json_object(None) is None

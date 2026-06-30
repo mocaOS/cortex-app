@@ -31,6 +31,44 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Number of times analyze_skill_config retries the LLM when it returns an empty
+# extraction. Small primary models (gemma-4-26b) intermittently return {} for a
+# skill that clearly needs config; retrying recovers it. A genuinely config-less
+# skill just exhausts these attempts and correctly stays empty.
+_SKILL_ANALYSIS_MAX_ATTEMPTS = 3
+
+
+def _extract_json_object(content: Optional[str]) -> Any:
+    """Best-effort parse of a JSON object/array from an LLM response.
+
+    Tolerates markdown fences and surrounding prose by falling back to the first
+    balanced ``{...}`` (or ``[...]``) span. Returns the parsed value, or ``None``
+    when nothing parseable is found — callers treat ``None`` as an empty result.
+    Without this, a single stray token or truncated string made the old
+    ``json.loads`` throw and silently saved an empty config schema.
+    """
+    raw = (content or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    # Fall back to the first {...} or [...] span embedded in the text.
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = raw.find(opener)
+        end = raw.rfind(closer)
+        if start != -1 and end > start:
+            try:
+                return json.loads(raw[start : end + 1])
+            except Exception:
+                continue
+    return None
+
 
 # =============================================================================
 # SKILL.md Parsing
@@ -823,56 +861,90 @@ class SkillService:
             base_url=settings.openai_api_base or None,
         )
 
+        # Prompt engineered for small instruction-tuned models (e.g. gemma-4-26b),
+        # which otherwise return {} for SDK-style skills whose only credential is a
+        # placeholder like apiKey: "YOUR_API_KEY" with no explicit env var or URL.
+        # Keep it short and concrete: a single worked example anchors the SDK case,
+        # an explicit clause covers {TEMPLATE}/UPPER_SNAKE vars in self-hosted REST
+        # skills, and there is deliberately no "return empty if nothing is needed"
+        # escape hatch — small models latch onto it and bail. See analyze retry loop
+        # below for the variance these models still show even at temperature 0.
         system_prompt = (
-            "Analyze the following skill documentation and extract:\n"
-            "1. Configuration variables the user must provide (API tokens, IDs, etc.)\n"
-            "2. The skill's API base URL (scheme + host, no path), if it calls an HTTP API.\n\n"
-            "Return a JSON object with exactly these two keys:\n"
-            '- "base_url": the origin of the API the skill calls, e.g. '
-            '"https://api.example.com" (no trailing slash, no path). null if '
-            "the skill does not call an HTTP API, or if the URL is held by a "
-            "config variable (then leave base_url null and the variable carries it).\n"
-            '- "variables": array of variable definitions. Each entry has:\n'
-            '  - "name": SCREAMING_SNAKE_CASE (e.g. API_TOKEN)\n'
-            '  - "description": one sentence; where to find the value\n'
-            '  - "required": boolean\n'
-            '  - "type": "secret" for tokens/keys, "text" for URLs/identifiers\n'
-            '  - "auth_header": (only for auth tokens) the literal HTTP header, '
-            'with the variable name as placeholder. Examples: '
-            '"Authorization: Bearer API_TOKEN", "X-API-Key: API_KEY". '
-            "Omit for non-auth variables.\n\n"
-            'Return {"base_url": null, "variables": []} if nothing is needed.\n'
-            "Return ONLY the JSON object, no markdown fences or explanation."
+            "You set up a skill so an agent can call its API. From the skill docs, "
+            "list every value the user must provide before it works: API keys, "
+            "tokens, secrets, base URLs, and account/domain/workspace/group "
+            "identifiers.\n\n"
+            "Treat a credential as required even when shown only as a placeholder "
+            '("YOUR_API_KEY", "<token>") or as an SDK argument (apiKey:, api_key=, '
+            "Authorization Bearer). A client initialized with an API key ALWAYS "
+            "makes that key a required variable. Also extract any value the docs "
+            "already write as an UPPER_SNAKE_CASE name or {TEMPLATE} placeholder "
+            "(e.g. {ZAMMAD_BASE_URL}, ZAMMAD_GROUP_NAME), reusing that exact name. "
+            "Ignore illustrative request/response data (recipients, sample ids like "
+            "msg_123, label names).\n\n"
+            "Output ONLY this JSON (no markdown, no commentary):\n"
+            '{"base_url": <origin or null>, "variables": [{"name": ..., '
+            '"description": ..., "required": true|false, "type": "secret"|"text", '
+            '"auth_header": ...}]}\n\n'
+            "Field rules:\n"
+            "- base_url: scheme+host of the API, no path. Infer from the "
+            'product/SDK name when not printed (an "AgentMail" SDK -> '
+            '"https://api.agentmail.to"). null if it calls no HTTP API, or if the '
+            "host is itself a variable (a self-hosted *_BASE_URL carries it).\n"
+            "- name: SCREAMING_SNAKE_CASE, prefixed with the product when generic "
+            "(AGENTMAIL_API_KEY, not API_KEY).\n"
+            "- type: secret for keys/tokens, text for urls/ids.\n"
+            "- auth_header: only for header-sent credentials, literal header with "
+            'the variable name as placeholder ("Authorization: Bearer '
+            'AGENTMAIL_API_KEY"); omit otherwise.\n\n'
+            "Example: docs with `new FooClient({ apiKey: \"YOUR_API_KEY\" })` -> "
+            '{"base_url":"https://api.foo.com","variables":[{"name":"FOO_API_KEY",'
+            '"description":"Foo API key from the Foo dashboard.","required":true,'
+            '"type":"secret","auth_header":"Authorization: Bearer FOO_API_KEY"}]}'
         )
 
         schema: List[dict] = []
         base_url: Optional[str] = None
-        try:
-            response = await client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": body},
-                ],
-                **build_chat_params(settings.openai_model, temperature=0, max_tokens=1000),
-            )
-            raw = response.choices[0].message.content or "{}"
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = re.sub(r"^```\w*\n?", "", raw)
-                raw = re.sub(r"\n?```$", "", raw)
-                raw = raw.strip()
-            parsed = json.loads(raw)
-            # Back-compat: older prompt returned a bare array
-            if isinstance(parsed, list):
-                schema = parsed
-            elif isinstance(parsed, dict):
-                schema = parsed.get("variables") or []
-                base_url = parsed.get("base_url") or None
-                if not isinstance(schema, list):
-                    schema = []
-        except Exception as e:
-            logger.warning(f"LLM analysis failed for skill '{skill_id}': {e}")
+        # Small models are non-deterministic even at temperature 0 on some gateways
+        # (Cloudflare Workers AI, Venice) and intermittently return an empty/truncated
+        # result for a skill that clearly needs config. Retry until we get a non-empty
+        # extraction; a genuinely config-less skill simply exhausts the attempts and
+        # returns empty, which is correct. This is a one-off, user-triggered setup call.
+        for attempt in range(_SKILL_ANALYSIS_MAX_ATTEMPTS):
+            try:
+                response = await client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": body},
+                    ],
+                    **build_chat_params(settings.openai_model, temperature=0, max_tokens=1500),
+                )
+                parsed = _extract_json_object(response.choices[0].message.content)
+                # Back-compat: older prompt returned a bare array
+                if isinstance(parsed, list):
+                    schema = parsed
+                    base_url = None
+                elif isinstance(parsed, dict):
+                    schema = parsed.get("variables") or []
+                    base_url = parsed.get("base_url") or None
+                    if not isinstance(schema, list):
+                        schema = []
+                else:
+                    schema, base_url = [], None
+            except Exception as e:
+                logger.warning(
+                    f"LLM analysis attempt {attempt + 1} failed for skill '{skill_id}': {e}"
+                )
+                schema, base_url = [], None
+            # Accept the first attempt that found anything; otherwise retry.
+            if schema or base_url:
+                break
+            if attempt + 1 < _SKILL_ANALYSIS_MAX_ATTEMPTS:
+                logger.info(
+                    f"Skill '{skill_id}' analysis returned empty config "
+                    f"(attempt {attempt + 1}/{_SKILL_ANALYSIS_MAX_ATTEMPTS}); retrying"
+                )
 
         self.save_skill_config_schema(skill_id, schema)
         self.save_skill_base_url(skill_id, base_url)

@@ -65,6 +65,12 @@ Successful API responses are stored as sources (without chunk_id) for the writer
 ### LLM Analysis
 `POST /api/admin/skills/{id}/analyze` sends SKILL.md body to the primary LLM which returns `{variables: [...], base_url: string|null}`. Each variable: name, description, required, type, optional auth_header. Schema cached on the Neo4j `Skill` node as `config_schema`; `base_url` cached on the same node (auto-extracted, never user-edited — used to scope auth headers when the skill has no URL config variable).
 
+**Prompt is tuned for small primary models** (e.g. gemma-4-26b). The old prompt returned `{}` for SDK-style skills whose only credential appears as a placeholder (`apiKey: "YOUR_API_KEY"`) with no explicit env var or URL — the AgentMail skill is the canonical failure. The current prompt: keeps it short, gives one worked SDK example, explicitly treats placeholder/SDK-arg credentials **and** `{TEMPLATE}`/`UPPER_SNAKE` vars (self-hosted REST) as required, infers `base_url` from the product name when unprinted, and omits any "return empty if nothing needed" escape hatch (small models latch onto it and bail).
+
+**Robustness (these models are non-deterministic even at temperature 0 on Cloudflare/Venice gateways):**
+- `_extract_json_object()` — tolerant parse: strips fences, falls back to the first `{...}`/`[...]` span, returns `None` (not an exception) on truncated/garbage output, so a stray token can no longer silently save an empty schema.
+- `analyze_skill_config()` retries up to `_SKILL_ANALYSIS_MAX_ATTEMPTS` (3) times, accepting the first attempt that yields any variable or base_url; a genuinely config-less skill exhausts attempts and correctly stays empty. Worst case ~3 sequential LLM calls at setup (well under nginx's 300s).
+
 ### Config Endpoints
 - `GET /api/admin/skills/{id}/config` — schema + masked values
 - `PUT /api/admin/skills/{id}/config` — save with mask preservation for existing secrets
