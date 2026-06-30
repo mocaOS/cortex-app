@@ -12,11 +12,47 @@ from __future__ import annotations
 import pytest
 
 from app.services.researcher_agent import (
+    _CitationStripper,
     _deduplicate_sources,
     _merge_graph_context,
     _substitute_variables,
     _truncate_response,
 )
+
+
+# --- _CitationStripper -------------------------------------------------------
+
+def _stream(text: str, max_index: int, chunk: int) -> str:
+    """Feed `text` through the stripper in `chunk`-sized pieces."""
+    f = _CitationStripper(max_index)
+    out = "".join(f.feed(text[i : i + chunk]) for i in range(0, len(text), chunk))
+    return out + f.flush()
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7, 1000])
+def test_citation_stripper_drops_orphans_when_no_sources(chunk):
+    # max_index == 0 (retrieval returned nothing): every marker + its leading
+    # space is removed so it never renders as literal [src_N] text.
+    out = _stream("Wählen Sie Neu [src_1]. Dann [src_1] erneut.", 0, chunk)
+    assert out == "Wählen Sie Neu. Dann erneut."
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7, 1000])
+def test_citation_stripper_keeps_valid_strips_overindexed(chunk):
+    out = _stream("A [src_1] and B [src_2] but C [src_3] gone", 2, chunk)
+    assert out == "A [src_1] and B [src_2] but C gone"
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7, 1000])
+def test_citation_stripper_preserves_non_citation_brackets(chunk):
+    out = _stream("See [note] and array[0] here", 0, chunk)
+    assert out == "See [note] and array[0] here"
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7, 1000])
+def test_citation_stripper_does_not_eat_real_whitespace(chunk):
+    out = _stream("para one\n\npara two", 5, chunk)
+    assert out == "para one\n\npara two"
 
 
 # --- _merge_graph_context ----------------------------------------------------

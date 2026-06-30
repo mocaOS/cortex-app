@@ -1,8 +1,8 @@
 """Provider-agnostic reasoning control for LLM calls.
 
 Knowledge-graph extraction and relationship analysis benefit from disabling
-reasoning on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM,
-Kimi K2, MiniMax M3). This module resolves the right per-backend request body
+reasoning on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1,
+MiniMax M3). This module resolves the right per-backend request body
 to force reasoning OFF (or any other level), based on the configured
 `base_url` and `model` string.
 

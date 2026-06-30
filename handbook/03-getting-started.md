@@ -25,16 +25,16 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (MiniMax-M3 primary + Qwen3.7-27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (Gemma4 26B A4B primary + Qwen3.6 27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
 >
 > ```env
-> # Primary — agentic Q&A / researcher (MiniMax-M3: 192K context window)
+> # Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
 > OPENAI_API_KEY=
 > OPENAI_API_BASE=https://api.venice.ai/api/v1
-> OPENAI_MODEL=minimax-m3
-> OPENAI_MAX_CONTEXT=196608
+> OPENAI_MODEL=google-gemma-4-26b-a4b-it
+> OPENAI_MAX_CONTEXT=256000
 >
-> # Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+> # Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 > GRAPH_EXTRACTION_MAX_CONTEXT=256000
 >
@@ -280,14 +280,15 @@ The Library is LLM-agnostic. Each capability can point to a different model or p
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ─────────────────────────
-# Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5)
+# Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
+# (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
 OPENAI_API_KEY=sk-your-key
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_MODEL_FAST_MODE=gpt-4o-mini    # Optional: faster model for "Fast Mode"
 
 # ── Graph Extraction (entity discovery + community summarization) ─
-# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
+# Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 # Defaults to Primary LLM if not set
 GRAPH_EXTRACTION_MODEL=gpt-4o          # Instruction-following model for extraction
 GRAPH_EXTRACTION_API_BASE=https://api.openai.com/v1

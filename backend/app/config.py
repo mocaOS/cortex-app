@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = Field(default="")
     openai_api_base: str = Field(default="https://api.openai.com/v1")
-    openai_model: str = Field(default="openai/minimax-m3")
+    openai_model: str = Field(default="google-gemma-4-26b-a4b-it")
     openai_model_fast_mode: str = Field(
         default=""
     )  # Model for "Fast Mode" in Ask AI (defaults to openai_model if empty)

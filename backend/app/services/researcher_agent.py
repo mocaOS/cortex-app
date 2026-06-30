@@ -1238,6 +1238,60 @@ async def _run_researcher_loop(
 
 
 # =============================================================================
+# Citation marker hygiene (stream-safe)
+# =============================================================================
+
+# A complete citation marker, optionally preceded by one space (the space is
+# dropped along with the marker, mirroring the frontend's defensive strip).
+_CITE_MARKER_RE = re.compile(r"\s?\[src_(\d+)\]")
+
+# A trailing fragment that could still grow into a [src_N] marker. While the
+# buffer ends in one of these we must hold it back, because the next token may
+# complete (or invalidate) the marker. Trailing whitespace is also held so the
+# optional space that precedes a stripped marker is removed with it, even when
+# the space and the "[" land in different tokens.
+_CITE_PARTIAL_RE = re.compile(r"\s*\[(?:s(?:r(?:c(?:_\d*)?)?)?)?$|\s+$")
+
+
+class _CitationStripper:
+    """Stream-safe filter enforcing the [src_N] ↔ sources invariant.
+
+    Every [src_N] that survives in the answer text is guaranteed to map to an
+    emitted source (1-based). Markers with N < 1 or N > ``max_index`` — which
+    includes the no-sources case (``max_index == 0``) — are stripped together
+    with one optional leading space. This stops the writer LLM from rendering
+    orphaned/hallucinated citations as literal `[src_1]` text when retrieval
+    returned nothing or the model over-numbers.
+
+    Tokens are buffered only across a potential partial marker, so latency is
+    unaffected for ordinary text.
+    """
+
+    def __init__(self, max_index: int):
+        self.max_index = max(0, max_index)
+        self._buf = ""
+
+    def _resolve(self, match: "re.Match[str]") -> str:
+        n = int(match.group(1))
+        return match.group(0) if 1 <= n <= self.max_index else ""
+
+    def feed(self, token: str) -> str:
+        self._buf += token
+        # Hold back a trailing fragment that might still become a marker.
+        partial = _CITE_PARTIAL_RE.search(self._buf)
+        if partial:
+            head, self._buf = self._buf[: partial.start()], self._buf[partial.start() :]
+        else:
+            head, self._buf = self._buf, ""
+        return _CITE_MARKER_RE.sub(self._resolve, head)
+
+    def flush(self) -> str:
+        out = _CITE_MARKER_RE.sub(self._resolve, self._buf)
+        self._buf = ""
+        return out
+
+
+# =============================================================================
 # Full Research Pipeline (Researcher → Writer)
 # =============================================================================
 
@@ -1467,6 +1521,16 @@ async def run_research_pipeline(
     for msg in curated_history:
         writer_messages.append({"role": msg.role, "content": msg.content})
 
+    # When retrieval produced no grounded sources, instruct the writer not to
+    # cite at all — otherwise it tends to emit learned [src_N] formatting that
+    # has nothing to point at. The stream filter below is the hard guarantee;
+    # this just avoids wasting tokens on citations we'd only strip.
+    if not source_events:
+        writer_user += (
+            "\n\n(No reference sources are available — do NOT use [src_N] "
+            "citation markers anywhere in your answer.)"
+        )
+
     writer_messages.append({"role": "user", "content": writer_user})
 
     try:
@@ -1487,12 +1551,20 @@ async def run_research_pipeline(
             ),
         )
 
+        # Strip any [src_N] whose N has no matching emitted source (orphaned /
+        # over-numbered / no-sources-at-all), preserving the per-turn contract.
         answer_parts: List[str] = []
+        citation_filter = _CitationStripper(max_index=len(source_events))
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                answer_parts.append(token)
-                yield {"content": token}
+                clean = citation_filter.feed(chunk.choices[0].delta.content)
+                if clean:
+                    answer_parts.append(clean)
+                    yield {"content": clean}
+        tail = citation_filter.flush()
+        if tail:
+            answer_parts.append(tail)
+            yield {"content": tail}
 
     except Exception as e:
         logger.error(f"Writer streaming error: {e}")

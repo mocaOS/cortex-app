@@ -531,7 +531,7 @@ export default function AdminPage() {
                     {/* Primary Model */}
                     <div className="mb-4">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Powerful reasoning models like Minimax M3, GLM5, or Kimi K2.5 recommended for maximum performance in deep research mode.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Gemma4 26B A4B recommended — a blazing-fast MoE that's an ideal fit for data retrieval and deep research.</p>
                       <ConfigItem label="Model" value={config.openai_model} format="model" tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
                       <ConfigItem label="API Base" value={config.openai_api_base} format="apiBase" tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.openai_max_context.toLocaleString()} tooltip="Input context budget for the primary model. Floor of the context-budget fallback chain — sub-tier *_MAX_CONTEXT knobs inherit from this when set to 0 (OPENAI_MAX_CONTEXT)" />
@@ -541,7 +541,7 @@ export default function AdminPage() {
                     {/* Extraction Model */}
                     <div className="mb-4 pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Extraction Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Discovers entities and their types from document chunks during ingestion, and generates community summaries. Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B). Defaults to the primary model if not set separately.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Extracts entities and types from chunks during ingestion and writes community summaries. Qwen3.6 27B recommended (thinking suppressed for fast, instruct-like behavior).</p>
                       <ConfigItem label="Model" value={config.extraction_model} format="model" tooltip="LLM used for entity extraction during document ingestion. Defaults to the primary model if not set (GRAPH_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.extraction_api_base} format="apiBase" tooltip="API endpoint for the extraction model. Defaults to primary API base if not set (GRAPH_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.extraction_max_context.toLocaleString()} tooltip="Max context window tokens for entity extraction. Inherits OPENAI_MAX_CONTEXT when GRAPH_EXTRACTION_MAX_CONTEXT is 0 (GRAPH_EXTRACTION_MAX_CONTEXT)" />
@@ -552,7 +552,7 @@ export default function AdminPage() {
                     {/* Relationship Model */}
                     <div className="mb-4 pt-3">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Relationship Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Used for all relationship discovery (Step 1 per-chunk and Step 2 batch analysis). Separate rate limit from entity extraction. Instruction-following models recommended (e.g. OpenAI GPT OSS 120B). Defaults to extraction model.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Handles all relationship discovery (per-chunk + batch analysis). Qwen3.6 27B recommended (thinking suppressed for fast, instruct-like behavior).</p>
                       <ConfigItem label="Model" value={config.relationship_model} format="model" tooltip="LLM used for per-chunk relationship extraction. Defaults to the extraction model if not set (RELATIONSHIP_EXTRACTION_MODEL)" />
                       <ConfigItem label="API Base" value={config.relationship_api_base} format="apiBase" tooltip="API endpoint for the relationship model. Defaults to extraction API base if not set (RELATIONSHIP_EXTRACTION_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.relationship_max_context.toLocaleString()} tooltip="Max input context tokens for Phase 2 batch analysis. Inherits extraction → primary when RELATIONSHIP_MAX_CONTEXT is 0 (RELATIONSHIP_MAX_CONTEXT)" />
@@ -566,7 +566,7 @@ export default function AdminPage() {
                     {config.vision_model_available && (
                       <div className="mb-4 pt-3">
                         <h4 className="text-sm font-medium text-foreground mb-0.5">Vision Model</h4>
-                        <p className="text-muted-foreground text-xs mb-2">Analyzes images extracted from documents during ingestion, generating descriptions and running OCR in the background.</p>
+                        <p className="text-muted-foreground text-xs mb-2">Analyzes images extracted from documents during ingestion, generating descriptions in the background.</p>
                         <ConfigItem label="Model" value={config.vision_model} format="model" tooltip="Vision-capable model used for image analysis during document ingestion (VISION_MODEL)" />
                         <ConfigItem label="API Base" value={config.vision_api_base} format="apiBase" tooltip="API endpoint for the vision model. Defaults to primary API base if not set (VISION_MODEL_API_BASE)" />
                         <ConfigItem advanced label="Output Tokens" value={config.vision_max_output_tokens.toLocaleString()} tooltip="Output budget for vision-model image descriptions. Inherits relationship → extraction → primary when VISION_MAX_OUTPUT_TOKENS is 0 (VISION_MAX_OUTPUT_TOKENS)" />

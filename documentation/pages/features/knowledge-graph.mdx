@@ -432,13 +432,13 @@ The **Explore** section provides an interactive graph visualization (Knowledge G
 ENABLE_GRAPH_EXTRACTION=true
 
 # Model for entity extraction and community summarization (defaults to OPENAI_MODEL)
-# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
-# GRAPH_EXTRACTION_MODEL=gpt-4o-mini
+# Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
+# GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 # GRAPH_EXTRACTION_API_BASE=http://localhost:11434/v1
 # GRAPH_EXTRACTION_API_KEY=ollama
 
 # Model for relationship extraction (defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL)
-# Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B)
+# Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 # Used for both per-chunk (Step 1) and batch analysis (Step 2)
 # Runs on a separate rate limit from entity extraction
 # RELATIONSHIP_EXTRACTION_MODEL=gpt-4o-mini

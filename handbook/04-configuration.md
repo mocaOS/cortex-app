@@ -18,7 +18,7 @@ The Library uses Pydantic BaseSettings for configuration. Environment variables 
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | — | API key for the primary LLM provider. Required for Q&A, research, and graph operations. |
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | Base URL for the LLM API. Change for LiteLLM, Azure, or local providers. |
-| `OPENAI_MODEL` | `openai/minimax-m3` | Model name for Q&A, research, and chat. Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5). |
+| `OPENAI_MODEL` | `google-gemma-4-26b-a4b-it` | Model name for Q&A, research, and chat. Recommended: Gemma4 26B A4B — a blazing-fast 26B/4B-active MoE benched faster than MiniMax-M3 at similar quality, ideal for retrieval. MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff. |
 | `OPENAI_MODEL_FAST_MODE` | Same as `OPENAI_MODEL` | Optional faster/cheaper model for the "Fast Mode" search in Ask AI. |
 | `OPENAI_MAX_OUTPUT_TOKENS` | `8000` | Floor of the output-token budget chain. All sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit from here when set to 0. 8000 covers Qwen3-family verbose XML; tighter models simply finish under cap. See [Budget Fallback Chain](#budget-fallback-chain). |
 | `OPENAI_MAX_CONTEXT` | `32768` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0. |
@@ -30,7 +30,7 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENABLE_GRAPH_EXTRACTION` | `true` | Enable LLM-powered entity extraction during document ingestion. Set `false` to skip extraction entirely. |
-| `GRAPH_EXTRACTION_MODEL` | Same as `OPENAI_MODEL` | Dedicated model for entity extraction and community summarization. Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B). |
+| `GRAPH_EXTRACTION_MODEL` | Same as `OPENAI_MODEL` | Dedicated model for entity extraction and community summarization. Recommended: Qwen3.6 27B with reasoning suppressed, so it behaves like a fast instruct model that solves the task without overthinking. |
 | `GRAPH_EXTRACTION_API_BASE` | Same as `OPENAI_API_BASE` | API base URL for the extraction model. |
 | `GRAPH_EXTRACTION_API_KEY` | Same as `OPENAI_API_KEY` | API key for the extraction model. |
 | `GRAPH_EXTRACTION_MAX_CONTEXT` | `0` (=inherit `OPENAI_MAX_CONTEXT`) | Max context window tokens for entity extraction batching. Set explicitly when your extraction model has a bigger window than the primary. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored). |
@@ -41,7 +41,7 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELATIONSHIP_EXTRACTION_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for relationship extraction (per-chunk and cross-document). Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B). |
+| `RELATIONSHIP_EXTRACTION_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for relationship extraction (per-chunk and cross-document). Recommended: Qwen3.6 27B with reasoning suppressed, so it behaves like a fast instruct model that solves the task without overthinking. |
 | `RELATIONSHIP_MAX_CONTEXT` | `0` (=inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary) | Max input context window tokens for Phase 2 batch relationship analysis. Set when relationship model has bigger window than extraction. |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `0` (=inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary) | Output budget for **per-chunk + candidate-pair scan** (in the chain). **Migrated semantics** — see migration note below. |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | `16000` | Output budget for **Phase 2 batch** relationship analysis. Standalone (NOT in chain) — batch processes hundreds of pairs per call and genuinely needs ~16k. |
@@ -50,7 +50,7 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 
 ## Reasoning Control (ingestion pipelines)
 
-Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, GLM-4.6, Kimi K2, MiniMax M3) be used for ingestion while forcing their thinking OFF. Provider is auto-detected from `base_url`; model family is parsed from the model name. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM. Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for `off`).
+Reasoning hurts structured extraction (drift, hidden-token cost, latency, malformed JSON). These knobs let reasoning-capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, MiniMax M3) be used for ingestion while forcing their thinking OFF. Provider is auto-detected from `base_url`; model family is parsed from the model name. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM. Accepted values: `off | minimal | auto | low | medium | high` (`none`/`disabled` are aliases for `off`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -91,11 +91,11 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=minimax-m3              # primary / agentic (192K window)
-OPENAI_MAX_CONTEXT=196608                  # unlock MiniMax-M3's full input window
+OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
+OPENAI_MAX_CONTEXT=256000                  # unlock Gemma4 26B A4B's full input window
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
-GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.7-27B's full input window; relationship_max_context inherits
+GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.6 27B's full input window; relationship_max_context inherits
 
 VISION_MODEL=qwen3-6-27b              # image analysis (does NOT inherit from extraction)
 
@@ -106,7 +106,7 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 # Self-hosted vLLM users running Qwen3-Embedding-8B can lift to 32768.
 ```
 
-Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting MiniMax-M3 and Qwen3.7-27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
+Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting Gemma4 26B A4B and Qwen3.6 27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
 **Performance tuning (Venice-validated)** — bench-validated against Venice as the LLM provider, paired with the recommended stack above. Cranks ingestion throughput at the cost of much higher peak concurrency:
 

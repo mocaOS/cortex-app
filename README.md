@@ -142,13 +142,13 @@ Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community su
 **Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
 
 ```env
-# Primary — agentic Q&A / researcher (MiniMax-M3: 192K context window)
+# Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m3
-OPENAI_MAX_CONTEXT=196608
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MAX_CONTEXT=256000
 
-# Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+# Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 GRAPH_EXTRACTION_MAX_CONTEXT=256000
 
@@ -175,20 +175,21 @@ Or configure each tier explicitly:
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
-# Powerful reasoning models recommended (e.g. Minimax M3, GLM5, Kimi K2.5)
+# Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
+# (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.example.com/v1
 OPENAI_MODEL=
 
 # ── Graph Extraction (entity extraction + community summarization) ─
-# Instruction-following models recommended (e.g. Mistral Small 24B, Ministral 14B)
+# Qwen3.6 27B recommended — its reasoning is suppressed so it behaves like a fast instruct model that solves the task without overthinking
 ENABLE_GRAPH_EXTRACTION=                     # true = extract entities/relationships, false = skip
 GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
 GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
 GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
 
 # ── Relationship Model (per-chunk + cross-document analysis) ─────
-# Instruction-following models recommended (e.g. OpenAI GPT OSS 120B)
+# Qwen3.6 27B recommended — its reasoning is suppressed so it behaves like a fast instruct model that solves the task without overthinking
 RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODEL
 RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
 RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
@@ -678,7 +679,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `NEO4J_PASSWORD` | Neo4j password (rejected as default `password123` when `ENVIRONMENT=production`) | Yes | `password123` |
 | `OPENAI_API_KEY` | OpenAI API key for AI answers & GraphRAG | **Yes for GraphRAG** | - |
 | `OPENAI_API_BASE` | OpenAI API base URL (for proxies/LiteLLM) | No | `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (powerful reasoning models recommended, e.g. Minimax M3, GLM5, Kimi K2.5) | No | `openai/minimax-m3` |
+| `OPENAI_MODEL` | Primary LLM for Q&A/research/chat (recommended: Gemma4 26B A4B — blazing-fast MoE, ideal for retrieval; MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff) | No | `google-gemma-4-26b-a4b-it` |
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
 | `CUSTOM_INPUTS_DIR` | Directory for custom input files | No | `./custom_inputs` |
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
@@ -689,10 +690,10 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
 | `ENABLE_GRAPH_EXTRACTION` | Enable GraphRAG entity extraction | No | `true` |
-| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction, community summarization, and query-side entity extraction during RAG search (instruction-following recommended, e.g. Mistral Small 24B, Ministral 14B; defaults to `OPENAI_MODEL`) | No | - |
+| `GRAPH_EXTRACTION_MODEL` | Model for entity extraction, community summarization, and query-side entity extraction during RAG search (Qwen3.6 27B recommended, with reasoning suppressed for fast instruct-like behavior; defaults to `OPENAI_MODEL`) | No | - |
 | `GRAPH_EXTRACTION_API_BASE` | API base for extraction model (defaults to `OPENAI_API_BASE`) | No | - |
 | `GRAPH_EXTRACTION_API_KEY` | API key for extraction model (defaults to `OPENAI_API_KEY`) | No | - |
-| `RELATIONSHIP_EXTRACTION_MODEL` | Model for all relationship discovery (instruction-following recommended, e.g. OpenAI GPT OSS 120B; defaults to `GRAPH_EXTRACTION_MODEL`) | No | - |
+| `RELATIONSHIP_EXTRACTION_MODEL` | Model for all relationship discovery (Qwen3.6 27B recommended, with reasoning suppressed for fast instruct-like behavior; defaults to `GRAPH_EXTRACTION_MODEL`) | No | - |
 | `RELATIONSHIP_EXTRACTION_API_BASE` | API base for relationship model (defaults to `GRAPH_EXTRACTION_API_BASE`) | No | - |
 | `RELATIONSHIP_EXTRACTION_API_KEY` | API key for relationship model (defaults to `GRAPH_EXTRACTION_API_KEY`) | No | - |
 | `EXTRACTION_REASONING_MODE` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high`. No-op for pure instruct models | No | `off` |

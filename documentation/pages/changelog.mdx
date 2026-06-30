@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## June 30, 2026 (Recommended primary model → Gemma4 26B A4B)
+
+The bench-validated default primary for Q&A / research / chat is now **Gemma4 26B A4B** (`google-gemma-4-26b-a4b-it` on Venice) — a 26B/4B-active MoE that benches **even faster than MiniMax-M3 at similar answer quality**, making it an ideal fit for fast data retrieval from Cortex. MiniMax M2.7 / M3 were comparatively slower on this workload.
+
+- `OPENAI_MODEL` default changed from `openai/minimax-m3` to `google-gemma-4-26b-a4b-it`.
+- `OPENAI_MAX_CONTEXT` recommended value is now `256000` (Gemma4 26B A4B's full 256K input window).
+- Recommended-stack blocks updated across `.env.recommended`, `.env.example`, `README.md`, the handbook, and the docs; the admin **Primary Model** panel reflects the new recommendation.
+
+Existing deployments are unaffected — any explicit `OPENAI_MODEL` you set still takes precedence; this only changes the documented default and recommendation.
+
+---
+
 ## June 29, 2026 (Launch-readiness hardening)
 
 A round of reliability and UX hardening across the backend pipeline and the chat experience.

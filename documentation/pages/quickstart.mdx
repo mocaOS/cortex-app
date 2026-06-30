@@ -52,13 +52,13 @@ Cortex uses LLMs for Q&A, entity extraction, relationship extraction, image unde
 **Recommended Minimal Stack** — bench-validated 2-model setup. Fill in two API values and you're done; relationship + vision inherit from the extraction model, output budgets cascade automatically.
 
 ```bash
-# Primary — agentic Q&A / researcher (MiniMax-M3: 192K context window)
+# Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=minimax-m3
-OPENAI_MAX_CONTEXT=196608
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MAX_CONTEXT=256000
 
-# Extraction — drives relationship via inheritance (Qwen3.7-27B: 256K window)
+# Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 GRAPH_EXTRACTION_MAX_CONTEXT=256000
 
@@ -85,20 +85,21 @@ Or configure each tier independently:
 
 ```bash
 # ── Primary LLM (Q&A, research, chat) ───────────────────────────
-# Recommended: powerful reasoning models (e.g. Minimax M3, GLM5, Kimi K2.5)
+# Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
+# (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.example.com/v1
 OPENAI_MODEL=
 
 # ── Graph Extraction (entity discovery + community summarization) ─
-# Recommended: instruction-following models (e.g. Mistral Small 24B, Ministral 14B)
+# Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 ENABLE_GRAPH_EXTRACTION=                     # true = extract entities/relationships, false = skip
 GRAPH_EXTRACTION_MODEL=                      # defaults to OPENAI_MODEL
 GRAPH_EXTRACTION_API_BASE=                   # defaults to OPENAI_API_BASE
 GRAPH_EXTRACTION_API_KEY=                    # defaults to OPENAI_API_KEY
 
 # ── Relationship Model (relationship discovery) ─────────────────
-# Recommended: instruction-following models (e.g. OpenAI GPT OSS 120B)
+# Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 # Used for per-chunk (Step 1) and cross-document (Step 2) relationship extraction
 # Runs on a separate rate limit from entity extraction
 RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODEL → OPENAI_MODEL
