@@ -116,6 +116,13 @@ services:
       # Required with ENVIRONMENT=production above: startup refuses to boot
       # if this is unset/short while ADMIN_PASSWORD is set.
       - SESSION_SECRET=${SESSION_SECRET}
+      # At-rest encryption for user-supplied secrets (git connector PATs,
+      # secret-typed skill config). Comma-separated Fernet keys; the first
+      # encrypts, all decrypt (zero-downtime rotation). Injected per-tenant by
+      # meta-cortex at creation. Empty => plaintext storage + loud startup
+      # warning; a MALFORMED key fails startup fast. MUST be declared here or
+      # Dokploy never interpolates the injected value into the container.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       # --- Shared cortex-helper (offload reranker + Docling to one per-host service) ---
       # Injected per-tenant by meta-cortex (control-plane CORTEX_HELPER_* config).
       # Empty => cortex-app uses its built-in local reranker/Docling subprocess.

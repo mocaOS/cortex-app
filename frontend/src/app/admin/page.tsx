@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { createPortal } from "react-dom";
 import { PageTransition } from "@/components/layout";
 import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
@@ -44,6 +45,71 @@ import type { SystemConfig, Stats } from "@/types";
 // ConfigItem rendered outside a provider always shows.
 const DisplayFullConfigContext = createContext(true);
 
+// Hover/focus info tooltip rendered through a portal on <body>.
+//
+// Previously the tooltip was an absolutely-positioned child that depended on EVERY
+// ancestor being overflow:visible. The collapsible section wraps its body in a
+// framer-motion height:auto animation that must be overflow:hidden while animating;
+// it tried to flip back to overflow:visible via `transitionEnd`, but that is racy
+// with height:auto — it intermittently stayed hidden, clipping tooltips on the
+// bottom section (e.g. Privacy) at the section/card edge. A portal escapes all
+// overflow ancestors, so the tooltip can never be clipped no matter the anim state.
+function InfoTooltip({ text }: { text: string }) {
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const show = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const width = 224; // matches w-56
+    const margin = 8;
+    // Clamp into the viewport so a near-edge trigger can't push the tooltip off-screen.
+    const left = Math.max(margin, Math.min(r.left, window.innerWidth - width - margin));
+    setPos({ top: r.bottom + 6, left });
+  };
+  const hide = () => setPos(null);
+
+  // A fixed tooltip would drift from its trigger on scroll/resize — dismiss it
+  // instead (it reopens on the next hover).
+  useEffect(() => {
+    if (!pos) return;
+    const dismiss = () => setPos(null);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [pos]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className="inline-flex cursor-help"
+      tabIndex={0}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
+      aria-label={text}
+    >
+      <Info className="w-3 h-3 text-muted-foreground/50" />
+      {pos &&
+        createPortal(
+          <span
+            role="tooltip"
+            style={{ position: "fixed", top: pos.top, left: pos.left, width: "14rem", zIndex: 9999 }}
+            className="px-2.5 py-1.5 bg-popover border border-border text-popover-foreground text-xs rounded-md shadow-lg whitespace-normal leading-relaxed pointer-events-none"
+          >
+            {text}
+          </span>,
+          document.body
+        )}
+    </span>
+  );
+}
+
 function ConfigItem({ label, value, type = "text", tooltip, format, advanced }: { label: string; value: string | number | boolean; type?: "text" | "boolean" | "list"; tooltip?: string; format?: "model" | "apiBase"; advanced?: boolean }) {
   const displayFull = useContext(DisplayFullConfigContext);
   if (advanced && !displayFull) return null;
@@ -53,14 +119,7 @@ function ConfigItem({ label, value, type = "text", tooltip, format, advanced }: 
       <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
         <span className="text-muted-foreground text-sm flex items-center gap-1.5">
           {label}
-          {tooltip && (
-            <span className="relative group">
-              <Info className="w-3 h-3 text-muted-foreground/50 cursor-help" />
-              <span className="absolute top-full left-0 mt-1.5 px-2.5 py-1.5 bg-popover border border-border text-popover-foreground text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-normal w-56 z-50 leading-relaxed">
-                {tooltip}
-              </span>
-            </span>
-          )}
+          {tooltip && <InfoTooltip text={tooltip} />}
         </span>
         {value ? (
           <span className="flex items-center gap-1 text-green-500 text-sm">
@@ -83,14 +142,7 @@ function ConfigItem({ label, value, type = "text", tooltip, format, advanced }: 
     <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
       <span className="text-muted-foreground text-sm flex items-center gap-1.5">
         {label}
-        {tooltip && (
-          <span className="relative group">
-            <Info className="w-3 h-3 text-muted-foreground/50 cursor-help" />
-            <span className="absolute top-full left-0 mt-1.5 px-2.5 py-1.5 bg-popover border border-border text-popover-foreground text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-normal w-56 z-50 leading-relaxed">
-              {tooltip}
-            </span>
-          </span>
-        )}
+        {tooltip && <InfoTooltip text={tooltip} />}
       </span>
       <span className="text-foreground text-sm font-mono" title={displayValue !== rawValue ? rawValue : undefined}>
         {displayValue}
@@ -129,12 +181,12 @@ function ConfigSection({
       </button>
       <AnimatePresence initial={false}>
         {isOpen && (
-          // overflow is hidden during the height animation (so the collapse clips
-          // cleanly) but set to visible once open, so hover tooltips on the bottom
-          // rows can escape the card instead of being cut off at its border.
+          // overflow stays hidden so the height animation clips the collapse cleanly.
+          // Tooltips no longer need this box to be overflow:visible — InfoTooltip
+          // portals out to <body>, so it can't be clipped here regardless.
           <motion.div
             initial={{ height: 0, opacity: 0, overflow: "hidden" }}
-            animate={{ height: "auto", opacity: 1, transitionEnd: { overflow: "visible" } }}
+            animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0, overflow: "hidden" }}
             transition={{ duration: 0.2 }}
           >
@@ -438,11 +490,7 @@ export default function AdminPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
         >
-          {/* No overflow-hidden here: ConfigItem hover tooltips on the last/bottom
-              section (e.g. Privacy) open downward and extend past the card's bottom
-              edge. overflow-hidden would clip them — the section's own collapse is
-              already clipped by each ConfigSection's motion.div, not by this card. */}
-          <div className="glass rounded-xl">
+          <div className="glass rounded-xl overflow-hidden">
             {/* Header */}
             <div className="px-6 py-4 border-b border-border/50">
               <div className="flex items-center justify-between">
