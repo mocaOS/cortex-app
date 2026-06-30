@@ -13,6 +13,7 @@ from app.services.skill_service import (
     _extract_json_object,
     _parse_skill_md_from_string,
     _sanitize_skill_id,
+    _skill_doc_hints_config,
     _substitute_env_vars,
 )
 
@@ -120,3 +121,31 @@ def test_extract_json_object_returns_none_on_truncated():
 def test_extract_json_object_handles_empty_and_none():
     assert _extract_json_object("") is None
     assert _extract_json_object(None) is None
+
+
+# --- _skill_doc_hints_config (retry gating) ----------------------------------
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'const c = new Foo({ apiKey: "YOUR_API_KEY" });',  # SDK arg + placeholder
+        "Set the AGENTMAIL_API_KEY env var.",               # ENV_STYLE name
+        "Authorization: Bearer <token>",                    # auth header
+        "POST {ZAMMAD_BASE_URL}/api/v1/tickets",            # {TEMPLATE} placeholder
+        "Provide your client_secret and client_id.",        # oauth creds
+    ],
+)
+def test_hints_config_true_when_credentials_present(body):
+    assert _skill_doc_hints_config(body) is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Use web_fetch on https://wttr.in/London?format=j2 for weather.",  # keyless
+        "Rewrite the user's text to be concise. No setup required.",       # instruction-only
+        "Call the public archive/API; no authentication needed.",          # bare 'API' must not trigger
+    ],
+)
+def test_hints_config_false_when_keyless(body):
+    assert _skill_doc_hints_config(body) is False

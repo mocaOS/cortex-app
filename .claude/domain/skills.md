@@ -67,9 +67,12 @@ Successful API responses are stored as sources (without chunk_id) for the writer
 
 **Prompt is tuned for small primary models** (e.g. gemma-4-26b). The old prompt returned `{}` for SDK-style skills whose only credential appears as a placeholder (`apiKey: "YOUR_API_KEY"`) with no explicit env var or URL — the AgentMail skill is the canonical failure. The current prompt: keeps it short, gives one worked SDK example, explicitly treats placeholder/SDK-arg credentials **and** `{TEMPLATE}`/`UPPER_SNAKE` vars (self-hosted REST) as required, infers `base_url` from the product name when unprinted, and omits any "return empty if nothing needed" escape hatch (small models latch onto it and bail).
 
-**Robustness (these models are non-deterministic even at temperature 0 on Cloudflare/Venice gateways):**
+**Robustness (these models are non-deterministic even at temperature 0):**
 - `_extract_json_object()` — tolerant parse: strips fences, falls back to the first `{...}`/`[...]` span, returns `None` (not an exception) on truncated/garbage output, so a stray token can no longer silently save an empty schema.
-- `analyze_skill_config()` retries up to `_SKILL_ANALYSIS_MAX_ATTEMPTS` (3) times, accepting the first attempt that yields any variable or base_url; a genuinely config-less skill exhausts attempts and correctly stays empty. Worst case ~3 sequential LLM calls at setup (well under nginx's 300s).
+- `analyze_skill_config()` retries up to `_SKILL_ANALYSIS_MAX_ATTEMPTS` (3) on an empty result, accepting the first attempt that yields any variable or base_url. **Retry is gated on `_skill_doc_hints_config(body)`** — it fires only when the docs mention a credential keyword, an `{UPPER_TEMPLATE}` placeholder, or an `ENV_STYLE_NAME` suffix. A keyless API (e.g. wttr.in weather) or pure instruction skill is *correctly* empty and accepts in a single call. This gating was the key latency fix: an ungated retry made keyless skills pay 3× the per-call latency (minutes on a slow gateway).
+- `max_tokens` uses the global `OPENAI_MAX_OUTPUT_TOKENS` (`settings.openai_max_output_tokens`, default 8000), not a hardcoded value. The primary/extraction models are **reasoning models**: measured completion is ~900–1100 tokens even for a 0–1 variable skill (almost all thinking), and a ~10-variable schema reaches ~2800. A tight cap (e.g. the old 1500) truncates the thinking or the JSON and yields a spurious empty/partial result, so the budget must stay large.
+
+**Latency note:** per-call latency is dominated by the gateway, not the prompt. Venice-hosted gemma/qwen run ~10–15s; the same gemma routed through Cloudflare AI Gateway ran ~35–58s. The model is read from `OPENAI_MODEL`/`OPENAI_API_BASE` (`env_file: .env`), which is only re-read on container **recreate**, not `docker restart` — a stale route is a common cause of slow analysis.
 
 ### Config Endpoints
 - `GET /api/admin/skills/{id}/config` — schema + masked values

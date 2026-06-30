@@ -152,7 +152,9 @@ OPENAI_MAX_CONTEXT=256000
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 GRAPH_EXTRACTION_MAX_CONTEXT=256000
 
-# Vision — image analysis (does NOT inherit; api_base/api_key inherit from OPENAI_*)
+# Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
+# inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
+# built-in capabilities). Only api_base/api_key inherit from OPENAI_* when unset.
 VISION_MODEL=qwen3-6-27b
 
 # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
@@ -160,15 +162,6 @@ EMBEDDING_MODEL=text-embedding-qwen3-8b
 EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
 # EMBEDDING_MAX_INPUT_TOKENS defaults to 8192 — Venice/OpenAI cap inputs at 8192 server-side.
 # Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
-```
-
-**Performance tuning (Venice-validated)** — pair these with the stack above to crank ingestion throughput. Bench-validated on Venice as the LLM provider; safe on Venice or large vLLM endpoints, dial back for stock OpenAI or smaller hosts.
-
-```env
-BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
-CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3 — biggest multiplier)
-CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
 ```
 
 Or configure each tier explicitly:
@@ -804,7 +797,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `10` |
+| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `2` |
 | `PROCESSING_THREAD_WORKERS` | Thread pool workers for CPU operations | No | `4` |
 | `VISION_MAX_CONCURRENT` | Max concurrent vision API calls for image analysis | No | `3` |
 

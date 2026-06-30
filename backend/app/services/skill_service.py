@@ -33,9 +33,35 @@ logger = logging.getLogger(__name__)
 
 # Number of times analyze_skill_config retries the LLM when it returns an empty
 # extraction. Small primary models (gemma-4-26b) intermittently return {} for a
-# skill that clearly needs config; retrying recovers it. A genuinely config-less
-# skill just exhausts these attempts and correctly stays empty.
+# skill that clearly needs config; retrying recovers it. Retries are gated on
+# _CONFIG_HINT below so a genuinely config-less skill (keyless API, pure
+# instruction skill) accepts the empty result in a single call instead of
+# burning every attempt — this was the dominant latency cost (e.g. a keyless
+# weather skill taking minutes on a slow gateway).
 _SKILL_ANALYSIS_MAX_ATTEMPTS = 3
+
+# A skill's docs hint that it needs config (so an empty extraction is worth
+# retrying) when they mention a credential keyword, an {UPPER_TEMPLATE}
+# placeholder, or an ENV_STYLE_NAME ending in a config suffix. Deliberately does
+# NOT match a bare "API" (a keyless skill may still describe "an archive/API").
+_CONFIG_HINT_KEYWORD = re.compile(
+    r"(?i)\b(api[_\s-]?(?:key|token|secret)|apikey|access[_\s-]?token|bearer|"
+    r"authorization|credentials?|x-api-key|client[_\s-]?secret|client[_\s-]?id|"
+    r"password|passphrase|private[_\s-]?key)\b"
+)
+_CONFIG_HINT_VARNAME = re.compile(
+    r"\{[A-Z][A-Z0-9_]*\}|\b[A-Z][A-Z0-9_]*_(?:KEY|TOKEN|SECRET|URL|ID|PASSWORD)\b"
+)
+
+
+def _skill_doc_hints_config(body: str) -> bool:
+    """Whether SKILL.md text suggests the skill needs user-provided config.
+
+    Used to gate retry-on-empty: when there is no hint, an empty extraction is
+    almost certainly correct (keyless/instruction skill), so we accept it without
+    spending more LLM calls.
+    """
+    return bool(_CONFIG_HINT_KEYWORD.search(body) or _CONFIG_HINT_VARNAME.search(body))
 
 
 def _extract_json_object(content: Optional[str]) -> Any:
@@ -905,11 +931,17 @@ class SkillService:
 
         schema: List[dict] = []
         base_url: Optional[str] = None
-        # Small models are non-deterministic even at temperature 0 on some gateways
-        # (Cloudflare Workers AI, Venice) and intermittently return an empty/truncated
-        # result for a skill that clearly needs config. Retry until we get a non-empty
-        # extraction; a genuinely config-less skill simply exhausts the attempts and
-        # returns empty, which is correct. This is a one-off, user-triggered setup call.
+        # Retry only buys something when the docs hint at config the model may
+        # have missed. Small models are non-deterministic even at temperature 0
+        # and occasionally drop a real variable; a keyless/instruction skill,
+        # however, is *correctly* empty and must not pay for repeated calls (the
+        # main latency cost we saw). Output budget uses the generous global
+        # `openai_max_output_tokens` (default 8000): these are reasoning models
+        # that spend ~900-1100 tokens thinking even for a trivial skill, and a
+        # large multi-variable schema can reach ~2800 — a tight cap truncates
+        # the thinking (or the JSON itself) and yields a spurious empty/partial
+        # result. This is a one-off, user-triggered setup call.
+        config_likely = _skill_doc_hints_config(body)
         for attempt in range(_SKILL_ANALYSIS_MAX_ATTEMPTS):
             try:
                 response = await client.chat.completions.create(
@@ -918,7 +950,11 @@ class SkillService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": body},
                     ],
-                    **build_chat_params(settings.openai_model, temperature=0, max_tokens=1500),
+                    **build_chat_params(
+                        settings.openai_model,
+                        temperature=0,
+                        max_tokens=settings.openai_max_output_tokens,
+                    ),
                 )
                 parsed = _extract_json_object(response.choices[0].message.content)
                 # Back-compat: older prompt returned a bare array
@@ -937,8 +973,11 @@ class SkillService:
                     f"LLM analysis attempt {attempt + 1} failed for skill '{skill_id}': {e}"
                 )
                 schema, base_url = [], None
-            # Accept the first attempt that found anything; otherwise retry.
+            # Accept the first attempt that found anything.
             if schema or base_url:
+                break
+            # Empty result: retry only if the docs suggest config exists to find.
+            if not config_likely:
                 break
             if attempt + 1 < _SKILL_ANALYSIS_MAX_ATTEMPTS:
                 logger.info(

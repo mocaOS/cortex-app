@@ -264,7 +264,7 @@ OPENAI_MAX_CONTEXT=256000                 # unlock Gemma4 26B A4B full input win
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.6 27B full input window; relationship_max_context inherits
 
-VISION_MODEL=qwen3-6-27b              # image analysis (does NOT inherit from extraction)
+VISION_MODEL=qwen3-6-27b              # image analysis — set explicitly (model name does NOT inherit; empty disables vision → Docling fallback). api_base/api_key inherit from OPENAI_*.
 
 EMBEDDING_MODEL=text-embedding-qwen3-8b    # text embedding (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
@@ -275,16 +275,9 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 
 Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap Gemma4 26B A4B and Qwen3.6 27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (8192 regardless of the underlying model's native window); oversized inputs are char-truncated client-side to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
-**Performance tuning (Venice-validated).** Pair these four knobs with the stack above to maximize ingestion throughput. Bench-validated against Venice; safe on Venice or large self-hosted vLLM endpoints. Dial back on stock OpenAI or smaller hosts to avoid rate-limit errors.
+**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=2`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) are the recommended, reliably-tested setting — leave them as-is unless you have a specific reason to change them.
 
-```bash
-BATCH_PROCESSING_CONCURRENCY=3    # docs processed in parallel (default 2)
-CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3 — biggest multiplier)
-CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=4           # system-wide vision-API semaphore (default 3)
-```
-
-The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. If you swap to a slower provider, `CONCURRENT_EXTRACTIONS` is the first knob to lower — it's the biggest multiplier and entity extraction is the heaviest call. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
+The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. Because they compound, raise them cautiously — `CONCURRENT_EXTRACTIONS` is the biggest multiplier (entity extraction is the heaviest call) and the first knob to lower on a slower provider. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
 
 **Override examples:**
 
