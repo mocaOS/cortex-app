@@ -392,7 +392,6 @@ class InstanceStatusResponse(BaseModel):
     last_entity_merge_at: Optional[str] = None
     # Connectivity / meta
     neo4j_connected: bool = True
-    version: str
     checked_at: str = Field(..., description="ISO timestamp when this snapshot was taken")
 
 

@@ -1136,7 +1136,6 @@ async def get_instance_status(auth: AuthResult = Depends(require_manage_permissi
         last_community_detection_at=stats.get("last_community_detection_at"),
         last_entity_merge_at=stats.get("last_entity_merge_at"),
         neo4j_connected=connected,
-        version="1.0.0",
         checked_at=checked_at,
     )
 
