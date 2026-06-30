@@ -50,7 +50,7 @@ Returns a single snapshot designed for deploy automation:
 - `active_query_count` — in-flight AskAI/research queries; a restart kills the stream (blocks redeploy)
 - `last_query_at` — timestamp of the most recent AskAI query
 - `last_relationship_analysis_at`, `last_community_detection_at`, `last_entity_merge_at` — last pipeline operations (informational)
-- `neo4j_connected`, `version`, `checked_at`
+- `neo4j_connected`, `checked_at`
 
 Poll this endpoint and wait for `safe_to_redeploy: true` before triggering a graceful shutdown. Requires an API key with `manage` permission.
 
