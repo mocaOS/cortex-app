@@ -1,8 +1,8 @@
 """Tests for MAX_QUERIES_PER_MONTH enforcement across chat-style endpoints.
 
-PRICING.md §4.3 promises that MAX_QUERIES_PER_MONTH caps the global, instance-
-wide sum of `ep_ask + ep_search` across all APIKeyUsageLog rows for the current
-UTC calendar month, with sentinel `0` meaning unlimited.
+MAX_QUERIES_PER_MONTH caps the global, instance-wide sum of `ep_ask +
+ep_search` across all APIKeyUsageLog rows for the current UTC calendar month,
+with sentinel `0` meaning unlimited.
 
 The cap MUST be enforced on the chat-style query endpoints:
 - POST /api/search

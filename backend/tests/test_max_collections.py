@@ -1,8 +1,8 @@
 """Tests for MAX_COLLECTIONS enforcement on POST /api/collections.
 
-PRICING.md §4.4 promises that MAX_COLLECTIONS caps the total collection count
-globally (the auto-created `default` collection counts toward the cap), with
-sentinel `0` meaning unlimited.
+MAX_COLLECTIONS caps the total collection count globally (the auto-created
+`default` collection counts toward the cap), with sentinel `0` meaning
+unlimited.
 """
 
 from __future__ import annotations

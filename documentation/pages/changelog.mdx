@@ -289,7 +289,7 @@ Exporting a large instance (~1,300 documents / 22K entities / 49K relationships,
 
 **Export** now streams: a new `_write_ndjson` helper writes each NDJSON entry one JSON line at a time via `zf.open(name, "w", force_zip64=True)`, and the embedding-heavy sections pull 500-row batches from Neo4j and stream them straight into the zip. New batched query methods in `neo4j_service.py`: `export_entity_count`/`export_all_entities_batched` (ORDER BY `e.name`) and `export_relationship_count`/`export_all_entity_relationships_batched` (ORDER BY `elementId(r)` for stable SKIP/LIMIT pagination).
 
-**Import** got the mirror treatment so restoring a large archive doesn't OOM the *target* instance: `_iter_ndjson` reads each heavy entry through an `io.TextIOWrapper` one line at a time, `_iter_ndjson_batches` feeds the existing `import_*_batch` inserts (chunks, entities, chunk mentions), and relationships stream one-at-a-time. The pre-import plan-limit guards (`MAX_FILES`, `MAX_ENTITIES`) now use `_count_ndjson` — which counts lines without parsing or buffering — instead of loading the whole entities-with-embeddings file into RAM just to call `len()`. Progress totals are read from `manifest.stats`.
+**Import** got the mirror treatment so restoring a large archive doesn't OOM the *target* instance: `_iter_ndjson` reads each heavy entry through an `io.TextIOWrapper` one line at a time, `_iter_ndjson_batches` feeds the existing `import_*_batch` inserts (chunks, entities, chunk mentions), and relationships stream one-at-a-time. The pre-import limit guards (`MAX_FILES`, `MAX_ENTITIES`) now use `_count_ndjson` — which counts lines without parsing or buffering — instead of loading the whole entities-with-embeddings file into RAM just to call `len()`. Progress totals are read from `manifest.stats`.
 
 Peak RAM on both sides is now ~one 500-record batch regardless of corpus size. The archive format, endpoints, and on-disk output are unchanged — existing exports/imports remain fully compatible. Touched `backend/app/services/{library_transfer_service.py, neo4j_service.py}` and `.claude/domain/admin-features.md`.
 
@@ -469,11 +469,10 @@ Settings page (`/admin`) didn't expose the new budget knobs. The **LLM Configura
 
 Each new field includes a tooltip explaining its inheritance path and where it sits in the budget chain. Backend `SystemConfigResponse` model + `/api/admin/config` endpoint extended with the corresponding fields.
 
-### Pricing & Plan Limits
+### Instance Limits
 
-- New `MAX_ENTITIES` env var (default `0` = unlimited) caps the total entity count across the graph. Enforced at upload-time and custom-input creation: new ingestion is rejected once `get_stats()["entity_count"]` is at or above the cap. A single in-flight document can push the post-extraction count slightly above the cap (accepted tradeoff per PRICING.md §4.2).
+- New `MAX_ENTITIES` env var (default `0` = unlimited) caps the total entity count across the graph. Enforced at upload-time and custom-input creation: new ingestion is rejected once `get_stats()["entity_count"]` is at or above the cap. A single in-flight document can push the post-extraction count slightly above the cap (accepted tradeoff).
 - `MAX_QUERIES_PER_MONTH` instance-wide cap on chat-style queries — applies to `POST /api/search`, `POST /api/ask`, `POST /api/ask/stream`, `POST /api/ask/stream/thinking`. Returns `429 Too Many Requests` with a `Retry-After` header (seconds until next UTC month) when exceeded.
-- Error messages on limit-rejection updated to indicate users should upgrade their plan rather than just stating the limit was hit.
 - Comprehensive test coverage in `backend/tests/` for `MAX_FILES`, `MAX_ENTITIES`, `MAX_COLLECTIONS` enforcement across upload, custom input, collection creation, and library import endpoints.
 
 ### Skill `http_request` Tool Improvements

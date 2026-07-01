@@ -48,6 +48,10 @@ A growing marketplace of integrations that extend the Library's capabilities:
 
 60+ REST endpoints with full OpenAPI documentation. Build anything on top of Cortex — from chatbots and copilots to internal tools and customer-facing applications.
 
+### MOCA Community Library
+
+For Cortex Launch the MOCA Community is able to aggregate documents into the official museum library to ensure their legacy is being included in the system that can be queried by humans and agents.
+
 ## Deployment Options
 
 Cortex is available in two forms:

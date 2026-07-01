@@ -1,7 +1,7 @@
 """Tests for MAX_ENTITIES enforcement across all entity-creating entry points.
 
-PRICING.md §4.2 promises that MAX_ENTITIES caps total entity count globally,
-with sentinel `0` meaning unlimited. The cap is enforced at:
+MAX_ENTITIES caps total entity count globally, with sentinel `0` meaning
+unlimited. The cap is enforced at:
 - POST /api/upload
 - POST /api/custom-input
 - library_transfer_service.import_library (admin bulk import)

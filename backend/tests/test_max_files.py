@@ -1,7 +1,7 @@
 """Tests for MAX_FILES enforcement across all document-creation entry points.
 
-PRICING.md §4.1 promises that MAX_FILES caps total document count globally,
-with sentinel `0` meaning unlimited. The cap is enforced at:
+MAX_FILES caps total document count globally, with sentinel `0` meaning
+unlimited. The cap is enforced at:
 - POST /api/upload
 - POST /api/custom-input
 - library_transfer_service.import_library (admin bulk import)
