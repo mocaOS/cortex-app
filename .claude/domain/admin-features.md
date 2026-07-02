@@ -15,6 +15,8 @@ When documents are deleted, also cleans up:
 
 Accessible via Settings page → Danger Zone → System Reset modal with "DELETE" confirmation.
 
+**Memory-safe deletion**: `delete_all_documents` deletes communities/entities/chunks/documents via `CALL {} IN TRANSACTIONS` (10K rows; 2K for chunks, which carry embedding vectors) — a single whole-graph `DETACH DELETE` blows past `dbms.memory.transaction.total.max` (~70% of heap) on large knowledge bases. These queries must run as auto-commit (`session.run`), not inside an explicit transaction.
+
 ## Library Import/Export
 
 Full instance migration via Settings page → Data Management section.

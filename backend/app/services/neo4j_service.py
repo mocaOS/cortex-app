@@ -1060,17 +1060,33 @@ class Neo4jService:
             """)
             community_count = community_result.single()["community_count"]
             
+            # Batched deletes: a single DETACH DELETE over the whole graph
+            # exceeds dbms.memory.transaction.total.max on large knowledge
+            # bases. CALL {} IN TRANSACTIONS requires an auto-commit query
+            # (session.run), not an explicit transaction.
+
             # Delete all communities
-            session.run("MATCH (com:Community) DETACH DELETE com")
-            
+            session.run("""
+                MATCH (com:Community)
+                CALL { WITH com DETACH DELETE com } IN TRANSACTIONS OF 10000 ROWS
+            """)
+
             # Delete all entities (they will all be orphaned)
-            session.run("MATCH (e:Entity) DETACH DELETE e")
-            
-            # Delete all chunks and documents
+            session.run("""
+                MATCH (e:Entity)
+                CALL { WITH e DETACH DELETE e } IN TRANSACTIONS OF 10000 ROWS
+            """)
+
+            # Delete all chunks (small batches: chunks carry embedding vectors)
+            session.run("""
+                MATCH (c:Chunk)
+                CALL { WITH c DETACH DELETE c } IN TRANSACTIONS OF 2000 ROWS
+            """)
+
+            # Delete all documents
             session.run("""
                 MATCH (d:Document)
-                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-                DETACH DELETE d, c
+                CALL { WITH d DETACH DELETE d } IN TRANSACTIONS OF 10000 ROWS
             """)
             
             logger.info(f"Deleted all documents: {doc_count} documents, {entity_count} entities, {community_count} communities")
