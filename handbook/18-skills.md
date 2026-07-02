@@ -145,6 +145,8 @@ The LLM never sees API keys, tokens, or auth headers. Lines in the SKILL.md that
 - Responses are truncated to 32,000 characters maximum
 - JSON responses with arrays are truncated intelligently: individual items are slimmed (long string values shortened) while preserving all array entries, so the agent sees complete data sets rather than cut-off JSON
 - Non-JSON responses are truncated with a hard character limit
+- Every truncated response carries an explicit `[NOTE: response truncated …]` trailer with pagination guidance (`?limit=`, `?page=`), so the agent knows data was dropped and can fetch the rest instead of answering from partial data
+- The answer stage additionally caps oversized API payloads (~8,000 characters per skill source) — the agent analyzed the full data during research; the writer doesn't re-pay for it
 - Successful API responses are also stored as sources for the writer phase, so they appear in the final answer's references
 
 ### Failed Calls
@@ -212,7 +214,7 @@ When a skill is enabled but needs setup:
 | `SKILL_SCRIPT_TIMEOUT` | `30` | Timeout in seconds for legacy script execution |
 | `SKILL_HTTP_TIMEOUT` | `15` | Timeout in seconds for HTTP tool calls |
 | `MAX_SKILL_TOOLS` | `10` | Maximum total legacy skill-provided tools in the researcher agent |
-| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions in the system prompt |
+| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions in the system prompt. Enforced: oversized instruction blocks are cut with an explicit truncation marker, so many enabled skills can't grow the prompt without bound |
 | `ENABLE_AGENT_CHAT` | `true` | Enable agent-based chat mode (required for skills in chat) |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations in speed/chat mode |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations in quality/deep research mode |

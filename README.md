@@ -753,6 +753,11 @@ Set `ENABLE_AGENT_RESEARCH=false` to revert to the legacy fixed-step pipeline if
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | Max agent loop iterations for deep research | No | `8` |
 | `WRITER_MAX_TOKENS_SPEED` | Max output tokens for chat answers | No | `1200` |
 | `WRITER_MAX_TOKENS_QUALITY` | Max output tokens for deep research answers | No | `4000` |
+| `RESEARCHER_SPEED_EARLY_WRITE` | Chat skips the agent's final confirmation LLM call after a fruitful search (one round-trip less per turn) | No | `true` |
+| `RESEARCHER_PARALLEL_TOOL_CALLS` | Run read-only searches from one agent turn concurrently (skill/git actions stay sequential) | No | `true` |
+| `RESEARCHER_TOOL_ENTITY_HINTS` | Agent passes entity names on its search calls, skipping the query entity-extraction LLM call | No | `true` |
+| `RESEARCHER_SEARCH_DEDUP` | Serve identical repeated searches from a per-question cache instead of re-running retrieval | No | `true` |
+| `EMIT_DONE_BEFORE_MEMORY` | Emit SSE `done` (with `pending_memory: true`) before memory compaction; `memory_update` follows before stream end | No | `true` |
 
 #### Agent Skills
 

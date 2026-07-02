@@ -7,6 +7,36 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 2, 2026 (AskAI v2 — faster Chat & Deep Research)
+
+A structural latency pass over the agentic ask pipeline. A chat turn now costs **2 LLM calls instead of 3** (plus one eliminated helper call per search); on the reference deployment this cut average chat time-to-first-token by **~65%**, and long Deep Research questions that previously hit gateway limits now complete. Answer quality and citation behavior are unchanged — the writer stage is untouched.
+
+**Pipeline (all default-on, each individually revertible via env flag)**
+
+- **Chat early-write** (`RESEARCHER_SPEED_EARLY_WRITE`) — once a search iteration has produced sources (and no skill/git action ran), the answer is written immediately instead of spending one more full LLM round-trip asking the agent to confirm it is done.
+- **Concurrent searches** (`RESEARCHER_PARALLEL_TOOL_CALLS`) — read-only tool calls issued in one agent turn (knowledge / community / entity searches) now execute in parallel; skill and git actions stay sequential.
+- **Entity hints** (`RESEARCHER_TOOL_ENTITY_HINTS`) — the agent passes the entity names from its own search queries, eliminating the separate query entity-extraction LLM call on every search.
+- **Search dedup** (`RESEARCHER_SEARCH_DEDUP`) — an identical repeated search within one question is answered from cache with a nudge to try a different angle.
+- **Faster turn completion** (`EMIT_DONE_BEFORE_MEMORY`) — the SSE `done` event now fires as soon as the last answer token streams, **before** the post-answer memory compaction; the `memory_update` blob follows 1–4 s later and then the stream closes. The `done` frame carries `pending_memory: true` when an update is still coming. **Integrator note:** consume the stream to its actual end — a client that stops reading at `done` loses memory continuity. Set `EMIT_DONE_BEFORE_MEMORY=false` to restore the legacy order. See the [Ask AI event reference](/features/ask-ai#sse-event-reference).
+- Connection reuse for LLM calls, skill/git metadata caching, and event-loop hygiene fixes reduce per-request overhead further; SSE responses now send `X-Accel-Buffering: no` so customer-managed reverse proxies can't buffer the stream.
+
+**Skills**
+
+- The `MAX_SKILL_INSTRUCTIONS_TOKENS` budget is now actually enforced (with an explicit truncation marker) — previously skill instructions grew the system prompt without bound as more skills were enabled.
+- Deployments with **no** skills installed no longer receive skill instructions referencing a tool that doesn't exist (which occasionally provoked hallucinated tool calls on small models).
+- Truncated skill API responses are now labeled as truncated with pagination guidance, so the model paginates instead of confidently answering from cut data; the answer stage caps oversized API payloads.
+- Action requests ("create a ticket for that") can no longer be swallowed by the memory fast-path — they always run the full pipeline.
+
+**Chat UI**
+
+- **Live citations** — sources and `[src_N]` badges are clickable while the answer is still streaming, and survive pressing Stop.
+- **Conversation memory wired end-to-end** — the web UI now round-trips the conversation-memory blob, so memory-answerable follow-ups ("summarize that") skip retrieval entirely.
+- **Conversations survive navigation** — switching tabs or reloading no longer destroys the chat (per-tab persistence); Clear properly aborts an in-flight stream.
+- **Smoother streaming** — token rendering is batched per animation frame and completed messages no longer re-render on every incoming token, keeping long research sessions responsive.
+- Stopping mid-thought no longer leaks raw `<think>` text into the answer; the composer resets and refocuses after sending.
+
+---
+
 ## June 30, 2026 (Recommended primary model → Gemma4 26B A4B)
 
 The bench-validated default primary for Q&A / research / chat is now **Gemma4 26B A4B** (`google-gemma-4-26b-a4b-it` on Venice) — a 26B/4B-active MoE that benches **even faster than MiniMax-M3 at similar answer quality**, making it an ideal fit for fast data retrieval from Cortex. MiniMax M2.7 / M3 were comparatively slower on this workload.

@@ -226,12 +226,15 @@ Every event is a JSON object on a `data:` line. Each event contains exactly one 
 | `sub_questions` | `string[]` | Deep Research | The decomposed research sub-questions |
 | `retrieval` | `string` | Deep Research | Per-sub-question retrieval progress |
 | `retrieval_stats` | `object` | Deep Research | Summary: `total_sources`, `unique_sources`, `communities_used` |
-| `done` | `boolean` | All | `true` when the stream is complete |
+| `done` | `boolean` | All | `true` when the answer is complete. On memory-carrying turns it includes `pending_memory: true` — a `memory_update` event still follows before the stream closes |
+| `pending_memory` | `boolean` | On the `done` event | Present (`true`) when a `memory_update` will follow the `done` event — keep reading the stream |
 | `error` | `string` | All | Error message if something went wrong |
 | `communities_used` | `number[]` | Deep Research | Community IDs used, included in the `done` event |
-| `memory_update` | `object` | When `conversation_memory` sent | Updated memory blob to store and replay next turn (see [Conversation Memory](#conversation-memory)) |
+| `memory_update` | `object` | When `conversation_memory` sent | Updated memory blob to store and replay next turn — **emitted after `done`** by default (see [Conversation Memory](#conversation-memory)) |
 
 Each source object in `sources` also carries a stable `sid` (string) for cross-turn citation continuity.
+
+**Event order note:** `done` fires as soon as the last answer token is streamed (finalize your UI there), but it is **not necessarily the final frame**: with `EMIT_DONE_BEFORE_MEMORY=true` (the default) the post-answer memory compaction runs afterwards and `memory_update` arrives 1–4 s later, then the stream closes. Consume the stream to its actual end — a client that stops reading at `done` loses memory continuity. Set `EMIT_DONE_BEFORE_MEMORY=false` to restore the legacy order (`memory_update` → `done`).
 
 During silent windows (≥ 8 s with no event), the stream also emits SSE comment keep-alives (`: ping`) — ignored by the SSE spec and clients, present only to prevent proxy idle-timeouts.
 
@@ -275,7 +278,7 @@ For long conversations, raw history trimming silently forgets older turns. **Con
 
 **How to use it:**
 1. Start with `"conversation_memory": {}` (or omit on turn 1).
-2. Read the `memory_update` SSE event emitted at the end of each turn.
+2. Read the `memory_update` SSE event emitted at the end of each turn — by default it arrives **after** the `done` event (which carries `pending_memory: true`), so keep consuming the stream until it actually closes.
 3. Send that blob back as `conversation_memory` on the next turn (and keep sending the full `conversation_history`).
 
 ```jsonc

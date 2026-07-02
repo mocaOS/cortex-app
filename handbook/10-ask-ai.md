@@ -7,10 +7,10 @@ The Library provides two AI-powered question-answering modes, both accessible th
 | Feature | Chat (Speed) | Deep Research (Quality) |
 |---------|-------------|----------------------|
 | **Purpose** | Quick answers to straightforward questions | Thorough, multi-angle research for complex questions |
-| **Max iterations** | 2 | 10 |
+| **Max iterations** | 3 | 8 |
 | **Tools available** | `knowledge_search`, `done` | `knowledge_search`, `community_search`, `entity_lookup`, `reasoning`, `done` |
 | **Writer output** | Up to 1,200 tokens | Up to 4,000 tokens |
-| **LLM calls** | 4-5 per query | 6-15+ per query |
+| **LLM calls** | 2-3 per query | 6-15+ per query |
 | **Latency** | 3-8 seconds | 15-60 seconds |
 | **Best for** | Factual lookups, follow-up questions | Comparisons, analysis, multi-topic questions |
 
@@ -35,8 +35,8 @@ An LLM-driven agent iteratively gathers information using function-calling tools
 
 **Speed Mode (Chat):**
 1. Agent receives the question + conversation history
-2. Issues 1 `knowledge_search` call with up to 3 parallel queries
-3. Calls `done` with a summary of findings
+2. Issues 1 `knowledge_search` call with up to 3 parallel queries (passing the entity names it spotted, so no separate extraction call is needed)
+3. Hands off to the writer as soon as the search produced sources (*early write* — the final "research complete" confirmation call is skipped; see `RESEARCHER_SPEED_EARLY_WRITE`). When a skill or git action ran, the agent keeps its full loop instead.
 
 **Quality Mode (Deep Research):**
 1. Agent uses `reasoning` tool to plan a research strategy
@@ -45,6 +45,8 @@ An LLM-driven agent iteratively gathers information using function-calling tools
 4. Uses `entity_lookup` to explore key entities mentioned in results
 5. Cross-references and fills gaps
 6. Calls `done` with a comprehensive summary
+
+Read-only searches the agent issues in a single turn run **concurrently**, and an identical repeated search is answered from a per-question cache with a nudge to try a different angle — both keep long research runs from wasting wall-clock (see the loop-efficiency flags in [Chapter 4](04-configuration.md#agent-research-pipeline)).
 
 ### Research Tools
 
@@ -172,7 +174,8 @@ All streaming endpoints use Server-Sent Events. Each event is a JSON object:
 | `retrieval` | `{"retrieval": "Found N sources"}` | Search progress |
 | `retrieval_stats` | `{"retrieval_stats": {total, unique, searches, communities}}` | Final search stats |
 | `communities_used` | `{"communities_used": [1, 3]}` | Community IDs used |
-| `done` | `{"done": true}` | Stream complete |
+| `memory_update` | `{"memory_update": {...}}` | Updated conversation-memory blob (only when `conversation_memory` was sent). Arrives **after** `done` by default — keep reading until the stream closes |
+| `done` | `{"done": true}` | Answer complete. Carries `pending_memory: true` when a `memory_update` still follows |
 | `error` | `{"error": "message"}` | Error occurred |
 
 ### Non-Streaming
@@ -260,6 +263,13 @@ RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Research: up to 8 iterations
 # Writer output limits
 WRITER_MAX_TOKENS_SPEED=1200     # Chat answers
 WRITER_MAX_TOKENS_QUALITY=4000   # Research answers
+
+# Loop efficiency (all default true)
+RESEARCHER_SPEED_EARLY_WRITE=true     # Chat: skip the final confirmation LLM call
+RESEARCHER_PARALLEL_TOOL_CALLS=true   # Concurrent read-only searches per agent turn
+RESEARCHER_TOOL_ENTITY_HINTS=true     # Agent-supplied entities skip the extraction call
+RESEARCHER_SEARCH_DEDUP=true          # Repeat searches served from cache
+EMIT_DONE_BEFORE_MEMORY=true          # SSE done before memory compaction
 
 # Search configuration
 ENABLE_HYBRID_SEARCH=true

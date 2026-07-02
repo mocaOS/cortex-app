@@ -403,6 +403,13 @@ ENABLE_AGENT_CHAT=true
 # Max output tokens for the writer per mode
 # WRITER_MAX_TOKENS_SPEED=1200           # Chat mode
 # WRITER_MAX_TOKENS_QUALITY=4000         # Deep research mode
+
+# Loop efficiency (all default true; set false to restore legacy behavior)
+# RESEARCHER_SPEED_EARLY_WRITE=true      # Chat: skip the final "research complete" confirmation LLM call
+# RESEARCHER_PARALLEL_TOOL_CALLS=true    # Run read-only searches from one agent turn concurrently
+# RESEARCHER_TOOL_ENTITY_HINTS=true      # Agent supplies entities on search calls (skips extraction call)
+# RESEARCHER_SEARCH_DEDUP=true           # Identical repeat searches served from a per-question cache
+# EMIT_DONE_BEFORE_MEMORY=true           # SSE `done` before memory compaction (memory_update follows)
 ```
 
 ### Reasoning Visibility
@@ -683,6 +690,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `10` | Agent loop iterations for deep research |
 | `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |
 | `WRITER_MAX_TOKENS_QUALITY` | No | `4000` | Max output tokens for deep research answers |
+| `RESEARCHER_SPEED_EARLY_WRITE` | No | `true` | Chat skips the agent's final confirmation LLM call after a fruitful search |
+| `RESEARCHER_PARALLEL_TOOL_CALLS` | No | `true` | Read-only searches from one agent turn run concurrently |
+| `RESEARCHER_TOOL_ENTITY_HINTS` | No | `true` | Agent passes entities on search calls, skipping the extraction LLM call |
+| `RESEARCHER_SEARCH_DEDUP` | No | `true` | Identical repeat searches served from a per-question cache |
+| `EMIT_DONE_BEFORE_MEMORY` | No | `true` | SSE `done` (with `pending_memory: true`) precedes memory compaction; `memory_update` follows |
 | `ENABLE_COMMUNITY_DETECTION` | No | `true` | Enable communities |
 | `PROMPT_SECURITY` | No | `true` | Enable prompt guard |
 | `VISION_MODEL` | No | - | Vision model for image analysis |
