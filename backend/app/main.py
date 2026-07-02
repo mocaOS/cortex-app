@@ -5435,13 +5435,7 @@ async def start_library_export(
     """Start a library export as a background task. Returns task_id for polling."""
     import tempfile as _tempfile
 
-    # Concurrency guard
-    for t in _task_store.values():
-        if t.task_type in ("library_export", "library_import") and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
-            raise HTTPException(
-                status_code=409,
-                detail="An export or import is already in progress. Please wait for it to complete.",
-            )
+    _guard_no_transfer_in_progress()
 
     from app.services.library_transfer_service import get_library_transfer_service
     transfer = get_library_transfer_service()
@@ -5493,6 +5487,153 @@ async def download_library_export(task_id: str, auth: AuthResult = Depends(requi
     )
 
 
+# =============================================================================
+# Chunked import upload
+#
+# Reverse proxies (Traefik v3 defaults respondingTimeouts.readTimeout=60s)
+# kill single-request uploads of large export ZIPs mid-body. The frontend
+# uploads the archive in small sequential chunks instead — each request
+# completes in seconds — and the backend appends them to a temp file, then
+# hands the assembled ZIP to the same import task as /api/admin/import.
+# =============================================================================
+
+_import_upload_sessions: Dict[str, dict] = {}
+_IMPORT_UPLOAD_TTL_SECONDS = 2 * 60 * 60
+
+
+class ImportUploadStartRequest(BaseModel):
+    total_size: int = Field(gt=0, description="Total ZIP size in bytes")
+    filename: Optional[str] = None
+
+
+def _purge_stale_import_uploads() -> None:
+    """Drop upload sessions (and their temp files) abandoned past the TTL."""
+    now = time.time()
+    for uid in list(_import_upload_sessions):
+        sess = _import_upload_sessions.get(uid)
+        if sess and now - sess["created_at"] > _IMPORT_UPLOAD_TTL_SECONDS:
+            _import_upload_sessions.pop(uid, None)
+            try:
+                os.unlink(sess["path"])
+            except OSError:
+                pass
+
+
+def _guard_no_transfer_in_progress() -> None:
+    for t in _task_store.values():
+        if t.task_type in ("library_export", "library_import") and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+            raise HTTPException(
+                status_code=409,
+                detail="An export or import is already in progress. Please wait for it to complete.",
+            )
+
+
+@app.post("/api/admin/import/upload/start")
+async def start_import_upload(request: ImportUploadStartRequest, auth: AuthResult = Depends(require_admin)):
+    """Open a chunked upload session for a library export ZIP."""
+    import tempfile as _tempfile
+
+    _purge_stale_import_uploads()
+    _guard_no_transfer_in_progress()
+
+    tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="cortex_import_")
+    os.close(tmp_fd)
+    upload_id = uuid.uuid4().hex
+    _import_upload_sessions[upload_id] = {
+        "path": tmp_path,
+        "received": 0,
+        "total_size": request.total_size,
+        "created_at": time.time(),
+    }
+    return {"upload_id": upload_id, "received": 0}
+
+
+@app.put("/api/admin/import/upload/{upload_id}/chunk")
+async def upload_import_chunk(
+    upload_id: str,
+    request: Request,
+    offset: int = Query(..., ge=0),
+    auth: AuthResult = Depends(require_admin),
+):
+    """Append one chunk (raw bytes) at the given offset.
+
+    Offsets must be contiguous; on mismatch (e.g. a retried chunk that already
+    landed) responds 409 with the server's byte count so the client can resync.
+    """
+    sess = _import_upload_sessions.get(upload_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Upload session not found or expired")
+
+    if sess["received"] != offset:
+        raise HTTPException(status_code=409, detail={"received": sess["received"], "message": "Offset mismatch"})
+
+    received = 0
+    with open(sess["path"], "ab") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+            received += len(chunk)
+    sess["received"] += received
+
+    if sess["received"] > sess["total_size"]:
+        _import_upload_sessions.pop(upload_id, None)
+        try:
+            os.unlink(sess["path"])
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail="Upload exceeds declared total_size")
+
+    return {"received": sess["received"]}
+
+
+@app.post("/api/admin/import/upload/{upload_id}/finish")
+async def finish_import_upload(
+    upload_id: str,
+    background_tasks: BackgroundTasks,
+    mode: str = Query("clean", pattern="^(clean|replace)$"),
+    auth: AuthResult = Depends(require_admin),
+):
+    """Validate the assembled ZIP is complete and start the import task."""
+    sess = _import_upload_sessions.get(upload_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Upload session not found or expired")
+
+    if sess["received"] != sess["total_size"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload incomplete: received {sess['received']} of {sess['total_size']} bytes",
+        )
+
+    _guard_no_transfer_in_progress()
+    _import_upload_sessions.pop(upload_id, None)
+
+    from app.services.library_transfer_service import get_library_transfer_service
+    transfer = get_library_transfer_service()
+
+    task = create_task("library_import")
+    background_tasks.add_task(
+        transfer.import_library,
+        task.task_id,
+        sess["path"],
+        mode,
+        update_task_progress,
+        complete_task,
+        fail_task,
+    )
+    return {"task_id": task.task_id, "status": "pending", "message": f"Import started (mode: {mode})"}
+
+
+@app.delete("/api/admin/import/upload/{upload_id}")
+async def abort_import_upload(upload_id: str, auth: AuthResult = Depends(require_admin)):
+    """Abort a chunked upload and discard the partial file."""
+    sess = _import_upload_sessions.pop(upload_id, None)
+    if sess:
+        try:
+            os.unlink(sess["path"])
+        except OSError:
+            pass
+    return {"status": "aborted"}
+
+
 @app.post("/api/admin/import")
 async def start_library_import(
     background_tasks: BackgroundTasks,
@@ -5509,13 +5650,7 @@ async def start_library_import(
     """
     import tempfile as _tempfile
 
-    # Concurrency guard
-    for t in _task_store.values():
-        if t.task_type in ("library_export", "library_import") and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
-            raise HTTPException(
-                status_code=409,
-                detail="An export or import is already in progress. Please wait for it to complete.",
-            )
+    _guard_no_transfer_in_progress()
 
     # Save uploaded file to temp location
     tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="cortex_import_")

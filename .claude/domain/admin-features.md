@@ -17,6 +17,8 @@ Accessible via Settings page → Danger Zone → System Reset modal with "DELETE
 
 **Memory-safe deletion**: `delete_all_documents` deletes communities/entities/chunks/documents via `CALL {} IN TRANSACTIONS` (10K rows; 2K for chunks, which carry embedding vectors) — a single whole-graph `DETACH DELETE` blows past `dbms.memory.transaction.total.max` (~70% of heap) on large knowledge bases. These queries must run as auto-commit (`session.run`), not inside an explicit transaction.
 
+**Timeout chain**: reset is a synchronous HTTP call routed through the Next.js rewrite proxy (`experimental.proxyTimeout`, 300s — the Next default of 30s returned a non-JSON 500 to the UI while the backend finished cleanup) and nginx (`proxy_read_timeout 300s`). A reset that outlives 300s would need conversion to a background task (like `library_import`).
+
 ## Library Import/Export
 
 Full instance migration via Settings page → Data Management section.
@@ -39,6 +41,8 @@ Download via `GET /api/admin/export/{task_id}/download` streams the ZIP in 1MB c
 - `replace` — auto-wipes via system reset first
 
 Runs as background task (`library_import` task type). Validates manifest, checks embedding model/dimension compatibility (warns on mismatch), remaps file paths to target instance directories, restores all nodes and edges including dynamic APOC relationship types.
+
+**Chunked upload** (`/api/admin/import/upload/start|{id}/chunk|{id}/finish`, DELETE `{id}` to abort): the web UI uploads the ZIP in 8MB sequential PUTs instead of one multipart request — reverse proxies with body-read timeouts (Traefik v3 defaults `respondingTimeouts.readTimeout=60s` on Coolify) kill single-request uploads of large archives mid-body. Sessions live in `_import_upload_sessions` (main.py) with a 2h TTL purge; chunk offsets must be contiguous, and a retried chunk gets 409 + the server's byte count so the client resyncs (`api.ts startLibraryImport`). `finish` validates size then starts the same `library_import` task. The single-request `POST /api/admin/import` remains for curl/API use. Tests: `backend/tests/test_import_chunked_upload.py`.
 
 **Memory-safe streaming (mirror of export)**: the heavy NDJSON sections are streamed from the zip rather than `zf.read()`-ing the whole file. `_iter_ndjson` reads via an `io.TextIOWrapper` over the decompressed entry one line at a time; `_iter_ndjson_batches` groups those into batch lists feeding the existing `import_*_batch` inserts (chunks, entities, chunk mentions); relationships stream one-at-a-time through `_iter_ndjson`. Peak RAM is ~one batch. The pre-import plan-limit guards (`MAX_FILES`, `MAX_ENTITIES`) use `_count_ndjson`, which counts non-blank lines without parsing or buffering — previously these loaded the entire 20K-entity-with-embeddings file into RAM just to call `len()`. Progress totals come from `manifest.stats` so no extra pre-read pass is needed. **Documents stay materialized via the small-file `read_ndjson`** because step 6 mutates each doc (path remap) and step 7 reuses the list to copy files; documents carry no embeddings. Small sections (collections, communities, members, merge history, system meta, skills) also keep `read_ndjson` — they're tiny and some are reused.
 

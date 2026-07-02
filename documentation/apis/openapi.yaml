@@ -1518,6 +1518,149 @@ paths:
         '409':
           description: An export or import is already in progress
 
+  /api/admin/import/upload/start:
+    post:
+      tags: [Admin]
+      summary: Start a chunked import upload session
+      description: |
+        Open a chunked upload session for a library export ZIP. Use this
+        instead of the single-request `/api/admin/import` when uploading
+        through reverse proxies with body-read timeouts (e.g. Traefik v3
+        defaults to 60s): each chunk is a short independent request.
+        The web UI always uses this flow.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                total_size:
+                  type: integer
+                  description: Total ZIP size in bytes
+                filename:
+                  type: string
+              required:
+                - total_size
+      responses:
+        '200':
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  upload_id:
+                    type: string
+                  received:
+                    type: integer
+                    example: 0
+        '409':
+          description: An export or import is already in progress
+
+  /api/admin/import/upload/{upload_id}/chunk:
+    put:
+      tags: [Admin]
+      summary: Upload one chunk of an import archive
+      description: |
+        Append raw bytes at the given offset. Offsets must be contiguous —
+        on mismatch (e.g. a retried chunk that already landed) the response
+        is 409 with the server's current byte count so the client can resync.
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: Byte offset this chunk starts at
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Chunk appended
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: integer
+                    description: Total bytes received so far
+        '400':
+          description: Upload exceeds declared total_size (session discarded)
+        '404':
+          description: Upload session not found or expired
+        '409':
+          description: Offset mismatch; detail contains the server's byte count
+
+  /api/admin/import/upload/{upload_id}/finish:
+    post:
+      tags: [Admin]
+      summary: Finish a chunked upload and start the import
+      description: |
+        Validates that all declared bytes arrived, then starts the same
+        background import task as `/api/admin/import`.
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [clean, replace]
+            default: clean
+      responses:
+        '200':
+          description: Import task started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    type: string
+                    example: pending
+                  message:
+                    type: string
+        '400':
+          description: Upload incomplete (session kept; continue uploading)
+        '404':
+          description: Upload session not found or expired
+        '409':
+          description: An export or import is already in progress
+
+  /api/admin/import/upload/{upload_id}:
+    delete:
+      tags: [Admin]
+      summary: Abort a chunked import upload
+      description: Discard the upload session and its partial file. Idempotent.
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload aborted
+
   /api/instance/status:
     get:
       tags: [Admin]

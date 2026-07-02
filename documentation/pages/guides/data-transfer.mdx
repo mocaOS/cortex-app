@@ -73,8 +73,12 @@ curl -OJ http://localhost:8000/api/admin/export/task_abc123def456/download \
 3. Drag and drop or browse for your export ZIP file
 4. For Replace mode: type `DELETE` in the confirmation field
 5. Click **Import Library** (or **Replace & Import**)
-6. Monitor the progress bar as data is restored
+6. Monitor the progress bar — first for the archive upload, then as data is restored
 7. Review the result summary showing imported counts and any warnings
+
+The web UI uploads the archive in small chunks, so large exports work reliably
+even behind reverse proxies with short request timeouts (e.g. Traefik's 60s
+default body-read timeout on Coolify).
 
 ### Via the API
 
@@ -89,6 +93,11 @@ curl -X POST "http://localhost:8000/api/admin/import?mode=replace" \
   -H "X-API-Key: your-admin-key" \
   -F "file=@cortex-export-2026-03-27.zip"
 ```
+
+If a proxy between you and the backend cuts off long uploads, use the chunked
+upload endpoints instead (`/api/admin/import/upload/start`, then sequential
+`PUT …/chunk?offset=N` requests, then `POST …/finish?mode=clean`) — see the
+API reference for details. The web UI always uses the chunked flow.
 
 Response:
 ```json

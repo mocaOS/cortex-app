@@ -7,6 +7,16 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 2, 2026 (Reliability: system reset & library import at scale)
+
+Two operations that worked fine on small instances but failed on grown ones are now size-independent.
+
+- **System reset no longer runs out of Neo4j memory** — deleting the knowledge graph now happens in bounded batches (`CALL {} IN TRANSACTIONS`) instead of one whole-graph transaction, which on large libraries exceeded Neo4j's transaction memory limit (`MemoryPoolOutOfMemoryError`). Orphaned chunks are swept too.
+- **Library import uploads are chunked** — the web UI uploads export archives in 8MB sequential requests (`/api/admin/import/upload/*`) with live upload progress, then starts the import task. Single-request uploads of large archives were cut off mid-body by reverse proxies with body-read timeouts (Traefik v3 on Coolify defaults to 60s → HTTP 502). The single-request `POST /api/admin/import` remains for API use.
+- **Long admin calls survive the frontend proxy** — the Next.js rewrite proxy timeout was raised from its 30s default to 300s (it previously returned a bare HTTP 500 for a reset that took ~33s, even though the reset completed).
+
+---
+
 ## July 2, 2026 (AskAI v2 — faster Chat & Deep Research)
 
 A structural latency pass over the agentic ask pipeline. A chat turn now costs **2 LLM calls instead of 3** (plus one eliminated helper call per search); on the reference deployment this cut average chat time-to-first-token by **~65%**, and long Deep Research questions that previously hit gateway limits now complete. Answer quality and citation behavior are unchanged — the writer stage is untouched.

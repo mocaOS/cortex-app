@@ -1308,24 +1308,81 @@ class ApiClient {
     URL.revokeObjectURL(url);
   }
 
-  async startLibraryImport(file: File, mode: "clean" | "replace"): Promise<{ task_id: string; status: string; message: string }> {
+  /**
+   * Upload a library export ZIP in small sequential chunks, then start the
+   * import task. Chunking keeps every request short so reverse proxies with
+   * body-read timeouts (e.g. Traefik's 60s default) never cut off the upload.
+   */
+  async startLibraryImport(
+    file: File,
+    mode: "clean" | "replace",
+    onUploadProgress?: (sentBytes: number, totalBytes: number) => void
+  ): Promise<{ task_id: string; status: string; message: string }> {
     const apiKey = getAdminApiKey();
-    const formData = new FormData();
-    formData.append("file", file);
+    const authHeader: Record<string, string> = apiKey ? { "X-API-Key": apiKey } : {};
+    const CHUNK_SIZE = 8 * 1024 * 1024;
 
-    const res = await fetch(`${API_BASE}/api/admin/import?mode=${mode}`, {
+    const startRes = await fetch(`${API_BASE}/api/admin/import/upload/start`, {
       method: "POST",
-      headers: {
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      body: formData,
+      headers: { "Content-Type": "application/json", ...authHeader },
+      body: JSON.stringify({ total_size: file.size, filename: file.name }),
     });
+    if (!startRes.ok) {
+      throw await toApiError(startRes, "Import failed");
+    }
+    const { upload_id } = await startRes.json();
 
-    if (!res.ok) {
-      throw await toApiError(res, "Import failed");
+    let offset = 0;
+    let attemptsLeft = 3;
+    while (offset < file.size) {
+      const chunk = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
+      let res: Response;
+      try {
+        res = await fetch(
+          `${API_BASE}/api/admin/import/upload/${upload_id}/chunk?offset=${offset}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/octet-stream", ...authHeader },
+            body: chunk,
+          }
+        );
+      } catch (err) {
+        // Transient network failure: retry the same chunk a couple of times
+        if (--attemptsLeft > 0) {
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        throw err;
+      }
+
+      if (res.status === 409) {
+        // Chunk already landed (e.g. a retry) — resync to the server's offset
+        const body = await res.json().catch(() => null);
+        const received = body?.detail?.received;
+        if (typeof received === "number" && received > offset) {
+          offset = received;
+          continue;
+        }
+        throw await toApiError(res, "Import upload failed");
+      }
+      if (!res.ok) {
+        throw await toApiError(res, "Import upload failed");
+      }
+
+      const { received } = await res.json();
+      offset = received;
+      attemptsLeft = 3;
+      onUploadProgress?.(offset, file.size);
     }
 
-    return res.json();
+    const finishRes = await fetch(
+      `${API_BASE}/api/admin/import/upload/${upload_id}/finish?mode=${mode}`,
+      { method: "POST", headers: authHeader }
+    );
+    if (!finishRes.ok) {
+      throw await toApiError(finishRes, "Import failed");
+    }
+    return finishRes.json();
   }
 
   // ===========================================================================

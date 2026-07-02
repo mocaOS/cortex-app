@@ -325,6 +325,11 @@ curl http://localhost:8000/api/tasks/{task_id} \
   -H "X-API-Key: your-admin-key"
 ```
 
+> Behind a reverse proxy that cuts off long uploads (Traefik v3 defaults to a
+> 60s body-read timeout), use the chunked upload endpoints the web UI uses:
+> `POST /api/admin/import/upload/start` → sequential `PUT …/chunk?offset=N` →
+> `POST …/finish?mode=clean`. See the API reference for the full contract.
+
 ### Export Archive Structure
 
 The export is a ZIP64 archive containing:

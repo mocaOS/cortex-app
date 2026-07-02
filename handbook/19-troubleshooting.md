@@ -62,6 +62,27 @@ ss -tlnp | grep 3000
 - Increase Traefik timeout settings for long-running operations
 - Check backend health: the backend may be overloaded
 
+### 502 Bad Gateway on Large Uploads (Coolify)
+
+**Symptom:** A large file upload fails with HTTP 502 after roughly a minute, while the same upload works on a local instance. Backend logs show no access line for the request (it died in transit).
+
+**Cause:** On Coolify, the browser uploads directly to the backend FQDN through Traefik. Traefik v3 sets `respondingTimeouts.readTimeout` to **60 seconds by default** — it covers reading the entire request body, so any single request whose body takes longer than a minute over the wire is cut off mid-transfer.
+
+**Library import is not affected anymore:** the web UI uploads export archives in small chunks (`/api/admin/import/upload/*`), so each request completes in seconds regardless of archive size. If you see this on library import, update to a version with chunked upload.
+
+**For other large single-request uploads** (e.g. `curl` against the single-shot `/api/admin/import`), either raise the Traefik timeout in Coolify → Servers → your server → Proxy (then restart the proxy):
+
+```
+--entrypoints.https.transport.respondingTimeouts.readTimeout=1800
+```
+
+or upload from the Coolify host itself, bypassing Traefik:
+
+```bash
+curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
+  "http://<backend-container-ip>:8000/api/admin/import?mode=clean"
+```
+
 ## LLM and API Issues
 
 ### Entity Extraction Fails

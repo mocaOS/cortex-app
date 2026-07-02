@@ -39,6 +39,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
   const [importProgress, setImportProgress] = useState<TaskProgress | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null);
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -145,8 +146,12 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
       setImportError(null);
       setImportProgress(null);
       setImportResult(null);
+      setUploadPercent(0);
 
-      const { task_id } = await api.startLibraryImport(importFile, importMode);
+      const { task_id } = await api.startLibraryImport(importFile, importMode, (sent, total) => {
+        if (mounted.current) setUploadPercent(Math.round((sent / total) * 100));
+      });
+      if (mounted.current) setUploadPercent(null);
 
       // Poll for progress
       pollRef.current = setInterval(async () => {
@@ -181,6 +186,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Failed to start import");
       setImportState("error");
+      setUploadPercent(null);
     }
   };
 
@@ -191,6 +197,7 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
     setImportProgress(null);
     setImportResult(null);
     setConfirmText("");
+    setUploadPercent(null);
   };
 
   // ==========================================================================
@@ -460,12 +467,18 @@ export function LibraryTransferSection({ stats, onImportComplete }: LibraryTrans
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>{importProgress?.message || "Starting import..."}</span>
+                  <span>
+                    {uploadPercent !== null
+                      ? `Uploading archive… ${uploadPercent}%`
+                      : importProgress?.message || "Starting import..."}
+                  </span>
                 </div>
                 <div className="w-full bg-background rounded-full h-2">
                   <div
                     className="bg-accent h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progressPercent(importProgress)}%` }}
+                    style={{
+                      width: `${uploadPercent !== null ? uploadPercent : progressPercent(importProgress)}%`,
+                    }}
                   />
                 </div>
               </div>
