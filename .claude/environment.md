@@ -200,7 +200,6 @@ Multi-bucket, client-carried conversation memory — see [`domain/rag-pipeline.m
 
 - `ENABLE_CONVERSATION_MEMORY` (default: true) — backend kill-switch (client opt-in via the blob still required)
 - `CONVERSATION_MEMORY_WINDOW` (default: 6) — recent messages kept verbatim; older ones fold into the rolling summary
-- `CONVERSATION_MEMORY_MAX_TOKENS` (default: 1500) — approx token budget for the curated context block
 - `CONVERSATION_MEMORY_COMPACTION_MODEL` (default: empty ⇒ fast-mode model) — model for post-stream compaction
 - `CONVERSATION_MEMORY_MAX_LEDGER` (default: 50) — max `source_ledger` entries retained in the blob (most recent kept); each source carries a stable `sid` for citation continuity
 - `ENABLE_MEMORY_FAST_PATH` (default: true) — let memory-answerable follow-ups ("summarize that", "why?", "in German") skip the researcher loop and retrieval entirely (a cheap classifier decides; KG grounding is rehydrated from the blob's stored `kg_context`)
@@ -233,7 +232,7 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 
 ## Auth
 
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET` — admin auth. In `ENVIRONMENT=production`, startup fails fast if `SESSION_SECRET` is < 32 chars while `ADMIN_PASSWORD` is set (see [Deployment & CORS](#deployment--cors)).
+- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET` — admin auth. Login validation happens in the Next.js frontend (`lib/auth.ts` consumes `ADMIN_EMAIL`/`ADMIN_PASSWORD`/`SESSION_SECRET`); the backend consumes `ADMIN_API_KEY` (and checks `ADMIN_PASSWORD`/`SESSION_SECRET` only in the production-hardening validator). In `ENVIRONMENT=production`, startup fails fast if `SESSION_SECRET` is < 32 chars while `ADMIN_PASSWORD` is set (see [Deployment & CORS](#deployment--cors)).
 
 ## Secret Encryption
 

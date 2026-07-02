@@ -299,10 +299,9 @@ EMBEDDING_DIMENSION=1536
 EMBEDDING_SEND_DIMENSIONS=true         # Set false for models with fixed output dim
 EMBEDDING_API_BASE=https://api.openai.com/v1
 EMBEDDING_API_KEY=sk-your-key
-
-# ── Community Summarization ────────────────────────────────────
-COMMUNITY_SUMMARY_MODEL=gpt-4o-mini   # Defaults to GRAPH_EXTRACTION_MODEL if not set
 ```
+
+Community names and summaries run on the extraction model (`GRAPH_EXTRACTION_MODEL`) — no separate model knob.
 
 ### Using Alternative Providers
 

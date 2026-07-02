@@ -313,9 +313,6 @@ class Settings(BaseSettings):
     )  # Thread pool workers for CPU-intensive operations
 
     # Relationship Analysis (Phase B - cross-document relationship discovery)
-    relationship_analysis_batch_size: int = Field(
-        default=100
-    )  # Max entities per relationship analysis LLM call
     parallel_relationship_batches: int = Field(
         default=5
     )  # Number of relationship analysis batches to process in parallel
@@ -448,9 +445,6 @@ class Settings(BaseSettings):
     conversation_memory_window: int = Field(
         default=6
     )  # Recent messages kept verbatim; older ones fold into the rolling summary
-    conversation_memory_max_tokens: int = Field(
-        default=1500
-    )  # Approx token budget for the curated context block
     conversation_memory_compaction_model: str = Field(
         default=""
     )  # Model for post-stream compaction; empty => fast-mode model (or primary if unset)
@@ -609,10 +603,7 @@ class Settings(BaseSettings):
     max_communities: int = Field(default=50)  # Maximum number of communities to track
     enable_graph_summarization: bool = Field(
         default=True
-    )  # Generate LLM summaries of communities
-    community_summary_model: str = Field(
-        default=""
-    )  # Model for summaries (defaults to openai_model)
+    )  # Generate LLM summaries of communities (runs on the extraction tier)
 
     # ==========================================================================
     # Enhanced Entity Resolution (Semantic Similarity)
@@ -723,7 +714,8 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Admin Authentication
     # ==========================================================================
-    admin_email: str = Field(default="admin@example.com")  # Admin login email
+    # NOTE: ADMIN_EMAIL is consumed by the Next.js frontend (lib/auth.ts), not
+    # the backend — no Settings field for it here.
     admin_password: str = Field(default="")  # Admin login password (required for auth)
     admin_api_key: str = Field(default="")  # Admin API key for full backend access
     session_secret: str = Field(
@@ -804,11 +796,6 @@ class Settings(BaseSettings):
     def rel_extraction_api_key(self) -> str:
         """Get the API key for relationship extraction."""
         return self.relationship_extraction_api_key or self.extraction_api_key
-
-    @property
-    def summary_model(self) -> str:
-        """Get the model to use for community summarization."""
-        return self.community_summary_model or self.openai_model
 
     @property
     def embed_api_base(self) -> str:

@@ -270,8 +270,7 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 | `ENABLE_COMMUNITY_DETECTION` | `true` | Enable entity community detection. |
 | `MIN_COMMUNITY_SIZE` | `3` | Minimum entities for a valid community. |
 | `MAX_COMMUNITIES` | `50` | Maximum number of communities to track. |
-| `ENABLE_GRAPH_SUMMARIZATION` | `true` | Generate LLM summaries of communities. |
-| `COMMUNITY_SUMMARY_MODEL` | Same as `GRAPH_EXTRACTION_MODEL` | Model for community name/summary generation. Uses the extraction model for consistent structured output. |
+| `ENABLE_GRAPH_SUMMARIZATION` | `true` | Generate LLM summaries of communities (always runs on the extraction model). |
 
 ## Entity Resolution Configuration
 

@@ -7,7 +7,7 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | File | Description |
 |------|-------------|
 | [`.claude/architecture.md`](.claude/architecture.md) | Tech stack, backend service map, frontend routes & components |
-| [`.claude/environment.md`](.claude/environment.md) | All 40+ env vars grouped by concern (DB, LLMs, features, skills, auth) |
+| [`.claude/environment.md`](.claude/environment.md) | All 160+ env vars grouped by concern (DB, LLMs, features, skills, auth) |
 | [`.claude/development.md`](.claude/development.md) | Docker/local dev commands, Neo4j setup, deployment (Coolify, Dokploy, standalone) |
 | [`.claude/design-system.md`](.claude/design-system.md) | Design tokens, visual principles, `.impeccable.md` reference |
 | [`.claude/maintenance.md`](.claude/maintenance.md) | Doc sync rules for README, documentation/, handbook/, design-system/, .claude/ |

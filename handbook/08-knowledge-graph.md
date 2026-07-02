@@ -115,7 +115,7 @@ Groups related entities into thematic communities using graph algorithms.
 
 **Community summarization:**
 
-After detection, the **extraction model** generates names and summaries (configurable via `COMMUNITY_SUMMARY_MODEL`, defaults to `GRAPH_EXTRACTION_MODEL`):
+After detection, the **extraction model** (`GRAPH_EXTRACTION_MODEL`) generates names and summaries:
 
 1. For each community, up to 30 entities and 40 relationships are collected
 2. The LLM is asked to return `{"name": "...", "summary": "..."}`
