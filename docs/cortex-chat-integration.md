@@ -48,8 +48,24 @@ Now wired: when `false`, the `status` (and reasoning) emissions are suppressed. 
 
 ### Still true / unchanged
 
-- `done` (and `error` on failure) remain **terminal and guaranteed** — keep finalizing on them.
+- `done` (and `error` on failure) remain **guaranteed** — keep finalizing the UI on them.
 - Please keep sending `Accept-Encoding: identity` — uncompressed SSE is still required for real-time streaming.
+
+### ⚠️ Amendment (2026-07): `done` is no longer necessarily the LAST frame
+
+With `EMIT_DONE_BEFORE_MEMORY=true` (backend default since the v2 loop-efficiency pass), on memory-carrying turns the order is now:
+
+```
+…content tokens… → {"done": true, "pending_memory": true, …} → {"memory_update": {…}} → stream end
+```
+
+`done` fires as soon as the last answer token lands (finalize your UI there — that's the point: the 1–4s post-answer compaction no longer blocks the spinner), but the `memory_update` blob follows **after** it. Client obligations:
+
+1. Keep reading the stream past `done` until it actually ends — do not `break`/`return` on `done`.
+2. If you persist the conversation on `done`, persist **again** when the late `memory_update` arrives, or the stored session keeps the previous turn's blob.
+3. `pending_memory: true` on the done frame tells you a `memory_update` is still coming; absent ⇒ the stream will just close.
+
+Turns without a `conversation_memory` blob, and backends with `EMIT_DONE_BEFORE_MEMORY=false`, keep the legacy order (`memory_update` → `done`) — handle both.
 
 ---
 
@@ -97,11 +113,12 @@ Ship the round-trip whenever you want. Until you do — no `conversation_memory`
 | Field on the JSON object | When | Frontend action |
 |---|---|---|
 | `status` `{stage, message}` | all modes (if `stream_reasoning_steps`) | drive the live stage label; fall back to heuristic |
-| `memory_update` `{…blob}` | when `conversation_memory` was sent | store it; replay as `conversation_memory` next turn |
+| `memory_update` `{…blob}` | when `conversation_memory` was sent — **may arrive after `done`** | store it; replay as `conversation_memory` next turn; re-persist if you already saved on `done` |
+| `pending_memory: true` (on the `done` frame) | when a `memory_update` will still follow | keep reading the stream; expect one more event |
 | `sid` (on each `sources[]` item) | any turn with sources | persist `src_N → sid` for cross-turn citation identity |
 | `: ping` (SSE comment line) | silent windows ≥ 8 s | ignore (keep-alive) |
 
-Terminal events unchanged: `done` (always), `error` (on failure).
+`done` (always) and `error` (on failure) remain guaranteed, but `done` is no longer necessarily the final frame — see the amendment above.
 
 ---
 

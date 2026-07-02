@@ -5,6 +5,7 @@ for the main chat path and the dedicated extraction/relationship paths.
 """
 
 import logging
+import threading
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
@@ -151,10 +152,36 @@ def make_openai_client(*, api_key: str, base_url: str, **kwargs):
     return OpenAI(api_key=api_key, base_url=base_url, **kwargs)
 
 
+_ASYNC_CLIENT_CACHE: dict = {}
+_ASYNC_CLIENT_LOCK = threading.Lock()
+
+
 def make_async_openai_client(*, api_key: str, base_url: str, **kwargs):
-    """Async twin of :func:`make_openai_client`."""
-    if _use_langfuse():
+    """Async twin of :func:`make_openai_client`, with connection-pool reuse.
+
+    A fresh ``AsyncOpenAI`` owns a fresh httpx pool, so every construction pays
+    a TCP+TLS handshake on its first request (~50-300ms against remote
+    gateways) — and the ask pipeline used to build 2-3 per turn (researcher/
+    writer, memory classifier, compaction). Clients are safe for concurrent
+    use on one event loop, so cache them per (api_key, base_url, langfuse,
+    extra-kwargs) and reuse the warm pool across calls and turns. Settings
+    changes produce a different key, so hot-reloads get a new client.
+    """
+    use_lf = _use_langfuse()
+    cache_key = (api_key, base_url, use_lf, tuple(sorted(kwargs.items())) if kwargs else ())
+    try:
+        cached = _ASYNC_CLIENT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    except TypeError:
+        # Unhashable kwarg (e.g. an http_client object) — build uncached.
+        cache_key = None
+    if use_lf:
         from langfuse.openai import AsyncOpenAI
     else:
         from openai import AsyncOpenAI
-    return AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    if cache_key is not None:
+        with _ASYNC_CLIENT_LOCK:
+            _ASYNC_CLIENT_CACHE[cache_key] = client
+    return client

@@ -188,6 +188,11 @@ All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 ret
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
 - `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
 - `MAX_CONVERSATION_HISTORY` (default: 6) — legacy message-count cap; used only when no `conversation_memory` blob is sent
+- `RESEARCHER_SPEED_EARLY_WRITE` (default: true) — speed mode breaks straight to the writer after a search iteration that produced sources (and no skill/git tool ran), skipping the model's `done` confirmation round-trip (whose summary the speed writer never reads). One full LLM call saved per plain chat turn.
+- `RESEARCHER_PARALLEL_TOOL_CALLS` (default: true) — read-only tool calls (`knowledge_search`/`community_search`/`entity_lookup`) emitted in one assistant message execute concurrently via `asyncio.gather`; side-effecting tools (`http_request`, `git_repo`, skill tools) stay sequential. Big quality-mode win (the prompt encourages several searches per turn).
+- `RESEARCHER_TOOL_ENTITY_HINTS` (default: true) — the `knowledge_search` tool accepts an optional `entities` array; when the researcher supplies it, the query-side entity-extraction LLM call is skipped entirely (one LLM round-trip saved per search).
+- `RESEARCHER_SEARCH_DEDUP` (default: true) — identical repeat `knowledge_search` calls within one run return the cached tool text instantly with a "try a different angle" nudge instead of re-running retrieval.
+- `EMIT_DONE_BEFORE_MEMORY` (default: true) — the SSE `done` frame (with `pending_memory: true`) is emitted **before** the post-answer memory-compaction LLM call; `memory_update` follows before stream end. UI finalizes 1–4s earlier. Clients must consume the stream to its end, not stop at `done`; set false to restore the legacy order (memory_update → done).
 
 ### Conversation Memory (Context Curator)
 

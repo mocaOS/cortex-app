@@ -107,7 +107,12 @@ def test_truncate_response_passthrough_under_budget():
 
 def test_truncate_response_non_json_plain_truncates():
     text = "x" * 200
-    assert _truncate_response(text, max_chars=50) == "x" * 50
+    out = _truncate_response(text, max_chars=50)
+    # Body bounded at max_chars, followed by the explicit truncation trailer
+    # (the model must know data was dropped and how to paginate for the rest).
+    assert out.startswith("x" * 50)
+    assert "x" * 51 not in out
+    assert "truncated" in out and "?limit=" in out
 
 
 def test_truncate_response_slims_json_array_to_fit():
@@ -115,11 +120,19 @@ def test_truncate_response_slims_json_array_to_fit():
     import json
     text = json.dumps({"data": items})
     out = _truncate_response(text, max_chars=600)
-    assert len(out) <= 600
-    parsed = json.loads(out)
+    # JSON body slimmed within budget; trailer appended after it.
+    body, sep, trailer = out.rpartition("\n[NOTE: response truncated")
+    assert sep, "truncation trailer missing"
+    assert len(body) <= 600
+    parsed = json.loads(body)
     # all 5 items retained (slimmed), not dropped
     assert len(parsed["data"]) == 5
     assert parsed["data"][0]["desc"].endswith("...")
+
+
+def test_truncate_response_short_text_untouched():
+    # No truncation → no trailer, byte-identical passthrough.
+    assert _truncate_response("hello", max_chars=50) == "hello"
 
 
 # --- _substitute_variables ---------------------------------------------------

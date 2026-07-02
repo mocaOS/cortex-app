@@ -143,3 +143,69 @@ class TestAntiInjection:
         a = get_anti_injection_instruction(enabled=True)
         b = get_anti_injection_instruction(enabled=True)
         assert a and a == b  # stable across calls (prompt-cache friendly)
+
+
+# ---------------------------------------------------------------------------
+# has_skills-conditional prompts + skill instruction budget (v-next)
+# ---------------------------------------------------------------------------
+
+class TestSkillConditionalPrompts:
+    def test_skill_less_prompts_never_mention_skills(self):
+        """On skill-less deployments http_request doesn't exist and the
+        <active_skills> block is absent — the prompt must not reference either
+        (a small model will hallucinate the tool call and burn an iteration)."""
+        for mode in ("speed", "quality"):
+            prompt = get_researcher_prompt(mode, 0, 5, has_skills=False)
+            assert "http_request" not in prompt
+            assert "active_skills" not in prompt
+            assert "skill" not in prompt.lower()
+
+    def test_skill_prompts_keep_skill_guidance(self):
+        for mode in ("speed", "quality"):
+            prompt = get_researcher_prompt(mode, 0, 5, has_skills=True)
+            assert "http_request" in prompt
+            assert "<active_skills>" in prompt
+
+    def test_speed_skill_prompt_makes_followup_search_conditional(self):
+        prompt = get_researcher_prompt("speed", 0, 5, has_skills=True)
+        assert "ALSO needs knowledge-base context" in prompt
+
+    def test_static_prompt_stable_per_configuration(self):
+        from app.services.research_prompts import get_researcher_prompt_static
+
+        for has_skills in (False, True):
+            a = get_researcher_prompt_static("speed", 5, has_skills=has_skills)
+            b = get_researcher_prompt_static("speed", 5, has_skills=has_skills)
+            assert a == b
+            assert "Iteration 1 of 5." not in a
+
+
+class TestSkillInstructionBudget:
+    def test_budget_enforced_with_marker(self):
+        body = "A" * 10_000
+        block = build_activated_skills_block(body, max_chars=1000)
+        assert "[skill instructions truncated" in block
+        # wrapped block = header + capped body + marker; body itself capped
+        assert len(block) < 10_000
+
+    def test_no_budget_means_no_truncation(self):
+        body = "B" * 10_000
+        block = build_activated_skills_block(body)
+        assert "truncated" not in block
+        assert "B" * 10_000 in block
+
+    def test_small_body_untouched_by_budget(self):
+        block = build_activated_skills_block("Call GET /x.", max_chars=1000)
+        assert "Call GET /x." in block
+        assert "truncated" not in block
+
+
+class TestKnowledgeSearchEntitiesParam:
+    def test_entities_param_declared_optional(self):
+        from app.services.research_prompts import KNOWLEDGE_SEARCH_TOOL
+
+        props = KNOWLEDGE_SEARCH_TOOL["function"]["parameters"]["properties"]
+        assert "entities" in props
+        assert KNOWLEDGE_SEARCH_TOOL["function"]["parameters"]["required"] == [
+            "queries"
+        ]

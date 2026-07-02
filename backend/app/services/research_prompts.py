@@ -38,7 +38,16 @@ KNOWLEDGE_SEARCH_TOOL = {
                         "retrieval, not full sentences. Cover different angles of the question "
                         "to maximize recall."
                     ),
-                }
+                },
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Named entities / proper nouns appearing in your queries (people, "
+                        "organizations, products, systems). Used for graph traversal — "
+                        "always include them when your queries mention specific entities."
+                    ),
+                },
             },
             "required": ["queries"],
         },
@@ -99,8 +108,9 @@ REASONING_TOOL = {
     "function": {
         "name": "reasoning",
         "description": (
-            "Think through your research strategy before taking action. Call this BEFORE "
-            "every other tool call to plan your next step. Reflect on what you've learned "
+            "Think through your research strategy. Call this TOGETHER WITH your next "
+            "tool call in the same response (they execute in order) — never as the only "
+            "call in a turn, that wastes an iteration. Reflect on what you've learned "
             "so far and what gaps remain. Keep it natural language."
         ),
         "parameters": {
@@ -126,7 +136,9 @@ HTTP_REQUEST_TOOL = {
         "description": (
             "Make an HTTP request to an external API. Use this when an active "
             "skill describes an API endpoint to call. Authentication is handled "
-            "automatically — just provide the method and URL."
+            "automatically — just provide the method and URL. For large "
+            "collections, request fewer items per call and paginate (e.g. "
+            "?limit=, ?page=, ?per_page=) instead of fetching everything at once."
         ),
         "parameters": {
             "type": "object",
@@ -360,11 +372,19 @@ def build_skill_catalog_block(catalog: List[dict]) -> str:
     return ""
 
 
-def build_activated_skills_block(activated_instructions: str) -> str:
+def build_activated_skills_block(
+    activated_instructions: str,
+    max_chars: Optional[int] = None,
+) -> str:
     """Wrap activated skill instruction bodies for the system prompt.
 
     Strips auth-related lines from the SKILL.md body to prevent the model
     from thinking it needs to handle authentication itself.
+
+    ``max_chars`` enforces the MAX_SKILL_INSTRUCTIONS_TOKENS budget (callers
+    pass ~4 chars/token): oversized instruction blocks are cut with an
+    explicit truncation marker instead of growing the system prompt without
+    bound as more skills are enabled.
     """
     if not activated_instructions:
         return ""
@@ -380,6 +400,12 @@ def build_activated_skills_block(activated_instructions: str) -> str:
         line for line in activated_instructions.split("\n")
         if not any(kw in line.lower() for kw in auth_keywords)
     )
+    if max_chars is not None and max_chars > 0 and len(cleaned) > max_chars:
+        cleaned = (
+            cleaned[:max_chars]
+            + "\n[skill instructions truncated — budget reached; "
+            "MAX_SKILL_INSTRUCTIONS_TOKENS]"
+        )
     return f"""
 
 <active_skills>
@@ -398,64 +424,104 @@ def get_researcher_prompt(
     mode: Literal["speed", "quality"],
     iteration: int,
     max_iterations: int,
+    has_skills: bool = True,
 ) -> str:
-    """Get the researcher system prompt for the given mode and iteration."""
+    """Get the researcher system prompt for the given mode and iteration.
+
+    ``has_skills=False`` drops every skills/http_request reference — on
+    skill-less deployments the tool doesn't exist and the <active_skills>
+    block is absent, so mentioning them only invites hallucinated tool calls
+    (which burn an iteration in the "Unknown tool" branch).
+    """
     if mode == "speed":
-        return _get_speed_researcher_prompt(iteration, max_iterations)
+        return _get_speed_researcher_prompt(iteration, max_iterations, has_skills)
     else:
-        return _get_quality_researcher_prompt(iteration, max_iterations)
+        return _get_quality_researcher_prompt(iteration, max_iterations, has_skills)
 
 
 def get_researcher_prompt_static(
     mode: Literal["speed", "quality"],
     max_iterations: int,
+    has_skills: bool = True,
 ) -> str:
     """Iteration-free researcher prompt (researcher_stable_prompt mode).
 
     Byte-stable across loop iterations so providers can serve it from prefix
     cache; the iteration counter is delivered as a trailing system note
-    instead (see _run_researcher_loop).
+    instead (see _run_researcher_loop). Stability holds per configuration:
+    the prompt only changes when skills are enabled/disabled, not per request.
     """
-    full = get_researcher_prompt(mode, 0, max_iterations)
+    full = get_researcher_prompt(mode, 0, max_iterations, has_skills)
     return full.replace(f"Iteration 1 of {max_iterations}.\n", "")
 
 
-def _get_speed_researcher_prompt(iteration: int, max_iterations: int) -> str:
+def _get_speed_researcher_prompt(
+    iteration: int, max_iterations: int, has_skills: bool = True
+) -> str:
     today = date.today().isoformat()
 
-    return f"""You are a research assistant with access to a knowledge base and external skills (live API connections).
-
-Today's date: {today}
-Iteration {iteration + 1} of {max_iterations}.
-
-<instructions>
+    if has_skills:
+        role = (
+            "You are a research assistant with access to a knowledge base "
+            "and external skills (live API connections)."
+        )
+        instructions = """<instructions>
 - You have active skills with live API access (see <active_skills>). On your FIRST call, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic.
-- Then use knowledge_search for additional context. You get up to 3 queries per call.
+- Then, only if the question ALSO needs knowledge-base context, use knowledge_search (up to 3 queries per call). If the skill API already answered the question (e.g. live data like weather, tickets, emails), call done — do not search the knowledge base for its own sake.
+- For pure knowledge-base questions, call knowledge_search directly. Include an `entities` array with any named entities from your queries.
+- Call done when you have enough information. Only call tools, never output text directly.
+</instructions>"""
+    else:
+        role = "You are a research assistant with access to a knowledge base."
+        instructions = """<instructions>
+- Use knowledge_search to gather context. You get up to 3 queries per call — cover different angles. Include an `entities` array with any named entities from your queries.
 - Call done when you have enough information. Only call tools, never output text directly.
 </instructions>"""
 
-
-def _get_quality_researcher_prompt(iteration: int, max_iterations: int) -> str:
-    today = date.today().isoformat()
-
-    return f"""You are a deep-research assistant with access to a knowledge base and external skills (live API connections).
+    return f"""{role}
 
 Today's date: {today}
 Iteration {iteration + 1} of {max_iterations}.
 
-<instructions>
-- You have active skills with live API access (see <active_skills>). On iteration 1, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic.
-- This is DEEP RESEARCH mode — be exhaustive. Aim for 3-5+ knowledge_search calls from different angles.
+{instructions}"""
+
+
+def _get_quality_researcher_prompt(
+    iteration: int, max_iterations: int, has_skills: bool = True
+) -> str:
+    today = date.today().isoformat()
+
+    if has_skills:
+        role = (
+            "You are a deep-research assistant with access to a knowledge base "
+            "and external skills (live API connections)."
+        )
+        skill_instruction = "\n- You have active skills with live API access (see <active_skills>). On iteration 1, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic."
+        skill_guidance = (
+            "\n- Iteration 1: If <active_skills> has a relevant skill, call its API via http_request"
+            "\n- Iterations 2-4: Broad knowledge_search + community_search for overview"
+        )
+    else:
+        role = "You are a deep-research assistant with access to a knowledge base."
+        skill_instruction = ""
+        skill_guidance = "\n- Iterations 1-4: Broad knowledge_search + community_search for overview"
+
+    return f"""{role}
+
+Today's date: {today}
+Iteration {iteration + 1} of {max_iterations}.
+
+<instructions>{skill_instruction}
+- This is DEEP RESEARCH mode — be exhaustive. Aim for 3-5+ knowledge_search calls from different angles. You may issue SEVERAL tool calls in one response — parallel searches are executed concurrently and are much faster than one per turn.
+- Include an `entities` array on knowledge_search calls listing the named entities in your queries.
 - Use community_search at least once for thematic context.
 - Use entity_lookup when results mention key entities worth exploring.
-- Call reasoning before every other tool call to plan your next step.
+- Call reasoning together with your next tool call(s) in the same response — never alone, that wastes an iteration.
 - Call done only after you've exhausted reasonable research avenues.
 - Only call tools, never output text directly.
 </instructions>
 
-<iteration_guidance>
-- Iteration 1: If <active_skills> has a relevant skill, call its API via http_request
-- Iterations 2-4: Broad knowledge_search + community_search for overview
+<iteration_guidance>{skill_guidance}
 - Iterations 5-7: Targeted knowledge_search following leads
 - Iterations 8-10: entity_lookup, fill gaps, call done
 </iteration_guidance>"""

@@ -111,11 +111,50 @@ export interface RAGResponse {
   reasoning_steps?: string[];
 }
 
+// =============================================================================
+// Ask / Chat Types (shared between AskPanel and ChatMessage)
+// =============================================================================
+
+export interface AskSource {
+  document_id: string;
+  chunk_id: string;
+  content: string;
+  score: number;
+  /** Conversation-stable source id from the backend (content hash — keeps
+   *  citation identity across turns; unrelated to per-turn [src_N] numbers). */
+  sid?: string;
+  metadata: {
+    filename: string;
+    chunk_index?: number;
+    rerank_score?: number;
+  };
+}
+
+export interface AskMessage {
+  /** Stable client-side identity — React key + streaming update target. */
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: AskSource[];
+  graphContext?: GraphContext;
+  reasoningSteps?: string[];
+  thinkingSteps?: string[];
+  subQuestions?: string[];
+  isStreaming?: boolean;
+  reranked?: boolean;
+  /** Latest backend pipeline stage label (from the `status` SSE event). */
+  statusMessage?: string;
+}
+
 export interface StreamEvent {
   content?: string;
-  sources?: SearchResult[];
+  sources?: AskSource[];
   graph_context?: GraphContext;
   done?: boolean;
+  /** Set on `done` when a `memory_update` event will still follow. */
+  pending_memory?: boolean;
+  /** Opaque conversation-memory blob; echo back as `conversation_memory`. */
+  memory_update?: unknown;
   error?: string;
   // Fast mode indicator
   fast_mode?: boolean;

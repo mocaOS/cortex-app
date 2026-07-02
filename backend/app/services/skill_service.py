@@ -222,12 +222,32 @@ class SkillService:
         self._cache_lock = threading.Lock()
         self._catalog_cache: Optional[Tuple[float, List[dict]]] = None
         self._activation_cache: Dict[str, Tuple[float, tuple]] = {}
+        self._node_cache: Dict[str, Tuple[float, Optional[dict]]] = {}
 
     def invalidate_cache(self) -> None:
         """Drop cached catalog/activation state after any skill mutation."""
         with self._cache_lock:
             self._catalog_cache = None
             self._activation_cache.clear()
+            self._node_cache.clear()
+
+    def _get_skill_node_cached(self, skill_id: str) -> Optional[dict]:
+        """TTL-cached Neo4j Skill node read.
+
+        get_skill_config_schema + get_skill_base_url are called per skill on
+        EVERY ask request (researcher auto-activation) — without this cache
+        that's 2 uncached Neo4j round trips × N skills × every request.
+        """
+        with self._cache_lock:
+            cached = self._node_cache.get(skill_id)
+            if cached is not None:
+                ts, node = cached
+                if time.monotonic() - ts < self._CACHE_TTL_SECONDS:
+                    return copy.deepcopy(node)
+        node = self._get_neo4j().get_skill(skill_id)
+        with self._cache_lock:
+            self._node_cache[skill_id] = (time.monotonic(), copy.deepcopy(node))
+        return node
 
     def _resolve_skills_dir(self) -> Path:
         """Resolve the skills directory path."""
@@ -828,9 +848,8 @@ class SkillService:
         return {v["name"] for v in schema if v.get("type") == "secret" and "name" in v}
 
     def get_skill_config_schema(self, skill_id: str) -> Optional[List[dict]]:
-        """Read the config_schema from the Neo4j Skill node."""
-        neo4j = self._get_neo4j()
-        node = neo4j.get_skill(skill_id)
+        """Read the config_schema from the Neo4j Skill node (TTL-cached)."""
+        node = self._get_skill_node_cached(skill_id)
         if not node:
             return None
         raw = node.get("config_schema")
@@ -848,9 +867,11 @@ class SkillService:
         self.invalidate_cache()
 
     def get_skill_base_url(self, skill_id: str) -> Optional[str]:
-        """Return the API base URL the skill talks to, used to scope auth headers."""
-        neo4j = self._get_neo4j()
-        node = neo4j.get_skill(skill_id)
+        """Return the API base URL the skill talks to, used to scope auth headers.
+
+        TTL-cached — read per skill on every ask request.
+        """
+        node = self._get_skill_node_cached(skill_id)
         if not node:
             return None
         return node.get("base_url") or None

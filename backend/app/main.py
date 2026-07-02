@@ -2650,6 +2650,10 @@ async def ask_question_stream(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                # Customer-managed reverse proxies (nginx variants) buffer SSE
+                # unless told not to; the bundled nginx.conf already disables
+                # buffering, this makes streaming proxy-agnostic.
+                "X-Accel-Buffering": "no",
             }
         )
 
@@ -2693,9 +2697,12 @@ Important: Do NOT include any thinking, reasoning, or internal monologue in your
                     messages.append({"role": "user", "content": request.question})
                 else:
                     # First message - do vector search and include context
-                    results = processor.search(request.question, top_k=request.top_k,
-                                               collection_id=_stream_effective_collection_id,
-                                               allowed_collection_ids=_stream_allowed_collection_ids)
+                    # Sync embed+Neo4j — offload so it doesn't pin the event
+                    # loop for every other in-flight stream (loop invariant).
+                    results = await asyncio.to_thread(
+                        processor.search, request.question, top_k=request.top_k,
+                        collection_id=_stream_effective_collection_id,
+                        allowed_collection_ids=_stream_allowed_collection_ids)
                     context = "\n\n".join([r['content'][:600] for r in results[:3]])
                     
                     if context:
@@ -2755,6 +2762,10 @@ Question: {request.question}"""
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                # Customer-managed reverse proxies (nginx variants) buffer SSE
+                # unless told not to; the bundled nginx.conf already disables
+                # buffering, this makes streaming proxy-agnostic.
+                "X-Accel-Buffering": "no",
             }
         )
 
@@ -2817,9 +2828,11 @@ Question: {request.question}"""
                         chunks=graph_data["chunks"]
                     )
             else:
-                results = processor.search(request.question, top_k=request.top_k * 2,
-                                           collection_id=_stream_effective_collection_id,
-                                           allowed_collection_ids=_stream_allowed_collection_ids)
+                # Sync embed+Neo4j — offload so it doesn't pin the event loop.
+                results = await asyncio.to_thread(
+                    processor.search, request.question, top_k=request.top_k * 2,
+                    collection_id=_stream_effective_collection_id,
+                    allowed_collection_ids=_stream_allowed_collection_ids)
 
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
@@ -2944,6 +2957,7 @@ Question: {request.question}"""
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 
@@ -4149,6 +4163,7 @@ async def ask_with_thinking_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 

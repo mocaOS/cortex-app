@@ -4,35 +4,21 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Zap, Settings2, FolderOpen, Layers, RotateCcw, ArrowUp, FlaskConical, Square } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ConversationMessage, GraphContext } from "@/types";
+import type { AskMessage, AskSource, ConversationMessage, GraphContext } from "@/types";
 import { ChatMessage, EmptyChat } from "./ask";
 import CollectionSelector from "./CollectionSelector";
 import { cn } from "@/lib/utils";
 
-interface Source {
-  document_id: string;
-  chunk_id: string;
-  content: string;
-  score: number;
-  metadata: {
-    filename: string;
-    chunk_index?: number;
-    rerank_score?: number;
-  };
-}
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  sources?: Source[];
-  graphContext?: GraphContext;
-  reasoningSteps?: string[];
-  thinkingSteps?: string[];
-  subQuestions?: string[];
-  isStreaming?: boolean;
-  reranked?: boolean;
-  /** Latest backend pipeline stage label (from the `status` SSE event). */
-  statusMessage?: string;
+// Stable client-side message identity (React key + streaming update target).
+function generateMessageId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // Fall through to the non-crypto fallback.
+  }
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // =========================================================================
@@ -72,22 +58,116 @@ function saveSettings(settings: PersistedSettings): void {
   }
 }
 
+// =========================================================================
+// SessionStorage persistence for the conversation itself (messages + the
+// backend conversation-memory blob). Survives reloads within the tab; a new
+// tab starts a fresh conversation.
+// =========================================================================
+const ASK_CONVERSATION_KEY = "cortex-ask-conversation";
+// Cap the persisted payload; sessionStorage quota is ~5MB and long research
+// answers with sources add up fast. Oldest messages are dropped first.
+const MAX_PERSISTED_CHARS = 2 * 1024 * 1024;
+
+interface PersistedConversation {
+  messages: AskMessage[];
+  memory?: unknown;
+}
+
+function loadConversation(): PersistedConversation | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = sessionStorage.getItem(ASK_CONVERSATION_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as PersistedConversation;
+    if (!Array.isArray(parsed.messages)) return null;
+    return {
+      // Backfill ids for payloads persisted before ids existed.
+      messages: parsed.messages.map((m) => ({
+        ...m,
+        id: m.id || generateMessageId(),
+      })),
+      memory: parsed.memory,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveConversation(messages: AskMessage[], memory: unknown): void {
+  if (typeof window === "undefined") return;
+  try {
+    // Never delete on empty here — the explicit Clear action removes the key.
+    // (Guards against StrictMode's double effect pass wiping a stored
+    // conversation with the initial empty state before rehydration lands.)
+    if (messages.length === 0) return;
+    // Strip volatile fields — a rehydrated message is never mid-stream.
+    let toStore = messages.map((m) => {
+      const copy = { ...m };
+      delete copy.isStreaming;
+      delete copy.statusMessage;
+      return copy;
+    });
+    let payload = JSON.stringify({ messages: toStore, memory });
+    while (payload.length > MAX_PERSISTED_CHARS && toStore.length > 1) {
+      toStore = toStore.slice(1);
+      payload = JSON.stringify({ messages: toStore, memory });
+    }
+    if (payload.length > MAX_PERSISTED_CHARS) {
+      sessionStorage.removeItem(ASK_CONVERSATION_KEY);
+      return;
+    }
+    sessionStorage.setItem(ASK_CONVERSATION_KEY, payload);
+  } catch {
+    // Silently ignore storage errors (quota, private mode, ...)
+  }
+}
+
 export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
   const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<AskMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Holds the in-flight stream so the user can Stop it (and so we can abort on
   // unmount — otherwise navigating away leaves the backend generating).
   const abortRef = useRef<AbortController | null>(null);
+  // Latest conversation-memory blob from the backend (`memory_update` events);
+  // echoed back as `conversation_memory` on the next request.
+  const memoryRef = useRef<unknown>(undefined);
+  // Mirror of `messages` so stream handlers can persist without stale closures.
+  const messagesRef = useRef<AskMessage[]>([]);
+  // Blocks persistence until the mount-time rehydrate has run, so the initial
+  // empty state can't clobber a stored conversation.
+  const hydratedRef = useRef(false);
 
   // Abort any in-flight stream when the panel unmounts.
   useEffect(() => {
     return () => abortRef.current?.abort();
+  }, []);
+
+  // Persist conversation + memory blob on every change. Declared BEFORE the
+  // rehydrate effect so the first run (empty messages, not yet hydrated) is a
+  // no-op instead of wiping the stored conversation.
+  useEffect(() => {
+    messagesRef.current = messages;
+    if (!hydratedRef.current) return;
+    saveConversation(messages, memoryRef.current);
+  }, [messages]);
+
+  // Rehydrate the persisted conversation on mount.
+  useEffect(() => {
+    const persisted = loadConversation();
+    if (persisted) {
+      memoryRef.current = persisted.memory;
+      if (persisted.messages.length > 0) {
+        setMessages(persisted.messages);
+      }
+    }
+    hydratedRef.current = true;
   }, []);
 
   // Chat is the default surface; Deep Research is an in-session toggle (flask
@@ -160,7 +240,10 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
         container.scrollHeight - container.scrollTop - container.clientHeight;
       if (distanceFromBottom > 120) return;
     }
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // While tokens stream in, "smooth" scrolls pile up and lag badly — jump
+    // instantly instead and save the smooth glide for completed messages.
+    const streaming = messages.length > 0 && messages[messages.length - 1].isStreaming;
+    messagesEndRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
   }, [messages]);
 
   const getConversationHistory = (): ConversationMessage[] => {
@@ -176,9 +259,19 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
     e.preventDefault();
     if (!question.trim() || isLoading) return;
 
-    const userMessage: Message = { role: "user", content: question };
+    const userMessage: AskMessage = {
+      id: generateMessageId(),
+      role: "user",
+      content: question,
+    };
     setMessages((prev) => [...prev, userMessage]);
     setQuestion("");
+    // Collapse the auto-grown composer back to one line and keep the caret
+    // there so the user can type a follow-up immediately.
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.focus();
+    }
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -188,7 +281,9 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
 
     if (useStreaming) {
       // Streaming mode
-      const assistantMessage: Message = {
+      const assistantId = generateMessageId();
+      const assistantMessage: AskMessage = {
+        id: assistantId,
         role: "assistant",
         content: "",
         isStreaming: true,
@@ -197,16 +292,49 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
+      // Always patch the assistant message by its id — "last index" breaks the
+      // moment the list changes underneath (e.g. Clear during streaming).
+      const updateAssistant = (patch: Partial<AskMessage>) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, ...patch } : m))
+        );
+      };
+
+      let sources: AskSource[] = [];
+      let graphContext: GraphContext | undefined;
+      let content = "";
+      let thinkingSteps: string[] = [];
+      let subQuestions: string[] = [];
+
+      // Token deltas arrive far faster than React should re-render. Accumulate
+      // them and flush at most once per animation frame.
+      let rafId: number | null = null;
+      const flushContent = () => {
+        rafId = null;
+        const snapshot = content;
+        updateAssistant({ content: snapshot });
+      };
+      const scheduleFlush = () => {
+        if (rafId !== null) return;
+        if (typeof requestAnimationFrame === "function") {
+          rafId = requestAnimationFrame(flushContent);
+        } else {
+          flushContent();
+        }
+      };
+      const cancelFlush = () => {
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+      };
+
       try {
-        let sources: Source[] = [];
-        let graphContext: GraphContext | undefined;
-        let content = "";
-        let thinkingSteps: string[] = [];
-        let subQuestions: string[] = [];
         let finalized = false;
 
         for await (const event of api.askStream(question, {
           conversationHistory,
+          conversationMemory: memoryRef.current,
           useReranking: true,
           useGraph: true,
           useAgentic,
@@ -216,141 +344,118 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
         })) {
           if (event.thinking) {
             thinkingSteps = [...thinkingSteps, event.thinking as string];
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
-              return updated;
-            });
+            updateAssistant({ thinkingSteps });
           }
           if (event.sub_questions) {
             subQuestions = event.sub_questions as string[];
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], subQuestions };
-              return updated;
-            });
+            updateAssistant({ subQuestions });
           }
           if (event.retrieval) {
             thinkingSteps = [...thinkingSteps, event.retrieval as string];
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
-              return updated;
-            });
+            updateAssistant({ thinkingSteps });
           }
           if (event.status?.message) {
-            const statusMessage = event.status.message;
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], statusMessage };
-              return updated;
-            });
+            updateAssistant({ statusMessage: event.status.message });
           }
           if (event.skill_tool) {
             const prefix = event.is_error ? "[SkillError] " : "[Skill] ";
             thinkingSteps = [...thinkingSteps, `${prefix}${event.skill_tool as string}`];
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], thinkingSteps };
-              return updated;
-            });
+            updateAssistant({ thinkingSteps });
           }
           if (event.sources) {
-            sources = event.sources as Source[];
+            // Commit immediately so [src_N] citations resolve while the answer
+            // is still streaming (and survive a Stop).
+            sources = event.sources;
+            updateAssistant({ sources });
           }
           if (event.graph_context) {
             graphContext = event.graph_context;
+            updateAssistant({ graphContext });
           }
           if (event.content) {
             content += event.content;
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = { ...updated[lastIdx], content };
-              return updated;
-            });
+            scheduleFlush();
+          }
+          if (event.memory_update !== undefined) {
+            memoryRef.current = event.memory_update;
+            // May arrive after `done` (i.e. after the last setMessages), so
+            // persist explicitly instead of relying on the messages effect.
+            if (hydratedRef.current) {
+              saveConversation(messagesRef.current, memoryRef.current);
+            }
           }
           if (event.done) {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                content,
-                sources,
-                graphContext,
-                thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
-                subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
-                isStreaming: false,
-                reranked: true,
-              };
-              return updated;
+            cancelFlush();
+            updateAssistant({
+              content,
+              sources,
+              graphContext,
+              thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+              subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
+              isStreaming: false,
+              reranked: true,
             });
             finalized = true;
+            // Do NOT break: the backend may still send `memory_update` after
+            // `done` — keep consuming until the stream actually ends.
           }
           if (event.error) {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                content: content
-                  ? `${content}\n\n_${event.error}_`
-                  : String(event.error),
-                isStreaming: false,
-              };
-              return updated;
+            cancelFlush();
+            updateAssistant({
+              content: content
+                ? `${content}\n\n_${event.error}_`
+                : String(event.error),
+              isStreaming: false,
             });
             finalized = true;
             break;
           }
         }
 
+        cancelFlush();
         // The stream can end without a terminal `done`/`error` frame: a dropped
         // connection, a proxy idle-timeout, or a graceful server restart (routine
         // in per-tenant container deploys). Finalize the message so it doesn't
         // blink with a streaming cursor forever.
         if (!finalized) {
-          setMessages((prev) => {
-            const updated = [...prev];
-            const lastIdx = updated.length - 1;
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              content:
-                content ||
-                "The connection was interrupted before the answer finished. Please try again.",
-              sources,
-              graphContext,
-              thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
-              subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
-              isStreaming: false,
-            };
-            return updated;
+          updateAssistant({
+            content:
+              content ||
+              "The connection was interrupted before the answer finished. Please try again.",
+            sources,
+            graphContext,
+            thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+            subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
+            isStreaming: false,
           });
         }
       } catch (error) {
-        // User pressed Stop (or navigated away) — keep whatever streamed so far,
-        // just stop the cursor. Not an error to report.
+        cancelFlush();
+        // User pressed Stop (or navigated away) — keep whatever streamed so far
+        // (including sources, so citations stay clickable), just stop the
+        // cursor. Not an error to report.
         const aborted = error instanceof DOMException && error.name === "AbortError";
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          updated[lastIdx] = {
-            ...updated[lastIdx],
-            content: aborted
-              ? updated[lastIdx].content || "_Stopped._"
-              : error instanceof Error && error.message
-                ? error.message
-                : "Sorry, I encountered an error processing your question.",
-            isStreaming: false,
-          };
-          return updated;
-        });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: aborted
+                    ? content || m.content || "_Stopped._"
+                    : error instanceof Error && error.message
+                      ? error.message
+                      : "Sorry, I encountered an error processing your question.",
+                  sources: sources.length > 0 ? sources : m.sources,
+                  graphContext: graphContext ?? m.graphContext,
+                  thinkingSteps:
+                    thinkingSteps.length > 0 ? thinkingSteps : m.thinkingSteps,
+                  subQuestions:
+                    subQuestions.length > 0 ? subQuestions : m.subQuestions,
+                  isStreaming: false,
+                }
+              : m
+          )
+        );
       }
     } else {
       // Non-streaming mode
@@ -364,17 +469,19 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
           collectionId: selectedCollectionId,
         });
 
-        const assistantMessage: Message = {
+        const assistantMessage: AskMessage = {
+          id: generateMessageId(),
           role: "assistant",
           content: data.answer,
-          sources: data.sources as Source[],
+          sources: data.sources,
           graphContext: data.graph_context,
           reasoningSteps: data.reasoning_steps,
           reranked: data.reranked,
         };
         setMessages((prev) => [...prev, assistantMessage]);
       } catch (error) {
-        const errorMessage: Message = {
+        const errorMessage: AskMessage = {
+          id: generateMessageId(),
           role: "assistant",
           content:
             error instanceof Error && error.message
@@ -393,21 +500,31 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
     abortRef.current?.abort();
   };
 
-  const clearConversation = () => {
+  const clearConversation = useCallback(() => {
+    // Stop any in-flight stream first — its updates target message ids that
+    // are about to disappear, so they become harmless no-ops.
+    abortRef.current?.abort();
     setMessages([]);
-  };
+    setExpandedSources(new Set());
+    memoryRef.current = undefined;
+    try {
+      sessionStorage.removeItem(ASK_CONVERSATION_KEY);
+    } catch {
+      // Silently ignore storage errors
+    }
+  }, []);
 
-  const toggleSourceExpand = (index: number) => {
+  const toggleSourceExpand = useCallback((id: string) => {
     setExpandedSources((prev) => {
       const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
+      if (next.has(id)) {
+        next.delete(id);
       } else {
-        next.add(index);
+        next.add(id);
       }
       return next;
     });
-  };
+  }, []);
 
   const hasInput = question.trim().length > 0;
 
@@ -422,11 +539,11 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
             <AnimatePresence initial={false}>
               {messages.map((msg, index) => (
                 <ChatMessage
-                  key={index}
+                  key={msg.id}
                   message={msg}
                   index={index}
-                  isSourceExpanded={expandedSources.has(index)}
-                  onToggleSourceExpand={() => toggleSourceExpand(index)}
+                  isSourceExpanded={expandedSources.has(msg.id)}
+                  onToggleSourceExpand={toggleSourceExpand}
                 />
               ))}
             </AnimatePresence>
@@ -472,6 +589,7 @@ export default function AskPanel({ initialMode = "chat" }: AskPanelProps) {
       <form onSubmit={handleAsk} className="mt-3 shrink-0">
         <div className="relative glass rounded-lg p-2 flex items-end gap-2">
           <textarea
+            ref={textareaRef}
             value={question}
             onChange={(e) => {
               setQuestion(e.target.value);

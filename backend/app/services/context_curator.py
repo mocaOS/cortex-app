@@ -360,7 +360,10 @@ async def is_memory_answerable(
             "Examples answerable from memory: 'summarize that', 'why?', 'translate to "
             "German', 'rephrase', referring back to something already discussed. "
             "Examples NOT answerable: any request for new facts, details, or sources not "
-            "already present. Reply with exactly 'yes' or 'no'."
+            "already present. Also NOT answerable: any request to perform an action or "
+            "contact an external system (create/update/send/delete something, call an "
+            "API, open a ticket) — actions always require the full pipeline. "
+            "Reply with exactly 'yes' or 'no'."
         )
         user = f"CONVERSATION MEMORY:\n{block}\n\nNEW MESSAGE:\n{question}\n\nAnswerable from memory only?"
         resp = await client.chat.completions.create(

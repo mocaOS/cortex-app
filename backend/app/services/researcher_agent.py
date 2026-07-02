@@ -234,12 +234,18 @@ async def _execute_knowledge_search(
     processor,
     settings,
     allowed_collection_ids: Optional[List[str]] = None,
+    hint_entities: Optional[List[str]] = None,
 ) -> tuple:
     """
     Execute hybrid search for each query in parallel, then deduplicate and rerank.
 
     Uses the existing graph_search_async (hybrid RRF: vector + fulltext + graph traversal)
     and rerank_results_async (cross-encoder) infrastructure.
+
+    ``hint_entities`` are entity names the researcher supplied on the tool call
+    itself. When present the query-side entity-extraction LLM call is skipped
+    entirely — the researcher just wrote the queries, so its own entity list is
+    at least as good and costs zero extra latency.
     """
     queries = queries[:3]  # Cap at 3 queries
 
@@ -250,10 +256,17 @@ async def _execute_knowledge_search(
     # results. Falls back to the per-query path on any failure or when disabled.
     per_query_entities: List[Optional[List[str]]] = [None] * len(queries)
     per_query_embeddings: List[Optional[List[float]]] = [None] * len(queries)
+    _hints = [
+        e.strip() for e in (hint_entities or []) if isinstance(e, str) and e.strip()
+    ][:10]
     if settings.enable_batched_query_extraction and queries:
         try:
             embed_task = asyncio.to_thread(processor.embed_queries, list(queries))
-            if processor.graph_extractor.is_available:
+            if _hints and getattr(settings, "researcher_tool_entity_hints", True):
+                # Researcher-provided entities: no extraction round-trip needed.
+                per_query_embeddings = await embed_task
+                per_query_entities = [list(_hints) for _ in queries]
+            elif processor.graph_extractor.is_available:
                 per_query_entities, per_query_embeddings = await asyncio.gather(
                     processor.graph_extractor.extract_entities_from_queries_async(
                         list(queries)
@@ -320,6 +333,67 @@ async def _execute_knowledge_search(
 # =============================================================================
 
 
+def _load_skill_state(settings) -> tuple:
+    """Load the skill catalog + auto-activated skill state (sync, cached).
+
+    Runs Neo4j queries / SKILL.md reads / secret decryption on cache misses, so
+    callers must offload it with asyncio.to_thread — a bare call would pin the
+    event loop and starve other in-flight requests (event-loop invariant).
+
+    Returns (skill_service, skill_catalog, activated_skills).
+    """
+    if not getattr(settings, "enable_skills", False):
+        return None, [], {}
+
+    from app.services.skill_service import get_skill_service
+
+    _skill_service = get_skill_service()
+    skill_catalog = _skill_service.get_skill_catalog()
+    activated_skills = {}
+    if skill_catalog:
+        logger.info(f"Skill catalog loaded: {len(skill_catalog)} skills available")
+        # Auto-activate all enabled skills so the model sees their
+        # instructions and can call http_request directly
+        for skill_entry in skill_catalog:
+            sid = skill_entry["skill_id"]
+            try:
+                instr, t_defs, t_map, skill_config = (
+                    _skill_service.load_skill_for_activation(sid)
+                )
+                config_schema = _skill_service.get_skill_config_schema(sid) or []
+                base_url = _skill_service.get_skill_base_url(sid)
+                activated_skills[sid] = {
+                    "instructions": instr,
+                    "tool_defs": t_defs,
+                    "tool_map": t_map,
+                    "config": skill_config,
+                    "config_schema": config_schema,
+                    "base_url": base_url,
+                }
+            except Exception as e:
+                logger.warning(f"Failed to auto-activate skill '{sid}': {e}")
+        if activated_skills:
+            logger.info(
+                f"Auto-activated {len(activated_skills)} skills: "
+                f"{list(activated_skills.keys())}"
+            )
+    return _skill_service, skill_catalog, activated_skills
+
+
+def _merge_activation_state(activated_skills: dict) -> tuple:
+    """Merge per-skill activation payloads into (instructions, tool_defs, tool_map)."""
+    activated_instructions = "\n\n".join(
+        s["instructions"] for s in activated_skills.values() if s["instructions"]
+    )
+    activated_tool_defs = [
+        td for s in activated_skills.values() for td in s["tool_defs"]
+    ]
+    activated_tool_map = {}
+    for s in activated_skills.values():
+        activated_tool_map.update(s["tool_map"])
+    return activated_instructions, activated_tool_defs, activated_tool_map
+
+
 async def _run_researcher_loop(
     question: str,
     mode: Literal["speed", "quality"],
@@ -346,7 +420,8 @@ async def _run_researcher_loop(
         else settings.researcher_max_iterations_quality
     )
 
-    # Skill activation state (on-demand pattern)
+    # Skill activation state (on-demand pattern). Loaded off the event loop —
+    # cache misses hit Neo4j + the filesystem + Fernet decryption.
     _skill_service = None
     skill_catalog = []                # compact name+desc for system prompt
     activated_skills = {}             # skill_id → {instructions, tool_defs, tool_map, config}
@@ -354,56 +429,15 @@ async def _run_researcher_loop(
     activated_tool_defs = []          # merged tool defs from all activated skills
     activated_tool_map = {}           # merged {namespaced_name: (skill_id, original_name)}
 
-    if getattr(settings, "enable_skills", False):
-        try:
-            from app.services.skill_service import get_skill_service
-            _skill_service = get_skill_service()
-            skill_catalog = _skill_service.get_skill_catalog()
-            if skill_catalog:
-                logger.info(
-                    f"Skill catalog loaded: {len(skill_catalog)} skills available"
-                )
-                # Auto-activate all enabled skills so the model sees their
-                # instructions and can call http_request directly
-                for skill_entry in skill_catalog:
-                    sid = skill_entry["skill_id"]
-                    try:
-                        instr, t_defs, t_map, skill_config = (
-                            _skill_service.load_skill_for_activation(sid)
-                        )
-                        config_schema = _skill_service.get_skill_config_schema(sid) or []
-                        base_url = _skill_service.get_skill_base_url(sid)
-                        activated_skills[sid] = {
-                            "instructions": instr,
-                            "tool_defs": t_defs,
-                            "tool_map": t_map,
-                            "config": skill_config,
-                            "config_schema": config_schema,
-                            "base_url": base_url,
-                        }
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-activate skill '{sid}': {e}")
-                # Build merged activation state
-                activated_instructions = "\n\n".join(
-                    s["instructions"]
-                    for s in activated_skills.values()
-                    if s["instructions"]
-                )
-                activated_tool_defs = [
-                    td
-                    for s in activated_skills.values()
-                    for td in s["tool_defs"]
-                ]
-                activated_tool_map = {}
-                for s in activated_skills.values():
-                    activated_tool_map.update(s["tool_map"])
-                if activated_skills:
-                    logger.info(
-                        f"Auto-activated {len(activated_skills)} skills: "
-                        f"{list(activated_skills.keys())}"
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to load skill catalog: {e}")
+    try:
+        _skill_service, skill_catalog, activated_skills = await asyncio.to_thread(
+            _load_skill_state, settings
+        )
+        activated_instructions, activated_tool_defs, activated_tool_map = (
+            _merge_activation_state(activated_skills)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load skill catalog: {e}")
 
     # Git integration: load the primary connection (if any) so the git_repo tool
     # is available. Writes are gated server-side on the connection's access_level.
@@ -411,7 +445,8 @@ async def _run_researcher_loop(
     if getattr(settings, "enable_git_integration", False):
         try:
             from app.services.neo4j_service import get_neo4j_service as _get_neo4j
-            _conns = _get_neo4j().list_git_connections()
+            # Sync neo4j driver — offload so it doesn't block the event loop.
+            _conns = await asyncio.to_thread(_get_neo4j().list_git_connections)
             if _conns:
                 # Prefer a read/write connection so write actions are possible.
                 git_connection = next(
@@ -433,14 +468,19 @@ async def _run_researcher_loop(
     # prompt is iteration-free and built exactly once — byte-stable across
     # the loop, so provider prefix caches hit from iteration 2 on.
     stable_prompt = getattr(settings, "researcher_stable_prompt", True)
+    _has_skills = bool(skill_catalog)
+    # MAX_SKILL_INSTRUCTIONS_TOKENS budget, approximated at ~4 chars/token.
+    _skill_budget_chars = (
+        max(0, getattr(settings, "max_skill_instructions_tokens", 4000)) * 4 or None
+    )
     system_prompt = (
         (
-            get_researcher_prompt_static(mode, max_iterations)
+            get_researcher_prompt_static(mode, max_iterations, has_skills=_has_skills)
             if stable_prompt
-            else get_researcher_prompt(mode, 0, max_iterations)
+            else get_researcher_prompt(mode, 0, max_iterations, has_skills=_has_skills)
         )
         + build_skill_catalog_block(skill_catalog)
-        + build_activated_skills_block(activated_instructions)
+        + build_activated_skills_block(activated_instructions, max_chars=_skill_budget_chars)
         + get_anti_injection_instruction(enabled=settings.prompt_security)
     )
 
@@ -454,6 +494,14 @@ async def _run_researcher_loop(
     result = ResearchResult()
     communities_used_ids = []
     _http_request_called = False
+    # True once any side-effecting / researcher-only tool ran (http_request,
+    # git_repo, legacy skill tools). Their outputs live in `messages`, which
+    # the writer never sees — so speed early-write must not fire after them.
+    _side_effect_called = False
+    # Per-run dedup of identical knowledge_search calls: normalized queries →
+    # formatted tool text. A repeat returns instantly with a nudge to try a
+    # different angle instead of paying the full retrieval pipeline again.
+    _search_cache: dict = {}
 
     # Wall-clock budget: on expiry we stop gathering and let the writer
     # synthesize from accumulated results (same path as iteration exhaustion).
@@ -486,9 +534,13 @@ async def _run_researcher_loop(
         else:
             # Legacy: rebuild system prompt + tools each iteration
             messages[0]["content"] = (
-                get_researcher_prompt(mode, iteration, max_iterations)
+                get_researcher_prompt(
+                    mode, iteration, max_iterations, has_skills=bool(skill_catalog)
+                )
                 + build_skill_catalog_block(skill_catalog)
-                + build_activated_skills_block(activated_instructions)
+                + build_activated_skills_block(
+                    activated_instructions, max_chars=_skill_budget_chars
+                )
                 + get_anti_injection_instruction(enabled=settings.prompt_security)
             )
             tools = get_tools_with_skill_activation(
@@ -623,6 +675,73 @@ async def _run_researcher_loop(
 
         done_called = False
 
+        # Precompute read-only tool calls concurrently. knowledge_search /
+        # community_search / entity_lookup are independent reads — running
+        # them serially costs (N-1) full retrieval pipelines of wall-clock per
+        # iteration, and quality mode is explicitly prompted to issue several
+        # searches per turn. Side-effecting tools (http_request, git_repo,
+        # skill tools) keep their sequential execution below; message order
+        # and per-tool_call_id replies are preserved either way.
+        _precomputed: dict = {}
+        if getattr(settings, "researcher_parallel_tool_calls", True):
+            _ro_specs = []
+            for _tc in sorted_calls:
+                if _tc.function.name not in (
+                    "knowledge_search", "community_search", "entity_lookup"
+                ):
+                    continue
+                try:
+                    _tc_args = json.loads(_tc.function.arguments)
+                except json.JSONDecodeError:
+                    continue
+                _ro_specs.append((_tc, _tc_args))
+
+            if len(_ro_specs) >= 2:
+
+                async def _exec_read_only(name: str, tc_args: dict):
+                    if name == "knowledge_search":
+                        queries = [q for q in (tc_args.get("queries") or []) if q][:3]
+                        if not queries:
+                            return None
+                        _key = tuple(sorted(q.strip().lower() for q in queries))
+                        if _key in _search_cache:
+                            return None  # branch below serves the cached text
+                        return await _execute_knowledge_search(
+                            queries, question, collection_id, processor, settings,
+                            allowed_collection_ids=allowed_collection_ids,
+                            hint_entities=tc_args.get("entities"),
+                        )
+                    if name == "community_search":
+                        query = tc_args.get("query", "")
+                        if not (query and neo4j_service):
+                            return None
+                        return await asyncio.to_thread(
+                            neo4j_service.search_communities_by_content,
+                            query, limit=3,
+                        )
+                    names = tc_args.get("names", [])
+                    if not (names and neo4j_service):
+                        return None
+                    return await asyncio.to_thread(
+                        neo4j_service.find_entities_by_name, names[:5]
+                    )
+
+                yield {
+                    "type": "thinking",
+                    "content": f"Running {len(_ro_specs)} lookups in parallel...",
+                }
+                _ro_results = await asyncio.gather(
+                    *(_exec_read_only(t.function.name, a) for t, a in _ro_specs),
+                    return_exceptions=True,
+                )
+                for (_tc, _a), _res in zip(_ro_specs, _ro_results):
+                    if isinstance(_res, Exception):
+                        logger.warning(
+                            f"Parallel {_tc.function.name} failed: {_res}"
+                        )
+                    elif _res is not None:
+                        _precomputed[_tc.id] = _res
+
         for tool_call in sorted_calls:
             name = tool_call.function.name
 
@@ -665,8 +784,35 @@ async def _run_researcher_loop(
                 )
 
             elif name == "knowledge_search":
-                queries = args.get("queries", [])
+                queries = [q for q in (args.get("queries") or []) if q][:3]
                 if queries:
+                    _dedup_key = tuple(sorted(q.strip().lower() for q in queries))
+                    _cached_text = (
+                        _search_cache.get(_dedup_key)
+                        if getattr(settings, "researcher_search_dedup", True)
+                        else None
+                    )
+                    if _cached_text is not None:
+                        # Exact repeat within this run — skip the retrieval
+                        # pipeline and steer the model toward new ground.
+                        logger.info(
+                            f"knowledge_search dedup hit: {list(queries)}"
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": (
+                                    "You already searched these exact queries in "
+                                    "this session — the same results are repeated "
+                                    "below. Try a DIFFERENT angle, different "
+                                    "keywords, or another tool instead.\n\n"
+                                    + _cached_text
+                                ),
+                            }
+                        )
+                        continue
+
                     if settings.stream_reasoning_steps:
                         yield {
                             "type": "status",
@@ -677,10 +823,14 @@ async def _run_researcher_loop(
                         "content": f"Searching: {', '.join(q[:50] for q in queries[:3])}",
                     }
 
-                    sources, graph_ctx = await _execute_knowledge_search(
-                        queries, question, collection_id, processor, settings,
-                        allowed_collection_ids=allowed_collection_ids
-                    )
+                    if tool_call.id in _precomputed:
+                        sources, graph_ctx = _precomputed[tool_call.id]
+                    else:
+                        sources, graph_ctx = await _execute_knowledge_search(
+                            queries, question, collection_id, processor, settings,
+                            allowed_collection_ids=allowed_collection_ids,
+                            hint_entities=args.get("entities"),
+                        )
 
                     result.sources.extend(sources)
                     result.total_sources_considered += len(sources)
@@ -693,6 +843,7 @@ async def _run_researcher_loop(
                     }
 
                     agent_text = _format_search_results_for_agent(sources, graph_ctx)
+                    _search_cache[_dedup_key] = agent_text
                     messages.append(
                         {
                             "role": "tool",
@@ -713,13 +864,16 @@ async def _run_researcher_loop(
                 query = args.get("query", "")
                 if query and neo4j_service:
                     try:
-                        # Sync neo4j driver — offload so it doesn't block the
-                        # event loop and starve other in-flight requests.
-                        communities = await asyncio.to_thread(
-                            neo4j_service.search_communities_by_content,
-                            query,
-                            limit=3,
-                        )
+                        if tool_call.id in _precomputed:
+                            communities = _precomputed[tool_call.id]
+                        else:
+                            # Sync neo4j driver — offload so it doesn't block the
+                            # event loop and starve other in-flight requests.
+                            communities = await asyncio.to_thread(
+                                neo4j_service.search_communities_by_content,
+                                query,
+                                limit=3,
+                            )
                     except Exception as e:
                         logger.warning(f"Community search failed: {e}")
                         communities = []
@@ -755,11 +909,14 @@ async def _run_researcher_loop(
                 names = args.get("names", [])
                 if names and neo4j_service:
                     try:
-                        # Sync neo4j driver — offload so it doesn't block the
-                        # event loop and starve other in-flight requests.
-                        entities = await asyncio.to_thread(
-                            neo4j_service.find_entities_by_name, names[:5]
-                        )
+                        if tool_call.id in _precomputed:
+                            entities = _precomputed[tool_call.id]
+                        else:
+                            # Sync neo4j driver — offload so it doesn't block the
+                            # event loop and starve other in-flight requests.
+                            entities = await asyncio.to_thread(
+                                neo4j_service.find_entities_by_name, names[:5]
+                            )
                     except Exception as e:
                         logger.warning(f"Entity lookup failed: {e}")
                         entities = []
@@ -787,6 +944,9 @@ async def _run_researcher_loop(
                     )
 
             elif name == "git_repo":
+                # Output lives only in `messages` (researcher context), so the
+                # speed early-write shortcut must not fire after this tool.
+                _side_effect_called = True
                 git_action = (args.get("action") or "").strip()
                 if not git_connection:
                     response_text = "Error: no git repository is connected."
@@ -1195,6 +1355,7 @@ async def _run_researcher_loop(
 
             elif name in activated_tool_map and _skill_service:
                 # Activated skill tool call
+                _side_effect_called = True
                 skill_id, original_name = activated_tool_map[name]
                 yield {
                     "type": "skill_tool",
@@ -1231,6 +1392,25 @@ async def _run_researcher_loop(
                 )
 
         if done_called:
+            break
+
+        # Speed early-write: once a search iteration produced sources (and no
+        # side-effecting tool ran, whose researcher-only output the writer
+        # would lose), asking the model "are you done?" costs one more full
+        # LLM round-trip whose `done` summary the speed writer prompt never
+        # reads — break straight to the writer instead.
+        if (
+            mode == "speed"
+            and getattr(settings, "researcher_speed_early_write", True)
+            and result.sources
+            and not _http_request_called
+            and not _side_effect_called
+        ):
+            logger.info(
+                "Speed early-write: %d sources after iteration %d; skipping "
+                "the researcher confirmation round-trip",
+                len(result.sources), iteration + 1,
+            )
             break
 
     # Yield final result
@@ -1410,6 +1590,16 @@ async def run_research_pipeline(
         score = r.get("rerank_score", r.get("score", 0))
         filename = r.get("filename", "Unknown")
         content = r.get("content", "")
+        # Skill API responses can be up to 32KB — the researcher needs the full
+        # data, but the writer copy is capped so one response doesn't dominate
+        # (and pay for) the entire answer-stage prefill.
+        _src_type = (r.get("metadata") or {}).get("source_type", "")
+        if _src_type.startswith("skill_api") and len(content) > 8000:
+            content = (
+                content[:8000]
+                + "\n[response truncated for the answer stage — the full data "
+                "was already analyzed during research]"
+            )
         formatted_sources += (
             f"\n[{ref_id}] Source: {filename} (relevance: {score:.3f})\n{content}\n"
         )
@@ -1575,9 +1765,19 @@ async def run_research_pipeline(
 
     # Update the client-carried memory blob AFTER streaming (zero added latency on
     # the answer path). Only when the client opted in by sending a blob.
-    if conversation_memory is not None and getattr(
+    _done_event = {"done": True, "communities_used": list(set(communities_used))}
+    _memory_enabled = conversation_memory is not None and getattr(
         settings, "enable_conversation_memory", True
-    ):
+    )
+    # Compaction is a full LLM call (1-4s). Emitting `done` first lets the UI
+    # finalize the turn as soon as the last answer token lands; pending_memory
+    # tells clients one more frame (memory_update) follows before stream end.
+    # EMIT_DONE_BEFORE_MEMORY=false restores the legacy order for clients that
+    # stop consuming at `done`.
+    _done_first = _memory_enabled and getattr(settings, "emit_done_before_memory", True)
+    if _done_first:
+        yield {**_done_event, "pending_memory": True}
+    if _memory_enabled:
         try:
             updated_memory = await compact_memory(
                 memory=conversation_memory,
@@ -1595,7 +1795,8 @@ async def run_research_pipeline(
         except Exception as e:  # noqa: BLE001 — never break the turn on memory work
             logger.warning(f"memory_update emission skipped: {e}")
 
-    yield {"done": True, "communities_used": list(set(communities_used))}
+    if not _done_first:
+        yield _done_event
 
 
 # =============================================================================
@@ -1604,15 +1805,27 @@ async def run_research_pipeline(
 
 
 def _truncate_response(text: str, max_chars: int = 32000) -> str:
-    """Truncate an HTTP response intelligently.
+    """Truncate an HTTP response intelligently, labeling the cut explicitly.
 
     For JSON responses with arrays, slim down each item by truncating long
     string values (descriptions etc.) to keep ALL items within budget.
-    Falls back to keeping complete items, then plain truncation.
+    Falls back to keeping complete items, then plain truncation. The result
+    always carries a trailer stating data was dropped — without it the model
+    confidently answers from cut data and never paginates.
     """
     if len(text) <= max_chars:
         return text
+    truncated = _truncate_response_body(text, max_chars)
+    return truncated + (
+        f"\n[NOTE: response truncated — the original was {len(text)} chars "
+        f"and only part is shown. Do not assume this is everything; request "
+        f"fewer items per call or use pagination parameters "
+        f"(e.g. ?limit=, ?page=) to retrieve the rest.]"
+    )
 
+
+def _truncate_response_body(text: str, max_chars: int) -> str:
+    """Core slimming logic for :func:`_truncate_response` (no trailer)."""
     try:
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):

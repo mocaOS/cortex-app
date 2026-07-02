@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check } from "lucide-react";
-import { useState, ReactNode } from "react";
+import { memo, useState, ReactNode } from "react";
 import { copyToClipboard } from "@/lib/utils";
 
 interface MarkdownRendererProps {
@@ -152,7 +152,7 @@ function processCitations(
   return process(children);
 }
 
-export default function MarkdownRenderer({
+function MarkdownRenderer({
   content,
   className = "",
   onCitationClick,
@@ -302,3 +302,7 @@ export default function MarkdownRenderer({
     </div>
   );
 }
+
+// Memoized: markdown parsing is the hot path during chat streaming — skip it
+// entirely when content/props are unchanged (e.g. completed messages).
+export default memo(MarkdownRenderer);

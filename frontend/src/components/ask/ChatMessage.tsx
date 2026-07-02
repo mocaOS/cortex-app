@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import { api } from "@/lib/api";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import type { GraphContext, DocumentContent } from "@/types";
+import type { AskMessage, AskSource, DocumentContent } from "@/types";
 
 // Helper to parse <think>...</think> blocks from content
 // Handles both complete and incomplete (streaming) thinking blocks
@@ -41,18 +41,20 @@ function parseThinkingContent(content: string, isStreaming: boolean = false): {
     };
   }
   
-  // Check for incomplete <think> block (still streaming thinking content)
+  // Check for incomplete <think> block. While streaming this is thinking-in-
+  // progress; after the stream ended (e.g. user hit Stop mid-thought) it is
+  // still thinking content — never render the raw <think> text as the answer.
   const incompleteThinkRegex = /^<think>([\s\S]*)$/;
   const incompleteMatch = content.match(incompleteThinkRegex);
-  
-  if (incompleteMatch && isStreaming) {
+
+  if (incompleteMatch) {
     return {
       thinking: incompleteMatch[1].trim(),
       mainContent: "",
-      isThinkingComplete: false,
+      isThinkingComplete: !isStreaming,
     };
   }
-  
+
   return {
     thinking: null,
     mainContent: content,
@@ -159,37 +161,12 @@ function ThinkingBlock({
   );
 }
 
-interface Source {
-  document_id: string;
-  chunk_id: string;
-  content: string;
-  score: number;
-  metadata: {
-    filename: string;
-    chunk_index?: number;
-    rerank_score?: number;
-  };
-}
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  sources?: Source[];
-  graphContext?: GraphContext;
-  reasoningSteps?: string[];
-  thinkingSteps?: string[];
-  subQuestions?: string[];
-  isStreaming?: boolean;
-  reranked?: boolean;
-  statusMessage?: string;
-}
-
 // Pre-token "is it alive, not stuck?" indicator. Shown while an assistant
 // message is streaming but no content has arrived — the window where the backend
 // can be silent for seconds. Gives motion (blinking dot), a staged label (from
 // backend `status` events, with a heuristic fallback), a live elapsed counter,
 // and a reassurance line after 12s.
-function ThinkingIndicator({ message }: { message: Message }) {
+function ThinkingIndicator({ message }: { message: AskMessage }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const start = performance.now();
@@ -232,19 +209,20 @@ function ThinkingIndicator({ message }: { message: Message }) {
 }
 
 interface ChatMessageProps {
-  message: Message;
+  message: AskMessage;
   index: number;
   isSourceExpanded: boolean;
-  onToggleSourceExpand: () => void;
+  /** Stable callback — receives the message id so parent closures stay stable. */
+  onToggleSourceExpand: (messageId: string) => void;
 }
 
-export default function ChatMessage({
+function ChatMessage({
   message,
   index,
   isSourceExpanded,
   onToggleSourceExpand,
 }: ChatMessageProps) {
-  const [selectedSource, setSelectedSource] = useState<Source | null>(null);
+  const [selectedSource, setSelectedSource] = useState<AskSource | null>(null);
   const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
@@ -273,8 +251,9 @@ export default function ChatMessage({
     };
   }, [documentContent, selectedSource]);
 
-  // Fetch document content when a source is selected
-  const handleSourceClick = async (source: Source) => {
+  // Fetch document content when a source is selected. Stable identity so the
+  // memoized markdown below doesn't re-render on unrelated state changes.
+  const handleSourceClick = useCallback(async (source: AskSource) => {
     setSelectedSource(source);
     setDocumentContent(null);
     setContentError(null);
@@ -289,7 +268,26 @@ export default function ChatMessage({
     } finally {
       setIsLoadingContent(false);
     }
-  };
+  }, []);
+
+  // Stable citation handler (only changes when the sources array changes).
+  const onCitationClick = useMemo(() => {
+    const sources = message.sources;
+    if (!sources || sources.length === 0) return undefined;
+    return (sourceIndex: number) => {
+      if (sources[sourceIndex]) {
+        handleSourceClick(sources[sourceIndex]);
+      }
+    };
+  }, [message.sources, handleSourceClick]);
+
+  // Memoize the parsed markdown: for completed messages this skips the whole
+  // react-markdown parse on unrelated re-renders (modal state, expand toggles);
+  // while streaming, `mainContent` changes each flush so it re-parses anyway.
+  const renderedMainContent = useMemo(() => {
+    if (!mainContent) return null;
+    return <MarkdownRenderer content={mainContent} onCitationClick={onCitationClick} />;
+  }, [mainContent, onCitationClick]);
 
   // Close modal and reset content state
   const handleCloseModal = () => {
@@ -489,20 +487,9 @@ export default function ChatMessage({
               )}
               
               {/* Main Response Content - only shown after thinking is complete */}
-              {mainContent && (
+              {renderedMainContent && (
                 <>
-                  <MarkdownRenderer
-                    content={mainContent}
-                    onCitationClick={
-                      message.sources && message.sources.length > 0
-                        ? (sourceIndex: number) => {
-                            if (message.sources && message.sources[sourceIndex]) {
-                              handleSourceClick(message.sources[sourceIndex]);
-                            }
-                          }
-                        : undefined
-                    }
-                  />
+                  {renderedMainContent}
                   {/* Streaming cursor for main content */}
                   {message.isStreaming && (
                     <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-1" />
@@ -561,7 +548,7 @@ export default function ChatMessage({
                 )}
               </p>
               <button
-                onClick={onToggleSourceExpand}
+                onClick={() => onToggleSourceExpand(message.id)}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
                 {isSourceExpanded ? "Collapse" : "Expand"}
@@ -602,7 +589,7 @@ export default function ChatMessage({
               ))}
             {!isSourceExpanded && message.sources.length > 3 && (
               <button
-                onClick={onToggleSourceExpand}
+                onClick={() => onToggleSourceExpand(message.id)}
                 className="text-xs text-foreground hover:text-muted-foreground"
               >
                 Show {message.sources.length - 3} more sources
@@ -725,3 +712,7 @@ export default function ChatMessage({
     </motion.div>
   );
 }
+
+// Memoized: while a message streams, only THAT message's object identity
+// changes — completed siblings skip re-rendering (and re-parsing markdown).
+export default memo(ChatMessage);

@@ -531,6 +531,8 @@ class ApiClient {
     options: {
       topK?: number;
       conversationHistory?: ConversationMessage[];
+      /** Opaque blob from the last `memory_update` event; omitted when absent. */
+      conversationMemory?: unknown;
       useReranking?: boolean;
       useGraph?: boolean;
       useAgentic?: boolean;
@@ -542,6 +544,7 @@ class ApiClient {
     const {
       topK = 5,
       conversationHistory,
+      conversationMemory,
       useReranking = true,
       useGraph = true,
       useAgentic = false,
@@ -562,6 +565,9 @@ class ApiClient {
         question,
         top_k: topK,
         conversation_history: conversationHistory,
+        ...(conversationMemory !== undefined
+          ? { conversation_memory: conversationMemory }
+          : {}),
         use_reranking: useReranking,
         use_graph: useGraph,
         use_agentic: useAgentic,

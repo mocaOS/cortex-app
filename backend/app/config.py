@@ -491,6 +491,34 @@ class Settings(BaseSettings):
         default=0
     )  # Wall-clock budget for the researcher loop (0 = unlimited). On expiry
     #   the loop stops gathering and the writer synthesizes from what it has.
+    researcher_speed_early_write: bool = Field(
+        default=True
+    )  # Speed mode: after a knowledge_search iteration that produced sources
+    #   (and no skill/git action in flight), break straight to the writer
+    #   instead of spending one more full LLM round-trip on the model calling
+    #   `done` — whose summary the speed writer prompt never reads anyway.
+    researcher_parallel_tool_calls: bool = Field(
+        default=True
+    )  # Execute read-only tool calls (knowledge_search / community_search /
+    #   entity_lookup) from one assistant message concurrently instead of
+    #   serially. Side-effecting tools (http_request, git_repo) stay sequential.
+    researcher_tool_entity_hints: bool = Field(
+        default=True
+    )  # Let the researcher pass an `entities` array on knowledge_search calls;
+    #   when present the query-side entity-extraction LLM call is skipped
+    #   (the researcher just wrote the queries — it knows the entities).
+    researcher_search_dedup: bool = Field(
+        default=True
+    )  # Return a cached tool result (with a "try a different angle" nudge)
+    #   when the researcher re-issues an identical knowledge_search within one
+    #   run, instead of paying the full retrieval pipeline again.
+    emit_done_before_memory: bool = Field(
+        default=True
+    )  # Emit the SSE `done` frame BEFORE the post-answer memory compaction LLM
+    #   call, then `memory_update`, then close. The UI can finalize the turn
+    #   1-4s earlier; clients must keep reading until stream end to receive
+    #   `memory_update`. Set false to restore the legacy order (memory_update
+    #   then done) for clients that stop consuming at `done`.
     rerank_top_k: int = Field(
         default=15
     )  # Candidates kept per knowledge_search after pooling the parallel
