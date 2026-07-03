@@ -667,7 +667,8 @@ class GraphExtractor:
             # Extract individual fields from the block (order-independent)
             source_match = re.search(r'<source>([^<]+)</source>', block, re.IGNORECASE)
             target_match = re.search(r'<target>([^<]+)</target>', block, re.IGNORECASE)
-            type_match = re.search(r'<type>([^<]+)</type>', block, re.IGNORECASE)
+            # Models alternate between <type> and <relation> for this element
+            type_match = re.search(r'<(?:type|relation)>([^<]+)</(?:type|relation)>', block, re.IGNORECASE)
             desc_match = re.search(r'<description>([^<]*)</description>', block, re.IGNORECASE)
             weight_match = re.search(r'<weight>([^<]*)</weight>', block, re.IGNORECASE)
             
@@ -2363,6 +2364,9 @@ Relation Types (use only these): {", ".join(r_types)}
 === Entities in this text ===
 {entity_list}
 
+Each relationship element must use exactly this format:
+<relationship><source>Entity A</source><target>Entity B</target><type>USES</type><description>How they are related, per the source text.</description><weight>7</weight><confidence>0.9</confidence></relationship>
+
 Extract relationships supported by the text above:"""
 
         try:
@@ -2519,7 +2523,10 @@ Relation Types (use only these): {", ".join(r_types)}
 
 {chr(10).join(source_blocks)}
 
-For each source, output one <chunk index="i"> block (matching the source index) containing its <relationship> elements. Output an empty <chunk index="i"></chunk> when a source has no supported relationships:"""
+For each source, output one <chunk index="i"> block (matching the source index) containing its <relationship> elements. Each relationship element must use exactly this format:
+<relationship><source>Entity A</source><target>Entity B</target><type>USES</type><description>How they are related, per the source text.</description><weight>7</weight><confidence>0.9</confidence></relationship>
+
+Output an empty <chunk index="i"></chunk> when a source has no supported relationships:"""
 
         async def _fallback_per_chunk() -> dict:
             out = {}

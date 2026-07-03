@@ -760,7 +760,7 @@ All default **off**; enable per stack after an A/B bench run (`bench/BASELINE.md
 |----------|---------|-------------|
 | `ENTITY_DEDUP_PREFILTER` | `false` | Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every entity. |
 | `ENABLE_BATCHED_KG_WRITES` | `false` | Write entities/links/relationships via UNWIND batches (~10 Neo4j round trips per document instead of hundreds), preserving per-item dedup semantics. |
-| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `false` | Pack several chunks into one per-chunk relationship-extraction LLM call. |
+| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `false` | Pack several chunks into one per-chunk relationship-extraction LLM call (recommended — several times fewer Step 1 LLM calls at equivalent extraction quality; especially effective under provider rate limits). |
 | `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Max chunks per batched relationship-extraction call. |
 | `ENABLE_PHASEB_CHECKPOINTING` | `false` | Persist Phase B batch progress — crash/redeploy resumes; rounds 2+ reuse round 1's candidate scan. |
 | `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing when file bytes + extraction config are unchanged since the last successful run. |

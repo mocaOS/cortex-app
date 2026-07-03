@@ -7,6 +7,13 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 3, 2026 (Step 1: relationship descriptions & batched extraction)
+
+- **Relationship descriptions are now reliably captured in Step 1** — the per-chunk extraction prompts now pin the exact output format, so models consistently include a short evidence-grounded description with every relationship (previously most per-chunk relations were stored without one). The parser also accepts the common `<relation>` tag variant. Descriptions appear in the Explore relationship browser and enrich RAG context.
+- **Chunk-batched relationship extraction validated** — `ENABLE_BATCHED_CHUNK_RELATIONSHIPS=true` (with `RELATIONSHIP_CHUNKS_PER_CALL=4`) packs several chunks into one extraction call: several times fewer Step 1 LLM calls at equivalent extraction quality, which speeds up graph generation considerably when your LLM provider enforces request-rate limits.
+
+---
+
 ## July 3, 2026 (Step 2: targeted relationship discovery)
 
 Deep relationship analysis (Step 2) got a new default engine that scales much better on large graphs. Candidate entity pairs are now identified directly in Neo4j and the LLM focuses on verifying pairs with actual signal, which substantially reduces analysis time and token cost as libraries grow.

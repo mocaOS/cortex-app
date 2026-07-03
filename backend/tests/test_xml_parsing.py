@@ -44,6 +44,23 @@ class TestExtractXmlRelationships:
             "confidence": 1.0,
         }]
 
+    def test_relation_tag_alias(self, extractor):
+        # Observed live with qwen3-6-27b in chunk-batched extraction: the model
+        # emits <relation> instead of <type>. The alias must parse identically.
+        content = """
+        <relationship>
+            <source>NFT</source>
+            <target>Digital Art</target>
+            <relation>RELATED_TO</relation>
+            <weight>8</weight>
+            <confidence>0.9</confidence>
+        </relationship>
+        """
+        rels = extractor._extract_xml_relationships(content)
+        assert len(rels) == 1
+        assert rels[0]["relationship_type"] == "RELATED_TO"
+        assert rels[0]["confidence"] == 0.9
+
     def test_flexible_element_ordering(self, extractor):
         content = """
         <relationship>

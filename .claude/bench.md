@@ -4,6 +4,8 @@ Autonomous LLM-stack benchmark orchestrator. Lives at the repo root in `bench/`.
 
 > **Public status (important).** This subsystem is an **isolated commit, not yet publicly documented**. The main `README.md`, anything under `documentation/`, `handbook/`, and the public-facing layers of the project deliberately do NOT mention `bench/`. When making changes here, do **not** add references to the bench in those docs. Update this file and `bench/README.md` only.
 
+Reference docs inside `bench/`: `BASELINE.md` (A/B gate procedure for efficiency flags) and `STEP1_RESEARCH.md` (2026-07 research pass — Step 1 cost anatomy + ranked optimization levers with external evidence; the flag A/Bs it prescribes run through the BASELINE.md gate).
+
 ## What it is, in one paragraph
 
 Operator drops `.md` docs into `bench/files/`, picks combos in `bench/combos.yaml` (each combo references three model entries from `bench/models.yaml` — primary / extraction / relationship tiers), runs `python bench/run_bench.py`. The orchestrator iterates combos sequentially: rewrites `.env` with per-tier model/base_url/key/context env vars, `docker compose up -d backend --force-recreate`, resets the DB via `/api/admin/reset`, uploads files, drives the pipeline through the existing FastAPI endpoints, parses `docker logs` for signal counts and phase timings, applies a heuristic decision tree for verdict + failure_patterns, writes a per-combo JSON, appends a row to the master `.ods`. After all combos finish, one Claude API call reads the batch and writes the free-form `observations` / `vs_previous_run` / `code_optimisation_findings` fields back into each row.
