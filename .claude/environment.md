@@ -137,7 +137,7 @@ The cross-encoder reranker (`QueryProcessor.rerank_results`) is the precision pa
 - `ENABLE_RERANKING` (default: true) — enable cross-encoder reranking.
 - `RERANKING_MODEL` (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`) — local cross-encoder.
 - `RERANKER_PRELOAD` (default: **false**) — eager-load the cross-encoder at startup. Off keeps idle instances lean and defers the ~7 s cold start to first use (which `prewarm_reranker()`, fired from `enforce_query_quota`, overlaps with the pre-rerank LLM/search work). Set true for latency-sensitive single-tenant deploys that want zero cold start. No effect when reranking is disabled or offloaded to a service.
-- `RERANKER_IDLE_TTL_SECONDS` (default: 1800) — unload the local cross-encoder after this much idle time to reclaim ~1 GB; it reloads on the next query. `0` = never unload. A reaper task (`main.py:_reranker_idle_reaper`) enforces it. Ignored in remote mode.
+- `RERANKER_IDLE_TTL_SECONDS` (default: **0** = never unload; changed 2026-07-03) — when > 0, unload the local cross-encoder after this much idle time to reclaim ~1 GB (reloads ~7 s on the next query). Default is never-unload because idle eviction re-adds the load time to the first question after every quiet period — the query users judge responsiveness by. Set a TTL only on memory-pressed multi-tenant hosts without the shared helper. A reaper task (`main.py:_reranker_idle_reaper`) enforces it. Ignored in remote mode.
 
 ## Shared Model Services (cortex-helper)
 
@@ -206,6 +206,7 @@ All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 ret
 - `RESEARCHER_PARALLEL_TOOL_CALLS` (default: true) — read-only tool calls (`knowledge_search`/`community_search`/`entity_lookup`) emitted in one assistant message execute concurrently via `asyncio.gather`; side-effecting tools (`http_request`, `git_repo`, skill tools) stay sequential. Big quality-mode win (the prompt encourages several searches per turn).
 - `RESEARCHER_TOOL_ENTITY_HINTS` (default: true) — the `knowledge_search` tool accepts an optional `entities` array; when the researcher supplies it, the query-side entity-extraction LLM call is skipped entirely (one LLM round-trip saved per search).
 - `RESEARCHER_SEARCH_DEDUP` (default: true) — identical repeat `knowledge_search` calls within one run return the cached tool text instantly with a "try a different angle" nudge instead of re-running retrieval.
+- `RESEARCHER_FORCE_GROUNDING` (default: true) — grounding guard: when the researcher loop ends with zero searches performed and zero sources (the model answered from parametric memory — observed stochastically on gemma), the pipeline runs one `knowledge_search` with the raw question before the writer. Exempt: memory fast-path, skill-answered questions (skill responses land in `sources`).
 - `EMIT_DONE_BEFORE_MEMORY` (default: true) — the SSE `done` frame (with `pending_memory: true`) is emitted **before** the post-answer memory-compaction LLM call; `memory_update` follows before stream end. UI finalizes 1–4s earlier. Clients must consume the stream to its end, not stop at `done`; set false to restore the legacy order (memory_update → done).
 
 ### Conversation Memory (Context Curator)

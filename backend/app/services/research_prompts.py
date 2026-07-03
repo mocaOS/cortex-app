@@ -474,7 +474,7 @@ def _get_speed_researcher_prompt(
     else:
         role = "You are a research assistant with access to a knowledge base."
         instructions = """<instructions>
-- Use knowledge_search to gather context. You get up to 3 queries per call — cover different angles. Include an `entities` array with any named entities from your queries.
+- ALWAYS call knowledge_search first — never answer from memory alone; the knowledge base is the source of truth. You get up to 3 queries per call — cover different angles. Include an `entities` array with any named entities from your queries.
 - Call done when you have enough information. Only call tools, never output text directly.
 </instructions>"""
 

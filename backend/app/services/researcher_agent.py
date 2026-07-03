@@ -98,6 +98,24 @@ class ResearchResult:
     failed_actions: list = field(default_factory=list)
 
 
+def _needs_grounding_guard(
+    fast_path: bool, result: ResearchResult, settings
+) -> bool:
+    """True when the pipeline should force one raw-question knowledge_search.
+
+    Fires only when the loop performed ZERO searches and gathered ZERO sources
+    (skill API responses land in `sources`, so a skill-answered question never
+    triggers it). Searched-but-empty runs already had their retrieval chance.
+    The memory fast-path intentionally answers without retrieval — exempt.
+    """
+    return (
+        getattr(settings, "researcher_force_grounding", True)
+        and not fast_path
+        and result.search_count == 0
+        and not result.sources
+    )
+
+
 # =============================================================================
 # Context Merging & Deduplication
 # =============================================================================
@@ -1575,6 +1593,30 @@ async def run_research_pipeline(
     # =========================================================================
     # Phase 2: Prepare Context for Writer
     # =========================================================================
+
+    # Grounding guard: the model can (stochastically) end the loop without ever
+    # searching — explicit `done` on iteration 1, or prose instead of tool calls
+    # — which yields an ungrounded zero-source answer on a knowledge-base
+    # product. Run one knowledge_search with the raw question before writing.
+    if _needs_grounding_guard(fast_path, research_result, settings):
+        logger.info(
+            "Grounding guard: loop ended with 0 searches — "
+            "searching the raw question before the writer"
+        )
+        if settings.stream_reasoning_steps:
+            yield {"status": {"stage": "searching", "message": "Searching the knowledge base"}}
+        try:
+            guard_sources, guard_ctx = await _execute_knowledge_search(
+                [question], question, collection_id, processor, settings,
+                allowed_collection_ids=allowed_collection_ids,
+            )
+            research_result.sources.extend(guard_sources)
+            research_result.total_sources_considered += len(guard_sources)
+            research_result.search_count += 1
+            _merge_graph_context(research_result.graph_context, guard_ctx)
+            yield {"retrieval": f"Found {len(guard_sources)} sources"}
+        except Exception as e:
+            logger.warning(f"Grounding guard search failed (writing without): {e}")
 
     # Deduplicate accumulated sources
     unique_sources = _deduplicate_sources(research_result.sources)

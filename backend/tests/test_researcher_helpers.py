@@ -153,3 +153,48 @@ def test_substitute_bare_uppercase_key():
 def test_substitute_skill_env_placeholder(monkeypatch):
     monkeypatch.setenv("SKILL_FOO", "envval")
     assert _substitute_variables("k=${SKILL_FOO}", {}) == "k=envval"
+
+
+# ---------------------------------------------------------------------------
+# _needs_grounding_guard (zero-search grounding fallback)
+# ---------------------------------------------------------------------------
+
+class _Settings:
+    researcher_force_grounding = True
+
+
+def _result(search_count=0, sources=None):
+    from app.services.researcher_agent import ResearchResult
+
+    r = ResearchResult()
+    r.search_count = search_count
+    r.sources = sources or []
+    return r
+
+
+def test_grounding_guard_fires_on_zero_searches():
+    from app.services.researcher_agent import _needs_grounding_guard
+
+    assert _needs_grounding_guard(False, _result(), _Settings()) is True
+
+
+def test_grounding_guard_skips_fast_path_and_searched_runs():
+    from app.services.researcher_agent import _needs_grounding_guard
+
+    # Memory fast-path answers without retrieval by design
+    assert _needs_grounding_guard(True, _result(), _Settings()) is False
+    # Searched-but-empty already had its retrieval chance
+    assert _needs_grounding_guard(False, _result(search_count=2), _Settings()) is False
+    # Skill API responses land in sources — a skill-answered question is grounded
+    assert _needs_grounding_guard(
+        False, _result(sources=[{"content": "api data"}]), _Settings()
+    ) is False
+
+
+def test_grounding_guard_respects_flag():
+    from app.services.researcher_agent import _needs_grounding_guard
+
+    class _Off:
+        researcher_force_grounding = False
+
+    assert _needs_grounding_guard(False, _result(), _Off()) is False

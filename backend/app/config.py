@@ -374,11 +374,14 @@ class Settings(BaseSettings):
     # on the first reranked query. Set true for latency-sensitive single-tenant
     # deployments. Has no effect when enable_reranking is false.
     reranker_preload: bool = Field(default=False)
-    # Idle TTL for the locally-loaded cross-encoder, in seconds. After this much
-    # time with no rerank, the model is unloaded to reclaim ~1 GB; it reloads on
-    # the next query. 0 = never unload (stay loaded once loaded). Ignored when a
-    # remote reranker service is configured.
-    reranker_idle_ttl_seconds: int = Field(default=1800)
+    # Idle TTL for the locally-loaded cross-encoder, in seconds. When > 0, the
+    # model is unloaded after this much time with no rerank (reclaims ~1 GB) and
+    # reloads (~7 s) on the next query. Default 0 = never unload: an idle-evicted
+    # reranker re-adds its load time to the first question after every quiet
+    # period, which is exactly the query users judge responsiveness by. Set a
+    # TTL only on memory-pressed multi-tenant hosts that don't use the shared
+    # helper. Ignored when a remote reranker service is configured.
+    reranker_idle_ttl_seconds: int = Field(default=0)
 
     # ==========================================================================
     # Shared model services (cortex-helper) — offload heavy models to a service
@@ -538,6 +541,13 @@ class Settings(BaseSettings):
     )  # Return a cached tool result (with a "try a different angle" nudge)
     #   when the researcher re-issues an identical knowledge_search within one
     #   run, instead of paying the full retrieval pipeline again.
+    researcher_force_grounding: bool = Field(
+        default=True
+    )  # When the researcher loop ends with ZERO searches performed and zero
+    #   sources gathered (the model answered from parametric memory — observed
+    #   stochastically), run one knowledge_search with the raw question before
+    #   the writer so answers are grounded in the knowledge base. Skipped on
+    #   the memory fast-path (which intentionally answers without retrieval).
     emit_done_before_memory: bool = Field(
         default=True
     )  # Emit the SSE `done` frame BEFORE the post-answer memory compaction LLM

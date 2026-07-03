@@ -37,7 +37,7 @@ To remove the "is it stuck?" silent window before the first token, the SSE strea
 
 - **Lazy by default** — `RERANKER_PRELOAD=false`; the model loads on first reranked query, not at startup.
 - **Cold-start hiding** — `prewarm_reranker()` (fired from `enforce_query_quota` at request entry) kicks off the ~7 s load in the background so it overlaps the query-analysis LLM + embedding + search that precede reranking.
-- **Idle unload** — `RERANKER_IDLE_TTL_SECONDS` (default 1800; 0 = never) + `_reranker_idle_reaper` unload the model when idle, reclaiming ~1 GB; it reloads on next use.
+- **Idle unload** — `RERANKER_IDLE_TTL_SECONDS` (default **0 = never unload**, changed 2026-07-03: idle eviction re-added the ~7 s load to the first question after every quiet period) + `_reranker_idle_reaper` (only active when a TTL > 0 is set) unload the model when idle, reclaiming ~1 GB; it reloads on next use. Set a TTL only on memory-pressed multi-tenant hosts without the shared helper.
 - **Offload** — when `RERANKER_SERVICE_URL` is set, `rerank_results` POSTs to the shared `cortex-helper` service and no local model loads (`_rerank_remote`, with graceful fallback to original order on failure). See [`environment.md`](../environment.md#shared-model-services-cortex-helper).
 
 ## Writer
@@ -83,6 +83,7 @@ All default-on, individually env-gated (see [`environment.md`](../environment.md
 - **`done` before memory compaction** (`EMIT_DONE_BEFORE_MEMORY`): the pipeline emits `{done, pending_memory: true}` right after the last answer token, *then* runs `compact_memory` (an LLM call, 1–4s) and emits `memory_update` before closing. Clients must read the stream to its end (the in-repo frontend does; it finalizes on `done` but keeps consuming). `false` restores memory_update→done for clients that stop at `done`.
 - **Async client reuse** (`llm_config.make_async_openai_client`): clients are cached per (api_key, base_url, langfuse, kwargs) so the httpx pool (TCP+TLS) is reused across the researcher/writer/classifier/compaction calls and across turns, instead of 2–3 fresh handshakes per turn.
 - **Memory fast-path is action-aware**: the `is_memory_answerable` classifier prompt explicitly rules out action requests (create/update/send/delete, API calls) so a skill action can never be silently swallowed by the answer-from-memory shortcut.
+- **Grounding guard** (`RESEARCHER_FORCE_GROUNDING`, default true): when the researcher loop ends with zero searches performed and zero sources (models stochastically call `done` — or answer in prose — straight from parametric memory; observed live on gemma), `run_research_pipeline` runs one `knowledge_search` with the raw question before the writer (`_needs_grounding_guard` + guard block ahead of source dedup). Exempt: memory fast-path, skill-answered questions (skill responses land in `sources`), searched-but-empty runs. The skill-less speed prompt also now says "ALWAYS call knowledge_search first". Tested in `test_researcher_helpers.py`.
 
 ## v-Next Efficiency & Hardening
 
