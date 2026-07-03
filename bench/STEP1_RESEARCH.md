@@ -144,10 +144,9 @@ req/min rate limit. Two defects found and fixed during validation:
    (48,768/49,001) of per-chunk relationships in the prod-scale local graph had empty
    descriptions. With the format example: 100% description coverage (verified 11/11).
 
-Enabled in local `.env` (`ENABLE_BATCHED_CHUNK_RELATIONSHIPS=true`,
-`RELATIONSHIP_CHUNKS_PER_CALL=4`); repo default stays off pending the full
-BASELINE.md QA-score gate. Remaining open: entity-count/QA-score A/B on the
-15-doc bench corpus.
+Repo default flipped to ON (owner decision, 2026-07-03) with
+`RELATIONSHIP_CHUNKS_PER_CALL=4`. Remaining open: entity-count/QA-score A/B
+on the 15-doc bench corpus as a post-hoc confirmation.
 
 ## Suggested sequence
 

@@ -671,10 +671,12 @@ class Settings(BaseSettings):
     #   Neo4j round trips per document instead of one per item). Preserves the
     #   per-item dedup semantics; off by default until bench-validated per stack.
     enable_batched_chunk_relationships: bool = Field(
-        default=False
+        default=True
     )  # Pack several chunks into one per-chunk relationship-extraction LLM
     #   call (÷~relationship_chunks_per_call total calls). Falls back to the
-    #   single-chunk path per batch on error or empty parse.
+    #   single-chunk path per batch on error or empty parse. Default ON since
+    #   2026-07-03 (live-validated: ÷4 calls at parity yield — see
+    #   bench/STEP1_RESEARCH.md); set false to restore one call per chunk.
     relationship_chunks_per_call: int = Field(
         default=4
     )  # Max chunks per batched relationship-extraction call (token budget
