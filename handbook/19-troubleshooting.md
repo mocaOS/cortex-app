@@ -105,6 +105,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window (or leave 0 to inherit from `GRAPH_EXTRACTION_MAX_CONTEXT` / `OPENAI_MAX_CONTEXT`)
 - [ ] `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` is sufficient for Phase 2 batch (default: 16000)
 - [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already handles Qwen3-family verbose XML; only override if you've explicitly tightened the chain elsewhere and need to relax it.
+- [ ] In the default `targeted` mode with no embedding API key configured, candidates come from document co-mention only — pairs need at least `RELATIONSHIP_MIN_SHARED_DOCS` (default 2) shared documents, so very small or single-document libraries may yield few candidates
 - [ ] LLM API key has sufficient credits/quota
 - [ ] Check task status for error messages: `GET /api/tasks/{task_id}`
 
@@ -194,11 +195,12 @@ Run the indicated step to resolve staleness.
 
 ### Slow Relationship Analysis
 
-Relationship analysis is the most compute-intensive step. Speed it up:
+With the default `RELATIONSHIP_DISCOVERY_MODE=targeted`, Step 2 finishes in minutes even on large graphs — candidate pairs come from the entity-embedding index and document co-mention, and the LLM only verifies them in small calls. If it still takes hours:
 
-1. **Increase `PARALLEL_RELATIONSHIP_BATCHES`** — This is the most impactful setting. Default is 2; try 4-8 if your LLM API can handle it.
-2. **Use a faster model** — Smaller models process batches faster.
-3. **Increase `RELATIONSHIP_MAX_CONTEXT`** — Larger batches mean fewer total batches.
+1. **Check `RELATIONSHIP_DISCOVERY_MODE`** — if it is set to `llm_scan` (the legacy full-batch scan), switch to `targeted` (or unset it to get the default). This is the single biggest speedup on large graphs.
+2. **Increase `PARALLEL_RELATIONSHIP_BATCHES`** — Parallel verification calls (targeted) or batches (legacy). Default is 2; try 4-8 if your LLM API can handle it.
+3. **Use a faster model** — Smaller models process calls faster.
+4. **Increase `RELATIONSHIP_MAX_CONTEXT`** (legacy `llm_scan` mode) — Larger batches mean fewer total batches.
 
 ### Slow Search/Q&A
 

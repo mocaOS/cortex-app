@@ -22,18 +22,29 @@ Cortex uses a two-phase approach for building the knowledge graph:
 
 **Phase A (per-document, during upload):** Entity extraction from each document using a dedicated extraction model (can be a smaller, faster model). Entities are fuzzy-matched to chunks for provenance tracking. Entity resolution deduplicates entities at storage time using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as a fallback. This merges variants like "OpenAI" and "Open AI" into a single node with aliases. Entity types are strictly enforced to 10 allowed types (Person, Organization, Location, Concept, Technology, Event, Product, Document, System, Process) via fuzzy matching. After entity extraction and chunk linking, **per-chunk relationship extraction** runs: chunks with 2+ linked entities get an LLM call using the **relationship model** (falls back to extraction model, then primary model) to extract relationships using the chunk text as direct evidence. Entity names in per-chunk relationships are automatically mapped to their canonical (dedup-resolved) names before storage, ensuring relationships reference the correct merged entities. Self-referential relationships (where source and target are the same entity) are automatically filtered out. Per-chunk extraction uses retry with exponential backoff (tenacity, 4 attempts, 2-30s wait) for rate limit errors, and concurrency is controlled by `CONCURRENT_RELATIONS` (default 3). These relationships are stored with `extraction_method='per_chunk'` and provide high-confidence, evidence-grounded connections before Phase B runs.
 
-**Phase B (per-collection, on demand):** Cross-document relationship analysis using the **relationship model** (falls back to extraction model, then primary model). Uses a two-phase approach per batch:
+**Phase B (per-collection, on demand):** Cross-document relationship analysis using the **relationship model** (falls back to extraction model, then primary model). `RELATIONSHIP_DISCOVERY_MODE` selects between two discovery engines:
+
+**Targeted mode (default, `RELATIONSHIP_DISCOVERY_MODE=targeted`):** candidate entity pairs are generated **without the LLM**; the LLM only verifies and classifies them:
+
+1. **Embedding backfill** — Entities missing an embedding are embedded and bulk-written first, so the Neo4j `entity_embedding` vector index covers the whole entity set (skipped when no embedding API key is configured — candidates then come from co-mention only).
+2. **Candidate generation (no LLM)** — Two Neo4j-side generators: **kNN** over the vector index (`RELATIONSHIP_KNN_K` neighbors per entity, minimum similarity `RELATIONSHIP_KNN_MIN_SIMILARITY`, already-connected pairs excluded in-query), and **document co-mention** (unconnected pairs mentioned together in at least `RELATIONSHIP_MIN_SHARED_DOCS` documents; entities appearing in more than `RELATIONSHIP_DOC_FREQ_CAP` documents are skipped as hub anchors).
+3. **Ranking & caps** — Pairs are scored (weighted blend of kNN similarity and shared-document count), deduplicated across directions and sources, then capped per entity (`RELATIONSHIP_CANDIDATES_PER_ENTITY`) and in total (`RELATIONSHIP_MAX_CANDIDATE_PAIRS`).
+4. **LLM verification** — Ranked pairs are verified in small batched calls of `RELATIONSHIP_PAIRS_PER_CALL` (default 40) pairs, each with up to `RELATIONSHIP_PAIR_CONTEXT_TOKENS` of chunk context. The model returns structured XML relationships with confidence scores; the confidence < 0.5 filter and the `RELATIONSHIP_MAX_PER_ENTITY` cap apply as usual. Concurrency is controlled by `PARALLEL_RELATIONSHIP_BATCHES`.
+
+Because the LLM only sees ranked pairs with actual signal, analysis time and token cost stay proportional to the candidate budget rather than to the full entity space — a substantial efficiency gain on large graphs. Targeted mode runs a **single pass** (no multi-round discovery); `RELATIONSHIP_MAX_HOURS` is still enforced between verification batches.
+
+**Legacy mode (`RELATIONSHIP_DISCOVERY_MODE=llm_scan`):** the previous full-batch LLM scan, with a two-phase approach per batch:
 
 1. **Candidate scanning** — The relationship model scans entity pairs with their co-occurring chunk context and proposes candidate relationships. Includes few-shot good and bad examples to guide the LLM, plus anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
 2. **Structured confirmation** — The relationship model confirms candidates with structured XML output including confidence scores (0.0-1.0), grounding each relationship in source text. Relationships with confidence < 0.5 are filtered before storage. Self-referential relationships (where source and target are the same entity) are also automatically filtered out at both the extraction and storage levels.
 
-Entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
+In legacy mode, entities are grouped into batches using **Union-Find co-occurrence clustering** — entities that share chunks are grouped together, with high/low connection count interleaving to prevent hub entities from concentrating in early batches. Batch overlap is 5% with degree-aware selection (entities already in 2+ batches are excluded from overlap). Chunk context is filled dynamically per batch using a **60/40 token split** (60% for chunk text, 40% for entity descriptions and output budget), with **greedy entity-coverage-diversity** selection that maximizes coverage of different entities rather than always picking chunks dominated by hub entities.
 
-Supports **multi-round discovery**: initial analysis runs multiple rounds (default 3, configurable via `RELATIONSHIP_MAX_ROUNDS`), "Find more" (re-analyze) always does 1 round. Progress is tracked cumulatively across all rounds (e.g., "Batch 400/861" for 3 rounds of 287 batches). Guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). The ERR is also displayed on the Knowledge Graph page as a quality indicator.
+Legacy mode supports **multi-round discovery**: initial analysis runs multiple rounds (default 3, configurable via `RELATIONSHIP_MAX_ROUNDS`), "Find more" (re-analyze) always does 1 round. Progress is tracked cumulatively across all rounds (e.g., "Batch 400/861" for 3 rounds of 287 batches). Guided by a target **ERR (Entity-Relationship Ratio)** metric (default 1.0). `RELATIONSHIP_TARGET_RATIO` and `RELATIONSHIP_MAX_ROUNDS` only apply in legacy mode; the ERR itself is still displayed on the Knowledge Graph page as a quality indicator in both modes.
 
 **Anti-hub protections**: A per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`, default 50) prevents any single entity from accumulating disproportionate connections — relationships are skipped when both endpoints exceed the cap. Existing relationships shown to the LLM between rounds are capped at 20 per entity (highest weight first) to prevent hub reinforcement. Prompts emphasize direct, evidence-based relationships and explicitly discourage star patterns through common intermediary entities.
 
-Supports two modes: **incremental** (builds on existing relationships) and **rebuild** (deletes only batch-analysis relationships, preserving per-chunk relationships from Step 1, then re-analyzes from scratch with multi-round). Relationship types are constrained to 14 standard types via fuzzy matching (MENTIONS was removed as it was a lazy co-occurrence catch-all). A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
+Both discovery engines support two run modes: **incremental** (builds on existing relationships) and **rebuild** (deletes only batch-analysis relationships, preserving per-chunk relationships from Step 1, then re-analyzes from scratch — with multi-round in legacy mode). Relationship types are constrained to 14 standard types via fuzzy matching (MENTIONS was removed as it was a lazy co-occurrence catch-all). A **plaintext fallback parser** handles arrow-format output (e.g., `Entity1 -> RELATION -> Entity2`) when XML parsing fails. Triggered via API or the Knowledge Graph page after document processing.
 
 <Mermaid chart={`
 flowchart TD
@@ -407,7 +418,7 @@ GRAPH_WEIGHT=0.2
 The **Knowledge Graph** page (under Manage) provides a one-click **"Generate Graph"** (or **"Regenerate Graph"**) button that runs the full 3-step pipeline in sequence:
 
 1. **Entity Extraction & Relationship Discovery** — Process uploaded documents to extract entities and discover relations (per-chunk) grounded in the source text. Shows entity and relation counts. This step is also **image-analysis-aware**: documents that have finished text processing but still have background image analysis running (e.g., "Analyzed 3/67 images") are treated as in-progress. The step displays an aggregate image analysis progress bar and stays in "In Progress" state until all images across all documents have been analyzed. This ensures entities from images are included before advancing to relationship analysis.
-2. **Deep Relationship Analysis** — Discover cross-document relations between entities using the relationship model. Shows only cross-document relation counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR (Entity-Relationship Ratio) indicator is displayed to 2 decimal places.
+2. **Deep Relationship Analysis** — Discover cross-document relations between entities using the relationship model. By default (`RELATIONSHIP_DISCOVERY_MODE=targeted`) candidate pairs come from entity-embedding kNN and document co-mention, and the LLM only verifies them in small batched calls, keeping analysis fast on large graphs. Shows only cross-document relation counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR (Entity-Relationship Ratio) indicator is displayed to 2 decimal places in both discovery modes (the ERR target only drives extra rounds in legacy `llm_scan` mode).
 3. **Community Detection** — Group related entities into communities.
 
 The button label changes to "Regenerate Graph" when a graph already exists. When regenerating, Step 1 first **deletes all communities, relationships, and entities** (in that order) before reprocessing documents, ensuring a true from-scratch rebuild of the entire knowledge graph. The full cleanup order is: `DELETE /api/graph/communities` → `DELETE /api/graph/relationships` → `DELETE /api/graph/entities` → reprocess all documents → relationship analysis (rebuild mode) → community detection.
@@ -461,14 +472,27 @@ ENABLE_SEMANTIC_ENTITY_RESOLUTION=true
 ENTITY_SIMILARITY_THRESHOLD=0.85
 
 # Relationship analysis (Phase B / Step 2)
+# RELATIONSHIP_DISCOVERY_MODE=targeted          # 'targeted' (default) | 'llm_scan' (legacy full-batch scan)
 # RELATIONSHIP_MAX_CONTEXT=0                    # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary
 # RELATIONSHIP_MAX_OUTPUT_TOKENS=0              # per-chunk + candidate scan (in chain)
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000    # Phase 2 batch (standalone, NOT in chain)
-# PARALLEL_RELATIONSHIP_BATCHES=5       # Batches processed in parallel
-# RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
-# RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
+# PARALLEL_RELATIONSHIP_BATCHES=5       # Batches / verification calls processed in parallel
 # RELATIONSHIP_MAX_HOURS=0              # Max hours for relationship analysis (0 = no limit)
 # RELATIONSHIP_MAX_PER_ENTITY=50        # Soft cap on relationships per entity (0 = no cap)
+
+# Targeted mode only:
+# RELATIONSHIP_KNN_K=8                  # Nearest neighbors per entity (vector index)
+# RELATIONSHIP_KNN_MIN_SIMILARITY=0.80  # Min vector-index score for a kNN candidate pair
+# RELATIONSHIP_MIN_SHARED_DOCS=2        # Min docs co-mentioning a pair (0 = disable generator)
+# RELATIONSHIP_DOC_FREQ_CAP=30          # Skip hub entities mentioned in more docs than this
+# RELATIONSHIP_MAX_CANDIDATE_PAIRS=15000  # Total candidate-pair budget (top-ranked kept)
+# RELATIONSHIP_CANDIDATES_PER_ENTITY=10 # Max candidate pairs per entity (hub guard)
+# RELATIONSHIP_PAIRS_PER_CALL=40        # Candidate pairs verified per LLM call
+# RELATIONSHIP_PAIR_CONTEXT_TOKENS=3000 # Chunk-context tokens per verification call
+
+# Legacy llm_scan mode only:
+# RELATIONSHIP_TARGET_RATIO=1.0         # Target entity-to-relationship ratio (ERR)
+# RELATIONSHIP_MAX_ROUNDS=3             # Max discovery rounds per batch (initial analysis)
 
 # Reasoning Control — lets you use reasoning-capable models for ingestion
 # (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, etc.) with their thinking

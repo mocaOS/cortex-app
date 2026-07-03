@@ -2293,6 +2293,15 @@ class DocumentProcessor:
                 "rounds_completed": 0,
             }
 
+        # Targeted mode (default): zero-LLM candidate generation + pair
+        # verification. The legacy full-batch LLM scan remains available via
+        # RELATIONSHIP_DISCOVERY_MODE=llm_scan.
+        mode = (self.settings.relationship_discovery_mode or "targeted").strip().lower()
+        if mode != "llm_scan":
+            return await self._analyze_relationships_targeted(
+                entities, collection_id, progress_callback
+            )
+
         entity_names = [e.get("name") for e in entities if e.get("name")]
         entity_count = len(entities)
         target_ratio = self.settings.relationship_target_ratio
@@ -2583,6 +2592,280 @@ class DocumentProcessor:
             "total_relationships": final_rel_count,
         }
         logger.info(f"Relationship analysis complete: {result}")
+        return result
+
+    async def _analyze_relationships_targeted(
+        self,
+        entities: List[dict],
+        collection_id: Optional[str],
+        progress_callback: Optional[Callable] = None,
+    ) -> dict:
+        """Targeted Phase B discovery (Step 2 v2).
+
+        Candidate pairs are generated WITHOUT the LLM — entity-embedding kNN
+        via the `entity_embedding` vector index plus document co-mention —
+        then ranked, capped, and verified in small LLM calls of
+        `relationship_pairs_per_call` pairs each. Compared to the legacy
+        full-batch scan (2-3 near-context-window LLM calls per 120-entity
+        batch, ~250 batches per round on a 28k-entity graph), this reduces
+        LLM work by orders of magnitude while focusing it on pairs that have
+        an actual signal.
+        """
+        import time
+
+        from app.services.relationship_candidates import (
+            group_pairs_for_verification,
+            merge_and_rank_candidates,
+        )
+
+        settings = self.settings
+        entity_map = {e["name"]: e for e in entities if e.get("name")}
+        entity_names = list(entity_map.keys())
+        entity_count = len(entity_names)
+        target_ratio = settings.relationship_target_ratio
+        analysis_start = time.monotonic()
+        max_hours = settings.relationship_max_hours
+        deadline = (analysis_start + max_hours * 3600) if max_hours > 0 else None
+
+        def report(current: int, total: int, msg: str):
+            if progress_callback:
+                progress_callback(current, total, msg)
+
+        def final_result(discovered: int, stored: int, candidates_count: int) -> dict:
+            final_rel_count = self.neo4j.get_relationship_count()
+            final_ratio = final_rel_count / entity_count if entity_count else 0.0
+            return {
+                "relationships_discovered": discovered,
+                "relationships_stored": stored,
+                "entities_analyzed": entity_count,
+                "collection_id": collection_id,
+                "entity_relationship_ratio": round(final_ratio, 2),
+                "target_ratio": target_ratio,
+                "rounds_completed": 1,
+                "total_relationships": final_rel_count,
+                "discovery_mode": "targeted",
+                "candidate_pairs": candidates_count,
+            }
+
+        # --- Stage 1: embedding coverage for the kNN candidate scan ---
+        knn_enabled = bool(settings.embed_api_key)
+        if knn_enabled:
+            report(0, 1, "Checking entity embedding coverage...")
+            missing = await asyncio.to_thread(
+                self.neo4j.get_entities_missing_embedding, entity_names
+            )
+            if missing:
+                report(
+                    0, len(missing),
+                    f"Embedding {len(missing)} entities for candidate search...",
+                )
+                from app.models import Entity as EntityModel
+
+                entity_objs = [
+                    EntityModel(
+                        name=m["name"],
+                        type=m.get("type") or "Other",
+                        description=m.get("description") or "",
+                    )
+                    for m in missing
+                ]
+                embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
+                    entity_objs
+                )
+                rows = [
+                    {"name": m["name"], "embedding": emb}
+                    for m, emb in zip(missing, embeddings)
+                    if emb
+                ]
+                if rows:
+                    await asyncio.to_thread(
+                        self.neo4j.set_entity_embeddings_bulk, rows
+                    )
+                logger.info(
+                    f"Targeted Phase B: backfilled embeddings for "
+                    f"{len(rows)}/{len(missing)} entities"
+                )
+                if not rows and len(missing) == entity_count:
+                    knn_enabled = False  # embedding provider unavailable
+        else:
+            logger.warning(
+                "Targeted Phase B: no embedding API key — kNN candidate "
+                "generation disabled, using document co-mention only"
+            )
+
+        # --- Stage 2: candidate generation (no LLM) ---
+        report(0, 1, "Scanning for candidate pairs (vector kNN + document co-mentions)...")
+        knn_raw: list = []
+        doc_raw: list = []
+        if knn_enabled:
+            try:
+                knn_raw = await asyncio.to_thread(
+                    self.neo4j.get_knn_candidate_pairs,
+                    entity_names,
+                    settings.relationship_knn_k,
+                    settings.relationship_knn_min_similarity,
+                )
+            except Exception as e:
+                logger.warning(f"kNN candidate scan failed (continuing without): {e}")
+        if settings.relationship_min_shared_docs > 0:
+            try:
+                doc_raw = await asyncio.to_thread(
+                    self.neo4j.get_doc_cooccurrence_pairs,
+                    entity_names,
+                    settings.relationship_min_shared_docs,
+                    settings.relationship_doc_freq_cap,
+                )
+            except Exception as e:
+                logger.warning(f"Doc co-mention candidate scan failed (continuing without): {e}")
+
+        # Restrict to the analyzed entity set (kNN targets are index-global,
+        # which matters for collection-scoped runs).
+        knn_raw = [p for p in knn_raw if p[0] in entity_map and p[1] in entity_map]
+        doc_raw = [p for p in doc_raw if p[0] in entity_map and p[1] in entity_map]
+
+        candidates = merge_and_rank_candidates(
+            knn_raw,
+            doc_raw,
+            per_entity_cap=settings.relationship_candidates_per_entity,
+            total_cap=settings.relationship_max_candidate_pairs,
+        )
+        logger.info(
+            f"Targeted Phase B: {len(knn_raw)} kNN + {len(doc_raw)} co-mention "
+            f"raw pairs → {len(candidates)} ranked candidates "
+            f"({entity_count} entities)"
+        )
+        if not candidates:
+            report(1, 1, "No new candidate pairs found — graph is well connected")
+            return final_result(0, 0, 0)
+
+        # --- Stage 3: LLM verification in small pair batches ---
+        groups = group_pairs_for_verification(
+            candidates, settings.relationship_pairs_per_call
+        )
+        total_groups = len(groups)
+        report(
+            0, total_groups,
+            f"Verifying {len(candidates)} candidate pairs "
+            f"({total_groups} batches)...",
+        )
+
+        max_per_entity = settings.relationship_max_per_entity
+        if max_per_entity > 0:
+            entity_degrees = await asyncio.to_thread(
+                self.neo4j.get_entity_degree_map, entity_names
+            )
+        else:
+            entity_degrees = {}
+
+        stats = {"discovered": 0, "stored": 0, "groups_done": 0, "skipped_time": 0}
+        seen_keys: set = set()
+        store_lock = asyncio.Lock()
+        parallel = max(
+            1,
+            settings.parallel_relationship_batches or settings.concurrent_extractions,
+        )
+        semaphore = asyncio.Semaphore(parallel)
+
+        async def verify_group(pairs: list) -> None:
+            async with semaphore:
+                if deadline and time.monotonic() > deadline:
+                    async with store_lock:
+                        stats["skipped_time"] += 1
+                        stats["groups_done"] += 1
+                    return
+
+                group_names: list = []
+                seen_names: set = set()
+                for src, tgt in pairs:
+                    for n in (src, tgt):
+                        if n not in seen_names:
+                            seen_names.add(n)
+                            group_names.append(n)
+                group_entities = [entity_map[n] for n in group_names]
+
+                context = ""
+                if settings.relationship_pair_context_tokens > 0:
+                    try:
+                        context = await asyncio.to_thread(
+                            self.neo4j.get_chunk_context_for_entities,
+                            group_names,
+                            token_budget=settings.relationship_pair_context_tokens,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Pair context fetch failed (verifying without): {e}")
+
+                rels = await self.graph_extractor.analyze_relationships_async(
+                    group_entities,
+                    context,
+                    None,
+                    settings.relationship_batch_max_output_tokens,
+                    candidate_pairs=pairs,
+                )
+
+            async with store_lock:
+                stats["groups_done"] += 1
+                for rel in rels:
+                    key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    stats["discovered"] += 1
+                    if getattr(rel, "confidence", 1.0) < 0.5:
+                        continue
+                    if max_per_entity > 0:
+                        src_deg = entity_degrees.get(rel.source, 0)
+                        tgt_deg = entity_degrees.get(rel.target, 0)
+                        if src_deg >= max_per_entity and tgt_deg >= max_per_entity:
+                            continue
+                    try:
+                        stored = await asyncio.to_thread(
+                            self.neo4j.store_relationship,
+                            rel,
+                            None,
+                            "cross_collection",
+                        )
+                        if stored:
+                            stats["stored"] += 1
+                            entity_degrees[rel.source] = entity_degrees.get(rel.source, 0) + 1
+                            entity_degrees[rel.target] = entity_degrees.get(rel.target, 0) + 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to store relationship {rel.source} -> {rel.target}: {e}"
+                        )
+
+                done = stats["groups_done"]
+                elapsed = time.monotonic() - analysis_start
+                avg = elapsed / done if done else 0
+                eta_seconds = int(avg * (total_groups - done))
+                if eta_seconds > 60:
+                    eta_str = f"~{eta_seconds // 60}m remaining"
+                elif eta_seconds > 0:
+                    eta_str = f"~{eta_seconds}s remaining"
+                else:
+                    eta_str = "almost done"
+                report(
+                    done, total_groups,
+                    f"Batch {done}/{total_groups} ({stats['stored']} found), {eta_str}",
+                )
+
+        await asyncio.gather(*(verify_group(g) for g in groups))
+
+        if stats["skipped_time"]:
+            logger.info(
+                f"Targeted Phase B: time budget ({max_hours}h) exhausted — "
+                f"skipped {stats['skipped_time']}/{total_groups} verification batches"
+            )
+
+        result = final_result(stats["discovered"], stats["stored"], len(candidates))
+        elapsed_min = (time.monotonic() - analysis_start) / 60
+        report(
+            total_groups, total_groups,
+            f"Relationship analysis complete — {stats['stored']} stored, "
+            f"ratio {result['entity_relationship_ratio']:.1f}/{target_ratio}",
+        )
+        logger.info(
+            f"Targeted Phase B complete in {elapsed_min:.1f}m: {result}"
+        )
         return result
 
     async def _analyze_images_background_from_serialized(

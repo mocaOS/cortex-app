@@ -2252,6 +2252,136 @@ class Neo4jService:
 
         return co_occurrence
 
+    def get_entities_missing_embedding(self, entity_names: List[str]) -> List[dict]:
+        """Return {name, type, description} for entities without an embedding.
+
+        Used by targeted Phase B discovery to backfill vectors before the
+        kNN candidate scan (entities ingested before semantic resolution was
+        enabled, or whose embedding call failed at ingest time).
+        """
+        if not entity_names:
+            return []
+        missing: List[dict] = []
+        batch_size = 500
+        for i in range(0, len(entity_names), batch_size):
+            batch = entity_names[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names AND e.embedding IS NULL
+                    RETURN e.name as name, e.type as type, e.description as description
+                """, names=batch)
+                missing.extend(dict(record) for record in result)
+        return missing
+
+    def set_entity_embeddings_bulk(self, rows: List[dict]) -> int:
+        """Set `embedding` on entities in bulk. rows: [{name, embedding}]."""
+        if not rows:
+            return 0
+        updated = 0
+        batch_size = 200  # embedding vectors are large — keep transactions bounded
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    UNWIND $rows AS row
+                    MATCH (e:Entity {name: row.name})
+                    SET e.embedding = row.embedding
+                    RETURN count(e) as cnt
+                """, rows=batch)
+                record = result.single()
+                updated += record["cnt"] if record else 0
+        return updated
+
+    def get_knn_candidate_pairs(
+        self,
+        entity_names: List[str],
+        k: int = 8,
+        min_similarity: float = 0.80,
+    ) -> List[tuple]:
+        """Vector-index kNN candidate pairs for targeted relationship discovery.
+
+        For each entity (with an embedding), queries the `entity_embedding`
+        vector index for its k nearest neighbors and keeps pairs that are not
+        already connected by any relationship.
+
+        Returns:
+            List of (source_name, target_name, index_score) tuples,
+            deduplicated across directions.
+        """
+        if not entity_names:
+            return []
+        pairs: List[tuple] = []
+        seen: set = set()
+        batch_size = 250
+        for i in range(0, len(entity_names), batch_size):
+            batch = entity_names[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE e.name IN $names AND e.embedding IS NOT NULL
+                    CALL db.index.vector.queryNodes('entity_embedding', $k, e.embedding)
+                    YIELD node, score
+                    WHERE node:Entity AND node.name <> e.name
+                      AND score >= $min_sim
+                      AND NOT (e)-[]-(node)
+                    RETURN e.name as source, node.name as target, score
+                """, names=batch, k=k + 1, min_sim=min_similarity)
+                for record in result:
+                    key = tuple(sorted((record["source"].lower(), record["target"].lower())))
+                    if key not in seen:
+                        seen.add(key)
+                        pairs.append((record["source"], record["target"], record["score"]))
+        return pairs
+
+    def get_doc_cooccurrence_pairs(
+        self,
+        entity_names: List[str],
+        min_shared_docs: int = 2,
+        doc_freq_cap: int = 30,
+        max_pairs_per_batch: int = 5000,
+    ) -> List[tuple]:
+        """Document co-mention candidate pairs (no LLM).
+
+        Finds unconnected entity pairs mentioned together in at least
+        `min_shared_docs` distinct documents. Entities appearing in more than
+        `doc_freq_cap` documents are skipped as anchors (hub guard — they
+        co-occur with everything and would dominate both the query cost and
+        the candidate budget).
+
+        Returns:
+            List of (source_name, target_name, shared_doc_count) tuples.
+        """
+        if not entity_names or min_shared_docs <= 0:
+            return []
+        pairs: List[tuple] = []
+        seen: set = set()
+        batch_size = 200
+        for i in range(0, len(entity_names), batch_size):
+            batch = entity_names[i:i + batch_size]
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (e1:Entity) WHERE e1.name IN $names
+                    MATCH (e1)<-[:MENTIONS]-(:Chunk)<-[:HAS_CHUNK]-(d:Document)
+                    WITH e1, collect(DISTINCT d) as docs
+                    WHERE size(docs) >= $min_shared AND size(docs) <= $freq_cap
+                    UNWIND docs as d
+                    MATCH (d)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(e2:Entity)
+                    WHERE e1.name < e2.name
+                    WITH e1, e2, count(DISTINCT d) as shared
+                    WHERE shared >= $min_shared AND NOT (e1)-[]-(e2)
+                    RETURN e1.name as source, e2.name as target, shared
+                    ORDER BY shared DESC
+                    LIMIT $max_pairs
+                """, names=batch, min_shared=min_shared_docs,
+                    freq_cap=doc_freq_cap, max_pairs=max_pairs_per_batch)
+                for record in result:
+                    key = tuple(sorted((record["source"].lower(), record["target"].lower())))
+                    if key not in seen:
+                        seen.add(key)
+                        pairs.append((record["source"], record["target"], record["shared"]))
+        return pairs
+
     def get_relationship_count(self) -> int:
         """Get total count of Entity-Entity relationships."""
         with self.driver.session() as session:

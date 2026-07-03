@@ -1012,8 +1012,9 @@ class SystemConfigResponse(BaseModel):
     relationship_batch_max_output_tokens: int = Field(..., description="Output budget for Phase 2 batch relationship analysis (standalone)")
     parallel_relationship_batches: int = Field(..., description="Number of relationship batches processed in parallel")
     relationship_target_ratio: float = Field(default=3.0, description="Target relationships-per-entity ratio")
-    relationship_max_rounds: int = Field(default=1, description="Max auto-discovery rounds per analysis run")
+    relationship_max_rounds: int = Field(default=1, description="Max auto-discovery rounds per analysis run (llm_scan mode)")
     relationship_max_hours: float = Field(default=0, description="Max hours for relationship generation (0 = no limit)")
+    relationship_discovery_mode: str = Field(default="targeted", description="Step 2 engine: 'targeted' (kNN + co-mention candidates, LLM pair verification) or 'llm_scan' (legacy full-batch scan)")
 
     # Relationship Extraction Model
     relationship_model: str = Field(..., description="Model used for per-chunk relationship extraction")

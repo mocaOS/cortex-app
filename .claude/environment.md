@@ -39,6 +39,20 @@ See [`.claude/domain/relationships.md`](domain/relationships.md) for how these a
 - `RELATIONSHIP_MAX_HOURS` (default: 0) — max hours for relationship generation (0 = no time limit, completes all rounds)
 - `RELATIONSHIP_MAX_PER_ENTITY` (default: 50) — soft cap on relationships per entity during analysis (0 = no cap). When both endpoints are saturated, the relationship is skipped.
 
+### Targeted Phase B discovery (Step 2 v2, default mode)
+
+Candidates come from the entity-embedding vector index + document co-mention (no LLM); the LLM only verifies ranked pairs. See [`.claude/domain/relationships.md`](domain/relationships.md#phase-b-step-2--discovery-modes).
+
+- `RELATIONSHIP_DISCOVERY_MODE` (default: `targeted`) — `targeted` (kNN + co-mention candidates, LLM pair verification) or `llm_scan` (legacy two-phase full-batch scan; `RELATIONSHIP_TARGET_RATIO`/`RELATIONSHIP_MAX_ROUNDS` only apply there)
+- `RELATIONSHIP_KNN_K` (default: 8) — nearest neighbors per entity in the vector-index candidate scan
+- `RELATIONSHIP_KNN_MIN_SIMILARITY` (default: 0.80) — min Neo4j vector-index score for a kNN candidate pair
+- `RELATIONSHIP_MIN_SHARED_DOCS` (default: 2) — min distinct documents co-mentioning a pair for the co-mention generator (0 = disable generator)
+- `RELATIONSHIP_DOC_FREQ_CAP` (default: 30) — hub guard: entities mentioned in more documents than this are skipped as co-mention anchors
+- `RELATIONSHIP_MAX_CANDIDATE_PAIRS` (default: 15000) — total candidate-pair budget per run (top-ranked kept)
+- `RELATIONSHIP_CANDIDATES_PER_ENTITY` (default: 10) — max candidate pairs any entity may appear in (hub guard)
+- `RELATIONSHIP_PAIRS_PER_CALL` (default: 40) — candidate pairs verified per LLM call
+- `RELATIONSHIP_PAIR_CONTEXT_TOKENS` (default: 3000) — chunk-context token budget per verification call (0 = entity descriptions only)
+
 ## Reasoning Control (ingestion)
 
 Force reasoning OFF on capable models (GPT-5/5.1, Claude 4.x, Qwen3, DeepSeek-R1, MiniMax) so they can be used for structured extraction without the drift, hidden-token cost, latency, and malformed JSON that reasoning causes on these tasks. Implementation: `backend/app/services/reasoning_config.py`. Backend detected from `base_url`; model family by regex on the model string. Works for OpenAI, OpenRouter, Venice, Anthropic, and vLLM.

@@ -47,7 +47,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 ### GraphRAG Features
-- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document two-phase deep relationship analysis (candidate scanning with few-shot examples → confidence-scored XML extraction) for knowledge graph construction. Stats endpoint returns `per_chunk_relationship_count` separately so the UI can distinguish Step 1 relations vs cross-document relations. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
+- **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document deep relationship analysis — default `targeted` mode generates candidate pairs without the LLM (entity-embedding kNN + document co-mention) and verifies them in small batched LLM calls; legacy `llm_scan` mode runs the two-phase full-batch scan (candidate scanning with few-shot examples → confidence-scored XML extraction) — for knowledge graph construction. Stats endpoint returns `per_chunk_relationship_count` separately so the UI can distinguish Step 1 relations vs cross-document relations. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
 - **🔄 Hybrid Retrieval**: Combines vector similarity, keyword search, and graph traversal
 - **🎯 Re-ranking**: Cross-encoder re-ranking for improved precision
 - **💭 Conversation Memory**: Multi-turn conversations with context retention
@@ -61,7 +61,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
 - **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking and proper document provenance tracking (`source_documents`, `extraction_count`) — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz) with Person-aware name gating (word-prefix validation prevents false matches on shared first names), entity-level deduplicate button in Explore for quick access, inspect modal for reviewing entity details before merging, LLM-generated combined descriptions, review-and-merge UI, inline entity search, and full merge history with audit trail
-- **🔄 Multi-Round Relationship Discovery**: Initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds with cumulative progress tracking, stopping early when target Entity-Relationship Ratio (ERR) is reached. "Find more" button runs 1 additional round. Anti-hub protections: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), degree-aware batching, and evidence-based prompts prevent star topologies. Supports incremental (build on existing) and rebuild (delete cross-document relations, preserving per-chunk relations) modes.
+- **🔄 Targeted Relationship Discovery**: Default Step 2 engine (`RELATIONSHIP_DISCOVERY_MODE=targeted`) generates candidate entity pairs without the LLM — entity-embedding kNN over a Neo4j vector index (missing embeddings backfilled automatically) plus document co-mention — then verifies them in small batched LLM calls (~40 pairs/call), scaling efficiently on large graphs. Legacy `llm_scan` mode keeps the multi-round full-batch scan (up to `RELATIONSHIP_MAX_ROUNDS` rounds, stopping early at the target Entity-Relationship Ratio). Anti-hub protections in both modes: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), candidate caps and doc-frequency hub guard (targeted), degree-aware batching and evidence-based prompts (legacy). Supports incremental (build on existing) and rebuild (delete cross-document relations, preserving per-chunk relations) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page (2 decimal places) with color-coded health indicator
 - **📊 Explore Browsers**: Entities, relationships, and communities browsers load all items for full-dataset search, with type filters and detail modals
 - **⏱️ Progress Tracking**: Real-time batch progress with ETA for relationship analysis and community detection
@@ -370,7 +370,7 @@ npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/graph/relationships/analyze` | Two-phase relationship analysis: Phase 1 scans candidate pairs, Phase 2 confirms with XML output. Params: `rebuild=true` deletes cross-document (batch) relations while preserving per-chunk relations. Multi-round discovery up to `RELATIONSHIP_MAX_ROUNDS`. |
+| POST | `/api/graph/relationships/analyze` | Cross-document relationship analysis. Default `targeted` mode: kNN + co-mention candidate pairs verified by the LLM in small batched calls (single pass). Legacy `llm_scan` mode: Phase 1 scans candidate pairs, Phase 2 confirms with XML output, multi-round up to `RELATIONSHIP_MAX_ROUNDS`. Params: `rebuild=true` deletes cross-document (batch) relations while preserving per-chunk relations. |
 | DELETE | `/api/graph/relationships` | Delete ALL entity relationships |
 
 ### Community Detection Endpoints
@@ -810,9 +810,18 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches to process in parallel (0 = use `CONCURRENT_RELATIONS`) | No | `5` |
-| `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached | No | `1.0` |
-| `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) | No | `3` |
+| `RELATIONSHIP_DISCOVERY_MODE` | Step 2 engine: `targeted` (kNN + co-mention candidate pairs, LLM pair verification) or `llm_scan` (legacy two-phase full-batch scan) | No | `targeted` |
+| `RELATIONSHIP_KNN_K` | Targeted mode: nearest neighbors per entity in the vector-index candidate scan | No | `8` |
+| `RELATIONSHIP_KNN_MIN_SIMILARITY` | Targeted mode: min Neo4j vector-index score for a kNN candidate pair | No | `0.80` |
+| `RELATIONSHIP_MIN_SHARED_DOCS` | Targeted mode: min distinct docs co-mentioning a pair (0 = disable the co-mention generator) | No | `2` |
+| `RELATIONSHIP_DOC_FREQ_CAP` | Targeted mode: hub guard — entities mentioned in more docs than this are skipped as co-mention anchors | No | `30` |
+| `RELATIONSHIP_MAX_CANDIDATE_PAIRS` | Targeted mode: total candidate-pair budget per run (top-ranked kept) | No | `15000` |
+| `RELATIONSHIP_CANDIDATES_PER_ENTITY` | Targeted mode: max candidate pairs per entity (hub guard) | No | `10` |
+| `RELATIONSHIP_PAIRS_PER_CALL` | Targeted mode: candidate pairs verified per LLM call | No | `40` |
+| `RELATIONSHIP_PAIR_CONTEXT_TOKENS` | Targeted mode: chunk-context token budget per verification call (0 = entity descriptions only) | No | `3000` |
+| `PARALLEL_RELATIONSHIP_BATCHES` | Number of batches / verification calls to process in parallel (0 = use `CONCURRENT_RELATIONS`) | No | `5` |
+| `RELATIONSHIP_TARGET_RATIO` | Target Entity-Relationship Ratio (ERR); stops rounds early when reached — legacy `llm_scan` mode only | No | `1.0` |
+| `RELATIONSHIP_MAX_ROUNDS` | Max analysis rounds for initial relationship discovery (re-analyze always does 1) — legacy `llm_scan` mode only | No | `3` |
 
 #### Community Detection & Graph Summarization
 
@@ -1004,7 +1013,7 @@ When a document is uploaded (or custom input is added), the following pipeline e
 8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed concurrently via vision model (configurable concurrency via `VISION_MAX_CONCURRENT`, default 3). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
 9. **Collection Assignment** - Optionally add document to a collection scope
 10. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
-11. **Relationship Analysis** (separate step via Knowledge Graph page) - Two-phase pipeline using the relationship model: Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser). Entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities). Token budget is split 60/40 between entities and dynamic chunk context per batch. Runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when target ERR is reached. Re-analyze always does 1 round. Supports incremental (build on existing) and rebuild (from scratch) modes.
+11. **Relationship Analysis** (separate step via Knowledge Graph page) - Uses the relationship model. Default `targeted` mode: candidate entity pairs are generated without the LLM (entity-embedding kNN via a Neo4j vector index, with automatic embedding backfill, plus document co-mention with hub guards), scored, capped, and then verified by the LLM in small batched calls (~40 pairs/call, single pass). Legacy `llm_scan` mode: two-phase full-batch pipeline — Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser); entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities), token budget split 60/40 between entities and dynamic chunk context per batch, up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds stopping early when target ERR is reached (re-analyze always does 1 round). Both modes support incremental (build on existing) and rebuild (from scratch) modes.
 12. **Community Detection** (separate step) - Leiden/Louvain algorithm with weight-aware, undirected projection and co-mention edges. Extraction model generates community names and summaries.
 
 ### Query Pipeline (Agent Architecture)

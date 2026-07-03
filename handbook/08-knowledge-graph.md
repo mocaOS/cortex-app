@@ -43,7 +43,22 @@ available_tokens = (GRAPH_EXTRACTION_MAX_CONTEXT × 0.8) − system_prompt_token
 
 Discovers relationships between entities across your entire collection. The UI shows only cross-document relation counts (excludes per-chunk). The "Find more" button runs an additional round of incremental analysis. The ERR indicator is displayed to 2 decimal places.
 
-**What happens:**
+Step 2 has two discovery engines, selected via `RELATIONSHIP_DISCOVERY_MODE`.
+
+**Targeted mode (default, `RELATIONSHIP_DISCOVERY_MODE=targeted`):**
+
+Candidate entity pairs are generated without the LLM; the LLM only verifies and classifies them. This keeps analysis time proportional to the candidate budget rather than to the full entity space, so it scales well on large graphs.
+
+1. Entities missing an embedding are embedded and bulk-written first, so the `entity_embedding` vector index covers the whole set (skipped when no embedding API key is configured — candidates then come from co-mention only)
+2. Candidate pairs are generated in Neo4j: **kNN** over the vector index (`RELATIONSHIP_KNN_K` neighbors per entity, min similarity `RELATIONSHIP_KNN_MIN_SIMILARITY`, already-connected pairs excluded) plus **document co-mention** (unconnected pairs mentioned together in at least `RELATIONSHIP_MIN_SHARED_DOCS` documents; entities in more than `RELATIONSHIP_DOC_FREQ_CAP` documents skipped as hub anchors)
+3. Pairs are scored, deduplicated across directions and sources, and capped (`RELATIONSHIP_CANDIDATES_PER_ENTITY` per entity, `RELATIONSHIP_MAX_CANDIDATE_PAIRS` total)
+4. The LLM verifies the ranked pairs in small batched calls of `RELATIONSHIP_PAIRS_PER_CALL` (default 40) pairs, each with up to `RELATIONSHIP_PAIR_CONTEXT_TOKENS` of chunk context, returning the same XML format with confidence scores as below
+
+Targeted mode runs a **single pass** — no multi-round discovery. `RELATIONSHIP_MAX_HOURS` is still enforced between verification batches.
+
+**Legacy mode (`RELATIONSHIP_DISCOVERY_MODE=llm_scan`):**
+
+The previous full-batch LLM scan:
 
 1. All entities in the collection are fetched
 2. Entities are **interleaved by type** (round-robin merge) to ensure cross-type relationship discovery
@@ -52,6 +67,11 @@ Discovers relationships between entities across your entire collection. The UI s
    - Fetches **co-mention chunks** with greedy entity-coverage-diversity selection (maximizes coverage of different entities rather than always picking hub-dominated chunks)
    - Fetches existing relationships involving batch entities (capped at 20 per entity, highest weight first) to avoid rediscovery without reinforcing hub patterns
    - Sends entities + source context + existing relationships to the LLM. Phase 1 (candidate scan) includes few-shot good/bad examples to guide the LLM and anti-hub negative instructions ("If no clear relationship exists, do not create one") with bad examples showing co-occurrence pairs to avoid.
+
+Legacy mode supports **multi-round discovery**: initial analysis runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds, stopping early when the target ERR (`RELATIONSHIP_TARGET_RATIO`) is reached or `RELATIONSHIP_MAX_HOURS` is exhausted. These two knobs only apply in legacy mode; the ERR indicator itself is displayed in both modes.
+
+**In both modes:**
+
 5. The LLM returns relationships in XML format with confidence scores:
    ```xml
    <relationship>
@@ -68,13 +88,13 @@ Discovers relationships between entities across your entire collection. The UI s
 8. Non-standard relationship types are fuzzy-matched to the 14 standard types (80% threshold)
 9. Results are deduplicated across batches using the key `(source.lower(), target.lower(), type)`
 
-**Two modes:**
+**Two run modes:**
 - **Incremental** (default) — Builds on existing relationships, only analyzing gaps
 - **Rebuild** (`rebuild=true`) — Deletes only batch-analysis relationships (preserving per-chunk relationships from Step 1) and re-analyzes from scratch
 
 **Parallel execution:**
 
-When `PARALLEL_RELATIONSHIP_BATCHES > 1`, batches are processed concurrently using an asyncio Semaphore. Results are collected in batch order for deterministic deduplication.
+When `PARALLEL_RELATIONSHIP_BATCHES > 1`, batches (legacy mode) or verification calls (targeted mode) are processed concurrently using an asyncio Semaphore. Results are collected in batch order for deterministic deduplication.
 
 **Progress tracking:**
 

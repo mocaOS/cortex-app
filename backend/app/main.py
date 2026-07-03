@@ -4221,6 +4221,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         relationship_target_ratio=settings.relationship_target_ratio,
         relationship_max_rounds=settings.relationship_max_rounds,
         relationship_max_hours=settings.relationship_max_hours,
+        relationship_discovery_mode=settings.relationship_discovery_mode,
 
         # Relationship Extraction Model
         relationship_model=settings.rel_extraction_model,

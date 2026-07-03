@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 3, 2026 (Step 2: targeted relationship discovery)
+
+Deep relationship analysis (Step 2) got a new default engine that scales much better on large graphs. Candidate entity pairs are now identified directly in Neo4j and the LLM focuses on verifying pairs with actual signal, which substantially reduces analysis time and token cost as libraries grow.
+
+- **Candidates without the LLM** — the new default engine (`RELATIONSHIP_DISCOVERY_MODE=targeted`) generates candidate entity pairs from the Neo4j `entity_embedding` vector index (kNN; entities missing embeddings are backfilled automatically first) and from document co-mention (unconnected pairs mentioned together in ≥2 documents, hub entities excluded). Pairs are scored, deduplicated, and capped per entity and in total.
+- **LLM as verifier, not scanner** — the relationship model only verifies/classifies the ranked pairs in small batched calls (~40 pairs per call) with a bounded chunk-context budget, instead of scanning every entity batch against a near-full context window.
+- **Single pass** — targeted mode does no multi-round discovery; `RELATIONSHIP_TARGET_RATIO` and `RELATIONSHIP_MAX_ROUNDS` now only apply to the legacy mode. `RELATIONSHIP_MAX_HOURS`, `RELATIONSHIP_MAX_PER_ENTITY`, `PARALLEL_RELATIONSHIP_BATCHES`, and the confidence ≥ 0.5 filter apply to both modes. Relationships are still stored with `extraction_method='cross_collection'`; Step 1 per-chunk relations and the Knowledge Graph UI are unchanged (the ERR indicator still displays in both modes).
+- **New env vars** (defaults): `RELATIONSHIP_KNN_K=8`, `RELATIONSHIP_KNN_MIN_SIMILARITY=0.80`, `RELATIONSHIP_MIN_SHARED_DOCS=2`, `RELATIONSHIP_DOC_FREQ_CAP=30`, `RELATIONSHIP_MAX_CANDIDATE_PAIRS=15000`, `RELATIONSHIP_CANDIDATES_PER_ENTITY=10`, `RELATIONSHIP_PAIRS_PER_CALL=40`, `RELATIONSHIP_PAIR_CONTEXT_TOKENS=3000`. The admin config endpoint now also exposes `relationship_discovery_mode`.
+- **Legacy path preserved** — set `RELATIONSHIP_DISCOVERY_MODE=llm_scan` to restore the previous two-phase full-batch scan with multi-round discovery.
+
+---
+
 ## July 2, 2026 (Reliability: system reset & library import at scale)
 
 Two operations that worked fine on small instances but failed on grown ones are now size-independent.

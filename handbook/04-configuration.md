@@ -46,7 +46,16 @@ These settings control the LLM used for entity extraction (Phase A) and can poin
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | `0` (=inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary) | Output budget for **per-chunk + candidate-pair scan** (in the chain). **Migrated semantics** — see migration note below. |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | `16000` | Output budget for **Phase 2 batch** relationship analysis. Standalone (NOT in chain) — batch processes hundreds of pairs per call and genuinely needs ~16k. |
 | `RELATIONSHIP_MAX_PER_ENTITY` | `50` | Soft cap on relationships per entity. Prevents hub entities from accumulating disproportionate connections. 0 = no cap. |
-| `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
+| `PARALLEL_RELATIONSHIP_BATCHES` | `0` | Number of relationship batches / verification calls to process in parallel. 0 = use `CONCURRENT_EXTRACTIONS`. **Most impactful lever for relationship analysis speed.** |
+| `RELATIONSHIP_DISCOVERY_MODE` | `targeted` | Step 2 (cross-document) engine: `targeted` (kNN + co-mention candidate pairs, LLM verification in small calls — minutes on large graphs) or `llm_scan` (legacy two-phase full-batch scan with multi-round discovery; `RELATIONSHIP_TARGET_RATIO`/`RELATIONSHIP_MAX_ROUNDS` only apply there). |
+| `RELATIONSHIP_KNN_K` | `8` | Targeted mode: nearest neighbors per entity in the vector-index candidate scan. |
+| `RELATIONSHIP_KNN_MIN_SIMILARITY` | `0.80` | Targeted mode: min Neo4j vector-index score for a kNN candidate pair. |
+| `RELATIONSHIP_MIN_SHARED_DOCS` | `2` | Targeted mode: min distinct documents co-mentioning a pair (0 = disable the co-mention generator). |
+| `RELATIONSHIP_DOC_FREQ_CAP` | `30` | Targeted mode: hub guard — entities mentioned in more documents than this are skipped as co-mention anchors. |
+| `RELATIONSHIP_MAX_CANDIDATE_PAIRS` | `15000` | Targeted mode: total candidate-pair budget per run (top-ranked kept). |
+| `RELATIONSHIP_CANDIDATES_PER_ENTITY` | `10` | Targeted mode: max candidate pairs any entity may appear in (hub guard). |
+| `RELATIONSHIP_PAIRS_PER_CALL` | `40` | Targeted mode: candidate pairs verified per LLM call. |
+| `RELATIONSHIP_PAIR_CONTEXT_TOKENS` | `3000` | Targeted mode: chunk-context token budget per verification call (0 = entity descriptions only). |
 
 ## Reasoning Control (ingestion pipelines)
 

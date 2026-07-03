@@ -329,6 +329,38 @@ class Settings(BaseSettings):
         default=50
     )  # Soft cap on relationships per entity during analysis. 0 = no cap.
 
+    # Targeted Phase B discovery (Step 2 v2). Candidates are generated WITHOUT
+    # the LLM (entity-embedding kNN + document co-mention), then the LLM only
+    # verifies/classifies ranked pairs in small batched calls. Orders of
+    # magnitude fewer/cheaper LLM calls than the legacy full-batch scan.
+    relationship_discovery_mode: str = Field(
+        default="targeted"
+    )  # 'targeted' (kNN + co-mention candidates, LLM verifies pairs) | 'llm_scan' (legacy two-phase batch scan)
+    relationship_knn_k: int = Field(
+        default=8
+    )  # Nearest neighbors per entity in the vector-index candidate scan
+    relationship_knn_min_similarity: float = Field(
+        default=0.80
+    )  # Min vector-index score (Neo4j cosine index score, 0-1) for a kNN candidate pair
+    relationship_min_shared_docs: int = Field(
+        default=2
+    )  # Min distinct documents co-mentioning a pair for the doc-co-mention generator. 0 = disable generator.
+    relationship_doc_freq_cap: int = Field(
+        default=30
+    )  # Skip entities mentioned in more than this many documents in the co-mention generator (hub guard)
+    relationship_max_candidate_pairs: int = Field(
+        default=15000
+    )  # Total candidate-pair budget per analysis run (top-ranked pairs kept)
+    relationship_candidates_per_entity: int = Field(
+        default=10
+    )  # Max candidate pairs any single entity may appear in (hub guard)
+    relationship_pairs_per_call: int = Field(
+        default=40
+    )  # Candidate pairs verified per LLM call in targeted mode
+    relationship_pair_context_tokens: int = Field(
+        default=3000
+    )  # Chunk-context token budget per verification call (0 = descriptions only, no chunk context)
+
     # Enhanced RAG Configuration
     enable_reranking: bool = Field(default=True)  # Enable cross-encoder reranking
     reranking_model: str = Field(

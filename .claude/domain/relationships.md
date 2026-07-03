@@ -24,7 +24,24 @@ During Phase A (document processing), after entity extraction and chunk linking,
 
 Results are consumed via `asyncio.as_completed`, not `asyncio.gather`. Each chunk's relationships land in Neo4j (and the live `relationship_count` stat ticks up) the moment its LLM call returns, instead of bulk-committing after the entire batch finishes. The storage call itself is offloaded via `loop.run_in_executor(...)` so it doesn't block the event loop while other concurrent LLM tasks are still in flight. The progress message updates ~10× across the phase (`"Extracting per-chunk relationships: 44/442 chunks (118 found)..."`) so the UI no longer sits silently at 90% for minutes.
 
-## Batch Analysis
+## Phase B (Step 2) — Discovery Modes
+
+`RELATIONSHIP_DISCOVERY_MODE` selects the Step 2 engine (dispatch at the top of `document_processor.analyze_collection_relationships`):
+
+### Targeted mode (default, `targeted`)
+
+`_analyze_relationships_targeted` (document_processor) — candidate pairs are generated **without the LLM**, then the LLM only verifies/classifies ranked pairs. On a 28k-entity graph this replaces ~750 near-context-window batch scans (tens of hours) with a few hundred small verification calls (minutes).
+
+1. **Embedding backfill**: entities without `e.embedding` are embedded via `generate_entity_embeddings_batch_async` and bulk-written (`set_entity_embeddings_bulk`) so the `entity_embedding` vector index covers the whole set. Skipped when no embed API key (falls back to co-mention only).
+2. **Candidate generation** (Neo4j, no LLM):
+   - kNN: `get_knn_candidate_pairs` — `db.index.vector.queryNodes` per entity (`RELATIONSHIP_KNN_K`, `RELATIONSHIP_KNN_MIN_SIMILARITY`), already-connected pairs excluded in-query.
+   - Doc co-mention: `get_doc_cooccurrence_pairs` — unconnected pairs mentioned together in ≥ `RELATIONSHIP_MIN_SHARED_DOCS` documents; entities in > `RELATIONSHIP_DOC_FREQ_CAP` docs skipped as anchors (hub guard).
+3. **Rank & cap** (`relationship_candidates.py`, pure/unit-tested): score = 0.6·knn + 0.4·min(1, shared_docs/4); dedup across directions/sources; greedy `RELATIONSHIP_CANDIDATES_PER_ENTITY` and `RELATIONSHIP_MAX_CANDIDATE_PAIRS` caps.
+4. **LLM verification**: pairs grouped `RELATIONSHIP_PAIRS_PER_CALL` per call (name-sorted so shared entities cluster), each call = existing `analyze_relationships_async` candidate-pair mode with `RELATIONSHIP_PAIR_CONTEXT_TOKENS` of chunk context. Concurrency via `PARALLEL_RELATIONSHIP_BATCHES`; stored incrementally with the same confidence (≥0.5) + `RELATIONSHIP_MAX_PER_ENTITY` degree caps, `extraction_method='cross_collection'`.
+
+Single pass (no multi-round); `RELATIONSHIP_MAX_HOURS` still enforced between verification batches. Result dict adds `discovery_mode` and `candidate_pairs`. Phase B checkpointing does not apply (runs are short); tests: `test_relationship_candidates.py`, `test_targeted_relationship_discovery.py`.
+
+### Legacy mode (`llm_scan`) — Batch Analysis
 
 Per-collection (Phase B) with two-phase per-batch processing:
 
@@ -44,7 +61,7 @@ Relationship model takes only the candidate pairs + their descriptions + chunk c
 - Co-occurrence-based entity ordering via Union-Find clustering groups entities sharing chunks into the same batch with high/low connection count interleaving to prevent hub concentration
 - Scales to 100k+ entities in O(n * avg_chunks)
 
-## Multi-Round Discovery
+## Multi-Round Discovery (legacy `llm_scan` mode)
 
 - Initial analysis (0 existing relationships) runs up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds
 - "Find more" (relationships already exist) always runs 1 round

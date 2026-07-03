@@ -166,12 +166,29 @@ model, then the primary model.
 
 ### Relationship Analysis
 
-Cross-document relationship discovery (Phase B) using the relationship model
-(falls back to extraction model → primary model). Two-phase pipeline (candidate
-scanning + structured confirmation) with co-occurrence batching and multi-round
-discovery:
+Cross-document relationship discovery (Phase B / Step 2) using the relationship
+model (falls back to extraction model → primary model). The default `targeted`
+mode generates candidate entity pairs without the LLM — entity-embedding kNN
+(missing embeddings are backfilled automatically) plus document co-mention —
+then verifies them in small batched LLM calls. The legacy `llm_scan` mode runs
+the two-phase full-batch scan (candidate scanning + structured confirmation)
+with co-occurrence batching and multi-round discovery:
 
 ```bash
+# Step 2 discovery engine: 'targeted' (kNN + co-mention candidates, LLM pair
+# verification) or 'llm_scan' (legacy two-phase full-batch scan)
+# RELATIONSHIP_DISCOVERY_MODE=targeted
+
+# Targeted mode only:
+# RELATIONSHIP_KNN_K=8                     # Nearest neighbors per entity (vector index)
+# RELATIONSHIP_KNN_MIN_SIMILARITY=0.80     # Min vector-index score for a kNN candidate pair
+# RELATIONSHIP_MIN_SHARED_DOCS=2           # Min docs co-mentioning a pair (0 = disable generator)
+# RELATIONSHIP_DOC_FREQ_CAP=30             # Skip hub entities mentioned in more docs than this
+# RELATIONSHIP_MAX_CANDIDATE_PAIRS=15000   # Total candidate-pair budget per run (top-ranked kept)
+# RELATIONSHIP_CANDIDATES_PER_ENTITY=10    # Max candidate pairs per entity (hub guard)
+# RELATIONSHIP_PAIRS_PER_CALL=40           # Candidate pairs verified per LLM call
+# RELATIONSHIP_PAIR_CONTEXT_TOKENS=3000    # Chunk-context tokens per verification call (0 = descriptions only)
+
 # Max INPUT context window tokens for Phase 2 batch relationship analysis
 # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → OPENAI_MAX_CONTEXT
 # RELATIONSHIP_MAX_CONTEXT=0
@@ -184,20 +201,20 @@ discovery:
 # Batch processes hundreds of entity pairs per call — needs ~16k headroom.
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000
 
-# Number of relationship analysis batches to process in parallel
+# Number of relationship analysis batches / verification calls to process in parallel
 # PARALLEL_RELATIONSHIP_BATCHES=5
 
-# Target entity-to-relationship ratio (ERR metric)
+# Legacy llm_scan mode only — target entity-to-relationship ratio (ERR metric)
 # Higher values = more relationships discovered per entity
 # RELATIONSHIP_TARGET_RATIO=1.0
 
-# Max discovery rounds per batch (default 3 for initial, 1 for re-analyze)
+# Legacy llm_scan mode only — max discovery rounds (default 3 for initial, 1 for re-analyze)
 # RELATIONSHIP_MAX_ROUNDS=3
 
-# Max hours for relationship analysis (0 = no time limit)
+# Max hours for relationship analysis (0 = no time limit; applies to both modes)
 # RELATIONSHIP_MAX_HOURS=0
 
-# Soft cap on relationships per entity (0 = no cap)
+# Soft cap on relationships per entity (0 = no cap; applies to both modes)
 # Prevents hub entities from accumulating disproportionate connections
 # RELATIONSHIP_MAX_PER_ENTITY=50
 ```
@@ -661,9 +678,18 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for **per-chunk + candidate scan** (was Phase 2 batch in old releases — see migration note). Inherits `EXTRACTION_MAX_OUTPUT_TOKENS` |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | No | `16000` | Output budget for **Phase 2 batch** (standalone, NOT in chain) |
 | `VISION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for image analysis. Inherits `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary |
-| `PARALLEL_RELATIONSHIP_BATCHES` | No | `5` | Parallel relationship analysis batches |
-| `RELATIONSHIP_TARGET_RATIO` | No | `1.0` | Target entity-to-relationship ratio (ERR) |
-| `RELATIONSHIP_MAX_ROUNDS` | No | `3` | Max discovery rounds per batch |
+| `PARALLEL_RELATIONSHIP_BATCHES` | No | `5` | Parallel relationship analysis batches / verification calls |
+| `RELATIONSHIP_DISCOVERY_MODE` | No | `targeted` | Step 2 engine: `targeted` (kNN + co-mention candidates, LLM pair verification) or `llm_scan` (legacy full-batch scan) |
+| `RELATIONSHIP_KNN_K` | No | `8` | Targeted mode: nearest neighbors per entity in the vector-index scan |
+| `RELATIONSHIP_KNN_MIN_SIMILARITY` | No | `0.80` | Targeted mode: min vector-index score for a kNN candidate pair |
+| `RELATIONSHIP_MIN_SHARED_DOCS` | No | `2` | Targeted mode: min docs co-mentioning a pair (0 = disable generator) |
+| `RELATIONSHIP_DOC_FREQ_CAP` | No | `30` | Targeted mode: skip hub entities mentioned in more docs than this |
+| `RELATIONSHIP_MAX_CANDIDATE_PAIRS` | No | `15000` | Targeted mode: total candidate-pair budget per run |
+| `RELATIONSHIP_CANDIDATES_PER_ENTITY` | No | `10` | Targeted mode: max candidate pairs per entity (hub guard) |
+| `RELATIONSHIP_PAIRS_PER_CALL` | No | `40` | Targeted mode: candidate pairs verified per LLM call |
+| `RELATIONSHIP_PAIR_CONTEXT_TOKENS` | No | `3000` | Targeted mode: chunk-context tokens per verification call (0 = descriptions only) |
+| `RELATIONSHIP_TARGET_RATIO` | No | `1.0` | Target entity-to-relationship ratio (ERR) — legacy `llm_scan` mode only |
+| `RELATIONSHIP_MAX_ROUNDS` | No | `3` | Max discovery rounds per batch — legacy `llm_scan` mode only |
 | `RELATIONSHIP_MAX_HOURS` | No | `0` | Max hours for analysis (0 = no limit) |
 | `RELATIONSHIP_MAX_PER_ENTITY` | No | `50` | Soft cap on relationships per entity (0 = no cap) |
 | `EXTRACTION_REASONING_MODE` | No | `off` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high` |
