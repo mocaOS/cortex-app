@@ -222,3 +222,78 @@ def test_factory_survives_duck_typed_client(monkeypatch):
         api_key="test-count-5", base_url="https://example.invalid/v1"
     )
     assert client is not None
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter usage accounting (usage.cost -> Langfuse authoritative cost)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "traced,base_url,expected",
+    [
+        (True,  "https://openrouter.ai/api/v1", {"usage": {"include": True}}),
+        (True,  "https://api.venice.ai/api/v1", {}),
+        (True,  "https://api.openai.com/v1",    {}),
+        (False, "https://openrouter.ai/api/v1", {}),  # untraced -> zero change
+    ],
+)
+def test_openrouter_usage_accounting_body_matrix(monkeypatch, traced, base_url, expected):
+    from app.services import llm_config
+
+    monkeypatch.setattr(llm_config, "_use_langfuse", lambda: traced)
+    assert llm_config.openrouter_usage_accounting_body(base_url) == expected
+
+
+class _RecordingClient:
+    """Minimal client whose chat.completions.create records received kwargs."""
+
+    def __init__(self):
+        self.seen = None
+        outer = self
+
+        class _Completions:
+            def create(self, **kwargs):
+                outer.seen = kwargs
+                return "resp"
+
+        class _Chat:
+            completions = _Completions()
+
+        self.chat = _Chat()
+
+
+def test_instrument_injects_usage_accounting_for_traced_openrouter(monkeypatch):
+    """Traced OpenRouter client: usage.include merged, caller extra_body kept."""
+    from app.services import llm_config
+
+    monkeypatch.setattr(llm_config, "_use_langfuse", lambda: True)
+    client = _RecordingClient()
+    llm_config._instrument_completions(
+        client, base_url="https://openrouter.ai/api/v1", is_async=False
+    )
+
+    client.chat.completions.create(
+        model="google/gemma-4-26b-a4b-it:nitro",
+        extra_body={"reasoning": {"effort": "none"}},  # caller's own extra_body
+    )
+
+    assert client.seen["extra_body"] == {
+        "reasoning": {"effort": "none"},
+        "usage": {"include": True},
+    }
+    assert usage_meter.pending_count() == 1  # metering still fires
+
+
+def test_instrument_no_usage_accounting_for_venice(monkeypatch):
+    """Non-OpenRouter gateway must never receive the usage param."""
+    from app.services import llm_config
+
+    monkeypatch.setattr(llm_config, "_use_langfuse", lambda: True)
+    client = _RecordingClient()
+    llm_config._instrument_completions(
+        client, base_url="https://api.venice.ai/api/v1", is_async=False
+    )
+
+    client.chat.completions.create(model="m", messages=[])
+
+    assert "usage" not in (client.seen.get("extra_body") or {})

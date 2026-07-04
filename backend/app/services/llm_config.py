@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.services.reasoning_config import ReasoningMode
+from app.services.reasoning_config import ReasoningMode, merge_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -135,16 +135,51 @@ def stream_usage_kwargs() -> dict:
     return {"stream_options": {"include_usage": True}} if _use_langfuse() else {}
 
 
-def _count_chat_completions(client, *, is_async: bool):
-    """Wrap ``client.chat.completions.create`` with quota metering.
+def openrouter_usage_accounting_body(base_url: str) -> dict:
+    """Extra request-body fragment that makes OpenRouter return per-call USD cost.
 
-    The factory is the one place every chat client passes through, so counting
-    here covers all completion call sites — wrapped (`safe_chat_completion`),
-    direct, and streamed — while embeddings (`client.embeddings`) and clients
-    built outside the factory (Haystack embedders) stay uncounted. Only
-    *successful* creates count, so the reasoning-fallback retry in
-    `safe_chat_completion` never double-counts. The raw-httpx vision path is
-    the single call site the factory can't see; it records manually.
+    OpenRouter reports the actual cost of each completion in ``usage.cost`` when
+    the request opts in via ``usage: {include: true}`` (OpenRouter "usage
+    accounting"). The Langfuse OpenAI drop-in reads that field natively
+    (``_parse_cost``) and records it as the generation's authoritative
+    ``cost_details.total``.
+
+    This is the **only** correct cost source for OpenRouter ``:nitro`` models:
+    nitro routes each request to whichever provider is fastest, so the effective
+    per-token price varies call-to-call and a static price catalog would
+    misreport it. Letting the gateway return the exact cost sidesteps that (and
+    the model-name/suffix matching problem) entirely.
+
+    Returns the ``extra_body`` fragment for OpenRouter when tracing is active,
+    else ``{}`` — zero behavior change when untraced, and never sent to
+    non-OpenRouter gateways that would reject the param.
+    """
+    if not _use_langfuse():
+        return {}
+    if "openrouter.ai" not in (base_url or "").lower():
+        return {}
+    return {"usage": {"include": True}}
+
+
+def _instrument_completions(client, *, base_url: str, is_async: bool):
+    """Wrap ``client.chat.completions.create`` with quota metering + OpenRouter
+    usage accounting.
+
+    The factory is the one place every chat client passes through, so this
+    covers all completion call sites — wrapped (`safe_chat_completion`), direct,
+    and streamed — while embeddings (`client.embeddings`) and clients built
+    outside the factory (Haystack embedders) stay untouched.
+
+    Two concerns, both decided once per client (``base_url`` is fixed per client):
+      - **Quota metering**: only *successful* creates count, so the
+        reasoning-fallback retry in `safe_chat_completion` never double-counts.
+        The raw-httpx vision path is the single call site the factory can't see;
+        it records manually.
+      - **OpenRouter cost**: for a traced OpenRouter client, deep-merge
+        ``extra_body={"usage": {"include": true}}`` into each call so the
+        response carries ``usage.cost`` for Langfuse to record (see
+        `openrouter_usage_accounting_body`). Merged per-call because callers pass
+        their own ``extra_body`` (reasoning params); `merge_kwargs` preserves it.
     """
     from app.services import usage_meter
 
@@ -155,18 +190,23 @@ def _count_chat_completions(client, *, is_async: bool):
             return client
         original = completions.create
     except AttributeError:
-        # Stubbed/duck-typed client (tests) — metering must never break
+        # Stubbed/duck-typed client (tests) — instrumentation must never break
         # client construction.
         return client
 
+    usage_body = openrouter_usage_accounting_body(base_url)  # {} unless traced OpenRouter
+
+    def _with_usage_accounting(kwargs: dict) -> dict:
+        return merge_kwargs(kwargs, {"extra_body": usage_body}) if usage_body else kwargs
+
     if is_async:
         async def counted_create(*args, **kwargs):
-            response = await original(*args, **kwargs)
+            response = await original(*args, **_with_usage_accounting(kwargs))
             usage_meter.record_completion()
             return response
     else:
         def counted_create(*args, **kwargs):
-            response = original(*args, **kwargs)
+            response = original(*args, **_with_usage_accounting(kwargs))
             usage_meter.record_completion()
             return response
 
@@ -192,8 +232,10 @@ def make_openai_client(*, api_key: str, base_url: str, **kwargs):
         from langfuse.openai import OpenAI  # drop-in: same API, auto-traces
     else:
         from openai import OpenAI
-    return _count_chat_completions(
-        OpenAI(api_key=api_key, base_url=base_url, **kwargs), is_async=False
+    return _instrument_completions(
+        OpenAI(api_key=api_key, base_url=base_url, **kwargs),
+        base_url=base_url,
+        is_async=False,
     )
 
 
@@ -225,8 +267,10 @@ def make_async_openai_client(*, api_key: str, base_url: str, **kwargs):
         from langfuse.openai import AsyncOpenAI
     else:
         from openai import AsyncOpenAI
-    client = _count_chat_completions(
-        AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs), is_async=True
+    client = _instrument_completions(
+        AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs),
+        base_url=base_url,
+        is_async=True,
     )
     if cache_key is not None:
         with _ASYNC_CLIENT_LOCK:

@@ -89,6 +89,20 @@ the openai SDK, so the global patch can't see it. The 200-path records model +
 `usage` + prompt/output via `record_generation` (`name="vision.analyze"`). This
 is the only place `record_generation` is still used.
 
+**6. OpenRouter usage accounting — gateway-reported USD cost.** For OpenRouter
+clients, `llm_config._instrument_completions` deep-merges
+`extra_body={"usage": {"include": true}}` into every `create` call (gated on
+tracing active + `openrouter.ai` base_url; merged per-call so a caller's own
+`extra_body` reasoning params are preserved). OpenRouter then returns the actual
+cost of the invocation in `usage.cost`, which the langfuse.openai drop-in reads
+natively (`_parse_cost`) and records as the generation's `cost_details.total`.
+This is the **authoritative** cost for OpenRouter and the **only correct source
+for `:nitro`** — nitro routes each request to the fastest provider, so the
+effective per-token price varies call-to-call and a static price catalog would
+misreport it. Streaming still needs `stream_options.include_usage` (already
+added by `stream_usage_kwargs()` when traced) so the final chunk carries usage +
+cost. Zero behavior change untraced / non-OpenRouter (`extra_body` untouched).
+
 ## Content masking (`LANGFUSE_LOG_EXTENDED`)
 
 By **default** (`LANGFUSE_LOG_EXTENDED=false`) Cortex redacts **all** user- and
@@ -150,13 +164,22 @@ gate.
 
 ## Cost catalog (USD pricing)
 
-Langfuse prices a generation by regex-matching the recorded model name to a
-price definition. Venice/OpenRouter models aren't in Langfuse's built-in
-catalog, so without seeding, cost shows `$0` (token usage is still tracked).
+Langfuse prices a generation two ways, in priority order: (1) an explicit
+`cost_details` on the generation — this is what **OpenRouter usage accounting**
+supplies (see "How calls get traced" §6), so OpenRouter cost is exact and needs
+no catalog entry; (2) otherwise, a **regex match of the recorded model name** to
+a seeded price definition. Venice/direct-OpenRouter models aren't in Langfuse's
+built-in catalog, so without seeding (and without usage accounting) cost shows
+`$0` (token usage is still tracked).
 
 - **`backend/scripts/langfuse-models.json`** — versioned price catalog, single
   source of truth. Prices are **USD per 1M tokens** (as on the provider's pricing
-  page); embeddings use `output_per_1m: 0`. Edit here when prices change.
+  page); embeddings use `output_per_1m: 0`. Edit here when prices change. An
+  entry may set `match_pattern` to override the default exact-name regex (used
+  by the OpenRouter gemma entry to tolerate the `:nitro` variant suffix). The
+  OpenRouter gemma entry is a **fallback only** — usage accounting is the primary
+  cost source; the static price is a floor-price safety net if `usage.cost` is
+  ever absent, and is approximate for `:nitro` by nature.
 - **`backend/scripts/seed_langfuse_models.py`** — idempotent seeder. POSTs each
   entry to a project's `POST /api/public/models` (Basic auth with the project
   key), converting per-1M → Langfuse's per-token `inputPrice`/`outputPrice`.
