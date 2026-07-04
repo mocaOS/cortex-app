@@ -47,6 +47,7 @@ from app.models import (
     ReasoningStep,
     ThinkingEvent,
 )
+from app.services import usage_meter
 from app.services.graph_extractor import get_graph_extractor
 from app.services.llm_config import (
     get_llm_config,
@@ -860,6 +861,21 @@ class DocumentProcessor:
                 or not fingerprint.get("file_sha256")
             ):
                 return False
+            # Degraded documents (completed but 0 entities extracted, or
+            # chunks missing embeddings) must NOT be delta-skipped: the whole
+            # point of reprocessing them is to redo the work the unchanged
+            # file+config produced incompletely last time.
+            if (
+                fingerprint.get("entity_count") == 0
+                or (fingerprint.get("unembedded_chunk_count") or 0) > 0
+            ):
+                logger.info(
+                    f"Document {doc_id}: degraded (entity_count="
+                    f"{fingerprint.get('entity_count')}, unembedded_chunks="
+                    f"{fingerprint.get('unembedded_chunk_count')}) — "
+                    f"bypassing reprocess delta-skip"
+                )
+                return False
             file_hash = await asyncio.to_thread(self._file_sha256, file_path)
             if (
                 file_hash == fingerprint["file_sha256"]
@@ -1231,12 +1247,22 @@ class DocumentProcessor:
         semaphore = asyncio.Semaphore(concurrency)
         completed = 0
         failed = 0
+        quota_skipped = 0
 
         async def process_one(doc: dict):
-            nonlocal completed, failed
+            nonlocal completed, failed, quota_skipped
             async with semaphore:
                 # Yield before starting so the event loop can process pending requests
                 await asyncio.sleep(0)
+
+                # Unit-denominated quota: in-flight documents always finish,
+                # but no NEW document starts once the monthly LLM-completion
+                # budget is spent. Skipped docs stay 'pending' and resume
+                # next month (or after a plan upgrade).
+                if await self._monthly_quota_exhausted():
+                    quota_skipped += 1
+                    return
+
                 doc_id = doc["id"]
                 file_path = doc.get("file_path")
                 file_type = doc.get("file_type", "")
@@ -1288,14 +1314,32 @@ class DocumentProcessor:
 
         logger.info(
             f"Processing complete: {completed} succeeded, {failed} failed out of {total}"
+            + (f", {quota_skipped} skipped (monthly usage limit)" if quota_skipped else "")
         )
 
+        message = f"Processed {completed} documents, {failed} failed"
+        if quota_skipped:
+            message += (
+                f"; {quota_skipped} left pending — monthly usage limit reached "
+                f"(they will process next month or after a plan upgrade)"
+            )
         return {
             "processed": completed,
             "failed": failed,
+            "quota_skipped": quota_skipped,
             "total": total,
-            "message": f"Processed {completed} documents, {failed} failed",
+            "message": message,
         }
+
+    async def _monthly_quota_exhausted(self) -> bool:
+        """Whether the monthly LLM-completion budget (MAX_QUERIES_PER_MONTH,
+        unit-denominated) is spent. Used to stop STARTING new documents in a
+        batch; never interrupts a document already processing."""
+        limit = getattr(self.settings, "max_queries_per_month", 0)
+        if limit <= 0:
+            return False
+        counts = await asyncio.to_thread(usage_meter.get_completions_this_month)
+        return counts["total"] >= limit
 
     async def _process_document(self, doc_id: str, file_path: str, file_type: str):
         """Background task to process a document with GraphRAG extraction.
@@ -1305,6 +1349,10 @@ class DocumentProcessor:
 
         Supports cancellation via cancellation flags - checked at key stages.
         """
+        # Attribute this pipeline's LLM completions to "processing" in the
+        # usage meter (covers extraction, relationships, and image analysis).
+        usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
+
         total_entities = 0
         total_relationships = 0
         loop = asyncio.get_event_loop()
@@ -1965,7 +2013,14 @@ class DocumentProcessor:
                 ),
             )
 
-            # Update document status
+            # Update document status. entity_count is persisted only when
+            # graph extraction actually ran — with extraction off (or the
+            # extractor unavailable), 0 entities is normal and the field must
+            # stay unset so the doc is never flagged as degraded.
+            graph_extraction_ran = (
+                self.graph_extractor.is_available
+                and self.settings.enable_graph_extraction
+            )
             await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(
@@ -1973,6 +2028,7 @@ class DocumentProcessor:
                     doc_id,
                     ProcessingStatus.COMPLETED,
                     chunk_count=len(embedded_chunks),
+                    entity_count=total_entities if graph_extraction_ran else None,
                 ),
             )
 

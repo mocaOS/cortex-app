@@ -342,7 +342,7 @@ Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled 
 ### Concurrency Settings
 
 ```env
-BATCH_PROCESSING_CONCURRENCY=2        # Documents processed in parallel
+BATCH_PROCESSING_CONCURRENCY=3        # Documents processed in parallel
 CONCURRENT_EXTRACTIONS=3              # Entity extraction thread pool size
 VISION_MAX_CONCURRENT=3               # Concurrent vision API calls (system-wide)
 PARALLEL_RELATIONSHIP_BATCHES=2       # Relationship analysis batches in parallel

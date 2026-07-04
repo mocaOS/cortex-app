@@ -44,7 +44,11 @@ Document row with view button: `.md` files open in an in-app Markdown viewer mod
 
 ## Document Filters
 
-Filter dropdowns: Collection, Status, Source. Source filter auto-shown when documents have 2+ distinct sources.
+Filter dropdowns: Collection, Status, Source. Source filter auto-shown when documents have 2+ distinct sources. Status includes a virtual **Degraded** option (not a backend status): `isDegraded(doc)` in `DocumentList.tsx` = effective status `completed` (so docs still analyzing images are excluded) AND (`entity_count === 0` — exactly 0, backend sends `-1` for unknown — OR `unembedded_chunk_count > 0`). See [`domain/document-pipeline.md`](domain/document-pipeline.md#degraded-document-signals) for the backend signals.
+
+## Degraded Documents UI
+
+`DocumentCard` shows an amber `AlertTriangle` "Degraded" badge (tooltip + inline reason line: "0 entities extracted" / "N chunks missing embeddings — reprocess to retry"); the existing completed-doc reprocess button is the one-click fix. `DocumentList` renders a single combined needs-attention banner ("N failed / M degraded documents") with a **Select all** button that selects failed + degraded for bulk reprocess; `selectAllDegraded` mirrors `selectAllFailed`.
 
 ## Document Bulk Actions
 

@@ -22,6 +22,7 @@ interface DocumentBulkActionsProps {
   filteredCount: number;
   allFilteredSelected: boolean;
   failedCount: number;
+  degradedCount: number;
   inProgressCount: number;
   selectedInProgressCount: number;
   isReprocessing: boolean;
@@ -32,6 +33,7 @@ interface DocumentBulkActionsProps {
   hasFilters: boolean;
   onToggleSelectAll: () => void;
   onSelectFailed: () => void;
+  onSelectDegraded: () => void;
   onSelectInProgress: () => void;
   onReprocessSelected: () => void;
   onRestartSelected: () => void;

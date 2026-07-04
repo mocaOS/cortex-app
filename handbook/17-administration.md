@@ -28,6 +28,7 @@ Returns comprehensive metrics:
 - Processing status breakdown: pending, completed, failed, processing
 - Average chunks per document
 - Entity type distribution (counts per type)
+- Monthly usage meter: `monthly_usage_used` / `monthly_usage_limit` (units = internal LLM completions), with a `monthly_usage_query` vs `monthly_usage_processing` breakdown. The Settings page's Statistics panel shows a "Monthly Usage" bar that turns amber at 80% and red when exhausted (or plain counters when no limit is configured). Both questions and document imports consume units — an instance can reach its limit through imports alone.
 - Average entity mentions
 - Staleness timestamps (last relationship analysis, community detection, entity merge)
 

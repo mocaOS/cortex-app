@@ -21,6 +21,9 @@ export interface Document {
   collection_name?: string | null;
   // Source tracking
   source?: string;
+  // Degraded-document signals (-1 entity_count = unknown / extraction disabled)
+  entity_count?: number;
+  unembedded_chunk_count?: number;
 }
 
 export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";
@@ -205,6 +208,11 @@ export interface Stats {
   last_entity_merge_at?: string | null;
   entity_relationship_ratio?: number;
   relationship_target_ratio?: number;
+  // Monthly unit quota (MAX_QUERIES_PER_MONTH, denominated in LLM completions)
+  monthly_usage_used?: number;
+  monthly_usage_limit?: number;
+  monthly_usage_query?: number;
+  monthly_usage_processing?: number;
 }
 
 export interface HealthResponse {

@@ -161,7 +161,9 @@ class Settings(BaseSettings):
     )  # Max total entities (global). 0 = unlimited.
     max_queries_per_month: int = Field(
         default=0
-    )  # Max chat queries (ask + search) per UTC calendar month, instance-wide. 0 = unlimited
+    )  # Monthly quota in internal LLM COMPLETIONS (Q&A loop calls + document
+    # processing/extraction calls; embeddings excluded), UTC calendar month,
+    # instance-wide. Aligns quota consumption with inference cost. 0 = unlimited
 
     # Embedding Configuration
     embedding_model: str = Field(default="openai/text-embedding-3-small")
@@ -306,8 +308,9 @@ class Settings(BaseSettings):
 
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(
-        default=2
-    )  # Number of documents to process concurrently in batch mode
+        default=3
+    )  # Documents processed concurrently in batch mode (default 3,
+    # bench-validated: the recalibrated Venice-safe setting)
     processing_thread_workers: int = Field(
         default=4
     )  # Thread pool workers for CPU-intensive operations

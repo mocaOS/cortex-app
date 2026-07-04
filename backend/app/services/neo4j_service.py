@@ -401,6 +401,7 @@ class Neo4jService:
                 MERGE (c:Chunk {id: $chunk_id})
                 SET c.content = $content,
                     c.embedding = $embedding,
+                    c.has_embedding = $has_embedding,
                     c.chunk_index = $chunk_index,
                     c.metadata = $metadata,
                     c.content_hash = $content_hash
@@ -411,6 +412,9 @@ class Neo4jService:
                 chunk_id=chunk.id,
                 content=chunk.content,
                 embedding=embedding,
+                # Boolean mirror of the (large) embedding vector so embedding
+                # coverage can be checked without streaming vectors.
+                has_embedding=embedding is not None,
                 chunk_index=chunk.chunk_index,
                 metadata=str(chunk.metadata),
                 content_hash=content_hash,
@@ -430,40 +434,61 @@ class Neo4jService:
             """, id=doc_id, file_sha256=file_sha256, config_hash=config_hash)
 
     def get_document_fingerprint(self, doc_id: str) -> Optional[dict]:
-        """Return {file_sha256, config_hash, processing_status} or None."""
+        """Return {file_sha256, config_hash, processing_status, entity_count,
+        unembedded_chunk_count} or None.
+
+        The degraded signals (entity_count == 0 / unembedded chunks) let the
+        reprocess delta-skip force a real reprocess for a document that
+        "completed" without a usable graph or embeddings — an unchanged
+        file+config must not no-op a degraded doc."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $id})
                 RETURN d.file_sha256 as file_sha256,
                        d.reprocess_config_hash as config_hash,
-                       coalesce(d.processing_status, 'pending') as processing_status
+                       coalesce(d.processing_status, 'pending') as processing_status,
+                       coalesce(d.entity_count, -1) as entity_count,
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.has_embedding = false | 1]) as unembedded_chunk_count
             """, id=doc_id)
             record = result.single()
             return dict(record) if record else None
     
     def update_document_status(
-        self, 
-        doc_id: str, 
-        status: ProcessingStatus, 
+        self,
+        doc_id: str,
+        status: ProcessingStatus,
         chunk_count: int = 0,
         error_message: Optional[str] = None,
-        progress_message: str = ""
+        progress_message: str = "",
+        entity_count: Optional[int] = None
     ):
-        """Update the processing status of a document."""
-        with self.driver.session() as session:
-            session.run("""
+        """Update the processing status of a document.
+
+        `entity_count` is only SET when provided — callers pass it on
+        successful completion when graph extraction actually ran, so a
+        completed doc with entity_count=0 is a reliable "degraded" signal
+        (extraction was expected but produced nothing). When extraction is
+        disabled the field stays unset and the doc is never flagged.
+        """
+        query = """
                 MATCH (d:Document {id: $id})
                 SET d.processing_status = $status,
                     d.chunk_count = $chunk_count,
                     d.error_message = $error_message,
                     d.progress_message = $progress_message
-            """,
-                id=doc_id,
-                status=status.value,
-                chunk_count=chunk_count,
-                error_message=error_message,
-                progress_message=progress_message
-            )
+        """
+        params = dict(
+            id=doc_id,
+            status=status.value,
+            chunk_count=chunk_count,
+            error_message=error_message,
+            progress_message=progress_message,
+        )
+        if entity_count is not None:
+            query += ", d.entity_count = $entity_count"
+            params["entity_count"] = entity_count
+        with self.driver.session() as session:
+            session.run(query, **params)
     
     def update_document_progress(
         self,
@@ -534,6 +559,63 @@ class Neo4jService:
                 RETURN d.id AS id
             """)
             return [record["id"] for record in result]
+
+    def backfill_degraded_document_signals(self, include_entity_counts: bool = True) -> dict:
+        """One-time, idempotent backfill of the degraded-document signals for
+        data created before those signals existed.
+
+        (a) `Chunk.has_embedding` — derived from `c.embedding IS NOT NULL` for
+            chunks that predate the boolean, so embedding coverage can be
+            checked without streaming vectors.
+        (b) `Document.entity_count` — computed from the graph for completed
+            documents that predate the field. Only run when graph extraction
+            is enabled (`include_entity_counts`): with extraction off, 0
+            entities is normal, not degraded, and the field must stay unset.
+
+        Both updates run batched via `CALL {} IN TRANSACTIONS` on an
+        auto-commit session (same memory-safety constraint as the batched
+        deletes — a single transaction over every chunk would blow past the
+        transaction memory cap on large knowledge bases). Idempotent: only
+        NULL fields are touched, so re-running at every startup is a no-op.
+
+        Returns {"chunks_backfilled": N, "documents_backfilled": M}.
+        """
+        summary = {"chunks_backfilled": 0, "documents_backfilled": 0}
+        with self.driver.session() as session:
+            pending_chunks = session.run("""
+                MATCH (c:Chunk) WHERE c.has_embedding IS NULL
+                RETURN count(c) as n
+            """).single()["n"]
+            if pending_chunks:
+                session.run("""
+                    MATCH (c:Chunk)
+                    WHERE c.has_embedding IS NULL
+                    CALL {
+                        WITH c
+                        SET c.has_embedding = c.embedding IS NOT NULL
+                    } IN TRANSACTIONS OF 1000 ROWS
+                """).consume()
+                summary["chunks_backfilled"] = pending_chunks
+
+            if include_entity_counts:
+                pending_docs = session.run("""
+                    MATCH (d:Document)
+                    WHERE d.processing_status = 'completed' AND d.entity_count IS NULL
+                    RETURN count(d) as n
+                """).single()["n"]
+                if pending_docs:
+                    session.run("""
+                        MATCH (d:Document)
+                        WHERE d.processing_status = 'completed' AND d.entity_count IS NULL
+                        CALL {
+                            WITH d
+                            OPTIONAL MATCH (d)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(e:Entity)
+                            WITH d, count(DISTINCT e) as ec
+                            SET d.entity_count = ec
+                        } IN TRANSACTIONS OF 1000 ROWS
+                    """).consume()
+                    summary["documents_backfilled"] = pending_docs
+        return summary
 
     def refresh_chunk_count(self, doc_id: str) -> int:
         """Recount actual chunks from the graph and update the document's chunk_count."""
@@ -724,7 +806,9 @@ class Neo4jService:
                        coalesce(d.is_custom_input, false) as is_custom_input,
                        coalesce(d.custom_input_type, '') as custom_input_type,
                        coalesce(d.custom_topic_hint, '') as custom_topic_hint,
-                       coalesce(d.source, 'upload') as source
+                       coalesce(d.source, 'upload') as source,
+                       coalesce(d.entity_count, -1) as entity_count,
+                       size([(d)-[:HAS_CHUNK]->(uc:Chunk) WHERE uc.has_embedding = false | 1]) as unembedded_chunk_count
                 ORDER BY d.upload_date DESC
             """)
             return [dict(record) for record in result]
@@ -746,6 +830,7 @@ class Neo4jService:
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $id})
+                WITH d, size([(d)-[:HAS_CHUNK]->(uc:Chunk) WHERE uc.has_embedding = false | 1]) as unembedded_chunk_count
                 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
                 OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
                 RETURN d.id as id,
@@ -764,6 +849,8 @@ class Neo4jService:
                        coalesce(d.image_progress_total, 0) as image_progress_total,
                        coalesce(d.image_progress_message, '') as image_progress_message,
                        coalesce(d.source, 'upload') as source,
+                       coalesce(d.entity_count, -1) as entity_count,
+                       unembedded_chunk_count,
                        col.id as collection_id,
                        col.name as collection_name,
                        collect(c.id) as chunk_ids
@@ -6046,23 +6133,59 @@ class Neo4jService:
                 "endpoint_breakdown": endpoint_breakdown
             }
 
-    def get_query_count_this_month(self) -> int:
-        """Sum ep_ask + ep_search across ALL APIKeyUsageLog rows for the current
-        UTC calendar month. Used to enforce MAX_QUERIES_PER_MONTH instance-wide.
+    def increment_llm_completions(self, date_str: str, by_kind: dict) -> None:
+        """Add completion counts to the LLMUsageDay node for ``date_str``.
+
+        One node per UTC day; ``by_kind`` maps usage kinds ("query",
+        "processing", "other") to increments. Written by the usage_meter
+        flusher in coalesced batches, never per completion.
+        """
+        total = sum(by_kind.values())
+        if total <= 0:
+            return
+        with self.driver.session() as session:
+            # NB: kwargs can't be named `query` — that collides with the
+            # driver's own Session.run(query, ...) first argument.
+            session.run(
+                """
+                MERGE (u:LLMUsageDay {date: $date})
+                SET u.completions = COALESCE(u.completions, 0) + $total,
+                    u.completions_query = COALESCE(u.completions_query, 0) + $query_n,
+                    u.completions_processing = COALESCE(u.completions_processing, 0) + $processing_n
+                """,
+                date=date_str,
+                total=total,
+                query_n=int(by_kind.get("query", 0)),
+                processing_n=int(by_kind.get("processing", 0)),
+            )
+
+    def get_llm_completion_count_this_month(self) -> dict:
+        """LLM completion counts for the current UTC calendar month.
+
+        Used to enforce MAX_QUERIES_PER_MONTH, which is denominated in internal
+        LLM completions (unit-based quota). Returns totals plus the
+        query/processing attribution for the frontend usage meter.
         """
         month_start = datetime.utcnow().strftime("%Y-%m-01")
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (log:APIKeyUsageLog)
-                WHERE log.date >= $month_start
-                RETURN COALESCE(SUM(log.ep_ask), 0)
-                     + COALESCE(SUM(log.ep_search), 0) AS total
+                MATCH (u:LLMUsageDay)
+                WHERE u.date >= $month_start
+                RETURN COALESCE(SUM(u.completions), 0) AS total,
+                       COALESCE(SUM(u.completions_query), 0) AS query,
+                       COALESCE(SUM(u.completions_processing), 0) AS processing
                 """,
                 month_start=month_start,
             )
             record = result.single()
-            return int(record["total"]) if record and record["total"] is not None else 0
+            if not record:
+                return {"total": 0, "query": 0, "processing": 0}
+            return {
+                "total": int(record["total"] or 0),
+                "query": int(record["query"] or 0),
+                "processing": int(record["processing"] or 0),
+            }
 
     def list_api_keys_with_stats(self) -> List[dict]:
         """

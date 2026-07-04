@@ -330,6 +330,11 @@ class GraphStatsResponse(BaseModel):
     # Relationship health metrics
     entity_relationship_ratio: float = Field(default=0.0, description="Current relationships-per-entity ratio")
     relationship_target_ratio: float = Field(default=3.0, description="Target relationships-per-entity ratio from config")
+    # Monthly usage meter (MAX_QUERIES_PER_MONTH is denominated in LLM completions)
+    monthly_usage_used: int = Field(default=0, description="LLM completions consumed this UTC month (queries + document processing)")
+    monthly_usage_limit: int = Field(default=0, description="Monthly LLM-completion quota (0 = unlimited)")
+    monthly_usage_query: int = Field(default=0, description="Portion of monthly usage consumed by Q&A/search")
+    monthly_usage_processing: int = Field(default=0, description="Portion of monthly usage consumed by document/graph processing")
 
 
 class UploadResponse(BaseModel):
@@ -390,6 +395,14 @@ class InstanceStatusResponse(BaseModel):
     last_relationship_analysis_at: Optional[str] = None
     last_community_detection_at: Optional[str] = None
     last_entity_merge_at: Optional[str] = None
+    # Library size & monthly usage meter (fleet orchestration / plan enforcement)
+    document_count: int = Field(default=0, description="Total documents in the library")
+    entity_count: int = Field(default=0, description="Total entities in the graph")
+    collection_count: int = Field(default=0, description="Total collections")
+    monthly_usage_used: int = Field(default=0, description="LLM completions ('units') consumed this UTC month")
+    monthly_usage_limit: int = Field(default=0, description="Monthly unit quota (MAX_QUERIES_PER_MONTH; 0 = unlimited)")
+    monthly_usage_query: int = Field(default=0, description="Units consumed by Q&A/search this month")
+    monthly_usage_processing: int = Field(default=0, description="Units consumed by document/graph processing this month")
     # Connectivity / meta
     neo4j_connected: bool = True
     checked_at: str = Field(..., description="ISO timestamp when this snapshot was taken")

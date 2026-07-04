@@ -7,6 +7,34 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 4, 2026 (Unit-based usage metering & degraded-document detection)
+
+Two operational features: the monthly quota now measures what actually costs money, and silently broken documents are now visible and fixable from the UI.
+
+### Unit-denominated usage metering
+
+`MAX_QUERIES_PER_MONTH` is now denominated in **units** — internal LLM completions — instead of HTTP requests, so quota consumption tracks inference cost directly. Every successful model call counts one unit: each step of a Q&A answer (typically a handful per question) and each extraction/analysis call during document processing (a few per file). Embeddings are free.
+
+- **Document processing is now metered** — previously, imports and graph rebuilds consumed unlimited model calls outside the quota. Now uploads, custom inputs, reprocessing, web imports, git syncs, and the graph-build steps all draw from the same monthly pool.
+- **In-flight work always finishes** — the quota blocks *starting* new work (`429` + `Retry-After` until the next UTC month). A batch import stops cleanly between documents; skipped documents stay pending and resume next month.
+- **Usage meter in the admin UI** — the Settings page's Statistics panel shows a monthly usage bar with a queries vs. processing breakdown, turning amber at 80% and red when exhausted. `GET /api/stats` exposes `monthly_usage_used`, `monthly_usage_limit`, `monthly_usage_query`, `monthly_usage_processing`.
+- **Fleet orchestration surface** — `GET /api/instance/status` (admin) now also reports library size (`document_count`, `entity_count`, `collection_count`) and the same monthly usage fields, so deployment automation can read plan consumption from the endpoint it already polls for redeploy safety.
+
+### Other changes
+
+- **`BATCH_PROCESSING_CONCURRENCY` default raised from `2` to `3`** — the bench-validated, Venice-safe setting from the June recalibration is now the shipped default. Deployments that pinned the variable explicitly are unaffected; unset deployments process one more document in parallel during batch ingestion.
+
+### Failed & degraded documents
+
+A document can complete processing yet be silently broken — e.g. an extraction timeout leaving it with 0 entities, or chunks missing embeddings (invisible to semantic search). These are now **flagged as degraded**:
+
+- New **Degraded** status filter and amber warning badge on the Documents page, with the reason shown on the card ("0 entities extracted" / "N chunks missing embeddings").
+- Combined failed/degraded banner with one-click **Select all** for bulk reprocess.
+- Reprocessing a degraded document automatically bypasses the "content unchanged" skip.
+- Signals (`entity_count`, unembedded chunk count) are persisted at processing time and backfilled once at startup for existing libraries.
+
+---
+
 ## July 4, 2026 (Graph builds: leaner extraction & rebuild hardening)
 
 A pass over the knowledge-graph build pipeline focused on API-call economy and robustness on large libraries. Graph content and quality semantics are unchanged; builds complete faster and make substantially fewer LLM calls, especially under provider rate limits.

@@ -169,6 +169,20 @@ def mock_llm(monkeypatch):
 # Opt-in: mocked Neo4j service
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _reset_usage_meter():
+    """Isolate the module-global LLM usage meter between tests.
+
+    Clears pending in-memory counts and deregisters the Neo4j getter so a
+    test's flush can never land on a previous test's mock.
+    """
+    from app.services import usage_meter
+
+    usage_meter._reset_for_tests()
+    yield
+    usage_meter._reset_for_tests()
+
+
 @pytest.fixture
 def mock_neo4j(monkeypatch):
     """Replace the Neo4j service singleton with a MagicMock.
@@ -197,7 +211,10 @@ def mock_neo4j(monkeypatch):
         "description": None,
     }
     fake.close.return_value = None
-    fake.get_query_count_this_month.return_value = 0
+    fake.get_llm_completion_count_this_month.return_value = {
+        "total": 0, "query": 0, "processing": 0,
+    }
+    fake.increment_llm_completions.return_value = None
 
     def _set_document_count(n: int) -> None:
         current = dict(fake.get_stats.return_value)
@@ -212,7 +229,10 @@ def mock_neo4j(monkeypatch):
     fake.set_entity_count = _set_entity_count
 
     def _set_query_count(n: int) -> None:
-        fake.get_query_count_this_month.return_value = n
+        # The quota is denominated in LLM completions (unit metering).
+        fake.get_llm_completion_count_this_month.return_value = {
+            "total": n, "query": n, "processing": 0,
+        }
     fake.set_query_count = _set_query_count
 
     def _set_collection_count(n: int) -> None:

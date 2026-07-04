@@ -60,6 +60,14 @@ On import completion, clears client-side caches (same as system reset).
 
 `POST /api/documents/download-zip` — Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. Requires `read` permission; restricted keys can only download documents from their allowed collections. Accessible via Download button in bulk actions toolbar on Documents page.
 
+## Monthly Usage Metering (unit-denominated quota)
+
+`MAX_QUERIES_PER_MONTH` is denominated in **internal LLM completions** ("units"), not HTTP requests — quota consumption tracks inference cost. Pricing tiers are unit-based.
+
+- **Counting** — `services/usage_meter.py`: thread-safe in-memory accumulator + a daemon flusher that batches increments to per-day `LLMUsageDay` nodes (`completions`, `completions_query`, `completions_processing`); the month's meter is the sum over the month's days. Increments fire from the OpenAI client-factory wrap (`llm_config._count_chat_completions` — every factory-built client's `chat.completions.create`, so wrapped/direct/streamed call sites all count, embeddings never do; only *successful* creates count) plus one manual `record_completion` in the raw-httpx vision path (`vision_analyzer.py`). Attribution rides a contextvar: `enforce_query_quota` stamps "query", processing task entries stamp "processing". Restart loses at most a few seconds of buffered counts (accepted undercount). NB: the Cypher parameters are `$query_n`/`$processing_n` — a kwarg literally named `query` collides with the Neo4j driver's `Session.run(query, ...)`.
+- **Enforcement** — `enforce_query_quota` (search + ask endpoints; also stamps the contextvar and prewarms the reranker) and `enforce_processing_quota` (upload, custom-input, reprocess single/bulk, process-pending, web-import, git sync endpoint + scheduler skip, relationships/analyze, communities detect/summarize). Both 429 + `Retry-After` to next UTC month. **In-flight work always finishes**: `process_pending_documents` checks the meter between documents (`_monthly_quota_exhausted`) and leaves the remainder `pending` with a quota message (`quota_skipped` in the batch result).
+- **Surfacing** — `GET /api/stats` carries `monthly_usage_used/limit/query/processing`; the **admin page's Statistics card** (`frontend/src/app/admin/page.tsx`, "Monthly Usage" block) renders a bar (accent < 80%, amber ≥ 80%, red at 100%) with a queries/processing breakdown, plus "no limit" mode when the quota is 0. Deliberately admin-only — the global StatsBar does NOT show quota mechanics. Tests: `test_usage_meter.py`, `test_max_queries_per_month.py`.
+
 ## Instance Status (redeploy safety)
 
 `GET /api/instance/status` (`main.py`, `require_manage_permission`) — single-call operational snapshot for deploy automation to decide whether a customer instance can be safely restarted/upgraded. Returns `InstanceStatusResponse` with a `safe_to_redeploy` boolean plus a `reasons` list of active blockers.
@@ -71,6 +79,8 @@ On import completion, clears client-side caches (same as system reset).
 - Neo4j unreachable — state can't be verified, so treated as unsafe.
 
 `pending_count` is reported but **never** blocks: pending docs persist in Neo4j and resume after restart.
+
+**Fleet orchestration fields** (2026-07-04): the response also carries library size (`document_count`, `entity_count`, `collection_count`) and the monthly unit meter (`monthly_usage_used/limit/query/processing`) so the meta-cortex control plane can read plan consumption and library growth from the same admin-key call it already makes for redeploy safety. Populated only when Neo4j is reachable (zeros otherwise).
 
 AskAI activity is tracked via the `track_ask_activity` FastAPI `yield` dependency on `/api/ask`, `/api/ask/stream`, `/api/ask/stream/thinking` — it increments an in-memory `_active_query_count` (reset to 0 on restart, which is correct) and writes `last_query_at` to the `SystemMeta` node (`set_meta`). The dependency teardown runs after a streamed response is fully consumed (or the client disconnects), so the counter decrements reliably. `last_query_at` and the `last_relationship_analysis_at`/`last_community_detection_at`/`last_entity_merge_at` timestamps are surfaced for informational "when was it last active" checks.
 

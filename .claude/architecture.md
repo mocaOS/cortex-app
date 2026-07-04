@@ -32,6 +32,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `services/observability.py` — Langfuse wiring: client lifecycle (`init_langfuse`/`shutdown_langfuse`), agentic-trace grouping (`observed_trace`/`traced_sse`), manual generation records for non-SDK calls (`record_generation`). Env-driven; no-op when unconfigured. See [`.claude/domain/observability.md`](domain/observability.md)
 - `services/helper_client.py` — transport layer for cortex-helper calls: shared HTTP client, retries with backoff, circuit breaker, `HELPER_STRICT_REMOTE`, `X-Tenant-ID`/`X-Request-ID` headers
 - `services/rate_limiter.py` — opt-in per-API-key token bucket (`RATE_LIMIT_QPM`) on ask/upload endpoints
+- `services/usage_meter.py` — instance-wide LLM-completion metering for the unit-denominated `MAX_QUERIES_PER_MONTH` quota (in-memory accumulator → batched `LLMUsageDay` flushes; counted at the client-factory wrap in `llm_config`). See [`.claude/domain/admin-features.md`](domain/admin-features.md#monthly-usage-metering-unit-denominated-quota)
 - `logging_setup.py` — `LOG_FORMAT=plain|json` + `X-Request-ID` correlation (contextvar stamped on every log line, echoed on responses, forwarded to cortex-helper)
 - `metrics.py` — Prometheus metrics (no-op without `prometheus-client`); `GET /metrics` is admin-key protected
 

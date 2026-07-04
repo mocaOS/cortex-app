@@ -18,6 +18,7 @@ import {
   PenLine,
   Eye,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -46,6 +47,8 @@ interface Document {
   custom_input_type?: string | null;
   custom_topic_hint?: string | null;
   source?: string;
+  entity_count?: number;
+  unembedded_chunk_count?: number;
 }
 
 interface DocumentCardProps {
@@ -71,6 +74,27 @@ const isProcessing = (status: string, doc?: Document) => {
   return false;
 };
 
+// Degraded: completed (and past image analysis) but extraction produced 0
+// entities, or chunks are missing embeddings. entity_count must be exactly 0 —
+// the backend sends -1 for "unknown" (extraction disabled / pre-backfill).
+const isDegradedDoc = (doc: Document): boolean => {
+  if (doc.processing_status !== "completed") return false;
+  const total = doc.image_progress_total ?? 0;
+  if (total > 0 && doc.image_progress_current !== total) return false;
+  return doc.entity_count === 0 || (doc.unembedded_chunk_count ?? 0) > 0;
+};
+
+const getDegradedReason = (doc: Document): string | null => {
+  if (!isDegradedDoc(doc)) return null;
+  const reasons: string[] = [];
+  if (doc.entity_count === 0) reasons.push("0 entities extracted");
+  const missing = doc.unembedded_chunk_count ?? 0;
+  if (missing > 0) {
+    reasons.push(`${missing} chunk${missing !== 1 ? "s" : ""} missing embeddings`);
+  }
+  return reasons.join(" · ");
+};
+
 const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
   if (isCustomInput) return PenLine;
   if (fileType.includes("pdf")) return FileText;
@@ -91,6 +115,14 @@ const getStatusConfig = (status: string, doc?: Document) => {
         bgColor: "bg-muted",
         label: "Analyzing Images",
         animate: true,
+      };
+    }
+    if (isDegradedDoc(doc)) {
+      return {
+        icon: AlertTriangle,
+        color: "text-amber-400",
+        bgColor: "bg-amber-500/10",
+        label: "Degraded",
       };
     }
   }
@@ -180,6 +212,7 @@ export function DocumentCard({
   const status = getStatusConfig(doc.processing_status, doc);
   const StatusIcon = status.icon;
   const isCustomInput = doc.is_custom_input === true;
+  const degradedReason = getDegradedReason(doc);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -302,7 +335,10 @@ export function DocumentCard({
             </div>
 
             {/* Status badge */}
-            <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-full text-xs", status.bgColor)}>
+            <div
+              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-full text-xs", status.bgColor)}
+              title={degradedReason ?? undefined}
+            >
               <StatusIcon className={cn("w-3 h-3", status.color, status.animate && "animate-spin")} />
               <span className={status.color}>{status.label}</span>
             </div>
@@ -346,6 +382,14 @@ export function DocumentCard({
           {/* Error message */}
           {doc.processing_status === "failed" && doc.error_message && (
             <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{doc.error_message}</p>
+          )}
+
+          {/* Degraded reason */}
+          {degradedReason && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-amber-400/90">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              {degradedReason} — reprocess to retry
+            </p>
           )}
 
           {/* Pending status */}

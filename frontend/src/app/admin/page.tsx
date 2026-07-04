@@ -33,6 +33,7 @@ import {
   Layers,
   Share2,
   Info,
+  Gauge,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { api, clearAdminApiKey } from "@/lib/api";
@@ -389,6 +390,70 @@ export default function AdminPage() {
                       <p className="text-xs text-muted-foreground">Communities</p>
                     </div>
                   </div>
+
+                  {/* Monthly usage — unit quota (MAX_QUERIES_PER_MONTH is
+                      denominated in LLM completions; questions AND document
+                      processing consume from the same pool). Admin-only
+                      surface by design — end users aren't confronted with
+                      quota mechanics outside the settings page. */}
+                  {(() => {
+                    const used = stats.monthly_usage_used ?? 0;
+                    const limit = stats.monthly_usage_limit ?? 0;
+                    const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : null;
+                    const barColor =
+                      pct == null
+                        ? "bg-accent"
+                        : pct >= 100
+                          ? "bg-red-500"
+                          : pct >= 80
+                            ? "bg-yellow-500"
+                            : "bg-accent";
+                    return (
+                      <div>
+                        <h3 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                          <Gauge className="w-4 h-4 text-muted-foreground" />
+                          Monthly Usage
+                        </h3>
+                        <div className="p-4 bg-muted/30 rounded-lg space-y-2">
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-sm text-muted-foreground">
+                              Units consumed (LLM completions)
+                            </span>
+                            <span className="text-sm font-mono text-foreground">
+                              {used.toLocaleString()}
+                              {limit > 0
+                                ? ` / ${limit.toLocaleString()} (${Math.round(pct!)}%)`
+                                : " · no limit"}
+                            </span>
+                          </div>
+                          {pct != null && (
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Queries {(stats.monthly_usage_query ?? 0).toLocaleString()}</span>
+                            <span>Processing {(stats.monthly_usage_processing ?? 0).toLocaleString()}</span>
+                          </div>
+                          {pct != null && pct >= 100 && (
+                            <p className="text-xs text-red-400">
+                              Monthly limit reached — new questions and document processing
+                              are paused until next month. In-flight work finishes normally.
+                            </p>
+                          )}
+                          {pct != null && pct >= 80 && pct < 100 && (
+                            <p className="text-xs text-yellow-400">
+                              {Math.round(pct)}% of the monthly quota used. Document imports
+                              also consume units.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Document Processing */}
                   <div>

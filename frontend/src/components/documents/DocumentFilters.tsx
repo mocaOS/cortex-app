@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, FolderOpen, X, Globe } from "lucide-react";
+import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, AlertTriangle, FolderOpen, X, Globe } from "lucide-react";
 import type { Collection } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,7 @@ interface StatusCounts {
   in_progress: number;
   pending: number;
   failed: number;
+  degraded: number;
 }
 
 interface DocumentFiltersProps {
@@ -143,6 +144,7 @@ export function DocumentFilters({
     { value: "in_progress", label: "In Progress", count: statusCounts.in_progress, icon: Loader2 },
     { value: "pending", label: "Pending", count: statusCounts.pending, icon: Clock },
     { value: "failed", label: "Failed", count: statusCounts.failed, icon: XCircle },
+    { value: "degraded", label: "Degraded", count: statusCounts.degraded, icon: AlertTriangle },
   ];
 
   const sourceKeys = Object.keys(sourceCounts).sort();

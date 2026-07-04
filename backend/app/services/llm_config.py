@@ -135,6 +135,49 @@ def stream_usage_kwargs() -> dict:
     return {"stream_options": {"include_usage": True}} if _use_langfuse() else {}
 
 
+def _count_chat_completions(client, *, is_async: bool):
+    """Wrap ``client.chat.completions.create`` with quota metering.
+
+    The factory is the one place every chat client passes through, so counting
+    here covers all completion call sites — wrapped (`safe_chat_completion`),
+    direct, and streamed — while embeddings (`client.embeddings`) and clients
+    built outside the factory (Haystack embedders) stay uncounted. Only
+    *successful* creates count, so the reasoning-fallback retry in
+    `safe_chat_completion` never double-counts. The raw-httpx vision path is
+    the single call site the factory can't see; it records manually.
+    """
+    from app.services import usage_meter
+
+    try:
+        completions = client.chat.completions
+        # `is True` (not truthiness): mock clients auto-create truthy attrs.
+        if getattr(completions, "_cortex_usage_counted", None) is True:
+            return client
+        original = completions.create
+    except AttributeError:
+        # Stubbed/duck-typed client (tests) — metering must never break
+        # client construction.
+        return client
+
+    if is_async:
+        async def counted_create(*args, **kwargs):
+            response = await original(*args, **kwargs)
+            usage_meter.record_completion()
+            return response
+    else:
+        def counted_create(*args, **kwargs):
+            response = original(*args, **kwargs)
+            usage_meter.record_completion()
+            return response
+
+    try:
+        completions.create = counted_create
+        completions._cortex_usage_counted = True
+    except AttributeError:
+        pass
+    return client
+
+
 def make_openai_client(*, api_key: str, base_url: str, **kwargs):
     """Construct a sync OpenAI client, Langfuse-wrapped when tracing is active.
 
@@ -149,7 +192,9 @@ def make_openai_client(*, api_key: str, base_url: str, **kwargs):
         from langfuse.openai import OpenAI  # drop-in: same API, auto-traces
     else:
         from openai import OpenAI
-    return OpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    return _count_chat_completions(
+        OpenAI(api_key=api_key, base_url=base_url, **kwargs), is_async=False
+    )
 
 
 _ASYNC_CLIENT_CACHE: dict = {}
@@ -180,7 +225,9 @@ def make_async_openai_client(*, api_key: str, base_url: str, **kwargs):
         from langfuse.openai import AsyncOpenAI
     else:
         from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    client = _count_chat_completions(
+        AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs), is_async=True
+    )
     if cache_key is not None:
         with _ASYNC_CLIENT_LOCK:
             _ASYNC_CLIENT_CACHE[cache_key] = client

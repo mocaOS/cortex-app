@@ -58,10 +58,10 @@
     {
       "id": "F-SEC-004", "name": "Rate limiting & monthly query quota", "area": "Security",
       "user_story": "As an operator, I want per-key rate limits and a monthly query cap so that abuse and runaway costs are bounded.",
-      "expected": "enforce_rate_limit (token bucket keyed by API key/IP) on upload/search/ask*: 429 + Retry-After when RATE_LIMIT_QPM>0 exceeded. enforce_query_quota: 429 + Retry-After to next UTC month when MAX_QUERIES_PER_MONTH>0 exceeded; no-op at 0.",
-      "edge_cases": "Quota=0 disables; bucket falls back to client IP when no key; quota pre-warms reranker as side effect; chat endpoints gated, non-chat (search) behavior per test matrix.",
+      "expected": "enforce_rate_limit (token bucket keyed by API key/IP) on upload/search/ask*: 429 + Retry-After when RATE_LIMIT_QPM>0 exceeded. Quota is denominated in internal LLM completions (usage_meter + LLMUsageDay nodes): enforce_query_quota gates search/ask*, enforce_processing_quota gates upload/custom-input/reprocess/process-pending/web-import/git-sync/graph steps; 429 + Retry-After to next UTC month when MAX_QUERIES_PER_MONTH>0 exceeded; no-op at 0. In-flight work finishes; batch processing skips remaining docs (stay pending).",
+      "edge_cases": "Quota=0 disables; bucket falls back to client IP when no key; query gate pre-warms reranker as side effect; embeddings never count; only successful completions count; restart loses <=2s of buffered counts.",
       "validation": "RATE_LIMIT_QPM, MAX_QUERIES_PER_MONTH ints.",
-      "dependencies": "rate_limiter.py, neo4j query count.",
+      "dependencies": "rate_limiter.py, usage_meter.py, llm_config factory wrap, neo4j LLMUsageDay.",
       "assumptions": "In-process token bucket (per instance, not cluster-wide).",
       "test_cases": "Happy: under limit OK. Boundary: exactly at limit, limit+1 -> 429+Retry-After. Disabled: 0 -> unlimited. Perf: burst of N requests. Security: spoof X-API-Key to evade bucket.",
       "status": "Tested (test_resilience, test_max_queries_per_month)", "defect_count": 0, "severity": "", "notes": "", "last_tested": "2026-06-22"

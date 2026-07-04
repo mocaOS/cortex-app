@@ -117,7 +117,7 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 
 Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) does not match either model's actual input window — without them you'd be limiting Gemma4 26B A4B and Qwen3.6 27B to a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` overrides are set. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B is MRL-aware. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (regardless of the underlying model's native window) — oversized inputs are char-truncated client-side to avoid `HTTP 400 "Input text exceeds the maximum token limit"` rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
-The default concurrency (`BATCH_PROCESSING_CONCURRENCY=2`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) is the recommended, reliably-tested setting — leave it as-is unless you have a specific reason to change it.
+The default concurrency (`BATCH_PROCESSING_CONCURRENCY=3`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) is the recommended, reliably-tested setting — leave it as-is unless you have a specific reason to change it.
 
 **Compounding behavior.** `BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs because they're *per-document* limits — each in-flight document can run its own pool of extraction / relationship threads. `VISION_MAX_CONCURRENT` is a global semaphore and does *not* compound. The pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual concurrent in-flight calls stays meaningfully below the worst-case theoretical product. Because the knobs compound, raise them cautiously — the defaults already saturate most providers.
 
@@ -167,7 +167,7 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BATCH_PROCESSING_CONCURRENCY` | `2` | Documents processed simultaneously during batch operations. |
+| `BATCH_PROCESSING_CONCURRENCY` | `3` | Documents processed simultaneously during batch operations. |
 | `CONCURRENT_EXTRACTIONS` | `3` | Entity extraction thread pool size per document. |
 | `PROCESSING_THREAD_WORKERS` | `4` | Thread pool workers for CPU-bound operations. |
 | `VISION_MAX_CONCURRENT` | `3` | Max concurrent vision API calls system-wide (controls semaphore + thread pool). |
@@ -378,6 +378,7 @@ Behavior:
 |----------|---------|-------------|
 | `MAX_FILES` | `0` (unlimited) | Maximum number of files allowed in the system. |
 | `MAX_COLLECTIONS` | `0` (unlimited) | Maximum number of collections allowed. |
+| `MAX_QUERIES_PER_MONTH` | `0` (unlimited) | Monthly usage quota in **units** (internal LLM completions). Both questions (each Q&A turn uses a handful of units) and document imports/graph builds (a few units per file) draw from the same pool; embeddings are free. When the quota is reached, new questions and new document processing return `429` until the next UTC month — work already in flight always finishes. Usage appears as a meter bar on the Settings page (Statistics panel). |
 
 ## Docling Configuration (Advanced)
 

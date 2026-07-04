@@ -104,7 +104,7 @@ curl http://localhost:8000/api/tasks/{task_id} \
   -H "X-API-Key: your-api-key"
 ```
 
-The batch processing concurrency is controlled by `BATCH_PROCESSING_CONCURRENCY` (default: 2).
+The batch processing concurrency is controlled by `BATCH_PROCESSING_CONCURRENCY` (default: 3).
 
 ## The Processing Pipeline
 
@@ -305,6 +305,16 @@ curl -X POST http://localhost:8000/api/documents/reprocess \
 ```
 
 Reprocessing deletes existing chunks and entities for the document, then re-runs the full pipeline.
+
+### Failed and Degraded Documents
+
+A document can finish processing "successfully" yet still be incomplete — for example when the extraction model timed out and the document ended up with **0 entities**, or when some chunks are **missing embeddings** (they will never appear in semantic search). Cortex flags these as **degraded**:
+
+- The Documents page status filter has a **Degraded** option (alongside Failed), and degraded cards carry an amber warning badge explaining the reason ("0 entities extracted" or "N chunks missing embeddings").
+- A summary banner shows the combined failed/degraded count with a one-click **Select all** for bulk reprocessing.
+- Reprocessing is the fix: for degraded documents the "content unchanged" reprocess skip is bypassed automatically, so a reprocess always re-runs the full pipeline.
+
+The signals behind the badge (`entity_count`, unembedded chunk count) are computed during processing and backfilled once at startup for existing libraries.
 
 ### Moving Documents
 

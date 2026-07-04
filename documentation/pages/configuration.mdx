@@ -100,7 +100,7 @@ SENTENCES_PER_CHUNK=5
 
 ```bash
 # Concurrent document processing
-BATCH_PROCESSING_CONCURRENCY=2
+BATCH_PROCESSING_CONCURRENCY=3
 
 # Thread workers for processing
 PROCESSING_THREAD_WORKERS=4
@@ -292,7 +292,7 @@ EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) suppor
 
 Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap Gemma4 26B A4B and Qwen3.6 27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (8192 regardless of the underlying model's native window); oversized inputs are char-truncated client-side to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
 
-**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=2`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) are the recommended, reliably-tested setting — leave them as-is unless you have a specific reason to change them.
+**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=3`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) are the recommended, reliably-tested setting — leave them as-is unless you have a specific reason to change them.
 
 The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. Because they compound, raise them cautiously — `CONCURRENT_EXTRACTIONS` is the biggest multiplier (entity extraction is the heaviest call) and the first knob to lower on a slower provider. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
 

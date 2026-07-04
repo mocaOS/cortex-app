@@ -104,6 +104,7 @@ from app.services.prompt_security import (
     get_safe_refusal_message,
 )
 from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
+from app.services import usage_meter
 from app.services.observability import traced_sse
 from app.services.reasoning_config import safe_chat_completion, ReasoningMode
 from app.services.auth_service import (
@@ -298,6 +299,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not initialize Neo4j schema: {e}")
 
+    # Wire the LLM-completion usage meter to Neo4j (unit-denominated quota).
+    usage_meter.configure(get_neo4j_service)
+
     # Recover documents orphaned mid-processing by a previous shutdown/crash.
     # Processing runs as in-process background tasks, so anything left in a
     # transient state at startup can never resume on its own — it would spin
@@ -314,7 +318,30 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.warning(f"Could not reconcile orphaned processing documents: {e}")
-    
+
+    # One-time, idempotent backfill of the degraded-document signals
+    # (Chunk.has_embedding + Document.entity_count for data that predates
+    # them). Runs as a non-blocking background task — on a large knowledge
+    # base the batched updates can take a while and must not delay startup.
+    async def _backfill_degraded_signals():
+        try:
+            summary = await asyncio.to_thread(
+                neo4j.backfill_degraded_document_signals,
+                settings.enable_graph_extraction,
+            )
+            logger.info(
+                "Degraded-signal backfill complete: %d chunk(s) got "
+                "has_embedding, %d completed document(s) got entity_count",
+                summary["chunks_backfilled"],
+                summary["documents_backfilled"],
+            )
+        except Exception as e:
+            logger.warning(
+                f"Degraded-signal backfill failed (retried next startup): {e}"
+            )
+
+    backfill_task = asyncio.create_task(_backfill_degraded_signals())
+
     # Ensure admin API key record exists for usage tracking (only if tracking is enabled)
     if settings.track_admin_api_key_usage:
         try:
@@ -419,7 +446,7 @@ async def lifespan(app: FastAPI):
     # clients reconnect instead of seeing a dead socket.
     SHUTTING_DOWN.set()
 
-    background_tasks = [watchdog_task, reranker_reaper_task]
+    background_tasks = [watchdog_task, reranker_reaper_task, backfill_task]
     if git_scheduler_task:
         background_tasks.append(git_scheduler_task)
     for task in background_tasks:
@@ -446,6 +473,12 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.observability import shutdown_langfuse
         shutdown_langfuse()
+    except Exception:
+        pass
+
+    # Persist any LLM-completion counts still buffered in the usage meter.
+    try:
+        await asyncio.to_thread(usage_meter.flush_now)
     except Exception:
         pass
 
@@ -554,12 +587,40 @@ async def enforce_rate_limit(request: Request) -> None:
         )
 
 
+async def _quota_exceeded() -> bool:
+    """Whether the monthly LLM-completion quota is exhausted.
+
+    MAX_QUERIES_PER_MONTH is denominated in internal LLM completions (each
+    Q&A-loop completion, extraction call, vision call, ... consumes one unit),
+    counted at the client-factory choke point and read here. 0 = unlimited.
+    """
+    settings = get_settings()
+    if settings.max_queries_per_month <= 0:
+        return False
+    counts = await asyncio.to_thread(usage_meter.get_completions_this_month)
+    return counts["total"] >= settings.max_queries_per_month
+
+
+def _quota_429(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail=detail,
+        headers={"Retry-After": str(_seconds_until_next_utc_month())},
+    )
+
+
 async def enforce_query_quota() -> None:
     """Reject chat requests with 429 once MAX_QUERIES_PER_MONTH is hit.
 
-    No-op when the env var is unset (default 0 = unlimited).
+    No-op when the env var is unset (default 0 = unlimited). Requests that
+    pass the gate run to completion — in-flight answers are never cut off
+    mid-stream by the quota.
     """
     settings = get_settings()
+
+    # Stamp this context as query work so its LLM completions are attributed
+    # to "query" in the usage meter (inherited by tasks the handler spawns).
+    usage_meter.set_usage_kind(usage_meter.KIND_QUERY)
 
     # Kick off the reranker load now (non-blocking) so its ~7 s cold start
     # overlaps the query-analysis LLM call + embedding + search that run before
@@ -570,19 +631,27 @@ async def enforce_query_quota() -> None:
     except Exception:
         pass
 
-    if settings.max_queries_per_month <= 0:
-        return
-    neo4j = get_neo4j_service()
-    count = await asyncio.to_thread(neo4j.get_query_count_this_month)
-    if count >= settings.max_queries_per_month:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Monthly query limit reached "
-                f"(max: {settings.max_queries_per_month}). "
-                f"Upgrade your plan or wait until next month."
-            ),
-            headers={"Retry-After": str(_seconds_until_next_utc_month())},
+    if await _quota_exceeded():
+        raise _quota_429(
+            f"Monthly usage limit reached "
+            f"(max: {settings.max_queries_per_month} LLM completions). "
+            f"Upgrade your plan or wait until next month."
+        )
+
+
+async def enforce_processing_quota() -> None:
+    """Reject new document/graph processing with 429 once the quota is hit.
+
+    Document processing consumes LLM completions (extraction, relationships,
+    vision), so it draws from the same MAX_QUERIES_PER_MONTH pool. In-flight
+    documents always finish; this gate only blocks *starting* new work.
+    """
+    settings = get_settings()
+    if await _quota_exceeded():
+        raise _quota_429(
+            f"Monthly usage limit reached "
+            f"(max: {settings.max_queries_per_month} LLM completions). "
+            f"Document processing is paused until next month or a plan upgrade."
         )
 
 
@@ -1032,7 +1101,13 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
         neo4j = get_neo4j_service()
         collection_filter = auth.get_collection_filter()
         stats = await asyncio.to_thread(neo4j.get_stats, collection_filter)
+        # Instance-wide (never collection-scoped): the unit quota meter.
+        usage = await asyncio.to_thread(usage_meter.get_completions_this_month)
         return GraphStatsResponse(
+            monthly_usage_used=usage["total"],
+            monthly_usage_limit=max(0, get_settings().max_queries_per_month),
+            monthly_usage_query=usage["query"],
+            monthly_usage_processing=usage["processing"],
             document_count=stats["document_count"],
             chunk_count=stats["chunk_count"],
             entity_count=stats.get("entity_count", 0),
@@ -1077,12 +1152,17 @@ async def get_instance_status(auth: AuthResult = Depends(require_manage_permissi
 
     stats: dict = {}
     last_query_at: Optional[str] = None
+    usage = {"total": 0, "query": 0, "processing": 0}
     if connected:
         try:
             stats = await asyncio.to_thread(neo4j.get_stats)
             last_query_at = await asyncio.to_thread(neo4j._get_meta, "last_query_at")
         except Exception as e:
             logger.error(f"instance/status: failed to read graph state: {e}")
+        try:
+            usage = await asyncio.to_thread(usage_meter.get_completions_this_month)
+        except Exception as e:
+            logger.error(f"instance/status: failed to read usage meter: {e}")
 
     processing_count = stats.get("processing_count", 0)
     pending_count = stats.get("pending_count", 0)
@@ -1135,6 +1215,13 @@ async def get_instance_status(auth: AuthResult = Depends(require_manage_permissi
         last_relationship_analysis_at=stats.get("last_relationship_analysis_at"),
         last_community_detection_at=stats.get("last_community_detection_at"),
         last_entity_merge_at=stats.get("last_entity_merge_at"),
+        document_count=stats.get("document_count", 0),
+        entity_count=stats.get("entity_count", 0),
+        collection_count=stats.get("collection_count", 0),
+        monthly_usage_used=usage["total"],
+        monthly_usage_limit=max(0, get_settings().max_queries_per_month),
+        monthly_usage_query=usage["query"],
+        monthly_usage_processing=usage["processing"],
         neo4j_connected=connected,
         checked_at=checked_at,
     )
@@ -1148,6 +1235,7 @@ async def upload_file(
     source: Optional[str] = Query(default=None, description="Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'."),
     auth: AuthResult = Depends(require_manage_permission),
     _rate: None = Depends(enforce_rate_limit),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Upload a file to the knowledge base.
@@ -1498,7 +1586,11 @@ Output 3-7 words only:"""
 
 
 @app.post("/api/custom-input", response_model=CustomInputResponse)
-async def create_custom_input(request: CustomInputCreate, auth: AuthResult = Depends(require_manage_permission)):
+async def create_custom_input(
+    request: CustomInputCreate,
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
+):
     """
     Create a custom knowledge input (Q&A, text, or markdown).
     
@@ -1969,7 +2061,8 @@ async def delete_all_documents(auth: AuthResult = Depends(require_manage_permiss
 async def reprocess_document(
     document_id: str,
     file: Optional[UploadFile] = File(default=None),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Reprocess a single document.
@@ -2063,7 +2156,8 @@ async def reprocess_documents(
                     "(allowed: 'relationship_analysis', 'community_detection'). Used by the "
                     "Generate Graph flow to chain Steps 1 → 2 → 3 backend-side.",
     ),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Reprocess multiple documents using their stored original files.
@@ -2203,6 +2297,7 @@ async def _run_batch_processing_task(
     Anything beyond the first chain item is passed to that follow-up so the
     chain can continue (e.g. into 'community_detection').
     """
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     try:
         processor = get_document_processor()
         pending = processor.get_pending_documents()
@@ -2267,7 +2362,8 @@ async def process_pending_documents(
         description="Comma-separated next pipeline steps to auto-run when this task finishes "
                     "(allowed: 'relationship_analysis', 'community_detection').",
     ),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Start processing all pending documents as a background task.
@@ -3599,6 +3695,7 @@ async def _run_relationship_analysis_task(
     When `chain` includes 'community_detection', a follow-up community-detection
     task is spawned automatically once this step finishes.
     """
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     try:
         processor = get_document_processor()
         neo4j = get_neo4j_service()
@@ -3678,7 +3775,8 @@ async def analyze_relationships(
         description="Comma-separated next pipeline steps to auto-run when this task finishes "
                     "(allowed: 'community_detection').",
     ),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """Analyze relationships between entities across documents.
 
@@ -3781,6 +3879,7 @@ async def _run_community_detection_task(
     collection_id: Optional[str]
 ) -> None:
     """Background task for community detection with progress tracking."""
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     try:
         settings = get_settings()
         neo4j = get_neo4j_service()
@@ -3895,7 +3994,8 @@ async def detect_communities(
     background_tasks: BackgroundTasks,
     min_size: int = Query(default=3, ge=2, le=20, description="Minimum community size"),
     collection_id: Optional[str] = Query(default=None, description="Scope to collection"),
-    auth: AuthResult = Depends(require_manage_permission)
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Start community detection on the knowledge graph as a background task.
@@ -3987,12 +4087,17 @@ async def delete_all_communities(auth: AuthResult = Depends(require_manage_permi
 
 
 @app.post("/api/graph/communities/summarize")
-async def summarize_communities(request: CommunitySummaryRequest, auth: AuthResult = Depends(require_manage_permission)):
+async def summarize_communities(
+    request: CommunitySummaryRequest,
+    auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
+):
     """
     Generate or regenerate summaries for communities.
     
     Uses LLM to create descriptive names and summaries for entity communities.
     """
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     try:
         settings = get_settings()
         if not settings.enable_graph_summarization:
@@ -4518,6 +4623,7 @@ async def _run_web_import_task(
     Mirrors the git connector's two-phase shape: stage every harvested page as
     a PENDING document, then run the shared processing pass once at the end.
     """
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     from app.services import crawl_client
 
     settings = get_settings()
@@ -4592,6 +4698,7 @@ async def _run_web_import_task(
 async def web_import(
     request: WebImportRequest,
     auth: AuthResult = Depends(require_manage_permission),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """Harvest one or more URLs into the knowledge base as markdown.
 
@@ -4884,6 +4991,7 @@ async def delete_git_connection(
 
 async def _run_git_sync_task(connection_id: str, task_id: str):
     """Background runner: sync a git connection, reporting progress to the task store."""
+    usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     from app.services.git_connector_service import get_git_connector_service
     service = get_git_connector_service()
     update_task_progress(task_id, 0, 100, "Starting sync...")
@@ -4915,6 +5023,11 @@ async def _git_sync_scheduler():
         try:
             await asyncio.sleep(interval_s)
             neo4j = get_neo4j_service()
+            # Scheduled syncs feed the processing pipeline — don't start new
+            # ones once the monthly LLM-completion budget is spent.
+            if await _quota_exceeded():
+                logger.info("Git sync scheduler: monthly usage limit reached; skipping this round")
+                continue
             now = datetime.now(timezone.utc)
             for conn in neo4j.list_git_connections():
                 if int(conn.get("sync_interval_minutes") or 0) <= 0:
@@ -4946,6 +5059,7 @@ async def sync_git_connection(
     connection_id: str,
     background_tasks: BackgroundTasks,
     auth: AuthResult = Depends(require_admin),
+    _quota: None = Depends(enforce_processing_quota),
 ):
     """Trigger an incremental sync for a connection. Returns a task id to poll."""
     _require_git_enabled()

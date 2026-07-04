@@ -23,6 +23,7 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from PIL import Image
 
 from app.config import get_settings
+from app.services import usage_meter
 from app.services.observability import record_generation
 from app.services.reasoning_config import (
     ReasoningMode,
@@ -392,6 +393,8 @@ class VisionAnalyzer:
                         output=content,
                         metadata={"stage": "vision"},
                     )
+                    # ...and bypasses the factory's quota metering — count manually.
+                    usage_meter.record_completion(kind=usage_meter.KIND_PROCESSING)
                     logger.info(f"Successfully analyzed image with vision model: {model}")
                     return content
 

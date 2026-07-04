@@ -223,7 +223,7 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 **Performance tuning** — controls how much work runs in parallel:
 
 ```env
-BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel
+BATCH_PROCESSING_CONCURRENCY=3               # documents processed in parallel
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 CONCURRENT_RELATIONS=3                       # relationship extraction thread pool size (separate from entity extraction)
 VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
@@ -802,7 +802,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `2` |
+| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `3` |
 | `PROCESSING_THREAD_WORKERS` | Thread pool workers for CPU operations | No | `4` |
 | `VISION_MAX_CONCURRENT` | Max concurrent vision API calls for image analysis | No | `3` |
 

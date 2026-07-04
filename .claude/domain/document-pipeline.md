@@ -90,6 +90,37 @@ flight. A `WARNING` log line lists the reset ids. Separately,
 docling subprocess is killed and the document marked `failed` instead of pinning
 the status at `processing`.
 
+### Degraded-document signals
+
+A document can "complete" while being useless for retrieval (e.g. extraction
+request timeouts → 0 entities; image-chunk embed step returns nothing →
+chunks without embeddings). Two persisted signals make this visible:
+
+- `Document.entity_count` — set by the completion `update_document_status`
+  call, **only when graph extraction actually ran** (extractor available +
+  `enable_graph_extraction`); otherwise unset, so 0-entities-by-design is
+  never flagged. Reads coalesce to `-1` = unknown → never degraded.
+- `Chunk.has_embedding` — boolean mirror written by `store_chunk`, so
+  embedding coverage is queryable without streaming vectors.
+
+**Degraded** = status `completed` AND (`entity_count == 0` OR any chunk with
+`has_embedding = false`). `get_all_documents`/`get_document` return
+`entity_count` + `unembedded_chunk_count` (only `false` counts — `NULL`
+pre-backfill chunks don't false-positive).
+
+**Startup backfill**: `Neo4jService.backfill_degraded_document_signals()`
+runs as a non-blocking background task in the lifespan (after the orphaned-doc
+reset): derives `has_embedding` for pre-existing chunks and computes
+`entity_count` for completed docs via `(d)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(e)`
+(entity part skipped when extraction is disabled). Batched `CALL {} IN
+TRANSACTIONS` on an auto-commit session; idempotent (only NULL fields touched).
+
+**Reprocess delta bypass**: `_reprocess_delta_skip` returns False for a
+degraded document even when file hash + config hash match — the fingerprint
+query (`get_document_fingerprint`) also returns both signals. Otherwise a
+degraded doc's reprocess would be no-op'd as "Content unchanged".
+Tests: `backend/tests/test_degraded_documents.py`.
+
 ### Step 1 Gate on Image Analysis
 
 `_run_batch_processing_task` in `backend/app/main.py` calls `_wait_for_image_analysis_complete()` after text processing finishes. That helper polls Neo4j every 3 s for any document with `processing_status == "completed" AND image_progress_current < image_progress_total`, updating the task's progress message with `"... — analyzing images: N/total across K document(s)..."` until none remain. Only then does `complete_task` run, which lets the backend chain advance to Step 2.

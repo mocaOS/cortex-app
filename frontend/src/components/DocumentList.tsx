@@ -47,6 +47,8 @@ interface Document {
   custom_input_type?: string | null;
   custom_topic_hint?: string | null;
   source?: string;
+  entity_count?: number;
+  unembedded_chunk_count?: number;
 }
 
 type UploadFileStatus = "uploading" | "uploaded" | "error";
@@ -77,6 +79,16 @@ const effectiveStatus = (doc: Document): string => {
     return "in_progress";
   }
   return doc.processing_status;
+};
+
+// Completed but unusable for retrieval: extraction ran and produced 0 entities,
+// or chunks are missing embeddings. entity_count must be exactly 0 — the backend
+// sends -1 for "unknown" (extraction disabled / pre-backfill), which is never
+// degraded. effectiveStatus folds unfinished image analysis into "in_progress",
+// so docs still analyzing images are not flagged.
+const isDegraded = (doc: Document): boolean => {
+  if (effectiveStatus(doc) !== "completed") return false;
+  return doc.entity_count === 0 || (doc.unembedded_chunk_count ?? 0) > 0;
 };
 
 const isProcessing = (status: string) => {
@@ -288,6 +300,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
     const matchesStatus = (() => {
       if (filterStatus === null) return true;
+      if (filterStatus === "degraded") return isDegraded(doc);
       return effectiveStatus(doc) === filterStatus;
     })();
 
@@ -323,6 +336,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     in_progress: documents.filter((d) => effectiveStatus(d) === "in_progress").length,
     pending: documents.filter((d) => effectiveStatus(d) === "pending").length,
     failed: documents.filter((d) => effectiveStatus(d) === "failed").length,
+    degraded: documents.filter(isDegraded).length,
   };
 
   const availableTargetCollections = collections.filter(
@@ -330,6 +344,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
   );
 
   const failedDocuments = filteredDocuments.filter((d) => effectiveStatus(d) === "failed");
+  const degradedDocuments = filteredDocuments.filter(isDegraded);
   const inProgressDocuments = filteredDocuments.filter((d) => effectiveStatus(d) === "in_progress" || effectiveStatus(d) === "pending");
   const selectedInProgressCount = documents.filter(
     (d) => selectedIds.has(d.id) && isProcessing(d.processing_status) && d.file_path
@@ -428,6 +443,16 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       .filter((d) => d.processing_status === "failed")
       .map((d) => d.id);
     setSelectedIds(new Set(failedIds));
+  };
+
+  const selectAllDegraded = () => {
+    setSelectedIds(new Set(degradedDocuments.map((d) => d.id)));
+  };
+
+  // "Select all" on the needs-attention banner: failed + degraded together,
+  // so one bulk Reprocess covers everything that needs a retry.
+  const selectFailedAndDegraded = () => {
+    setSelectedIds(new Set([...failedDocuments, ...degradedDocuments].map((d) => d.id)));
   };
 
   const selectInProgress = () => {
@@ -766,6 +791,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           filteredCount={filteredDocuments.length}
           allFilteredSelected={allFilteredSelected}
           failedCount={failedDocuments.length}
+          degradedCount={degradedDocuments.length}
           inProgressCount={inProgressDocuments.length}
           selectedInProgressCount={selectedInProgressCount}
           isReprocessing={isReprocessing}
@@ -776,6 +802,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
           hasFilters={hasFilters}
           onToggleSelectAll={toggleSelectAll}
           onSelectFailed={selectAllFailed}
+          onSelectDegraded={selectAllDegraded}
           onSelectInProgress={selectInProgress}
           onReprocessSelected={handleReprocessSelected}
           onRestartSelected={handleRestartSelected}
@@ -785,19 +812,35 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
         />
       </div>
 
-      {/* Failed documents summary */}
-      {failedDocuments.length > 0 && (
+      {/* Failed / degraded documents summary */}
+      {(failedDocuments.length > 0 || degradedDocuments.length > 0) && (
         <div className="glass rounded-lg p-4 border border-border">
           <div className="flex items-center gap-3">
             <AlertCircle className="w-5 h-5 text-muted-foreground shrink-0" />
             <div className="flex-1 min-w-0">
               <h4 className="text-sm font-medium text-foreground">
-                {failedDocuments.length} document{failedDocuments.length !== 1 ? "s" : ""} failed
+                {[
+                  failedDocuments.length > 0 &&
+                    `${failedDocuments.length} failed`,
+                  degradedDocuments.length > 0 &&
+                    `${degradedDocuments.length} degraded`,
+                ]
+                  .filter(Boolean)
+                  .join(" / ")}{" "}
+                document{failedDocuments.length + degradedDocuments.length !== 1 ? "s" : ""}
               </h4>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Click reprocess to retry, or select multiple and use bulk actions.
+                {degradedDocuments.length > 0
+                  ? "Degraded documents completed with no entities or missing embeddings. Reprocess to retry."
+                  : "Click reprocess to retry, or select multiple and use bulk actions."}
               </p>
             </div>
+            <button
+              onClick={selectFailedAndDegraded}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-muted/50 hover:bg-muted border border-border transition-colors"
+            >
+              Select all
+            </button>
           </div>
         </div>
       )}
