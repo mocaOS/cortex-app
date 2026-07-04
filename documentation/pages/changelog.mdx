@@ -7,6 +7,20 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 4, 2026 (Graph builds: leaner extraction & rebuild hardening)
+
+A pass over the knowledge-graph build pipeline focused on API-call economy and robustness on large libraries. Graph content and quality semantics are unchanged; builds complete faster and make substantially fewer LLM calls, especially under provider rate limits.
+
+- **Entity extraction skips redundant summary calls** — the per-document summary is now generated as extraction context only when a document spans multiple extraction batches. Single-batch documents (the common case) already carry their full text in the extraction prompt, so no separate summary call is made for them.
+- **Entity extraction is protected against output truncation** — a batch whose LLM response hits the output-token cap is automatically split in half and retried, so entity-dense documents keep their tail entities. A single chunk that still truncates logs a warning naming `EXTRACTION_MAX_OUTPUT_TOKENS`.
+- **Batched extraction accepts explicit empty results** — when the model returns an explicitly empty `<chunk>` block in a batched relationship call, that is accepted as a deliberate "no relationships" answer; only chunks *missing* from a (truncated or partial) response are retried individually. This avoids re-asking sparse chunks one by one.
+- **Batched graph writes and fulltext dedup prefilter are now the default** — `ENABLE_BATCHED_KG_WRITES=true` stores entities/links/relationships via UNWIND batches (a handful of Neo4j round trips per document), and `ENTITY_DEDUP_PREFILTER=true` scores the top fulltext-index candidates instead of scanning every entity during Levenshtein dedup. Both preserve the per-item dedup semantics (locked by parity tests) and can be set to `false` per stack.
+- **Relationship confidence is persisted** — both relationship writers now store the model's confidence score alongside description and weight (previously only library imports carried it through), making it available for filtering and analysis.
+- **Robust to embedding-model switches** — entities carrying vectors from a previously configured embedding model are re-embedded when merged into and treated as missing by Step 2's automatic backfill, and the kNN candidate scan skips incompatible vectors instead of aborting. Changing `EMBEDDING_MODEL`/`EMBEDDING_DIMENSION` no longer quietly degrades semantic dedup or targeted relationship discovery.
+- **Graph-wide deletes scale with library size** — "delete all entities", "delete all relationships", and the rebuild's batch-relationship cleanup now run in bounded batches (`CALL {} IN TRANSACTIONS`), matching the system-reset behavior, instead of a single whole-graph transaction that can exceed Neo4j's transaction memory limit on large graphs.
+
+---
+
 ## July 3, 2026 (Step 1: relationship descriptions & batched extraction)
 
 - **Relationship descriptions are now reliably captured in Step 1** — the per-chunk extraction prompts now pin the exact output format, so models consistently include a short evidence-grounded description with every relationship (previously most per-chunk relations were stored without one). The parser also accepts the common `<relation>` tag variant. Descriptions appear in the Explore relationship browser and enrich RAG context.
