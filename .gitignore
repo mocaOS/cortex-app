@@ -83,3 +83,7 @@ git_repos/
 
 # Claude Code scheduled-tasks lock (machine-local state)
 .claude/scheduled_tasks.lock
+
+# Venice capacity-planning report (local working doc, never commit)
+venice.md
+venice-projection.ods

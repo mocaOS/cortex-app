@@ -38,6 +38,13 @@ Triggered via "Extract Entities" on Knowledge Graph page or "Generate Graph" but
 - Entity type normalization (10 allowed types, fuzzy matched). See [`.claude/domain/entities.md`](entities.md#type-normalization).
 - Fuzzy entity-to-chunk linking
 
+### Extraction Batching, Auto-Summary & Truncation Guard
+
+`extract_entities_from_document_async` packs ALL of a document's chunks into as few LLM calls as fit the `GRAPH_EXTRACTION_MAX_CONTEXT` token budget (0.8× budget minus prompt overhead and a 1,500-token output reserve; 1-chunk overlap between batches). Most documents are single-batch.
+
+- **Auto-summary (since 2026-07-03):** the per-document summary LLM call (`generate_document_summary_async`, ≤1,000 output tokens over the first 10k chars) is made **only for multi-batch documents**, where it provides cross-batch context. A single-batch prompt already contains the full document text, so the summary was provably redundant there — skipping it removes ~1 LLM call per document (~half of entity-phase call volume). Callers pass `document_summary=None` (auto); passing a string forces the legacy explicit-summary behavior.
+- **Truncation split-retry:** a batch whose response hits the output cap (`finish_reason == "length"`, cap = `EXTRACTION_MAX_OUTPUT_TOKENS`) would silently lose its tail entities. The truncated output is discarded and the batch is split in half and retried (deque; halves may split again). A truncated single-chunk batch keeps whatever parsed and logs a warning to raise the cap. Tests: `backend/tests/test_entity_extraction_batching.py`.
+
 ### Entity Embedding & Storage
 
 When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, all entity embeddings for a document are generated in **one batched HTTP call** via `graph_extractor.generate_entity_embeddings_batch_async(entities, batch_size=64)` before the storage loop runs. Previous behavior was one HTTP call per entity (158 sequential calls observed at ~3-5s each → ~8-13 min); batched it's ~1-3 calls totalling a few seconds. Per-batch failures degrade to `None` in the aligned result list so the loop falls back to Levenshtein resolution for those entities — the document doesn't fail.

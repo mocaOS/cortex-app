@@ -15,7 +15,7 @@ When documents are deleted, also cleans up:
 
 Accessible via Settings page → Danger Zone → System Reset modal with "DELETE" confirmation.
 
-**Memory-safe deletion**: `delete_all_documents` deletes communities/entities/chunks/documents via `CALL {} IN TRANSACTIONS` (10K rows; 2K for chunks, which carry embedding vectors) — a single whole-graph `DETACH DELETE` blows past `dbms.memory.transaction.total.max` (~70% of heap) on large knowledge bases. These queries must run as auto-commit (`session.run`), not inside an explicit transaction.
+**Memory-safe deletion**: `delete_all_documents` deletes communities/entities/chunks/documents via `CALL {} IN TRANSACTIONS` (10K rows; 2K for chunks, which carry embedding vectors) — a single whole-graph `DETACH DELETE` blows past `dbms.memory.transaction.total.max` (~70% of heap) on large knowledge bases. These queries must run as auto-commit (`session.run`), not inside an explicit transaction. Since 2026-07-04 the graph-management deletes (`delete_all_entities`, `delete_all_relationships`, `delete_batch_relationships`) use the same batched pattern — the old single-transaction forms 500'd with `MemoryPoolOutOfMemoryError` on a 29k-entity/53k-relationship graph.
 
 **Timeout chain**: reset is a synchronous HTTP call routed through the Next.js rewrite proxy (`experimental.proxyTimeout`, 300s — the Next default of 30s returned a non-JSON 500 to the UI while the backend finished cleanup) and nginx (`proxy_read_timeout 300s`). A reset that outlives 300s would need conversion to a background task (like `library_import`).
 

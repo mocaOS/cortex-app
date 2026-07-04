@@ -754,12 +754,12 @@ curl -H "X-API-Key: your-api-key" http://localhost:8000/api/stats
 
 ## Efficiency Flags (v-next)
 
-All default **off**; enable per stack after an A/B bench run (`bench/BASELINE.md`). None change API shapes or graph semantics.
+None change API shapes or graph semantics; each can be disabled per stack.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENTITY_DEDUP_PREFILTER` | `false` | Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every entity. |
-| `ENABLE_BATCHED_KG_WRITES` | `false` | Write entities/links/relationships via UNWIND batches (~10 Neo4j round trips per document instead of hundreds), preserving per-item dedup semantics. |
+| `ENTITY_DEDUP_PREFILTER` | `true` | Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every entity. Set `false` to restore the full scan. |
+| `ENABLE_BATCHED_KG_WRITES` | `true` | Write entities/links/relationships via UNWIND batches (~10 Neo4j round trips per document instead of hundreds), preserving per-item dedup semantics. Set `false` to restore per-item writes. |
 | `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `true` | Pack several chunks into one per-chunk relationship-extraction LLM call (several times fewer Step 1 LLM calls at equivalent extraction quality; especially effective under provider rate limits). Set `false` to restore one call per chunk. |
 | `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Max chunks per batched relationship-extraction call. |
 | `ENABLE_PHASEB_CHECKPOINTING` | `false` | Persist Phase B batch progress — crash/redeploy resumes; rounds 2+ reuse round 1's candidate scan. |

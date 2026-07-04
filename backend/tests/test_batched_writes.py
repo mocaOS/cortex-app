@@ -163,8 +163,9 @@ class TestBatchWriterCypher:
         assert "size(coalesce(e.description, '')) < size(row.description)" in cypher
         assert (
             "e.embedding = CASE WHEN e.embedding IS NULL "
+            "OR (row.embedding IS NOT NULL AND size(e.embedding) <> size(row.embedding)) "
             "THEN row.embedding ELSE e.embedding END" in cypher
-        )
+        )  # first embedding wins, except a stale wrong-dimension one is replaced
 
     def test_apply_entity_merges_batch_alias_and_provenance(self):
         svc, session = _service_with_session()
@@ -222,3 +223,45 @@ class TestBatchWriterCypher:
         out = svc.resolve_entities_batch_by_embedding([(0, [0.1])], 0.85)
         assert out == {}
         assert svc._vector_search_failures == 1
+
+    def test_store_relationships_batch_carries_confidence(self):
+        svc, session = _service_with_session()
+        session.run.return_value.single.return_value = {"stored": 1}
+        svc.store_relationships_batch([
+            Relationship(source="A", target="B", relationship_type="USES",
+                         description="d", weight=5.0, confidence=0.8),
+        ])
+        rows = session.run.call_args.kwargs["rows"]
+        assert rows[0]["confidence"] == 0.8
+        assert "confidence" in session.run.call_args.args[0]
+
+    def test_bulk_deletes_run_in_transactions(self):
+        svc, session = _service_with_session()
+        session.run.return_value.single.return_value = {"deleted": 0}
+        svc.delete_all_entities()
+        assert "IN TRANSACTIONS" in session.run.call_args.args[0]
+        svc.delete_all_relationships()
+        assert "IN TRANSACTIONS" in session.run.call_args.args[0]
+        svc.delete_batch_relationships()
+        assert "IN TRANSACTIONS" in session.run.call_args.args[0]
+
+    def test_knn_batch_failure_skips_not_raises(self):
+        svc, session = _service_with_session()
+        session.run.side_effect = RuntimeError("query vector has 4096 dimensions")
+        pairs = svc.get_knn_candidate_pairs(["A", "B"])
+        assert pairs == []
+
+    def test_knn_query_guards_embedding_dimension(self):
+        svc, session = _service_with_session()
+        session.run.return_value = []
+        svc.get_knn_candidate_pairs(["A"])
+        query = session.run.call_args.args[0]
+        assert "size(e.embedding) = $dim" in query
+        assert session.run.call_args.kwargs["dim"] == svc.settings.embedding_dimension
+
+    def test_missing_embedding_includes_wrong_dimension(self):
+        svc, session = _service_with_session()
+        session.run.return_value = []
+        svc.get_entities_missing_embedding(["A"])
+        query = session.run.call_args.args[0]
+        assert "size(e.embedding) <> $dim" in query

@@ -1580,9 +1580,9 @@ class DocumentProcessor:
                     functools.partial(
                         self.neo4j.update_document_progress,
                         doc_id,
-                        35,
+                        40,
                         100,
-                        "Generating document summary...",
+                        "Extracting entities from document...",
                     ),
                 )
                 logger.info(f"Document {doc_id}: starting per-document entity extraction...")
@@ -1590,38 +1590,16 @@ class DocumentProcessor:
                 # Yield control before graph extraction
                 await asyncio.sleep(0)
 
-                # Generate document summary for context
-                full_text = " ".join([c.content for c in embedded_chunks if c.content])[:5000]
-                document_summary = (
-                    await self.graph_extractor.generate_document_summary_async(
-                        full_text
-                    )
-                )
-
-                if document_summary:
-                    logger.info(
-                        f"Document {doc_id}: generated summary for extraction context"
-                    )
-
-                await loop.run_in_executor(
-                    _get_processing_executor(),
-                    functools.partial(
-                        self.neo4j.update_document_progress,
-                        doc_id,
-                        40,
-                        100,
-                        "Extracting entities from document...",
-                    ),
-                )
-
                 # Check for cancellation before extraction
                 self._check_cancellation(doc_id)
 
-                # Per-document entity extraction (batched if needed)
+                # Per-document entity extraction (batched if needed). Summary
+                # generation is auto: the extractor makes the summary call only
+                # for multi-batch documents — a single-batch prompt already
+                # contains the full document text.
                 chunk_contents = [c.content for c in embedded_chunks if c.content]
                 entities = await self.graph_extractor.extract_entities_from_document_async(
                     chunks=chunk_contents,
-                    document_summary=document_summary or "",
                     max_tokens=self.settings.extraction_max_context,
                 )
 

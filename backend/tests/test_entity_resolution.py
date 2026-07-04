@@ -238,8 +238,9 @@ class TestStoreEntityWithEmbedding:
         )  # longer description wins
         assert (
             "e.embedding = CASE WHEN e.embedding IS NULL "
+            "OR size(e.embedding) <> size($embedding) "
             "THEN $embedding ELSE e.embedding END" in cypher
-        )  # first embedding wins
+        )  # first embedding wins, except a stale wrong-dimension one is replaced
         assert "MERGE (c)-[:MENTIONS]->(e)" in cypher  # chunk link inline
         assert params["chunk_id"] == "c2"
         assert params["doc_id"] == "d2"

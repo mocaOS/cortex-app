@@ -167,10 +167,10 @@ Web→markdown harvesting (the "Web Import" feature; supersedes the deprecated s
 
 All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 retries with backoff+jitter, its own circuit breaker (op `crawl` in `/metrics`), and cache-bypass (`c="0"`) per request. Only the synchronous `/md` + `/crawl` endpoints are used (never the addressable async `/crawl/job` API) so nothing is retained or cross-tenant-visible.
 
-## Efficiency Flags (v-next — default off until bench-validated, see `bench/BASELINE.md`)
+## Efficiency Flags (v-next)
 
-- `ENTITY_DEDUP_PREFILTER` (default: false) — Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every Entity node (O(50) vs O(all) per stored entity).
-- `ENABLE_BATCHED_KG_WRITES` (default: false) — entities/chunk-links/relationships are written via UNWIND batches (a handful of Neo4j round trips per document instead of one per item) through a resolve → cluster → batch-write pipeline that preserves the per-item dedup semantics (`test_batched_writes.py` locks the parity contract).
+- `ENTITY_DEDUP_PREFILTER` (default: **true** since 2026-07-03) — Levenshtein entity dedup scores only the top-50 fulltext-index candidates instead of scanning every Entity node (O(50) vs O(all) per stored entity). Set false to restore the full scan (recall can differ on extreme typo variants the fulltext analyzer misses).
+- `ENABLE_BATCHED_KG_WRITES` (default: **true** since 2026-07-03) — entities/chunk-links/relationships are written via UNWIND batches (a handful of Neo4j round trips per document instead of one per item) through a resolve → cluster → batch-write pipeline that preserves the per-item dedup semantics (`test_batched_writes.py` locks the parity contract).
 - `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` (default: **true** since 2026-07-03 — live-validated, see `bench/STEP1_RESEARCH.md`) + `RELATIONSHIP_CHUNKS_PER_CALL` (default: 4; 6 also A/B-passed) — pack several chunks into one per-chunk relationship-extraction LLM call (grouped `<chunk index>` XML; same system prompt as the single-chunk path). ÷4 Step 1 relationship calls at parity yield — the key lever under provider request-rate limits. Degrades per batch: grouped parse → flat parse → per-chunk re-dispatch.
 - `ENABLE_PHASEB_CHECKPOINTING` (default: false) — persist Phase B batch progress (`PhaseBCheckpoint` nodes): crash/redeploy resumes from completed batches; rounds 2+ reuse round 1's Phase 1 candidates.
 - `ENABLE_REPROCESS_DELTA` (default: false) — skip reprocessing when the file bytes + extraction config are unchanged since the last successful run (fingerprint on the Document node). Git re-syncs of unchanged files cost ~zero.

@@ -390,13 +390,13 @@ Behavior:
 
 ## Efficiency Flags & Hardening (v-next)
 
-Opt-in performance flags (all default off — validate with a bench A/B run first, see `bench/BASELINE.md`):
+Performance flags (each can be disabled per stack):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENTITY_DEDUP_PREFILTER` | `false` | Faster entity dedup on large graphs (fulltext prefilter). |
-| `ENABLE_BATCHED_KG_WRITES` | `false` | UNWIND-batched graph writes (~10 DB round trips per document instead of hundreds). |
-| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `false` | Several chunks per relationship-extraction LLM call (÷~4 calls). |
+| `ENTITY_DEDUP_PREFILTER` | `true` | Faster entity dedup on large graphs (fulltext prefilter). |
+| `ENABLE_BATCHED_KG_WRITES` | `true` | UNWIND-batched graph writes (~10 DB round trips per document instead of hundreds). |
+| `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` | `true` | Several chunks per relationship-extraction LLM call (÷~4 calls). |
 | `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Chunks per batched call. |
 | `ENABLE_PHASEB_CHECKPOINTING` | `false` | Resume cross-document analysis after a crash; reuse candidates across rounds. |
 | `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing of unchanged documents (git re-syncs become free). |

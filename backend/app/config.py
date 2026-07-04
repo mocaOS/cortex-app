@@ -660,16 +660,18 @@ class Settings(BaseSettings):
         default=""
     )  # Model for entity embeddings (defaults to embedding_model)
     entity_dedup_prefilter: bool = Field(
-        default=False
+        default=True
     )  # Prefilter Levenshtein dedup with the entity fulltext index: scores only
     #   the top-50 fulltext candidates instead of scanning every Entity node.
-    #   Big win on 10k+ entity graphs; off by default (recall can differ on
-    #   extreme typo variants the fulltext analyzer misses).
+    #   Big win on 10k+ entity graphs. Default ON since 2026-07-03; set false
+    #   to restore full-scan Levenshtein (recall can differ on extreme typo
+    #   variants the fulltext analyzer misses).
     enable_batched_kg_writes: bool = Field(
-        default=False
+        default=True
     )  # Store entities/links/relationships via UNWIND batches (a handful of
     #   Neo4j round trips per document instead of one per item). Preserves the
-    #   per-item dedup semantics; off by default until bench-validated per stack.
+    #   per-item dedup semantics (parity tests in test_batched_writes.py).
+    #   Default ON since 2026-07-03; set false to restore per-item writes.
     enable_batched_chunk_relationships: bool = Field(
         default=True
     )  # Pack several chunks into one per-chunk relationship-extraction LLM

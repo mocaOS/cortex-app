@@ -148,6 +148,51 @@ Repo default flipped to ON (owner decision, 2026-07-03) with
 `RELATIONSHIP_CHUNKS_PER_CALL=4`. Remaining open: entity-count/QA-score A/B
 on the 15-doc bench corpus as a post-hoc confirmation.
 
+**2026-07-03 — entity-phase pass: SHIPPED (summary-skip, truncation guard, storage flags).**
+Cost anatomy follow-up: with relationships batched, the entity phase became ~half of
+Step 1's LLM calls — and ~half of *those* were the per-document summary call, which
+(a) is never stored or used outside the entity-extraction prompt, (b) only ever saw
+the first 5,000 chars of the doc, and (c) is provably redundant for single-batch
+documents (the extraction prompt already contains the full text). Changes:
+
+1. Auto-summary: `extract_entities_from_document_async` computes the batch split
+   first and generates a summary only for multi-batch documents (callers pass no
+   summary; explicit-summary path preserved). Removes ~1 LLM call + up to ~1,000
+   decoded tokens per document across effectively the whole library.
+2. Truncation guard: a batch whose response ends with `finish_reason == "length"`
+   (output cap `EXTRACTION_MAX_OUTPUT_TOKENS`, default 8,000) previously lost its
+   tail entities silently — a recall bug that worsens as batches grow. Now the
+   truncated output is discarded and the batch splits in half and retries.
+3. Defaults flipped ON: `ENABLE_BATCHED_KG_WRITES` + `ENTITY_DEDUP_PREFILTER`
+   (per-entity Neo4j round trips + full Levenshtein scans were pure non-LLM
+   wall-clock on every document's critical path).
+
+Unit tests: `backend/tests/test_entity_extraction_batching.py` (auto-summary on/off,
+explicit-summary compat, split-retry, single-chunk truncation); full suite 554 pass.
+
+**2026-07-04 — full-rebuild validation (1,267 docs) + two run-discovered fixes.**
+Rebuild completed in 10h53m, 0 failed docs, ~6.3k LLM calls (old builder: ~20k, ≥19h
+on the same corpus). Final graph vs old build: 50,885 per-chunk rels (old: 49,001 —
+the mid-run "fewer rels" reading was doc-order sampling, not real), 100% description
+coverage (old: 0.5%), 29,473 entities (old ~22k — needs an eyeball on dedup quality),
+truncation guard fired 22× (recall silently lost in the old code). Step 2 targeted:
+first pass ran **co-mention-only** because stale 4096-dim entity embeddings (merged-into
+entities survive an embedding-model switch un-re-embedded) crashed the kNN phase.
+Fixed (dimension-aware merge overwrite + kNN size guard + per-batch skip + backfill
+treats wrong-dim as missing), re-ran: 30,677 kNN pairs, 15,000 ranked candidates
+(cap hit), 10,967 verified rels stored in 38.6m — cross-doc 2,376 → 13,342 (5.6×),
+ERR 2.17, stored avg confidence 0.874. Also shipped: empty-`<chunk>`-block trust in
+batched extraction (1,172 wasted re-dispatch calls = ~23% of the rel pass eliminated;
+→ ~6 calls/doc), confidence persisted by both native rel writers, and batched
+`CALL {} IN TRANSACTIONS` for the graph-management delete-alls (OOM'd at 29k entities).
+Live E2E on the local stack (qwen3-6-27b): 2-chunk doc → 1 extraction batch, zero
+summary call, 18 entities, batched storage resolved 5 against existing canonicals,
+19 per-chunk relationships in 1 batched call. Quality gate: prod (pre-change) vs
+post-change graph comparison on the live library. Entity embeddings also moved to
+the subsecond provider in prod (lever: per-doc embedding batch call off the ~8s
+Venice queue). Remaining open here: doc-batched entity extraction for small-doc
+libraries (needs recall A/B before default-on).
+
 ## Suggested sequence
 
 1. Capture the bench baseline (BASELINE.md procedure — 15-doc corpus).

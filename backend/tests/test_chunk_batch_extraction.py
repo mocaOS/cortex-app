@@ -206,3 +206,40 @@ class TestBatchExtraction:
             {"key": "d", "chunk_text": "  ", "entities": [{"name": "a"}, {"name": "b"}]},
         ])
         assert out == {}
+
+
+class TestEmptyBlockTrust:
+    """Explicit empty <chunk> blocks are a deliberate answer — no re-dispatch."""
+
+    async def test_explicit_empty_blocks_not_redispatched(self, extractor, monkeypatch):
+        content = '<chunk index="1"></chunk><chunk index="2"></chunk>'
+        _wire_batch_llm(extractor, monkeypatch, content)
+        single_calls = []
+
+        async def _single(chunk_text, entities, max_output_tokens=2000):
+            single_calls.append(chunk_text)
+            return []
+
+        monkeypatch.setattr(extractor, "extract_chunk_relationships_async", _single)
+        out = await extractor.extract_chunk_relationships_batch_async(_ITEMS)
+        assert single_calls == []
+        assert out == {"chunk-1": [], "chunk-2": []}
+        assert extractor._async_safe_completion.await_count == 1
+
+    async def test_missing_block_redispatches_only_that_chunk(self, extractor, monkeypatch):
+        content = (
+            '<chunk index="1"><relationship><source>Alice</source>'
+            "<target>Acme</target><type>WORKS_FOR</type></relationship></chunk>"
+        )
+        _wire_batch_llm(extractor, monkeypatch, content)
+        single_calls = []
+
+        async def _single(chunk_text, entities, max_output_tokens=2000):
+            single_calls.append(chunk_text)
+            return []
+
+        monkeypatch.setattr(extractor, "extract_chunk_relationships_async", _single)
+        out = await extractor.extract_chunk_relationships_batch_async(_ITEMS)
+        assert single_calls == ["Cortex uses Neo4j."]  # only the uncovered chunk
+        assert [r.source for r in out["chunk-1"]] == ["Alice"]
+        assert out["chunk-2"] == []

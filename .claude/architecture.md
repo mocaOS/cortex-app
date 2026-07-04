@@ -14,7 +14,7 @@ Next.js 15 (React 19, TypeScript)  →  FastAPI (Python 3.11+)  →  Neo4j 5.x (
 - `main.py` — FastAPI app with 40+ endpoints (monolithic router, no separate router modules)
 - `config.py` — Pydantic BaseSettings, all env vars with defaults (see [`.claude/environment.md`](environment.md))
 - `models.py` — Pydantic request/response models
-- `services/neo4j_service.py` — Graph DB operations, search, entity extraction, community detection, `delete_all_entities()` (DETACH DELETE all entities). See [`.claude/domain/entities.md`](domain/entities.md), [`.claude/domain/communities.md`](domain/communities.md), [`.claude/domain/relationships.md`](domain/relationships.md)
+- `services/neo4j_service.py` — Graph DB operations, search, entity extraction, community detection, `delete_all_entities()` (batched `CALL {} IN TRANSACTIONS` DETACH DELETE). See [`.claude/domain/entities.md`](domain/entities.md), [`.claude/domain/communities.md`](domain/communities.md), [`.claude/domain/relationships.md`](domain/relationships.md)
 - `services/document_processor.py` — Ingestion pipeline. See [`.claude/domain/document-pipeline.md`](domain/document-pipeline.md)
 - `services/graph_extractor.py` — LLM-based entity/relationship extraction (`async_relationship_client` and `relationship_model_name` properties for dedicated relationship model). See [`.claude/domain/relationships.md`](domain/relationships.md), [`.claude/domain/entities.md`](domain/entities.md)
 - `services/vision_analyzer.py` — Image analysis and OCR. See [`.claude/domain/document-pipeline.md`](domain/document-pipeline.md)

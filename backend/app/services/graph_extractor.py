@@ -5,6 +5,7 @@ High-quality knowledge graph extraction using XML-formatted prompts.
 
 import hashlib
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, List, Callable, Awaitable
 import json
@@ -1998,7 +1999,7 @@ Respond with ONLY the community name, nothing else."""
     async def extract_entities_from_document_async(
         self,
         chunks: List[str],
-        document_summary: str,
+        document_summary: Optional[str] = None,
         max_tokens: int = 8192,
     ) -> List[Entity]:
         """Extract entities from an entire document (batched by token budget).
@@ -2009,7 +2010,12 @@ Respond with ONLY the community name, nothing else."""
 
         Args:
             chunks: List of chunk text content strings
-            document_summary: Summary of the document for context
+            document_summary: Summary of the document for context. None (the
+                default) means auto mode: a summary LLM call is made only when
+                the document spans multiple extraction batches — a single-batch
+                prompt already contains the full document text, so a summary
+                adds nothing there. Pass a string (possibly empty) to force
+                the legacy explicit-summary behavior.
             max_tokens: Approximate context window budget for the extraction model
 
         Returns:
@@ -2041,6 +2047,11 @@ Respond with ONLY the community name, nothing else."""
             text="",
         ))
         prompt_overhead = system_tokens + template_tokens
+        if document_summary is None:
+            # Auto mode: the summary (if any) is generated only after the
+            # batch split is known, so reserve room for it up front. Summary
+            # calls cap at 1,000 output tokens.
+            prompt_overhead += 1100
         output_reserve = 1500
         available_tokens = int(max_tokens * 0.8) - prompt_overhead - output_reserve
 
@@ -2070,10 +2081,30 @@ Respond with ONLY the community name, nothing else."""
             f"(model={model}, budget={max_tokens})"
         )
 
-        # Extract entities from each batch
-        all_entities: List[Entity] = []
+        if document_summary is None:
+            if len(batches) > 1:
+                # Multi-batch doc: each batch only sees a slice of the text,
+                # so a summary provides cross-batch context.
+                document_summary = await self.generate_document_summary_async(
+                    " ".join(chunks)
+                )
+                logger.info(
+                    f"Entity extraction: generated summary for {len(batches)}-batch document"
+                )
+            else:
+                # Single batch: the prompt already contains the full document.
+                document_summary = ""
 
-        for batch_idx, batch in enumerate(batches):
+        # Extract entities from each batch. A batch whose response hits the
+        # output-token cap (finish_reason == "length") would silently lose
+        # its tail entities — split it and retry the halves instead.
+        all_entities: List[Entity] = []
+        pending = deque(batches)
+        batch_num = 0
+
+        while pending:
+            batch = pending.popleft()
+            batch_num += 1
             batch_text = "\n\n".join(batch)
             user_prompt = ENTITY_EXTRACTION_USER_PROMPT.format(
                 entity_types=", ".join(e_types),
@@ -2096,8 +2127,27 @@ Respond with ONLY the community name, nothing else."""
 
                 content = self._extract_response_content(response)
                 if not content:
-                    logger.warning(f"Batch {batch_idx + 1}/{len(batches)}: empty response")
+                    logger.warning(f"Entity extraction batch {batch_num}: empty response")
                     continue
+
+                choices = getattr(response, "choices", None)
+                finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
+                if finish_reason == "length":
+                    if len(batch) > 1:
+                        mid = len(batch) // 2
+                        pending.appendleft(batch[mid:])
+                        pending.appendleft(batch[:mid])
+                        logger.warning(
+                            f"Entity extraction batch {batch_num}: output truncated at "
+                            f"{self.settings.extraction_max_output_tokens} tokens — "
+                            f"splitting {len(batch)}-chunk batch and retrying halves"
+                        )
+                        continue
+                    logger.warning(
+                        f"Entity extraction batch {batch_num}: single-chunk output truncated at "
+                        f"{self.settings.extraction_max_output_tokens} tokens — tail entities "
+                        f"lost; raise EXTRACTION_MAX_OUTPUT_TOKENS"
+                    )
 
                 xml_entities = self._extract_xml_entities(content)
                 for e in xml_entities:
@@ -2111,11 +2161,12 @@ Respond with ONLY the community name, nothing else."""
                         logger.warning(f"Failed to parse entity {e}: {ex}")
 
                 logger.info(
-                    f"Batch {batch_idx + 1}/{len(batches)}: extracted {len(xml_entities)} entities"
+                    f"Entity extraction batch {batch_num} ({len(batch)} chunks): "
+                    f"extracted {len(xml_entities)} entities"
                 )
 
             except Exception as e:
-                logger.error(f"Error in entity extraction batch {batch_idx + 1}: {e}")
+                logger.error(f"Error in entity extraction batch {batch_num}: {e}")
 
         # Deduplicate by name (case-insensitive), keep longest description
         seen: dict[str, Entity] = {}
@@ -2436,12 +2487,28 @@ Extract relationships supported by the text above:"""
         Returns None when no <chunk> blocks exist (caller tries the flat
         fallback); otherwise an index-aligned list of relationship-dict lists.
         """
+        parsed = self._extract_xml_grouped_relationships_with_coverage(
+            content, num_items
+        )
+        return parsed[0] if parsed else None
+
+    def _extract_xml_grouped_relationships_with_coverage(
+        self, content: str, num_items: int
+    ) -> Optional[tuple]:
+        """Like `_extract_xml_grouped_relationships`, but also reports which
+        indices had an explicit <chunk> block. An explicitly-present empty
+        block is a deliberate "no relationships" answer; an absent block
+        (truncated/partial response) is unknown and should be retried.
+
+        Returns (groups, covered_indices) or None when no blocks exist.
+        """
         blocks = re.findall(
             r'<chunk\b([^>]*)>(.*?)</chunk>', content, re.IGNORECASE | re.DOTALL
         )
         if not blocks:
             return None
         result: List[List[dict]] = [[] for _ in range(num_items)]
+        covered: set = set()
         for positional_i, (attrs, body) in enumerate(blocks):
             target = positional_i
             m = re.search(r'index\s*=\s*["\']?(\d+)', attrs, re.IGNORECASE)
@@ -2451,7 +2518,8 @@ Extract relationships supported by the text above:"""
                     target = idx
             if 0 <= target < num_items:
                 result[target] = self._extract_xml_relationships(body)
-        return result
+                covered.add(target)
+        return result, covered
 
     async def extract_chunk_relationships_batch_async(
         self,
@@ -2572,8 +2640,13 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
         if not content:
             return await _fallback_per_chunk()
 
-        grouped = self._extract_xml_grouped_relationships(content, len(items))
-        if grouped is None:
+        covered: Optional[set] = None
+        parsed = self._extract_xml_grouped_relationships_with_coverage(
+            content, len(items)
+        )
+        if parsed is not None:
+            grouped, covered = parsed
+        else:
             # Flat fallback: attribute each relationship to the first source
             # whose entity set contains both endpoints.
             flat = self._extract_xml_relationships(content)
@@ -2612,10 +2685,30 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
             results[it["key"]] = rels
             total += len(rels)
 
+        if covered is not None:
+            # Grouped format was followed. An explicit (possibly empty) block
+            # is a deliberate answer — do NOT pay N single-chunk calls to
+            # re-ask (measured: ~23% of the relationship pass wasted on
+            # re-dispatching legitimately-empty batches). Only chunks whose
+            # block is absent (truncated/partial response) are retried.
+            missing = [i for i in range(len(items)) if i not in covered]
+            if missing:
+                logger.info(
+                    f"Batched per-chunk extraction: {len(missing)}/{len(items)} "
+                    f"chunk blocks absent from response — re-dispatching those "
+                    f"chunks individually"
+                )
+                for i in missing:
+                    it = items[i]
+                    results[it["key"]] = await self.extract_chunk_relationships_async(
+                        it["chunk_text"], it["entities"], max_output_tokens
+                    )
+            return results
+
         if total == 0:
-            # Could be a legitimately sparse batch, but empirically (bench
-            # heuristics) all-zero across several 2+-entity chunks usually
-            # means format failure — re-dispatch per chunk as a safety net.
+            # Flat parse with zero yield: could be a legitimately sparse
+            # batch, but without chunk blocks we can't distinguish that from
+            # a format failure — re-dispatch per chunk as a safety net.
             logger.info(
                 f"Batched per-chunk extraction parsed 0 relationships across "
                 f"{len(items)} chunks — re-dispatching individually"

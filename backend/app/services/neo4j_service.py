@@ -1298,7 +1298,7 @@ class Neo4jService:
                 result = session.run("""
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
-                    CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description, weight: $weight}, t) YIELD rel
+                    CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description, weight: $weight, confidence: $confidence}, t) YIELD rel
                     SET rel.extracted_at = datetime(),
                         rel.extraction_method = $extraction_method,
                         rel.source_document_id = $source_doc_id
@@ -1309,6 +1309,7 @@ class Neo4jService:
                     rel_type=relationship.relationship_type,
                     description=relationship.description,
                     weight=relationship.weight,
+                    confidence=relationship.confidence,
                     extraction_method=extraction_method,
                     source_doc_id=source_document_id,
                 )
@@ -1321,6 +1322,7 @@ class Neo4jService:
                     MATCH (t:Entity {name: $target})
                     MERGE (s)-[r:RELATED_TO {type: $rel_type}]->(t)
                     SET r.description = $description, r.weight = $weight,
+                        r.confidence = $confidence,
                         r.extracted_at = datetime(),
                         r.extraction_method = $extraction_method,
                         r.source_document_id = $source_doc_id
@@ -1331,6 +1333,7 @@ class Neo4jService:
                     rel_type=relationship.relationship_type,
                     description=relationship.description,
                     weight=relationship.weight,
+                    confidence=relationship.confidence,
                     extraction_method=extraction_method,
                     source_doc_id=source_document_id,
                 )
@@ -2253,11 +2256,14 @@ class Neo4jService:
         return co_occurrence
 
     def get_entities_missing_embedding(self, entity_names: List[str]) -> List[dict]:
-        """Return {name, type, description} for entities without an embedding.
+        """Return {name, type, description} for entities without a usable embedding.
 
         Used by targeted Phase B discovery to backfill vectors before the
         kNN candidate scan (entities ingested before semantic resolution was
-        enabled, or whose embedding call failed at ingest time).
+        enabled, or whose embedding call failed at ingest time). An embedding
+        whose dimension doesn't match the configured index is treated as
+        missing — after an embedding-model switch, entities merged into from
+        the old graph keep stale vectors that the recreated index can't serve.
         """
         if not entity_names:
             return []
@@ -2268,9 +2274,10 @@ class Neo4jService:
             with self.driver.session() as session:
                 result = session.run("""
                     MATCH (e:Entity)
-                    WHERE e.name IN $names AND e.embedding IS NULL
+                    WHERE e.name IN $names
+                      AND (e.embedding IS NULL OR size(e.embedding) <> $dim)
                     RETURN e.name as name, e.type as type, e.description as description
-                """, names=batch)
+                """, names=batch, dim=self.settings.embedding_dimension)
                 missing.extend(dict(record) for record in result)
         return missing
 
@@ -2313,25 +2320,43 @@ class Neo4jService:
             return []
         pairs: List[tuple] = []
         seen: set = set()
+        failed_batches = 0
         batch_size = 250
         for i in range(0, len(entity_names), batch_size):
             batch = entity_names[i:i + batch_size]
-            with self.driver.session() as session:
-                result = session.run("""
-                    MATCH (e:Entity)
-                    WHERE e.name IN $names AND e.embedding IS NOT NULL
-                    CALL db.index.vector.queryNodes('entity_embedding', $k, e.embedding)
-                    YIELD node, score
-                    WHERE node:Entity AND node.name <> e.name
-                      AND score >= $min_sim
-                      AND NOT (e)-[]-(node)
-                    RETURN e.name as source, node.name as target, score
-                """, names=batch, k=k + 1, min_sim=min_similarity)
-                for record in result:
-                    key = tuple(sorted((record["source"].lower(), record["target"].lower())))
-                    if key not in seen:
-                        seen.add(key)
-                        pairs.append((record["source"], record["target"], record["score"]))
+            try:
+                with self.driver.session() as session:
+                    # size() guard: a stale wrong-dimension embedding (from a
+                    # model switch) makes queryNodes throw and would otherwise
+                    # kill the whole kNN phase for one bad vector.
+                    result = session.run("""
+                        MATCH (e:Entity)
+                        WHERE e.name IN $names AND e.embedding IS NOT NULL
+                          AND size(e.embedding) = $dim
+                        CALL db.index.vector.queryNodes('entity_embedding', $k, e.embedding)
+                        YIELD node, score
+                        WHERE node:Entity AND node.name <> e.name
+                          AND score >= $min_sim
+                          AND NOT (e)-[]-(node)
+                        RETURN e.name as source, node.name as target, score
+                    """, names=batch, k=k + 1, min_sim=min_similarity,
+                        dim=self.settings.embedding_dimension)
+                    for record in result:
+                        key = tuple(sorted((record["source"].lower(), record["target"].lower())))
+                        if key not in seen:
+                            seen.add(key)
+                            pairs.append((record["source"], record["target"], record["score"]))
+            except Exception as e:
+                failed_batches += 1
+                logger.warning(
+                    f"kNN candidate batch {i // batch_size + 1} failed "
+                    f"({len(batch)} entities) — skipping batch: {e}"
+                )
+        if failed_batches:
+            logger.warning(
+                f"kNN candidate scan: {failed_batches} batch(es) skipped; "
+                f"co-mention candidates still cover those entities"
+            )
         return pairs
 
     def get_doc_cooccurrence_pairs(
@@ -4421,6 +4446,10 @@ class Neo4jService:
     def delete_all_relationships(self) -> dict:
         """Delete ALL relationships between entities (excluding MENTIONS from chunks).
 
+        Batched via CALL {} IN TRANSACTIONS: a single-transaction delete (or
+        the old collect()+FOREACH form) exceeds dbms.memory.transaction.total.max
+        on large graphs (50k+ relationships → MemoryPoolOutOfMemoryError).
+
         Returns:
             Dict with count of deleted relationships.
         """
@@ -4428,9 +4457,11 @@ class Neo4jService:
             result = session.run("""
                 MATCH (:Entity)-[r]->(:Entity)
                 WHERE type(r) <> 'MENTIONS'
-                WITH count(r) as total, collect(r) as rels
-                FOREACH (r IN rels | DELETE r)
-                RETURN total as deleted
+                CALL {
+                    WITH r
+                    DELETE r
+                } IN TRANSACTIONS OF 10000 ROWS
+                RETURN count(*) as deleted
             """)
             record = result.single()
             deleted = record["deleted"] if record else 0
@@ -4448,9 +4479,11 @@ class Neo4jService:
                 MATCH (:Entity)-[r]->(:Entity)
                 WHERE type(r) <> 'MENTIONS'
                 AND coalesce(r.extraction_method, 'batch') <> 'per_chunk'
-                WITH count(r) as total, collect(r) as rels
-                FOREACH (r IN rels | DELETE r)
-                RETURN total as deleted
+                CALL {
+                    WITH r
+                    DELETE r
+                } IN TRANSACTIONS OF 10000 ROWS
+                RETURN count(*) as deleted
             """)
             record = result.single()
             deleted = record["deleted"] if record else 0
@@ -4460,14 +4493,22 @@ class Neo4jService:
     def delete_all_entities(self) -> dict:
         """Delete ALL entities and their MENTIONS relationships from chunks.
 
+        Batched via CALL {} IN TRANSACTIONS: a single-transaction DETACH
+        DELETE over a large graph (29k entities / 50k+ relationships) exceeds
+        dbms.memory.transaction.total.max (observed MemoryPoolOutOfMemoryError
+        at 1.4 GiB on the 2026-07-03 rebuild graph).
+
         Returns:
             Dict with count of deleted entities.
         """
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (e:Entity)
-                DETACH DELETE e
-                RETURN count(e) as deleted
+                CALL {
+                    WITH e
+                    DETACH DELETE e
+                } IN TRANSACTIONS OF 5000 ROWS
+                RETURN count(*) as deleted
             """)
             record = result.single()
             deleted = record["deleted"] if record else 0
@@ -4694,7 +4735,7 @@ class Neo4jService:
                     ON MATCH SET
                         e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
                         e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
-                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END,
+                        e.embedding = CASE WHEN e.embedding IS NULL OR size(e.embedding) <> size($embedding) THEN $embedding ELSE e.embedding END,
                         e.source_documents = CASE
                             WHEN $doc_id IS NOT NULL AND NOT $doc_id IN coalesce(e.source_documents, [])
                             THEN coalesce(e.source_documents, []) + $doc_id
@@ -4728,7 +4769,7 @@ class Neo4jService:
                     ON MATCH SET
                         e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN $type ELSE e.type END,
                         e.description = CASE WHEN size(coalesce(e.description, '')) < size($description) THEN $description ELSE e.description END,
-                        e.embedding = CASE WHEN e.embedding IS NULL THEN $embedding ELSE e.embedding END,
+                        e.embedding = CASE WHEN e.embedding IS NULL OR size(e.embedding) <> size($embedding) THEN $embedding ELSE e.embedding END,
                         e.source_documents = CASE
                             WHEN $doc_id IS NOT NULL AND NOT $doc_id IN coalesce(e.source_documents, [])
                             THEN coalesce(e.source_documents, []) + $doc_id
@@ -4925,7 +4966,7 @@ class Neo4jService:
                 ON MATCH SET
                     e.type = CASE WHEN e.type IS NULL OR e.type = '' THEN row.type ELSE e.type END,
                     e.description = CASE WHEN size(coalesce(e.description, '')) < size(row.description) THEN row.description ELSE e.description END,
-                    e.embedding = CASE WHEN e.embedding IS NULL THEN row.embedding ELSE e.embedding END,
+                    e.embedding = CASE WHEN e.embedding IS NULL OR (row.embedding IS NOT NULL AND size(e.embedding) <> size(row.embedding)) THEN row.embedding ELSE e.embedding END,
                     e.source_documents = CASE
                         WHEN row.doc_id IS NOT NULL AND NOT row.doc_id IN coalesce(e.source_documents, [])
                         THEN coalesce(e.source_documents, []) + row.doc_id
@@ -5016,6 +5057,7 @@ class Neo4jService:
                 "rel_type": r.relationship_type,
                 "description": r.description,
                 "weight": r.weight,
+                "confidence": r.confidence,
             }
             for r in relationships
             if r.source.strip().lower() != r.target.strip().lower()
@@ -5030,7 +5072,8 @@ class Neo4jService:
                     MATCH (t:Entity {name: row.target})
                     CALL apoc.merge.relationship(
                         s, row.rel_type, {},
-                        {description: row.description, weight: row.weight}, t
+                        {description: row.description, weight: row.weight,
+                         confidence: row.confidence}, t
                     ) YIELD rel
                     SET rel.extracted_at = datetime(),
                         rel.extraction_method = $extraction_method,
