@@ -324,6 +324,23 @@ export default function AdminPage() {
     }
   }, []);
 
+  const [promptGuardToggling, setPromptGuardToggling] = useState(false);
+  const handleTogglePromptGuard = useCallback(async (next: boolean) => {
+    setPromptGuardToggling(true);
+    // Optimistic update; reconcile with the server response (or revert on error).
+    setConfig((prev) => (prev ? { ...prev, prompt_guard: next } : prev));
+    try {
+      const updated = await api.updateRuntimeSettings({ prompt_guard: next });
+      setConfig(updated);
+      setConfigError(null);
+    } catch (err) {
+      setConfig((prev) => (prev ? { ...prev, prompt_guard: !next } : prev));
+      setConfigError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setPromptGuardToggling(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchConfig();
     refreshStats();
@@ -761,6 +778,13 @@ export default function AdminPage() {
                       pending={scanToggling}
                       onToggle={handleToggleInjectionScan}
                       tooltip="Scans each newly ingested document for planted prompt-injection instructions and flags (never blocks) matches. A free heuristic always runs; when enabled, an additional LLM classifier scans the text (~1 processing query per document). Disable to save queries."
+                    />
+                    <ConfigToggle
+                      label="Prompt Guard"
+                      value={config.prompt_guard}
+                      pending={promptGuardToggling}
+                      onToggle={handleTogglePromptGuard}
+                      tooltip="Runs each question through a shared prompt-injection/jailbreak classifier before retrieval and refuses flagged inputs. Only active when a prompt-guard service is configured. Each guarded query costs one extra security query. Disable to save that query."
                     />
                   </ConfigSection>
 

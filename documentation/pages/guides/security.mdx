@@ -9,50 +9,98 @@ Cortex includes several security features to protect your data and prevent abuse
 
 ## Prompt Security
 
-Cortex includes built-in protection against **prompt injection attacks** - attempts to manipulate the AI through malicious input.
+Cortex includes **layered** protection against **prompt injection attacks** —
+attempts to manipulate the AI through malicious input, whether typed directly
+into a question or planted inside an ingested document. No single layer is
+relied on; each one narrows what the others miss.
 
 ### How It Works
 
 <Mermaid chart={`
 flowchart TD
-    A["👤 User Input"] --> B["🔍 Input Validation"]
-    B --> C["📏 Length Limits"]
-    C --> D["🛡️ Anti-Injection"]
-    D --> E["🤖 LLM Processing"]
-    E --> F["🧹 Output Filtering"]
-    F --> G["✅ Safe Response"]
-    
-    B -.-> B1["Check for malicious patterns"]
-    C -.-> C1["Enforce max length"]
-    D -.-> D1["Add defensive prompts"]
-    F -.-> F1["Remove harmful content"]
+    A["👤 User question"] --> B["🔍 Regex detection<br/>(normalized text)"]
+    B -->|clean| P["🧠 Prompt Guard<br/>classifier (optional)"]
+    B -->|flagged| R["🛑 Safe refusal"]
+    P -->|clean| E["🤖 Retrieval + LLM"]
+    P -->|flagged| R
+    E --> F["🧹 Streaming output filter"]
+    F --> G["✅ Safe response"]
+
+    I["📄 Ingested document"] --> S["🚩 Ingestion-time scan<br/>(flag, never block)"]
+    S --> W["🔒 Fenced as untrusted<br/>at query time"]
+    W --> E
 `} />
 
-### Configuration
+The defenses fall into five layers:
+
+1. **Input detection** (`prompt_security.py`) — the question is normalized
+   (NFKC folding + zero-width stripping, defeating homoglyph/invisible-character
+   obfuscation) and matched against injection patterns. The heuristic is tuned
+   to avoid false-positiving on legitimate code/markup questions. Detection runs
+   in **strict mode** on the chat and research entry points → a safe refusal.
+2. **Prompt Guard classifier** (optional) — a model-based second gate on the
+   question (see below).
+3. **Output filtering** (`filter_stream`) — token-streamed responses pass through
+   a sliding-window filter that redacts verbatim system-prompt phrases and
+   structural role tags before they reach the client.
+4. **Untrusted-content fencing** — retrieved chunks, graph context, and tool
+   results are wrapped in data-boundary markers and the model is instructed to
+   treat everything inside as data, not instructions (defense against
+   *second-order* injection carried by your own documents).
+5. **Ingestion-time scan** — every ingested document is scanned once for planted
+   injection instructions and **flagged (never blocked)**, surfaced as an
+   "Injection Flagged" badge in the document list.
+
+### Prompt Guard (query-time classifier)
+
+Beyond the regex layer, Cortex can route each question through a dedicated
+prompt-injection **classifier model** ([PIGuard](https://huggingface.co/leolee99/PIGuard),
+MIT-licensed) before retrieval, refusing flagged questions with the same safe
+message. It catches jailbreak/injection phrasings the regex misses, and is
+tuned to *under*-flag benign questions that merely contain trigger words.
+
+- **Shared, zero per-instance cost** — the model is hosted once per machine by
+  the `cortex-helper` service (alongside the reranker) and called over HTTP, so
+  no tenant backend loads it. (Self-hosters without a helper can instead run it
+  **in-process** with `PROMPT_GUARD_LOCAL=true` — mirrors the local reranker
+  fallback; adds resident RAM, so it's off by default.)
+- **Opt-in and fail-open** — active only when `PROMPT_GUARD_SERVICE_URL` points
+  at a helper. If the helper is unreachable, questions proceed unguarded
+  (availability over strictness).
+- **Runtime toggle** — admins flip it in **System Configuration → Features &
+  Security** without a restart. Each guarded question costs one extra security
+  query (metered toward your monthly quota), so the toggle lets you trade that
+  cost off.
 
 ```bash
-# Enable prompt security (recommended)
+# Master switch for the regex/detection layers (recommended)
 PROMPT_SECURITY=true
+
+# Query-time Prompt Guard classifier (optional; needs a cortex-helper).
+PROMPT_GUARD_SERVICE_URL=https://helper.example.com  # empty = no remote guard (see PROMPT_GUARD_LOCAL)
+PROMPT_GUARD_LOCAL=false     # no helper? load the classifier in-process (dev / self-host; needs torch, +RAM)
+PROMPT_GUARD=true            # runtime-toggle default (admin-overridable)
+PROMPT_GUARD_THRESHOLD=0.5   # injection-class probability cutoff (lower = stricter)
+
+# Ingestion-time document scan (flag, never block); admin-toggleable at runtime
+INGESTION_INJECTION_SCAN=true
 ```
 
 ### What It Protects Against
 
 - **Jailbreak attempts** - Trying to bypass AI safety guidelines
 - **Instruction injection** - Inserting malicious instructions
-- **Data exfiltration** - Attempting to extract training data
 - **System prompt extraction** - Trying to reveal system prompts
 - **Role manipulation** - Pretending to be a different entity
+- **Second-order (indirect) injection** - Instructions planted inside ingested
+  documents or fetched web/tool content (mitigated by fencing + the ingestion
+  scan, not eliminated)
 
 ### Safe Refusal
 
-When an attack is detected, Cortex returns a safe refusal:
-
-```json
-{
-  "answer": "I can't process that request. Please rephrase your question about the documents.",
-  "security_flag": true
-}
-```
+When an attack is detected — by the regex layer or the Prompt Guard classifier —
+Cortex returns a safe refusal instead of processing the question, and logs the
+detection with the matched pattern (or the classifier's label + score).
 
 ## API Key Security
 

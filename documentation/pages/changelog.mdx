@@ -7,6 +7,87 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 6, 2026 (Layered prompt-injection defenses)
+
+A security-focused release that hardens Cortex against **prompt injection** on
+both the paths an attacker can reach: the questions users ask, and the content
+you ingest. No single layer is trusted on its own — detection, a model-based
+classifier, output filtering, untrusted-content fencing, and an ingestion-time
+scan each narrow what the others miss. All layers are best-effort by design and
+fail safe (a defense being unavailable never breaks a question or an ingest).
+
+### Query-time detection & output filtering
+
+- **Obfuscation-resistant detection** — user questions are normalized before
+  pattern matching: NFKC unicode folding defeats fullwidth/homoglyph tricks
+  (e.g. `ｉｇｎｏｒｅ`) and zero-width/soft-hyphen stripping defeats keyword-splitting
+  (`ig<ZWSP>nore`). The special-character heuristic was retuned so legitimate
+  code/markup questions no longer trip it. On the chat and research entry points
+  a detected injection returns a **safe refusal**, not an error.
+- **Real streaming output filter** — token-streamed answers now pass through a
+  sliding-window filter (`filter_stream`) that redacts verbatim system-prompt
+  phrases and structural role tags before they reach the client, catching leaks
+  that span multiple chunks. Wired into both the fast and standard chat loops.
+- **Research pipeline gated** — the deep-research entry point now validates its
+  own input, so every question path is covered.
+
+### Prompt Guard — query-time classifier (new)
+
+A dedicated prompt-injection **classifier model**
+([PIGuard](https://huggingface.co/leolee99/PIGuard), MIT-licensed) can now screen
+each question *before* retrieval, as a second gate on top of the regex layer. It
+catches jailbreak/injection phrasings patterns miss, and is specifically tuned to
+avoid over-flagging benign questions that merely contain trigger words.
+
+- **Zero per-instance cost** — the model is hosted once per machine by the
+  `cortex-helper` service (alongside the reranker) and called over HTTP, so no
+  backend loads it into its own memory.
+- **Opt-in, fail-open** — active only when `PROMPT_GUARD_SERVICE_URL` points at a
+  helper; if the helper is unreachable, questions proceed unguarded (availability
+  over strictness). Flagged questions get the same safe refusal.
+- **Runtime toggle with a clear cost** — admins flip **Prompt Guard** in System
+  Configuration → Features & Security without a restart. Each guarded question
+  costs **one extra query unit** (metered toward the monthly quota) and appears
+  as a `prompt_guard.classify` entry in Langfuse tracing; the toggle lets you
+  trade that cost off. New settings: `PROMPT_GUARD_SERVICE_URL`, `PROMPT_GUARD`,
+  `PROMPT_GUARD_THRESHOLD`.
+- **Self-host without a helper** — set `PROMPT_GUARD_LOCAL=true` to load the
+  classifier in-process instead (mirrors the local reranker fallback). Off by
+  default, since it adds resident memory; the shared-helper path stays the
+  recommendation for multi-tenant hosts.
+
+### Untrusted-content fencing (indirect injection)
+
+- Retrieved chunks, merged graph context, and researcher tool results (knowledge
+  search, `http_request`, skill outputs) are now **wrapped in data-boundary
+  markers**, and the model is instructed to treat everything inside as data, not
+  instructions — a defense against *second-order* injection planted in your own
+  documents or fetched web/tool content.
+- A phrase-only heuristic scan annotates fenced content with an inline caution on
+  a hit; content is logged but **never dropped**.
+
+### Ingestion-time document scan
+
+- Every ingested document (uploaded, web-crawled, or git-synced) is scanned once
+  for planted injection instructions. A **free heuristic always runs**; an
+  optional LLM classifier additionally scans the text when enabled.
+- Detected documents are **flagged, never blocked** — they stay ingested and
+  answerable (and fenced at query time), and surface as an **"Injection Flagged"**
+  badge/filter in the document list.
+- **First runtime-editable setting** — the LLM scan is on by default
+  (`INGESTION_INJECTION_SCAN`) and **admin-toggleable at runtime** (persisted as a
+  setting override, effective for new ingestions without a restart). Turning it
+  off keeps the free heuristic but skips the per-document classifier query.
+
+> **Deployment note (AaaS / shared-helper hosts):** Prompt Guard is served from
+> `cortex-helper`. Deploy the updated helper (it pre-caches the classifier), then
+> provision `PROMPT_GUARD_SERVICE_URL` (= your helper URL) and `PROMPT_GUARD` into
+> tenants. Self-hosters without a helper are unaffected by default — the guard
+> stays inert (or set `PROMPT_GUARD_LOCAL=true` to run it in-process), and all
+> other layers work unchanged.
+
+---
+
 ## July 4, 2026 (Unit-based usage metering & degraded-document detection)
 
 Two operational features: the monthly quota now measures what actually costs money, and silently broken documents are now visible and fixable from the UI.

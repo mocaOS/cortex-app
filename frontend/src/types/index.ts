@@ -759,6 +759,7 @@ export interface SystemConfig {
   // Security
   prompt_security: boolean;
   ingestion_injection_scan: boolean;
+  prompt_guard: boolean;
 
   // Privacy (LLM observability content handling)
   langfuse_tracing_active: boolean;

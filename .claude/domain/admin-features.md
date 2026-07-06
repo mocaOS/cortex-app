@@ -21,12 +21,19 @@ effect without a restart.
 - **Frontend**: rendered as an interactive `ConfigToggle` (vs the read-only
   `ConfigItem`) in the Features & Security section (`app/admin/page.tsx`,
   `api.updateRuntimeSettings`); optimistic update, reverts on error.
-- **First (currently only) setting**: `ingestion_injection_scan` — toggles the
-  ingestion-time prompt-injection scan's LLM classifier (see
-  [`document-pipeline.md`](document-pipeline.md)). Applies to subsequent
-  ingestions. Note: `SystemMeta` is included in library export/import and cleared
-  by System Reset, so the override travels with an export and resets to the env
-  default on reset.
+- **Settings**:
+  - `ingestion_injection_scan` — toggles the ingestion-time prompt-injection
+    scan's LLM classifier (see [`document-pipeline.md`](document-pipeline.md)).
+    Applies to subsequent ingestions.
+  - `prompt_guard` — toggles the query-time prompt-guard classifier gate (see
+    [`../../handbook/05-security.md`](../../handbook/05-security.md)). Only takes
+    effect when a guard backend is configured — `PROMPT_GUARD_SERVICE_URL` (shared
+    helper) or `PROMPT_GUARD_LOCAL=true` (in-process); the toggle's tooltip
+    notes each guarded query costs one extra security query. Off = skip the
+    guard (and save that query).
+  - Note: `SystemMeta` is included in library export/import and cleared by System
+    Reset, so both overrides travel with an export and reset to the env default
+    on reset.
 
 ## System Reset
 

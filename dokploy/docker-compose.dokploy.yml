@@ -130,6 +130,10 @@ services:
       # writes no .env, so a var only reaches the container if listed under environment.
       - DOCLING_SERVICE_URL=${DOCLING_SERVICE_URL:-}
       - RERANKER_SERVICE_URL=${RERANKER_SERVICE_URL:-}
+      # Query-time prompt-guard gate (shared cortex-helper /classify). URL empty
+      # => guard disabled; PROMPT_GUARD is the runtime-toggle default.
+      - PROMPT_GUARD_SERVICE_URL=${PROMPT_GUARD_SERVICE_URL:-}
+      - PROMPT_GUARD=${PROMPT_GUARD:-true}
       - HELPER_SERVICE_TOKEN=${HELPER_SERVICE_TOKEN:-}
       - HELPER_STRICT_REMOTE=${HELPER_STRICT_REMOTE:-false}
       - INSTANCE_ID=${INSTANCE_ID:-}

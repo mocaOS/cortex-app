@@ -36,3 +36,25 @@ def test_patch_without_fields_is_noop(client, mock_neo4j):
     r = client.patch("/api/admin/config", json={})
     assert r.status_code == 200
     mock_neo4j.set_runtime_setting.assert_not_called()
+
+
+def test_get_config_includes_prompt_guard(client, mock_neo4j):
+    mock_neo4j.get_runtime_setting.side_effect = lambda key, default: default
+    r = client.get("/api/admin/config")
+    assert r.status_code == 200
+    assert "prompt_guard" in r.json()
+
+
+def test_patch_toggles_prompt_guard(client, mock_neo4j):
+    store: dict = {}
+    mock_neo4j.set_runtime_setting.side_effect = lambda key, value: store.__setitem__(key, value)
+    mock_neo4j.get_runtime_setting.side_effect = lambda key, default: store.get(key, default)
+
+    r = client.patch("/api/admin/config", json={"prompt_guard": False})
+    assert r.status_code == 200
+    assert r.json()["prompt_guard"] is False
+    assert store["prompt_guard"] is False
+
+    r2 = client.patch("/api/admin/config", json={"prompt_guard": True})
+    assert r2.status_code == 200
+    assert r2.json()["prompt_guard"] is True

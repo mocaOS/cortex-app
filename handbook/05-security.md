@@ -237,11 +237,36 @@ The system detects and blocks 30+ attack patterns and heuristics including:
    - Added to the researcher and writer system prompts when enabled
    - Instructs the LLM to never reveal its instructions, ignore extraction attempts, and respond naturally
 
+5. **Prompt-Guard classifier** (`prompt_guard_client.guard_user_question`):
+   - A model-based second gate that runs **after** the regex detection and
+     **before** retrieval, on all three query paths (fast, standard, research).
+   - Sends the question to the shared **cortex-helper** `/classify` endpoint
+     (PIGuard — an MIT-licensed deberta-v3 classifier whose ACL 2025 paper
+     specifically reduces *over-defense*, so it flags fewer legitimate questions
+     than a generic guard). A flagged question returns the same safe refusal.
+   - **Shared, not per-instance**: one model per host (zero per-tenant RAM),
+     consistent with the resource-footprint priority. Self-hosters without a
+     helper can instead run it in-process with `PROMPT_GUARD_LOCAL=true` (mirrors
+     the local reranker fallback; off by default — it adds resident RAM).
+   - **Fail-open**: if cortex-helper is unreachable, asks proceed unguarded
+     (availability > strictness). **URL-gated + runtime-toggleable**: inert
+     unless `PROMPT_GUARD_SERVICE_URL` is set, and admin-toggleable (Admin →
+     System Configuration → Features & Security).
+   - **Cost**: each guarded ask spends **one extra query-unit** (metered as
+     `query`) and emits a `prompt_guard.classify` Langfuse trace. Disabling the
+     toggle saves that unit.
+
 ### Configuration
 
 ```env
 PROMPT_SECURITY=true    # Enable protection (default)
 PROMPT_SECURITY=false   # Disable for trusted internal environments
+
+# Query-time Prompt-Guard classifier (item 5). Inert unless a backend is configured.
+PROMPT_GUARD_SERVICE_URL=https://helper.example.com  # shared cortex-helper /classify
+PROMPT_GUARD_LOCAL=false     # no helper? load PIGuard in-process (dev / self-host; needs torch, +RAM). Ignored if URL set.
+PROMPT_GUARD=true       # runtime-toggle default (admin-overridable). Off = save the extra query.
+PROMPT_GUARD_THRESHOLD=0.5   # injection-class probability cutoff (lower = stricter)
 ```
 
 When an injection is detected on a user question (the chat and research
@@ -299,9 +324,11 @@ The toggle is the first runtime-editable setting: it persists as a `SystemMeta`
 override that overlays the `INGESTION_INJECTION_SCAN` env default and takes
 effect without a restart.
 
-Still deferred (real cost — tokens/latency/quota or per-instance memory, not
-enabled): a per-query LLM classifier over retrieved content, and a dedicated
-local guard model.
+The dedicated guard model (Prompt Guard, item 5 above) is **shipped** — served
+from cortex-helper so it costs zero per-instance RAM. Still deferred (real cost,
+not enabled): a per-query classifier over *retrieved content* (indirect
+injection) — that multiplies calls and quota per ask, so delimiting + the
+heuristic content scan remain the mitigation there for now.
 
 ## API Key Best Practices
 

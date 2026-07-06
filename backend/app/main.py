@@ -107,6 +107,7 @@ from app.services.prompt_security import (
 )
 from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services import usage_meter
+from app.services.prompt_guard_client import guard_user_question
 from app.services.observability import traced_sse
 from app.services.reasoning_config import safe_chat_completion, ReasoningMode
 from app.services.auth_service import (
@@ -467,6 +468,13 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.crawl_client import close_async_client as close_crawl_client
         await close_crawl_client()
+    except Exception:
+        pass
+
+    # Close the shared prompt-guard HTTP client (no-op when unused).
+    try:
+        from app.services.prompt_guard_client import close_async_client as close_guard_client
+        await close_guard_client()
     except Exception:
         pass
 
@@ -2769,7 +2777,17 @@ async def ask_question_stream(
                     yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
                     yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
                     return
-                
+
+                # Query-time prompt-guard classifier (shared cortex-helper).
+                guard_blocked, guard_reason = await guard_user_question(
+                    processed_question, settings, get_neo4j_service()
+                )
+                if guard_blocked:
+                    logger.warning(f"Prompt-guard blocked question: {guard_reason}")
+                    yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                    return
+
                 processor = get_query_processor()
                 
                 # Check if this is a follow-up question (has conversation history)
@@ -2890,6 +2908,16 @@ Question: {processed_question}"""
 
             if was_blocked:
                 logger.warning(f"Blocked potential prompt injection: {reason}")
+                yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+
+            # Query-time prompt-guard classifier (shared cortex-helper).
+            guard_blocked, guard_reason = await guard_user_question(
+                processed_question, settings, get_neo4j_service()
+            )
+            if guard_blocked:
+                logger.warning(f"Prompt-guard blocked question: {guard_reason}")
                 yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
                 return
@@ -4338,6 +4366,11 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         "ingestion_injection_scan",
         settings.ingestion_injection_scan,
     )
+    prompt_guard = await asyncio.to_thread(
+        get_neo4j_service().get_runtime_setting,
+        "prompt_guard",
+        settings.prompt_guard,
+    )
 
     return SystemConfigResponse(
         # LLM Configuration
@@ -4433,6 +4466,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         # Security
         prompt_security=settings.prompt_security,
         ingestion_injection_scan=ingestion_injection_scan,
+        prompt_guard=prompt_guard,
 
         # Privacy (LLM observability content handling)
         langfuse_tracing_active=settings.langfuse_tracing_active,
@@ -4473,6 +4507,16 @@ async def update_runtime_settings(
         logger.info(
             "Admin set runtime setting ingestion_injection_scan=%s",
             update.ingestion_injection_scan,
+        )
+    if update.prompt_guard is not None:
+        await asyncio.to_thread(
+            neo4j.set_runtime_setting,
+            "prompt_guard",
+            update.prompt_guard,
+        )
+        logger.info(
+            "Admin set runtime setting prompt_guard=%s",
+            update.prompt_guard,
         )
     return await get_system_config(auth=auth)
 

@@ -1193,6 +1193,7 @@ class ApiClient {
    */
   async updateRuntimeSettings(update: {
     ingestion_injection_scan?: boolean;
+    prompt_guard?: boolean;
   }): Promise<SystemConfig> {
     return this.request<SystemConfig>("/api/admin/config", {
       method: "PATCH",

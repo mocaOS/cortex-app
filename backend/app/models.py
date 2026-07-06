@@ -1015,6 +1015,10 @@ class RuntimeSettingsUpdate(BaseModel):
         default=None,
         description="Enable/disable the LLM prompt-injection scan on ingested documents",
     )
+    prompt_guard: Optional[bool] = Field(
+        default=None,
+        description="Enable/disable the query-time prompt-guard classifier gate (costs one extra query per guarded ask)",
+    )
 
 
 class SystemConfigResponse(BaseModel):
@@ -1113,6 +1117,7 @@ class SystemConfigResponse(BaseModel):
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
     ingestion_injection_scan: bool = Field(default=True, description="Whether ingested documents are scanned for prompt-injection (effective value: env default overlaid with the runtime admin override)")
+    prompt_guard: bool = Field(default=True, description="Whether the query-time prompt-guard classifier gate is enabled (effective value: env default overlaid with the runtime admin override). Only active when a prompt-guard service URL is configured.")
 
     # Privacy — LLM observability content handling. Lets an admin verify the
     # host is not storing prompt/completion text in external tracing.

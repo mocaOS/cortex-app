@@ -83,11 +83,21 @@ usage + cost. **Do not** add a manual `record_generation` for these — it
 double-counts (one manual + one auto for the same call). This was tried and
 removed; see git history.
 
-**5. Vision — manual `record_generation` (the one genuine non-SDK path).**
+**5. Vision — manual `record_generation` (a genuine non-SDK path).**
 `vision_analyzer.py` makes a raw `httpx` POST to `/chat/completions`, bypassing
 the openai SDK, so the global patch can't see it. The 200-path records model +
-`usage` + prompt/output via `record_generation` (`name="vision.analyze"`). This
-is the only place `record_generation` is still used.
+`usage` + prompt/output via `record_generation` (`name="vision.analyze"`).
+
+**6. Prompt Guard — manual `record_generation` (not an LLM at all).** The
+query-time prompt-guard gate (`prompt_guard_client.guard_user_question`) POSTs to
+cortex-helper's `/classify` (a deberta-v3 classifier, not the openai SDK), so it
+records `name="prompt_guard.classify"`, `model=prompt_guard_model`,
+`usage=None`, `metadata={"stage": "prompt_guard"}` (the `stage` key is in the
+`_KEEP_METADATA_KEYS` allow-list). It nests under the ask trace opened by
+`traced_sse`/`observed_trace`. It also meters one `query` unit via
+`usage_meter.record_completion` (the classify call bypasses the factory's quota
+metering, same as vision). These two (vision + prompt-guard) are the manual
+`record_generation` paths.
 
 **6. OpenRouter usage accounting — gateway-reported USD cost.** For OpenRouter
 clients, `llm_config._instrument_completions` deep-merges

@@ -1557,6 +1557,19 @@ async def run_research_pipeline(
         return
     question = _processed_question
 
+    # Query-time prompt-guard classifier (shared cortex-helper): a second,
+    # model-based gate after the regex heuristic. Fail-open + URL/toggle-gated.
+    from app.services.prompt_guard_client import guard_user_question
+
+    _guard_blocked, _guard_reason = await guard_user_question(
+        question, settings, neo4j_service
+    )
+    if _guard_blocked:
+        logger.warning(f"Prompt-guard blocked question in research pipeline: {_guard_reason}")
+        yield {"content": get_safe_refusal_message()}
+        yield {"done": True}
+        return
+
     # Bound the client-carried memory blob before anything trusts it (a buggy
     # or malicious client can inflate it without limit).
     conversation_memory = clamp_memory_blob(conversation_memory, settings)

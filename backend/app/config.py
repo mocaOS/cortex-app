@@ -393,6 +393,23 @@ class Settings(BaseSettings):
     # ==========================================================================
     reranker_service_url: str = Field(default="")  # e.g. http://localhost:3030
     docling_service_url: str = Field(default="")   # e.g. http://localhost:3030
+    prompt_guard_service_url: str = Field(default="")  # e.g. http://localhost:3030
+    #   Shared cortex-helper /classify endpoint (prompt-injection gate). Empty =
+    #   no remote guard. Falls back to the in-process model only if
+    #   prompt_guard_local is on (below); otherwise the guard is disabled.
+    prompt_guard_local: bool = Field(default=False)
+    #   Load the prompt-guard classifier IN-PROCESS when no service URL is set
+    #   (mirrors the local reranker fallback). Off by default: this pulls the
+    #   model into every instance (~resident RAM) and runs trust_remote_code
+    #   model code locally, against the shared-service footprint priority. Turn
+    #   on for local dev / self-hosters without a cortex-helper. Ignored when
+    #   prompt_guard_service_url is set (remote path wins). Needs torch +
+    #   transformers (present in the full image, absent in INSTALL_LOCAL_ML=false).
+    prompt_guard_threshold: float = Field(default=0.5)  # injection-prob cutoff
+    #   HF model id + pinned revision for both the remote helper and the local
+    #   fallback. PIGuard loads with trust_remote_code, so the revision is pinned.
+    prompt_guard_model: str = Field(default="leolee99/PIGuard")
+    prompt_guard_revision: str = Field(default="dd78b24e330193a22d2293ac66922dd4f982f563")
     helper_service_token: str = Field(default="")  # shared secret -> X-Helper-Token
     helper_strict_remote: bool = Field(
         default=False
@@ -766,6 +783,13 @@ class Settings(BaseSettings):
     # classifier and is admin-overridable at runtime (SystemMeta key
     # "ingestion_injection_scan"). Disable to save queries.
     ingestion_injection_scan: bool = Field(default=True)
+
+    # Query-time prompt-guard gate: run the user's question through the shared
+    # cortex-helper classifier (PROMPT_GUARD_SERVICE_URL) before retrieval and
+    # refuse flagged injections. DEFAULT for the runtime toggle (SystemMeta key
+    # "prompt_guard"); admin-overridable. Only active when a service URL is set.
+    # Each guarded query costs one extra query-unit — disable to save it.
+    prompt_guard: bool = Field(default=True)
 
     # ==========================================================================
     # Admin Authentication
