@@ -816,6 +816,14 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `EXPOSE_API_DOCS` | `auto` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in development, **off in production** (avoids unauthenticated API-schema disclosure on a directly-reachable backend). Set `true`/`false` to force. |
 | `RATE_LIMIT_QPM` | `0` | Per-API-key requests/minute on ask/upload endpoints (0 = off). 429 + `Retry-After` on excess. |
 | `RATE_LIMIT_BURST` | `10` | Token-bucket burst capacity for `RATE_LIMIT_QPM`. |
+| `MAX_REQUEST_BODY_MB` | `32` | Global request-body ceiling (Content-Length precheck + streamed cap → 413). Upload routes get `MAX_FILE_SIZE_MB` + 8MB multipart slack instead. `0` disables. |
+| `MAX_IMPORT_BODY_MB` | `2048` | Body ceiling for `/api/admin/import*` (ZIPs stream to disk — a disk guard, not a RAM guard). `0` = unlimited. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `360` | Timeout applied to every LLM client the backend builds (replaces the SDK's 600s default). For streaming, bounds the gap between chunks, not the whole stream. `0` restores the SDK default. |
+| `LLM_MAX_RETRIES` | `2` | Retry count for LLM transport errors (SDK-level). |
+| `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | When a restart strands documents mid-processing, automatically restart batch processing for them (quota-guarded). Bulk uploads parked with `start_processing=false` are never auto-started. |
+| `ENABLE_AUDIT_LOG` | `false` | Append-only JSONL audit trail: auth failures, key-attributed mutating requests, search/ask activity. Metadata only — never document content or query text. |
+| `AUDIT_LOG_PATH` | `./logs/audit.log` | Audit trail location; rotates at 50 MB keeping one `.1` generation. |
+| `CORTEX_NEO4J_TX_TIMEOUT` | `300s` | (Compose-level) server-side Neo4j transaction timeout — kills runaway queries so they can't pin connections forever. |
 | `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. |
 | `RERANK_TOP_K` | `15` | Candidates kept/reranked per knowledge search. |
 | `HELPER_STRICT_REMOTE` | `false` | With `DOCLING_SERVICE_URL` set: conversion failure marks the document failed instead of falling back to local docling. |

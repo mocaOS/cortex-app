@@ -29,7 +29,7 @@ Anyone can prompt an LLM to spit out triples. Building a graph you can *trust* a
 - **An agentic answer layer.** A researcher agent plans and runs retrieval across tools (knowledge search, entity lookup, community search, live skills); a writer composes the final, cited answer. Two modes — snappy chat and deep research — share the same graph.
 - **Provenance throughout.** Every answer carries `[src_N]` citations back to real chunks. Grounding isn't a feature flag; it's the contract.
 
-The graph lives in Neo4j with vector, full-text, and graph indexes in one engine. It is exposed through 60+ REST endpoints. It is yours.
+The graph lives in Neo4j with vector, full-text, and graph indexes in one engine. It is exposed through 100+ REST endpoints. It is yours.
 
 ## 3. The Open-Systems Principle
 

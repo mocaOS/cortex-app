@@ -8,10 +8,12 @@ Features:
 """
 
 from neo4j import GraphDatabase, AsyncGraphDatabase
-from neo4j.exceptions import ServiceUnavailable
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 from typing import Optional, List, Tuple
 from datetime import datetime, timedelta
+import functools
 import logging
+import time
 import numpy as np
 from contextlib import asynccontextmanager
 import uuid
@@ -23,6 +25,41 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Errors worth retrying: Neo4j restarting (compose OOM-restart is a designed-for
+# event), a pooled connection killed mid-flight, or a transient server error
+# (deadlock, leader switch). Auto-commit `session.run` gets NO driver-side retry
+# — only managed transactions do — so idempotent service methods opt in via
+# @retry_on_transient below.
+_TRANSIENT_ERRORS = (ServiceUnavailable, SessionExpired, TransientError)
+
+
+def retry_on_transient(fn):
+    """Retry an idempotent Neo4jService method on transient driver errors.
+
+    3 attempts with 0.5s/1.5s backoff (waits sized for a Neo4j restart to
+    come back). ONLY apply to methods that are safe to re-run: reads, and
+    writes that are pure SET/MERGE upserts. Never apply to CREATE-based
+    writes or multi-step deletes.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        delay = 0.5
+        for attempt in range(1, 4):
+            try:
+                return fn(self, *args, **kwargs)
+            except _TRANSIENT_ERRORS as e:
+                if attempt == 3:
+                    raise
+                logger.warning(
+                    "Transient Neo4j error in %s (attempt %d/3): %s — retrying in %.1fs",
+                    fn.__name__, attempt, e, delay,
+                )
+                time.sleep(delay)
+                delay *= 3
+
+    return wrapper
 
 
 class Neo4jService:
@@ -421,6 +458,7 @@ class Neo4jService:
             )
             return result.single()["id"]
 
+    @retry_on_transient
     def set_document_fingerprint(
         self, doc_id: str, file_sha256: str, config_hash: str
     ) -> None:
@@ -433,6 +471,7 @@ class Neo4jService:
                     d.reprocess_config_hash = $config_hash
             """, id=doc_id, file_sha256=file_sha256, config_hash=config_hash)
 
+    @retry_on_transient
     def get_document_fingerprint(self, doc_id: str) -> Optional[dict]:
         """Return {file_sha256, config_hash, processing_status, entity_count,
         unembedded_chunk_count} or None.
@@ -453,6 +492,7 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    @retry_on_transient
     def update_document_status(
         self,
         doc_id: str,
@@ -510,6 +550,7 @@ class Neo4jService:
                 reason=reason or "",
             )
 
+    @retry_on_transient
     def update_document_progress(
         self,
         doc_id: str,
@@ -531,6 +572,7 @@ class Neo4jService:
                 message=message
             )
 
+    @retry_on_transient
     def update_image_progress(
         self,
         doc_id: str,
@@ -552,6 +594,7 @@ class Neo4jService:
                 message=message
             )
 
+    @retry_on_transient
     def reset_orphaned_processing_documents(self) -> list[str]:
         """Reset documents stranded mid-pipeline back to 'pending'.
 
@@ -637,6 +680,7 @@ class Neo4jService:
                     summary["documents_backfilled"] = pending_docs
         return summary
 
+    @retry_on_transient
     def refresh_chunk_count(self, doc_id: str) -> int:
         """Recount actual chunks from the graph and update the document's chunk_count."""
         with self.driver.session() as session:
@@ -679,6 +723,7 @@ class Neo4jService:
                 topic_hint=topic_hint
             )
     
+    @retry_on_transient
     def get_custom_inputs(
         self,
         search: Optional[str] = None,
@@ -732,6 +777,7 @@ class Neo4jService:
             
             return [dict(record) for record in result]
     
+    @retry_on_transient
     def get_custom_input(self, doc_id: str) -> Optional[dict]:
         """Get a single custom input with full data for editing."""
         with self.driver.session() as session:
@@ -754,6 +800,7 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    @retry_on_transient
     def vector_search(
         self, 
         query_embedding: list[float], 
@@ -800,6 +847,7 @@ class Neo4jService:
             
             return [dict(record) for record in result]
     
+    @retry_on_transient
     def get_all_documents(self) -> list[dict]:
         """Get all documents from the knowledge base with collection info."""
         with self.driver.session() as session:
@@ -835,6 +883,7 @@ class Neo4jService:
             """)
             return [dict(record) for record in result]
     
+    @retry_on_transient
     def find_document_by_filename_and_size(self, filename: str, file_size: int) -> Optional[dict]:
         """Check if a document with the same filename and file size already exists."""
         with self.driver.session() as session:
@@ -847,6 +896,7 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
 
+    @retry_on_transient
     def get_document(self, doc_id: str) -> Optional[dict]:
         """Get a single document by ID with collection info."""
         with self.driver.session() as session:
@@ -883,6 +933,7 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    @retry_on_transient
     def get_documents_file_paths(self, doc_ids: list) -> list:
         """Get file paths, filenames, and collection info for multiple documents by ID."""
         with self.driver.session() as session:
@@ -897,6 +948,7 @@ class Neo4jService:
             """, ids=doc_ids)
             return [dict(record) for record in result]
 
+    @retry_on_transient
     def get_document_content(self, doc_id: str) -> Optional[dict]:
         """
         Get a document with all its chunk content, ordered by chunk index.
@@ -1376,6 +1428,7 @@ class Neo4jService:
             """, doc_id=document_id)
             return [dict(record) for record in result]
 
+    @retry_on_transient
     def link_entity_to_chunk(self, entity_name: str, chunk_id: str) -> bool:
         """Create (Chunk)-[:MENTIONS]->(Entity) relationship."""
         with self.driver.session() as session:
@@ -1688,6 +1741,7 @@ class Neo4jService:
     # GraphRAG: Graph Traversal and Retrieval
     # =========================================================================
     
+    @retry_on_transient
     def find_entities_by_name(
         self,
         names: List[str],
@@ -1761,6 +1815,7 @@ class Neo4jService:
                 """, names=names)
                 return [dict(record) for record in result]
     
+    @retry_on_transient
     def traverse_from_entities(
         self,
         entity_names: List[str],
@@ -1886,6 +1941,7 @@ class Neo4jService:
                 "chunks": chunks[:10]  # Limit chunks
             }
     
+    @retry_on_transient
     def fulltext_search(
         self,
         query_text: str,
@@ -1930,6 +1986,7 @@ class Neo4jService:
                 logger.warning(f"Fulltext search failed: {e}")
                 return []
     
+    @retry_on_transient
     def metadata_search(
         self,
         query_text: str,
@@ -1986,6 +2043,7 @@ class Neo4jService:
                 logger.warning(f"Metadata search failed: {e}")
                 return []
     
+    @retry_on_transient
     def simple_hybrid_search(
         self,
         query_embedding: List[float],
@@ -2067,6 +2125,7 @@ class Neo4jService:
         
         return final_results
     
+    @retry_on_transient
     def hybrid_search_rrf(
         self,
         query_embedding: List[float],
@@ -2129,6 +2188,7 @@ class Neo4jService:
             "graph_chunk_count": len(graph_chunk_results)
         }
     
+    @retry_on_transient
     def hybrid_search(
         self,
         query_embedding: List[float],
@@ -2242,6 +2302,7 @@ class Neo4jService:
                 )
                 return None
     
+    @retry_on_transient
     def get_chunk_context_for_entities(
         self,
         entity_names: List[str],
@@ -2593,6 +2654,7 @@ class Neo4jService:
             except Exception as e:
                 logger.debug(f"Failed to add entity alias: {e}")
     
+    @retry_on_transient
     def get_graph_visualization_data(
         self,
         limit: int = 100,
@@ -3366,6 +3428,7 @@ class Neo4jService:
         groups.sort(key=_group_sort_key)
         return groups[:limit]
 
+    @retry_on_transient
     def get_entity_relationships(
         self,
         entity_name: str,
@@ -3503,6 +3566,7 @@ class Neo4jService:
                 "relationships": all_relationships
             }
     
+    @retry_on_transient
     def get_graph_subgraph(
         self,
         entity_names: List[str],
@@ -3668,6 +3732,7 @@ class Neo4jService:
             logger.info(f"Created collection: {name} ({collection_id})")
             return dict(record) if record else None
     
+    @retry_on_transient
     def get_collection(self, collection_id: str) -> Optional[dict]:
         """Get a collection by ID with stats."""
         with self.driver.session() as session:
@@ -3686,6 +3751,7 @@ class Neo4jService:
             record = result.single()
             return dict(record) if record else None
     
+    @retry_on_transient
     def list_collections(self) -> List[dict]:
         """List all collections with stats."""
         with self.driver.session() as session:
@@ -3841,6 +3907,7 @@ class Neo4jService:
             record = result.single()
             return record is not None
     
+    @retry_on_transient
     def get_collection_entities(self, collection_id: str, limit: int = 100) -> List[dict]:
         """Get entities belonging to a collection."""
         with self.driver.session() as session:
@@ -4078,6 +4145,7 @@ class Neo4jService:
             
             return True
     
+    @retry_on_transient
     def get_community(
         self,
         community_id: int,
@@ -4144,6 +4212,7 @@ class Neo4jService:
             
             return community
     
+    @retry_on_transient
     def list_communities(self, limit: int = 50) -> List[dict]:
         """List all stored communities."""
         with self.driver.session() as session:
@@ -4162,6 +4231,7 @@ class Neo4jService:
             """, limit=limit)
             return [dict(record) for record in result]
 
+    @retry_on_transient
     def list_entities_paginated(
         self,
         skip: int = 0,
@@ -4277,6 +4347,7 @@ class Neo4jService:
 
             return {"entities": entities, "total": total}
 
+    @retry_on_transient
     def list_relationships_paginated(
         self,
         skip: int = 0,
@@ -4356,6 +4427,7 @@ class Neo4jService:
 
             return {"relationships": relationships, "total": total}
 
+    @retry_on_transient
     def list_communities_paginated(
         self,
         skip: int = 0,
@@ -4449,6 +4521,7 @@ class Neo4jService:
 
             return {"communities": communities, "total": total}
 
+    @retry_on_transient
     def get_entity_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
         """Get all distinct entity types, optionally scoped to collections."""
         with self.driver.session() as session:
@@ -4467,6 +4540,7 @@ class Neo4jService:
                 """)
             return [record["type"] for record in result if record["type"]]
 
+    @retry_on_transient
     def get_relationship_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
         """Get all distinct relationship types (excluding internal types), optionally scoped to collections."""
         with self.driver.session() as session:
@@ -4491,6 +4565,7 @@ class Neo4jService:
                 """)
             return [record["type"] for record in result if record["type"]]
 
+    @retry_on_transient
     def get_community_relationships(self, community_id: int, limit: int = 30) -> List[dict]:
         """Get relationships within a community."""
         with self.driver.session() as session:
@@ -5296,6 +5371,7 @@ class Neo4jService:
             record = result.single()
             return record["deleted"] if record else 0
 
+    @retry_on_transient
     def get_stats(self, allowed_collection_ids: Optional[List[str]] = None) -> dict:
         """Get knowledge base and knowledge graph statistics.
 

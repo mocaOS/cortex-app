@@ -218,6 +218,23 @@ def _instrument_completions(client, *, base_url: str, is_async: bool):
     return client
 
 
+def _apply_default_transport_limits(kwargs: dict) -> dict:
+    """Default timeout/max_retries for every LLM client built by the factories.
+
+    Without this, calls inherit the OpenAI SDK's 600s default — one hung
+    provider connection then pins an extraction slot for 10 minutes. Callers
+    that pass their own values win; LLM_REQUEST_TIMEOUT_SECONDS=0 restores
+    the SDK default. For streaming, the timeout's read component applies
+    between chunks, not to the whole stream, so long answers are unaffected.
+    """
+    settings = get_settings()
+    if settings.llm_request_timeout_seconds > 0:
+        kwargs.setdefault("timeout", float(settings.llm_request_timeout_seconds))
+    if settings.llm_max_retries >= 0:
+        kwargs.setdefault("max_retries", settings.llm_max_retries)
+    return kwargs
+
+
 def make_openai_client(*, api_key: str, base_url: str, **kwargs):
     """Construct a sync OpenAI client, Langfuse-wrapped when tracing is active.
 
@@ -228,6 +245,7 @@ def make_openai_client(*, api_key: str, base_url: str, **kwargs):
     ``safe_chat_completion_sync`` (which takes ``client.chat.completions.create``
     as ``create_fn``) are auto-traced transparently.
     """
+    kwargs = _apply_default_transport_limits(kwargs)
     if _use_langfuse():
         from langfuse.openai import OpenAI  # drop-in: same API, auto-traces
     else:
@@ -254,6 +272,7 @@ def make_async_openai_client(*, api_key: str, base_url: str, **kwargs):
     extra-kwargs) and reuse the warm pool across calls and turns. Settings
     changes produce a different key, so hot-reloads get a new client.
     """
+    kwargs = _apply_default_transport_limits(kwargs)
     use_lf = _use_langfuse()
     cache_key = (api_key, base_url, use_lf, tuple(sorted(kwargs.items())) if kwargs else ())
     try:

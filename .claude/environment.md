@@ -10,11 +10,14 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 ## Database
 
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` — Neo4j connection (production refuses the default `password123`; see Deployment above)
+- `CORTEX_NEO4J_TX_TIMEOUT` (compose-level, default: 300s) — maps to `NEO4J_db_transaction_timeout` in the prod/coolify/dokploy composes: server-side kill switch for runaway Cypher so one unbounded query can't pin a pool connection + API worker thread forever. (Uses the `CORTEX_NEO4J_` prefix pattern — never plain `NEO4J_*` operator vars on PaaS, which inject all env into the neo4j container and break boot.)
+- Backend resilience: idempotent reads/upserts in `neo4j_service.py` are wrapped with `@retry_on_transient` (3 attempts, backoff) against `ServiceUnavailable`/`SessionExpired`/`TransientError`; schema init retries at startup with backoff, then in the background — `/health` reports `schema_initialized` and stays `degraded` until it lands.
 
 ## Primary LLM
 
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default: google-gemma-4-26b-a4b-it) — Primary LLM for Q&A, research, and chat. Recommended: Gemma4 26B A4B — a blazing-fast 26B/4B-active MoE benched faster than MiniMax-M3 at similar quality, ideal for retrieval. MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff
 - `OPENAI_API_BASE` — for LiteLLM-compatible providers
+- `LLM_REQUEST_TIMEOUT_SECONDS` (default: 360), `LLM_MAX_RETRIES` (default: 2) — transport limits applied by the `llm_config` client factories to every LLM client (unless the call site passes its own). Replaces the SDK's 600s default so a hung provider connection can't pin an extraction slot for 10 minutes. `0` timeout restores the SDK default; streaming reads are bounded between chunks, not whole-stream.
 - `OPENAI_MAX_OUTPUT_TOKENS` (default: 8000) — floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0. 8000 is generous enough that verbose-XML models (Qwen3-family) don't truncate `<relationship>` output; tighter models simply finish under cap with no cost penalty. See [Budget Fallback Chain](#budget-fallback-chain).
 - `OPENAI_MAX_CONTEXT` (default: 32768) — floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0.
 
@@ -251,6 +254,10 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 - `GIT_HTTP_TIMEOUT` (default: 30) — timeout in seconds for git provider REST calls
 - `GIT_HTTP_INSECURE_HOSTS` (default: empty) — comma-separated hostnames for which git REST calls AND clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts (secure default)
 
+## Audit Log
+
+- `ENABLE_AUDIT_LOG` (default: false), `AUDIT_LOG_PATH` (default: ./logs/audit.log) — append-only JSONL audit trail (`services/audit_log.py`): auth failures (`auth.key_rejected`, `auth.unauthorized`), key-attributed mutating requests + search/ask (`api.request` with method/path/status/actor). Metadata only — never document content or query text (consistent with Langfuse masking). Fail-open, 50MB rotation to `.1`, hooked in `APIUsageMiddleware`.
+
 ## Auth
 
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET` — admin auth. Login validation happens in the Next.js frontend (`lib/auth.ts` consumes `ADMIN_EMAIL`/`ADMIN_PASSWORD`/`SESSION_SECRET`); the backend consumes `ADMIN_API_KEY` (and checks `ADMIN_PASSWORD`/`SESSION_SECRET` only in the production-hardening validator). In `ENVIRONMENT=production`, startup fails fast if `SESSION_SECRET` is < 32 chars while `ADMIN_PASSWORD` is set (see [Deployment & CORS](#deployment--cors)).
@@ -272,6 +279,10 @@ Optional LLM tracing/cost. All empty = disabled; the same image runs identically
 ## Document Processing
 
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing
+- `AUTO_RESUME_PENDING_ON_STARTUP` (default: true) — when the startup orphan-reset finds documents stranded mid-processing by the previous shutdown, restart batch processing automatically (quota-guarded). Keyed on reset docs only — `start_processing=false` uploads stay parked.
+- `MAX_FILE_SIZE_MB` (default: 50) — per-file upload cap; enforced with a chunked read on both `/api/upload` and the reprocess path (413 mid-stream, never fully buffered first)
+- `MAX_REQUEST_BODY_MB` (default: 32) — global request-body ceiling enforced by `app/body_limit.py:BodySizeLimitMiddleware` (Content-Length precheck + streamed-byte cap → 413). Upload routes get `MAX_FILE_SIZE_MB` + 8MB multipart slack instead; import routes use `MAX_IMPORT_BODY_MB`. `0` disables the middleware.
+- `MAX_IMPORT_BODY_MB` (default: 2048) — body ceiling for `/api/admin/import*` (ZIPs stream to disk, so this is a disk guard, not a RAM guard). `0` = unlimited.
 
 ## Instance Limits
 

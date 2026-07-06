@@ -411,6 +411,10 @@ Hardening & operations:
 | `LOG_FORMAT` | `plain` | `json` for structured logs with request-ID correlation. |
 | `METRICS_ENABLED` | `true` | Prometheus `GET /metrics` (admin key required). |
 | `RATE_LIMIT_QPM` / `RATE_LIMIT_BURST` | `0` / `10` | Per-API-key burst guardrail on ask/upload (429 + Retry-After). |
+| `MAX_REQUEST_BODY_MB` / `MAX_IMPORT_BODY_MB` | `32` / `2048` | Request-body ceilings (413 on excess); upload routes use `MAX_FILE_SIZE_MB` + slack. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `360` / `2` | Transport limits for every LLM call (0 timeout = SDK default). |
+| `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | Resume documents stranded mid-processing by a restart (quota-guarded). |
+| `ENABLE_AUDIT_LOG` / `AUDIT_LOG_PATH` | `false` / `./logs/audit.log` | Append-only JSONL audit trail (metadata only, never content). |
 | `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Time budget for deep research (0 = unlimited). |
 | `RERANK_TOP_K` | `15` | Rerank candidate pool size. |
 | `HELPER_STRICT_REMOTE` | `false` | Never fall back to local docling when the shared helper is configured. |

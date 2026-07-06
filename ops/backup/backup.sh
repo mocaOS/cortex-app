@@ -52,11 +52,13 @@ else
     echo "[backup] graph export complete ($(wc -c < "$dest/graph.cypher") bytes)"
 fi
 
-# File volumes (mounted read-only into this container)
-if [ -d /data/uploads ] || [ -d /data/custom_inputs ]; then
+# File volumes (mounted read-only into this container). /data/chat carries
+# the cortex-chat SQLite DB + assets on tenant stacks that run the chat service.
+if [ -d /data/uploads ] || [ -d /data/custom_inputs ] || [ -d /data/chat ]; then
     tar -czf "$dest/files.tar.gz" \
         $( [ -d /data/uploads ] && echo /data/uploads ) \
         $( [ -d /data/custom_inputs ] && echo /data/custom_inputs ) \
+        $( [ -d /data/chat ] && echo /data/chat ) \
         2>/dev/null || true
     echo "[backup] file volumes archived"
 fi

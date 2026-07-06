@@ -120,6 +120,7 @@ from app.services.auth_service import (
 )
 from app.services.api_key_service import get_api_key_service
 from app.services.api_usage_service import get_api_usage_service
+from app.services.audit_log import audit, get_audit_logger
 from app.services.crypto_service import get_crypto_service, migrate_secrets_at_rest
 
 # Configure logging (LOG_FORMAT=plain keeps the legacy format byte-identical;
@@ -210,6 +211,10 @@ async def with_sse_heartbeat(gen, interval: float = 8.0):
 
 _api_executor: Optional[ThreadPoolExecutor] = None
 
+# Set once initialize_schema() has succeeded (startup retry loop or the
+# background retry task). /health reports it; deploy gates key off it.
+_schema_initialized = False
+
 
 async def _reranker_idle_reaper():
     """Periodically unload the local cross-encoder if it's been idle past its TTL.
@@ -279,7 +284,9 @@ async def lifespan(app: FastAPI):
     # Dedicated thread pool for API endpoint handlers (asyncio.to_thread).
     # Kept separate from the document processing executor so blocking DB
     # queries in request handlers never compete with processing workers.
-    _api_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="api_")
+    # 16 workers: transient-retry sleeps and slow queries hold a thread each,
+    # so 8 stuck calls used to queue ALL to_thread DB access instance-wide.
+    _api_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="api_")
     asyncio.get_event_loop().set_default_executor(_api_executor)
 
     # Start event loop watchdog to detect GIL/blocking issues
@@ -294,13 +301,41 @@ async def lifespan(app: FastAPI):
     # Create custom inputs directory (for manually entered Q&A, text, markdown)
     os.makedirs(settings.custom_inputs_dir, exist_ok=True)
     
-    # Initialize Neo4j
+    # Initialize Neo4j schema. The neo4j container's healthcheck (HTTP :7474)
+    # can pass before bolt auth is ready, so the first attempts may fail even
+    # in a healthy deploy — retry with backoff instead of giving up. Running
+    # without constraints/vector indexes means broken dedup and dead semantic
+    # search, so if all retries fail we keep retrying in the background and
+    # /health reports "degraded" (schema_initialized=false) until it lands.
     neo4j = get_neo4j_service()
-    try:
-        neo4j.initialize_schema()
-        logger.info("Neo4j schema initialized")
-    except Exception as e:
-        logger.warning(f"Could not initialize Neo4j schema: {e}")
+    global _schema_initialized
+    for attempt in range(1, 6):
+        try:
+            await asyncio.to_thread(neo4j.initialize_schema)
+            _schema_initialized = True
+            logger.info("Neo4j schema initialized")
+            break
+        except Exception as e:
+            delay = min(2 ** attempt, 15)
+            logger.warning(
+                f"Neo4j schema init attempt {attempt}/5 failed: {e} — retrying in {delay}s"
+            )
+            await asyncio.sleep(delay)
+
+    async def _schema_init_background_retry():
+        global _schema_initialized
+        while not _schema_initialized:
+            await asyncio.sleep(30)
+            try:
+                await asyncio.to_thread(neo4j.initialize_schema)
+                _schema_initialized = True
+                logger.info("Neo4j schema initialized (background retry)")
+            except Exception as e:
+                logger.warning(f"Neo4j schema init still failing: {e}")
+
+    schema_retry_task = None
+    if not _schema_initialized:
+        schema_retry_task = asyncio.create_task(_schema_init_background_retry())
 
     # Wire the LLM-completion usage meter to Neo4j (unit-denominated quota).
     usage_meter.configure(get_neo4j_service)
@@ -310,6 +345,7 @@ async def lifespan(app: FastAPI):
     # transient state at startup can never resume on its own — it would spin
     # forever in the UI and keep `/api/instance/status` permanently
     # unsafe-to-redeploy. Reset them to 'pending' so they rejoin the queue.
+    reset_ids: list[str] = []
     try:
         reset_ids = neo4j.reset_orphaned_processing_documents()
         if reset_ids:
@@ -321,6 +357,38 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.warning(f"Could not reconcile orphaned processing documents: {e}")
+
+    # Auto-resume processing when the reset above found stranded documents —
+    # otherwise every fleet redeploy silently parks customers' in-flight
+    # uploads until someone manually clicks "Generate Graph". Deliberately
+    # keyed on reset_ids (not on any pending doc existing): documents bulk-
+    # uploaded with start_processing=false stay parked, as intended.
+    if reset_ids and settings.auto_resume_pending_on_startup:
+
+        async def _auto_resume_after_restart():
+            await asyncio.sleep(5)  # let startup settle before heavy work
+            try:
+                if await _quota_exceeded():
+                    logger.info(
+                        "Auto-resume skipped: monthly usage limit reached; "
+                        "documents remain 'pending'"
+                    )
+                    return
+                task = create_task("batch_processing")
+                task.message = (
+                    f"Auto-resuming {len(reset_ids)} document(s) interrupted by restart..."
+                )
+                logger.info(
+                    "Auto-resuming batch processing for %d document(s) "
+                    "interrupted by the previous shutdown", len(reset_ids),
+                )
+                await _run_batch_processing_task(
+                    task.task_id, settings.batch_processing_concurrency
+                )
+            except Exception as e:
+                logger.warning(f"Startup auto-resume failed: {e}")
+
+        _spawn_chain_task(_auto_resume_after_restart())
 
     # One-time, idempotent backfill of the degraded-document signals
     # (Chunk.has_embedding + Document.entity_count for data that predates
@@ -450,6 +518,8 @@ async def lifespan(app: FastAPI):
     SHUTTING_DOWN.set()
 
     background_tasks = [watchdog_task, reranker_reaper_task, backfill_task]
+    if schema_retry_task:
+        background_tasks.append(schema_retry_task)
     if git_scheduler_task:
         background_tasks.append(git_scheduler_task)
     for task in background_tasks:
@@ -489,6 +559,12 @@ async def lifespan(app: FastAPI):
     # Persist any LLM-completion counts still buffered in the usage meter.
     try:
         await asyncio.to_thread(usage_meter.flush_now)
+    except Exception:
+        pass
+
+    # Close the audit log file handle (no-op when auditing is disabled).
+    try:
+        get_audit_logger().close()
     except Exception:
         pass
 
@@ -532,6 +608,13 @@ app = FastAPI(
     redoc_url="/redoc" if _docs_on else None,
     openapi_url="/openapi.json" if _docs_on else None,
 )
+
+# Body-size enforcement. Registered BEFORE CORS so it sits inside the CORS
+# wrapper — its 413 responses then pass through CORSMiddleware on the way out
+# and stay readable from the cross-origin frontend (app vs api- subdomains).
+from app.body_limit import BodySizeLimitMiddleware  # noqa: E402
+
+app.add_middleware(BodySizeLimitMiddleware)
 
 # CORS middleware
 # Origins come from CORS_ALLOWED_ORIGINS (comma-separated). Per the CORS spec,
@@ -694,10 +777,35 @@ class APIUsageMiddleware(BaseHTTPMiddleware):
             if auth.is_authenticated and auth.key_id:
                 key_id = auth.key_id
                 is_admin_key = auth.is_admin
-        
+            else:
+                # Authentication event: a key was presented and rejected.
+                audit(
+                    "auth.key_rejected", outcome="denied",
+                    method=request.method, path=request.url.path,
+                )
+
         # Process the request
         response = await call_next(request)
-        
+
+        # Audit trail (ENABLE_AUDIT_LOG): key-attributed mutating requests
+        # (uploads, deletions, config/key changes) plus search/ask activity,
+        # and every 401/403 as an authentication event. Metadata only.
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            actor = key_id or ("admin" if is_admin_key else None)
+            if response.status_code in (401, 403):
+                audit(
+                    "auth.unauthorized", actor=actor, outcome="denied",
+                    method=request.method, path=request.url.path,
+                    status=response.status_code,
+                )
+            else:
+                audit(
+                    "api.request", actor=actor,
+                    outcome="ok" if response.status_code < 400 else "error",
+                    method=request.method, path=request.url.path,
+                    status=response.status_code,
+                )
+
         # Record usage if we have a valid key_id
         if key_id:
             # Check if we should skip tracking for admin key
@@ -761,6 +869,56 @@ async def request_id_and_metrics_middleware(request: Request, call_next):
     if rid:
         response.headers["X-Request-ID"] = rid
     return response
+
+
+# =============================================================================
+# 5xx sanitization — server errors never leak internals to clients in
+# production. Endpoints across main.py raise HTTPException(500, detail=str(e));
+# the detail is useful in development and in server logs, but in production it
+# can carry bolt URIs, provider error bodies, or file paths. These handlers
+# keep the full detail in logs (with request id) and return a generic message.
+# The SSE paths already enforce this policy separately (sse_error_frame).
+# =============================================================================
+
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
+from fastapi.exception_handlers import (  # noqa: E402
+    http_exception_handler as _default_http_exception_handler,
+)
+
+_GENERIC_5XX_DETAIL = "Internal server error. Check server logs for details."
+
+
+def _sanitized_error_response(status_code: int) -> JSONResponse:
+    rid = get_request_id()
+    body = {"detail": _GENERIC_5XX_DETAIL}
+    headers = {}
+    if rid:
+        body["request_id"] = rid
+        headers["X-Request-ID"] = rid
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def sanitized_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code >= 500 and get_settings().is_production:
+        logger.error(
+            f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
+        )
+        return _sanitized_error_response(exc.status_code)
+    return await _default_http_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+    if get_settings().is_production:
+        return _sanitized_error_response(500)
+    rid = get_request_id()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}", "request_id": rid or "-"},
+        headers={"X-Request-ID": rid} if rid else {},
+    )
 
 
 @app.get("/metrics")
@@ -1093,10 +1251,11 @@ async def health_check():
     """Health check endpoint."""
     neo4j = get_neo4j_service()
     connected = await asyncio.to_thread(neo4j.verify_connectivity)
-    
+
     return HealthResponse(
-        status="healthy" if connected else "degraded",
+        status="healthy" if (connected and _schema_initialized) else "degraded",
         neo4j_connected=connected,
+        schema_initialized=_schema_initialized,
         version="1.0.0"
     )
 
@@ -1484,7 +1643,7 @@ async def generate_topic_hint(request: TopicHintRequest, auth: AuthResult = Depe
     try:
         # Search for similar content in existing documents
         processor = get_query_processor()
-        similar_docs = processor.search(full_content[:500], top_k=5)
+        similar_docs = await asyncio.to_thread(processor.search, full_content[:500], top_k=5)
         
         # Extract unique filenames as potential similar topics
         seen_files = set()
@@ -2102,17 +2261,24 @@ async def reprocess_document(
                 detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"
             )
         
-        # Read file content
-        content = await file.read()
-        file_size = len(content)
-        
-        # Validate file size
+        # Read the upload in bounded chunks so an oversized file is rejected
+        # mid-stream instead of being fully buffered into memory first (same
+        # pattern as /api/upload).
         max_size = settings.max_file_size_mb * 1024 * 1024
-        if file_size > max_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
-            )
+        chunks: list[bytes] = []
+        file_size = 0
+        while True:
+            chunk = await file.read(1024 * 1024)  # 1 MiB
+            if not chunk:
+                break
+            file_size += len(chunk)
+            if file_size > max_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB",
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
         
         # Save new file (use document_id to maintain consistent path)
         new_filename = f"{document_id}{file_ext}"
@@ -2207,7 +2373,7 @@ async def reprocess_documents(
                     continue
                 
                 # Queue for reprocessing (sets status to pending)
-                processor.queue_document_for_reprocessing(doc_id)
+                await asyncio.to_thread(processor.queue_document_for_reprocessing, doc_id)
                 results.append({
                     "document_id": doc_id,
                     "status": "queued",
@@ -2310,7 +2476,7 @@ async def _run_batch_processing_task(
     usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     try:
         processor = get_document_processor()
-        pending = processor.get_pending_documents()
+        pending = await asyncio.to_thread(processor.get_pending_documents)
         total = len(pending)
 
         if total == 0:
@@ -2388,8 +2554,8 @@ async def process_pending_documents(
     try:
         settings = get_settings()
         processor = get_document_processor()
-        pending = processor.get_pending_documents()
-        
+        pending = await asyncio.to_thread(processor.get_pending_documents)
+
         # Use provided concurrency or fall back to config default
         actual_concurrency = concurrency if concurrency is not None else settings.batch_processing_concurrency
         
@@ -2489,7 +2655,9 @@ async def search(
         processor = get_query_processor()
         
         # Use hybrid search to combine vector + keyword + metadata
-        results = processor.hybrid_search(
+        # (embedding + Neo4j + rerank are sync/CPU-bound — keep off the event loop)
+        results = await asyncio.to_thread(
+            processor.hybrid_search,
             query=request.query,
             top_k=request.top_k,
             collection_id=effective_collection_id,
@@ -5014,7 +5182,7 @@ async def create_git_connection(
         "sync_status": "never_synced",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    node = neo4j.create_git_connection(props)
+    node = await asyncio.to_thread(neo4j.create_git_connection, props)
     return _git_conn_response(node)
 
 
@@ -5023,7 +5191,8 @@ async def list_git_connections(auth: AuthResult = Depends(require_admin)):
     """List all git connections (PATs masked)."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    return [_git_conn_response(n) for n in neo4j.list_git_connections()]
+    connections = await asyncio.to_thread(neo4j.list_git_connections)
+    return [_git_conn_response(n) for n in connections]
 
 
 @app.get("/api/integrations/git/connections/{connection_id}", response_model=GitConnectionResponse)
@@ -5031,7 +5200,7 @@ async def get_git_connection(connection_id: str, auth: AuthResult = Depends(requ
     """Get a single git connection (PAT masked)."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    node = neo4j.get_git_connection(connection_id)
+    node = await asyncio.to_thread(neo4j.get_git_connection, connection_id)
     if not node:
         raise HTTPException(status_code=404, detail="Connection not found")
     return _git_conn_response(node)
@@ -5046,7 +5215,7 @@ async def update_git_connection(
     """Update a git connection. PAT is rotated only when provided."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    existing = neo4j.get_git_connection(connection_id)
+    existing = await asyncio.to_thread(neo4j.get_git_connection, connection_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Connection not found")
 
@@ -5062,7 +5231,7 @@ async def update_git_connection(
     if "access_level" in data and data["access_level"] is not None:
         props["access_level"] = data["access_level"].value if hasattr(data["access_level"], "value") else data["access_level"]
 
-    node = neo4j.update_git_connection(connection_id, props)
+    node = await asyncio.to_thread(neo4j.update_git_connection, connection_id, props)
     return _git_conn_response(node)
 
 
@@ -5075,18 +5244,21 @@ async def delete_git_connection(
     """Delete a git connection. With purge_documents, also removes its ingested documents."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    existing = neo4j.get_git_connection(connection_id)
+    existing = await asyncio.to_thread(neo4j.get_git_connection, connection_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     purged = 0
     if purge_documents:
-        for doc in neo4j.list_documents_for_git_connection(connection_id):
-            neo4j.delete_relationships_by_source_document(doc["id"])
-            neo4j.delete_document(doc["id"])
-            purged += 1
+        # delete_document already removes relationships with this document's
+        # provenance (its step 0 runs the same query as
+        # delete_relationships_by_source_document), so bulk delete suffices.
+        docs = await asyncio.to_thread(neo4j.list_documents_for_git_connection, connection_id)
+        if docs:
+            result = await asyncio.to_thread(neo4j.delete_documents, [d["id"] for d in docs])
+            purged = result["deleted_count"]
 
-    neo4j.delete_git_connection(connection_id)
+    await asyncio.to_thread(neo4j.delete_git_connection, connection_id)
     return {"message": "Connection deleted", "connection_id": connection_id, "documents_purged": purged}
 
 
@@ -5130,7 +5302,8 @@ async def _git_sync_scheduler():
                 logger.info("Git sync scheduler: monthly usage limit reached; skipping this round")
                 continue
             now = datetime.now(timezone.utc)
-            for conn in neo4j.list_git_connections():
+            connections = await asyncio.to_thread(neo4j.list_git_connections)
+            for conn in connections:
                 if int(conn.get("sync_interval_minutes") or 0) <= 0:
                     continue
                 due = conn.get("next_sync_due")
@@ -5147,7 +5320,8 @@ async def _git_sync_scheduler():
                     continue
                 task = create_task("git_repo_sync")
                 task.result = {"connection_id": cid}
-                asyncio.create_task(_run_git_sync_task(cid, task.task_id))
+                # Keep a strong reference — a bare create_task can be GC'd mid-flight.
+                _spawn_chain_task(_run_git_sync_task(cid, task.task_id))
                 logger.info(f"Scheduled git sync started for connection {cid}")
         except asyncio.CancelledError:
             break
@@ -5165,7 +5339,7 @@ async def sync_git_connection(
     """Trigger an incremental sync for a connection. Returns a task id to poll."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    conn = neo4j.get_git_connection(connection_id)
+    conn = await asyncio.to_thread(neo4j.get_git_connection, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     # Guard against a concurrent in-flight sync for this connection.
@@ -5186,9 +5360,10 @@ async def list_orphaned_git_documents(connection_id: str, auth: AuthResult = Dep
     """List documents whose source file was removed from the repo (flagged for review)."""
     _require_git_enabled()
     neo4j = get_neo4j_service()
-    if not neo4j.get_git_connection(connection_id):
+    if not await asyncio.to_thread(neo4j.get_git_connection, connection_id):
         raise HTTPException(status_code=404, detail="Connection not found")
-    return {"documents": neo4j.list_orphaned_git_documents(connection_id)}
+    documents = await asyncio.to_thread(neo4j.list_orphaned_git_documents, connection_id)
+    return {"documents": documents}
 
 
 # =============================================================================

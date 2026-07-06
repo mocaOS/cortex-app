@@ -356,6 +356,10 @@ class HealthResponse(BaseModel):
     """Response model for health check."""
     status: str
     neo4j_connected: bool
+    # False until constraints/indexes are confirmed — an instance running
+    # without them dedupes entities wrongly and has no vector search, so
+    # health stays "degraded" and deploy gates keep waiting.
+    schema_initialized: bool = True
     version: str
 
 

@@ -13,6 +13,11 @@ services:
       - NEO4J_dbms_memory_heap_initial__size=${CORTEX_NEO4J_HEAP_INITIAL:-512m}
       - NEO4J_dbms_memory_heap_max__size=${CORTEX_NEO4J_HEAP_MAX:-2G}
       - NEO4J_dbms_memory_pagecache_size=${CORTEX_NEO4J_PAGECACHE:-512m}
+      # Server-side kill switch for runaway Cypher: a single unbounded query
+      # would otherwise hold a pool connection + API worker thread forever.
+      # 300s clears every legit workload (batched deletes/imports commit in
+      # bounded inner transactions); analytic explores on huge graphs can raise it.
+      - NEO4J_db_transaction_timeout=${CORTEX_NEO4J_TX_TIMEOUT:-300s}
     # Hard ceiling: on hosts packing multiple tenant stacks, one graph blowing up
     # must self-OOM in its cgroup instead of letting the kernel OOM-killer pick a
     # victim in another tenant's stack. Sized for heap max + pagecache + overhead.

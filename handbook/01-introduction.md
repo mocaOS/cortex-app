@@ -4,7 +4,7 @@
 
 Cortex is the managed, API-first Knowledge Graph System at the heart of MOCA's (The Museum of Crypto Art) Agent as a Service platform. It transforms your documents into intelligent, queryable knowledge — the persistent memory layer for AI agents, applications, and teams.
 
-**Cortex** is an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 60+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
+**Cortex** is an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 100+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
 
 Cortex is designed for a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight. Your knowledge shouldn't be locked into any single system. The beauty of Cortex is that your data isn't trapped — when a hot new agent framework drops next month, just connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
@@ -35,18 +35,20 @@ The knowledge graph engine. Ingest, connect, and query everything your team know
 - **Community detection** — Automatic topic clustering with LLM-generated summaries
 - **Collection management** — Organize knowledge by team, project, or use case with scoped access control
 
-### Cortex Apps
+### Integrations
 
-A growing marketplace of integrations that extend the Library's capabilities:
+Connectors that extend the Library's capabilities today:
 
-- **YouTube Channel Importer** — Paste a YouTube channel URL and Cortex transcribes every video, converting them into searchable knowledge
-- **Slack Integration** — Ingest knowledge from Slack channels and threads
-- **Notion Connector** — Sync Notion pages and databases into your knowledge graph
-- Free and premium apps available, with custom builds for enterprise teams
+- **Git Connector** — Sync GitHub, GitLab, or Gitea repositories (docs, wikis, code) into the knowledge graph with incremental updates
+- **Web Import** — Harvest websites into clean Markdown and ingest them, with link discovery for multi-page imports
+- **Agent Skills** — Teach the researcher new abilities (including outbound `http_request` calls to external APIs) via the AgentSkills standard
+- **REST API** — Build custom importers and integrations against the full API (see [Integrations](16-integrations.md) for Slack, Notion, and other DIY patterns)
+
+A curated app marketplace (one-click YouTube, Slack, and Notion importers) is on the roadmap.
 
 ### Cortex API
 
-60+ REST endpoints with full OpenAPI documentation. Build anything on top of Cortex — from chatbots and copilots to internal tools and customer-facing applications.
+100+ REST endpoints with full OpenAPI documentation. Build anything on top of Cortex — from chatbots and copilots to internal tools and customer-facing applications.
 
 ### MOCA Community Library
 
@@ -58,7 +60,7 @@ Cortex is available in two forms:
 
 | Option | Best For | Features |
 |--------|----------|----------|
-| **Cortex Cloud** (Managed) | Teams who want zero-ops | Hosted by MOCA, automatic updates, premium support, SLA, dedicated single-tenant available |
+| **Cortex Cloud** (Managed) | Teams who want zero-ops | Hosted by MOCA, automatic updates, priority support, dedicated single-tenant available |
 | **Self-Hosted** (Open Source) | Teams who need full control | Deploy on your own infrastructure, full source code access, community support |
 
 This handbook covers both perspectives. Cloud users will find the end-user chapters (6-14) most relevant. Self-hosted administrators should start with chapters 3-5 for deployment and configuration.

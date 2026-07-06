@@ -7,6 +7,70 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 7, 2026 (Production hardening for launch)
+
+A resilience-focused release: every change is about keeping an instance
+healthy under real-world failure — provider hangs, database restarts,
+oversized requests, redeploys mid-ingestion — and giving operators a
+compliance-grade audit trail and a real backup story on the cloud deploy
+paths. No API breakage.
+
+### Resilience & data safety
+
+- **Backups on the cloud composes** — the Coolify and Dokploy stacks now
+  include the nightly backup sidecar (APOC logical graph export + file-volume
+  archive, retention rotation) that previously shipped only with the
+  standalone prod overlay. Chat data is included where the chat service runs.
+- **Neo4j transient-error retry** — idempotent reads and status upserts
+  retry automatically (3 attempts with backoff) across a Neo4j restart
+  instead of failing the request or stranding a document in `failed`.
+- **Server-side query timeout** — the deploy composes set a Neo4j
+  transaction timeout (`CORTEX_NEO4J_TX_TIMEOUT`, default 300s) so a runaway
+  query can no longer pin a connection and an API worker forever.
+- **Schema init that can't be skipped silently** — constraint/index creation
+  now retries with backoff at startup and keeps retrying in the background;
+  `/health` reports the new `schema_initialized` field and stays `degraded`
+  until the schema is confirmed, so deploy gates wait instead of routing
+  traffic to an instance with broken dedup and dead vector search.
+- **Auto-resume after redeploys** — documents stranded mid-processing by a
+  restart are not just reset to `pending` but automatically resumed
+  (`AUTO_RESUME_PENDING_ON_STARTUP`, quota-guarded). Bulk uploads parked
+  deliberately with `start_processing=false` stay parked.
+- **LLM transport limits** — every LLM client the backend builds now
+  carries an explicit timeout (`LLM_REQUEST_TIMEOUT_SECONDS`, default 360s)
+  instead of the SDK's 600s default, so one hung provider connection can't
+  pin an ingestion slot for 10 minutes.
+
+### Request hygiene
+
+- **Request-body ceilings** — a new middleware rejects oversized bodies with
+  413 before they can pressure the container's memory: `MAX_REQUEST_BODY_MB`
+  (default 32) globally, `MAX_FILE_SIZE_MB` + slack on upload routes, and
+  `MAX_IMPORT_BODY_MB` (default 2048) on library import, which streams to
+  disk. The reprocess upload path now enforces its size cap mid-stream
+  instead of buffering the whole file first.
+- **Event-loop protection** — the hybrid-search endpoint, topic-hint
+  generation, and the git-connector endpoints moved their blocking
+  database/embedding work off the event loop; deleting a git connection
+  with document purge now uses one batched delete. Under load these paths
+  can no longer stall every concurrent request (including health checks).
+- **Sanitized server errors** — in production, 5xx responses return a
+  generic message plus the request ID; the full detail stays in server
+  logs. Exception internals (connection URIs, provider error bodies, file
+  paths) no longer reach clients.
+
+### Audit trail (new)
+
+`ENABLE_AUDIT_LOG=true` activates an append-only JSONL audit log:
+authentication failures, key-attributed mutating requests (uploads,
+deletions, configuration changes, key CRUD), and search/ask activity —
+each event carrying the acting API key, outcome, and request ID.
+**Metadata only**: document content and query text are never written,
+consistent with the observability masking stance. Fail-open by design and
+size-rotated. See the [Security guide](/guides/security) for details.
+
+---
+
 ## July 6, 2026 (Layered prompt-injection defenses)
 
 A security-focused release that hardens Cortex against **prompt injection** on

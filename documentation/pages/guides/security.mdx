@@ -193,9 +193,10 @@ MAX_FILE_SIZE_MB=50
 ```
 
 Validation includes:
-- File size limits
+- File size limits (enforced mid-stream — oversized uploads are rejected
+  before they are ever fully buffered)
 - Allowed file types (PDF, TXT, MD, DOCX)
-- Malware scanning (if configured)
+- Ingestion-time prompt-injection scan (content is flagged, never blocked)
 
 ### Query Limits
 
@@ -205,21 +206,19 @@ Validation includes:
 
 ## Rate Limiting
 
-Protect against abuse with rate limiting:
+Opt-in per-API-key token bucket on the ask/upload endpoints:
 
 ```bash
-# Configure rate limits
-RATE_LIMIT_REQUESTS=100
-RATE_LIMIT_WINDOW=60  # seconds
+# Sustained queries per minute per API key (0 = disabled, the default)
+RATE_LIMIT_QPM=60
+# Short-burst allowance on top of the sustained rate
+RATE_LIMIT_BURST=10
 ```
 
-Response headers include rate limit info:
-
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1705329600
-```
+When a key exceeds its budget the API responds `429 Too Many Requests`
+with a `Retry-After` header (seconds until the bucket refills). The
+monthly `MAX_QUERIES_PER_MONTH` quota uses the same 429 + `Retry-After`
+contract.
 
 ## CORS Configuration
 
@@ -227,10 +226,10 @@ Restrict which origins can access your API:
 
 ```bash
 # Development (allow all)
-CORS_ORIGINS=*
+CORS_ALLOWED_ORIGINS=*
 
 # Production (restrict to your domains)
-CORS_ORIGINS=https://cortex.yourdomain.com,https://app.yourdomain.com
+CORS_ALLOWED_ORIGINS=https://cortex.yourdomain.com,https://app.yourdomain.com
 ```
 
 ## Network Security
@@ -296,19 +295,25 @@ docker run -e OPENAI_API_KEY=$(vault read -field=key secret/openai) ...
 
 ## Audit Logging
 
-Enable audit logs for compliance:
+Enable the append-only JSONL audit trail for compliance review:
 
 ```bash
 ENABLE_AUDIT_LOG=true
 AUDIT_LOG_PATH=/var/log/cortex/audit.log
 ```
 
-Logged events:
-- API key usage
-- Document uploads/deletions
-- Search queries
-- Configuration changes
-- Authentication events
+Logged events (one JSON object per line, each carrying the acting API key,
+outcome, and request ID):
+- Authentication events (rejected keys, unauthorized requests)
+- Document uploads, deletions, and reprocessing
+- Search and ask activity
+- Configuration changes (API key CRUD, skill config, system reset,
+  library import/export)
+
+The audit log records **metadata only** — never document content or query
+text, consistent with Cortex's observability masking: operational
+visibility without content exfiltration. The file rotates at 50 MB
+(one `.1` generation is kept).
 
 ## Security Checklist
 
@@ -320,7 +325,7 @@ Logged events:
 - [ ] Set `ENCRYPTION_KEY` (and back it up) so git PATs and skill secrets are encrypted at rest
 - [ ] Enable `PROMPT_SECURITY=true`
 - [ ] Configure HTTPS with valid certificates
-- [ ] Restrict `CORS_ORIGINS` to your domains
+- [ ] Restrict `CORS_ALLOWED_ORIGINS` to your domains
 - [ ] Block direct access to Neo4j ports
 - [ ] Review API key permissions
 

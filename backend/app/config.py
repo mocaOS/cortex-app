@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Set EXPOSE_API_DOCS=true/false to force either way.
     expose_api_docs: str = Field(default="auto")
 
+    # Append-only JSONL audit trail for compliance review: authentication
+    # failures, key-attributed mutating requests (uploads, deletions, config
+    # changes, key CRUD), search/ask activity. Metadata only — never document
+    # content or query text. See services/audit_log.py.
+    enable_audit_log: bool = Field(default=False)
+    audit_log_path: str = Field(default="./logs/audit.log")
+
     # Comma-separated list of allowed CORS origins (e.g.
     # "https://app.example.com,https://admin.example.com"). The default "*"
     # allows any origin but, per the CORS spec, only without credentials —
@@ -79,6 +86,15 @@ class Settings(BaseSettings):
     # earlier (Mistral, GPT-OSS) simply use less of the cap — no cost penalty.
     openai_max_output_tokens: int = Field(default=8000)
     openai_max_context: int = Field(default=32768)
+
+    # Transport limits for every LLM client built by the llm_config factories.
+    # The OpenAI SDK's default timeout is 600s — one hung provider connection
+    # pins an extraction slot for 10 minutes. 360s still clears the slowest
+    # legit ingestion call (a 16k-token relationship batch on a slow model);
+    # for streaming the read component applies between chunks, so long chat
+    # answers are unaffected. 0 restores the SDK default.
+    llm_request_timeout_seconds: int = Field(default=360)
+    llm_max_retries: int = Field(default=2)  # SDK default; -1 = leave unset
 
     # Vision Model Configuration (for image analysis)
     vision_model: str = Field(
@@ -117,6 +133,12 @@ class Settings(BaseSettings):
         default="./custom_inputs"
     )  # Separate folder for manually entered content
     max_file_size_mb: int = Field(default=50)
+    max_request_body_mb: int = Field(
+        default=32
+    )  # Global request-body ceiling for all endpoints that are not file-upload routes. Enforced by BodySizeLimitMiddleware on both Content-Length and streamed bodies, so an oversized POST is rejected with 413 before it can pressure the container's memory. File-upload routes (/api/upload, reprocess) get max_file_size_mb + slack; library import gets max_import_body_mb. Set 0 to disable the middleware entirely.
+    max_import_body_mb: int = Field(
+        default=2048
+    )  # Body ceiling for the library-import routes (/api/admin/import*). Import ZIPs stream to disk (not RAM), so this can be far above max_request_body_mb — it exists to stop a runaway/abusive upload from filling the disk. Set 0 for unlimited.
     allowed_extensions: list[str] = Field(
         default=[
             ".pdf",
@@ -314,6 +336,9 @@ class Settings(BaseSettings):
     processing_thread_workers: int = Field(
         default=4
     )  # Thread pool workers for CPU-intensive operations
+    auto_resume_pending_on_startup: bool = Field(
+        default=True
+    )  # When the startup orphan-reset finds documents stranded mid-processing by the previous shutdown, automatically restart batch processing (quota-guarded). Only triggers on reset documents — bulk uploads parked with start_processing=false stay parked. Set false to require a manual "Generate Graph" after every redeploy.
 
     # Relationship Analysis (Phase B - cross-document relationship discovery)
     parallel_relationship_batches: int = Field(

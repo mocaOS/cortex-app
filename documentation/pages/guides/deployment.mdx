@@ -235,6 +235,7 @@ Expected response:
 {
   "status": "healthy",
   "neo4j_connected": true,
+  "schema_initialized": true,
   "version": "1.0.0"
 }
 ```
@@ -272,15 +273,15 @@ curl https://api.yourdomain.com/api/instance/status \
 
 ## Scaling
 
-### Horizontal Scaling
+### Backend Scaling
 
-Scale the backend for high traffic:
+Scale the backend **vertically** (more CPU/RAM for the single backend
+container):
 
 ```yaml
 services:
   backend:
     deploy:
-      replicas: 3
       resources:
         limits:
           cpus: '2'
@@ -289,6 +290,12 @@ services:
           cpus: '1'
           memory: 2G
 ```
+
+Do **not** run multiple backend replicas behind one Neo4j instance: task
+progress, SSE streams, and rate-limit buckets are tracked in process
+memory, so replicas would see inconsistent state. For more capacity per
+deployment, scale vertically; for more isolation, run one full Cortex
+stack per workload (the container-per-tenant model Cortex Cloud uses).
 
 ### Neo4j Scaling
 
