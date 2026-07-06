@@ -4,6 +4,30 @@ System administration: reset, library transfer, bulk download, and API key manag
 
 > Git connections (connect/sync/orphaned-review on the Settings page, `/api/integrations/git/*`) are documented separately in [`git-integration.md`](git-integration.md).
 
+## Runtime Settings (admin-editable)
+
+Almost all settings are env-only and read-only in the admin **System Config**
+panel (`GET /api/admin/config` → `SystemConfigResponse`). The one exception is
+the **runtime settings** layer: admin-editable overrides that persist and take
+effect without a restart.
+
+- **Storage**: reuses the generic `SystemMeta {key,value}` node via
+  `neo4j.set_runtime_setting(key, bool)` / `get_runtime_setting(key, default)`
+  (namespaced `setting:<key>`). Effective value = the env default overlaid with
+  the override.
+- **Endpoint**: `PATCH /api/admin/config` (`require_admin`, body
+  `RuntimeSettingsUpdate` — only provided fields are written) → persists the
+  override and returns the full updated `SystemConfigResponse`.
+- **Frontend**: rendered as an interactive `ConfigToggle` (vs the read-only
+  `ConfigItem`) in the Features & Security section (`app/admin/page.tsx`,
+  `api.updateRuntimeSettings`); optimistic update, reverts on error.
+- **First (currently only) setting**: `ingestion_injection_scan` — toggles the
+  ingestion-time prompt-injection scan's LLM classifier (see
+  [`document-pipeline.md`](document-pipeline.md)). Applies to subsequent
+  ingestions. Note: `SystemMeta` is included in library export/import and cleared
+  by System Reset, so the override travels with an export and resets to the env
+  default on reset.
+
 ## System Reset
 
 `POST /api/admin/reset` — Admin-only endpoint with selective deletion options (documents, uploaded files, custom inputs, collections, API keys).

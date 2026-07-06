@@ -202,7 +202,7 @@ The Library includes built-in protection against prompt injection attacks — at
 
 ### What It Protects Against
 
-The system detects and blocks 50+ attack patterns including:
+The system detects and blocks 30+ attack patterns and heuristics including:
 
 | Category | Examples |
 |----------|---------|
@@ -217,20 +217,21 @@ The system detects and blocks 50+ attack patterns including:
 
 ### How It Works
 
-1. **Input Detection** (`validate_and_process_input`):
-   - Normalizes input to lowercase
-   - Checks special character ratio (>15% triggers a flag)
-   - Runs all 50+ compiled regex patterns against the input
-   - Returns whether injection was detected, with the matched pattern
+1. **Input Detection** (`detect_injection_attempt` via `validate_and_process_input`):
+   - Normalizes the input before matching — NFKC unicode folding (defeats fullwidth/homoglyph tricks like `ｉｇｎｏｒｅ`) and stripping of zero-width / soft-hyphen characters (defeats keyword-splitting like `ig<ZWSP>nore`). Both the raw and normalized text are scanned.
+   - Flags long runs of structural characters (6+ in a row) and high special-character density (>30% on non-trivial input), tuned to avoid false positives on legitimate code/markup questions.
+   - Runs the compiled regex patterns against the input.
+   - Returns whether injection was detected, with the matched pattern.
 
-2. **Input Sanitization**:
+2. **Input Sanitization** (non-strict fallback):
    - Removes fake system/instruction/prompt tags (XML and bracket variants)
-   - Removes sequences of multiple special characters (encoding tricks)
+   - Strips zero-width / invisible characters
+   - Collapses sequences of repeated special characters (encoding tricks)
 
-3. **Output Filtering** (`filter_output`):
-   - Splits the system prompt into 8+ word phrases
-   - Checks if any phrases appear in the LLM response
-   - Replaces leaked content with `[content filtered]`
+3. **Output Filtering** (`filter_output` / `filter_stream`):
+   - Splits the system prompt into 8+ word phrases and redacts any that appear verbatim in the response, plus high-confidence structural role tags (`<system>`, `[instruction]`, the security block), replacing them with `[content filtered]`.
+   - Fuzzy indicators (e.g. "you are a helpful assistant") are logged but **not** redacted, to avoid mangling legitimate answers.
+   - `filter_stream` applies this to token-streamed responses via a sliding-window buffer, so a leaked phrase spanning multiple chunks is caught before it is emitted. It is wired into the fast and standard chat streaming paths.
 
 4. **System Prompt Addendum** (`get_anti_injection_instruction`):
    - Added to the researcher and writer system prompts when enabled
@@ -243,10 +244,64 @@ PROMPT_SECURITY=true    # Enable protection (default)
 PROMPT_SECURITY=false   # Disable for trusted internal environments
 ```
 
-When an injection is detected:
-- The input is sanitized (malicious patterns removed)
-- The original question is still processed with the cleaned input
-- A log entry records the detection
+When an injection is detected on a user question (the chat and research
+entry points run in **strict mode**):
+- The request is **blocked** — a safe refusal message is returned instead of processing the question
+- A log entry records the detection and the matched pattern
+
+The softer sanitize-and-proceed behavior is the non-strict fallback exposed by
+`validate_and_process_input(strict_mode=False)`; the product entry points use
+strict mode.
+
+### Second-order (indirect) injection
+
+The checks above guard the **user's question**. A separate risk is *indirect*
+injection: instructions planted inside content the model later reads —
+ingested documents, knowledge-graph descriptions, web-crawled pages, and
+tool/skill API responses. Two low-cost layers reduce this:
+
+1. **Delimiting / spotlighting** (`wrap_untrusted`): retrieved and external
+   content is fenced between `<<<BEGIN_UNTRUSTED_DATA>>>` /
+   `<<<END_UNTRUSTED_DATA>>>` markers before it reaches the model, and the
+   security addendum instructs the model to treat everything between the markers
+   strictly as reference **data**, never as instructions. Forged copies of the
+   markers are stripped from the content so it cannot close the fence early.
+   Applied to writer reference material, fast-path context, the agentic RAG
+   context, and researcher tool results (knowledge search, `http_request`,
+   skill outputs).
+2. **Heuristic content scan** (`scan_untrusted_content`): fenced content is
+   scanned with the injection *phrase* patterns (the structural-character
+   heuristics are skipped to avoid false positives on code/JSON). On a hit the
+   block is logged and annotated with an inline caution — content is never
+   dropped.
+
+These are best-effort and intentionally cheap (no extra LLM calls, no added
+latency).
+
+### Ingestion-time scan (flag, don't block)
+
+Every ingested document (uploaded, web-crawled, or git-synced) is scanned once
+at ingestion for planted injection instructions (`injection_scanner.py`, hooked
+into the document pipeline):
+
+- A **free heuristic** (`scan_untrusted_content`) always runs.
+- An **LLM classifier** additionally scans the text (windowed, capped) when the
+  runtime toggle is on — the classifier is prompted to distinguish content that
+  *contains* an injection from content that merely *discusses* injection.
+
+Detected documents are **flagged, never blocked** — they are still ingested and
+answerable, and remain fenced at query time. The flag surfaces as an "Injection
+Flagged" badge/filter in the document list. The scan is **on by default** and
+**admin-toggleable at runtime** (Admin → System Configuration → Features &
+Security). Toggling it off keeps the free heuristic but skips the LLM classifier
+to save queries (each clean document otherwise costs ~1 processing completion).
+The toggle is the first runtime-editable setting: it persists as a `SystemMeta`
+override that overlays the `INGESTION_INJECTION_SCAN` env default and takes
+effect without a restart.
+
+Still deferred (real cost — tokens/latency/quota or per-instance memory, not
+enabled): a per-query LLM classifier over retrieved content, and a dedicated
+local guard model.
 
 ## API Key Best Practices
 

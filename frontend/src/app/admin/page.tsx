@@ -152,6 +152,47 @@ function ConfigItem({ label, value, type = "text", tooltip, format, advanced }: 
   );
 }
 
+// Interactive boolean setting (runtime-editable, unlike the read-only ConfigItem)
+function ConfigToggle({
+  label,
+  value,
+  pending,
+  onToggle,
+  tooltip,
+}: {
+  label: string;
+  value: boolean;
+  pending?: boolean;
+  onToggle: (next: boolean) => void;
+  tooltip?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+      <span className="text-muted-foreground text-sm flex items-center gap-1.5">
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} />}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={value}
+        aria-label={label}
+        disabled={pending}
+        onClick={() => onToggle(!value)}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+          value ? "bg-green-500" : "bg-muted-foreground/30"
+        }`}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+            value ? "translate-x-4" : "translate-x-1"
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
 // Collapsible config section
 function ConfigSection({
   title,
@@ -263,6 +304,23 @@ export default function AdminPage() {
       setConfigError(err instanceof Error ? err.message : "Failed to load configuration");
     } finally {
       setConfigLoading(false);
+    }
+  }, []);
+
+  const [scanToggling, setScanToggling] = useState(false);
+  const handleToggleInjectionScan = useCallback(async (next: boolean) => {
+    setScanToggling(true);
+    // Optimistic update; reconcile with the server response (or revert on error).
+    setConfig((prev) => (prev ? { ...prev, ingestion_injection_scan: next } : prev));
+    try {
+      const updated = await api.updateRuntimeSettings({ ingestion_injection_scan: next });
+      setConfig(updated);
+      setConfigError(null);
+    } catch (err) {
+      setConfig((prev) => (prev ? { ...prev, ingestion_injection_scan: !next } : prev));
+      setConfigError(err instanceof Error ? err.message : "Failed to update setting");
+    } finally {
+      setScanToggling(false);
     }
   }, []);
 
@@ -697,6 +755,13 @@ export default function AdminPage() {
                     <ConfigItem label="Stream Reasoning Steps" value={config.stream_reasoning_steps} type="boolean" />
                     <ConfigItem label="Show Retrieval Stats" value={config.show_retrieval_stats} type="boolean" />
                     <ConfigItem label="Prompt Security" value={config.prompt_security} type="boolean" />
+                    <ConfigToggle
+                      label="Ingestion Injection Scan"
+                      value={config.ingestion_injection_scan}
+                      pending={scanToggling}
+                      onToggle={handleToggleInjectionScan}
+                      tooltip="Scans each newly ingested document for planted prompt-injection instructions and flags (never blocks) matches. A free heuristic always runs; when enabled, an additional LLM classifier scans the text (~1 processing query per document). Disable to save queries."
+                    />
                   </ConfigSection>
 
                   {/* Privacy — proves whether prompt/completion content ever leaves this instance */}

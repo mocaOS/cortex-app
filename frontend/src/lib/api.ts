@@ -1185,6 +1185,21 @@ class ApiClient {
     return this.request<SystemConfig>("/api/admin/config");
   }
 
+  /**
+   * Update admin-editable runtime settings (admin permission).
+   *
+   * Persisted overrides over env defaults; effective immediately for new work.
+   * Returns the full, updated system configuration.
+   */
+  async updateRuntimeSettings(update: {
+    ingestion_injection_scan?: boolean;
+  }): Promise<SystemConfig> {
+    return this.request<SystemConfig>("/api/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    });
+  }
+
   // ===========================================================================
   // Feature Flags
   // ===========================================================================

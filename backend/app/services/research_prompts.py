@@ -12,6 +12,8 @@ Two modes:
 from datetime import date
 from typing import Literal, List, Optional
 
+from app.services.prompt_security import wrap_untrusted
+
 
 # =============================================================================
 # Tool Definitions (OpenAI function-calling format)
@@ -622,9 +624,23 @@ def get_writer_user_prompt(
     researcher_summary: str = "",
     has_history: bool = False,
     failed_actions: Optional[List[str]] = None,
+    secure: bool = True,
 ) -> str:
-    """Get the writer user prompt for the given mode."""
+    """Get the writer user prompt for the given mode.
+
+    When ``secure`` is set, the retrieved reference material and graph context
+    (both attacker-influenceable via ingested documents) are fenced with
+    untrusted-data markers so the writer treats them as data, not instructions.
+    """
     failed_section = _format_failed_actions(failed_actions)
+
+    # Fence untrusted retrieved content (no-op when empty or secure=False).
+    formatted_sources = wrap_untrusted(
+        formatted_sources, source="retrieved documents", enabled=secure
+    )
+    graph_context_str = wrap_untrusted(
+        graph_context_str, source="knowledge graph", enabled=secure
+    )
 
     if mode == "quality":
         summary_section = ""

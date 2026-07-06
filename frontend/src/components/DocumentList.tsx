@@ -49,6 +49,8 @@ interface Document {
   source?: string;
   entity_count?: number;
   unembedded_chunk_count?: number;
+  injection_flagged?: boolean;
+  injection_reason?: string;
 }
 
 type UploadFileStatus = "uploading" | "uploaded" | "error";
@@ -90,6 +92,9 @@ const isDegraded = (doc: Document): boolean => {
   if (effectiveStatus(doc) !== "completed") return false;
   return doc.entity_count === 0 || (doc.unembedded_chunk_count ?? 0) > 0;
 };
+
+// Flagged by the ingestion prompt-injection scan (non-blocking).
+const isInjectionFlagged = (doc: Document): boolean => doc.injection_flagged === true;
 
 const isProcessing = (status: string) => {
   return status === "processing" || status === "extracting" || status === "pending";
@@ -301,6 +306,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     const matchesStatus = (() => {
       if (filterStatus === null) return true;
       if (filterStatus === "degraded") return isDegraded(doc);
+      if (filterStatus === "flagged") return isInjectionFlagged(doc);
       return effectiveStatus(doc) === filterStatus;
     })();
 
@@ -337,6 +343,7 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
     pending: documents.filter((d) => effectiveStatus(d) === "pending").length,
     failed: documents.filter((d) => effectiveStatus(d) === "failed").length,
     degraded: documents.filter(isDegraded).length,
+    flagged: documents.filter(isInjectionFlagged).length,
   };
 
   const availableTargetCollections = collections.filter(

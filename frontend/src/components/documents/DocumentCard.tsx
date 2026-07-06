@@ -19,6 +19,7 @@ import {
   Eye,
   X,
   AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -49,6 +50,8 @@ interface Document {
   source?: string;
   entity_count?: number;
   unembedded_chunk_count?: number;
+  injection_flagged?: boolean;
+  injection_reason?: string;
 }
 
 interface DocumentCardProps {
@@ -94,6 +97,10 @@ const getDegradedReason = (doc: Document): string | null => {
   }
   return reasons.join(" · ");
 };
+
+// Flagged by the ingestion prompt-injection scan (non-blocking — the document
+// is still ingested; this is a visibility signal for operators).
+const isInjectionFlagged = (doc: Document): boolean => doc.injection_flagged === true;
 
 const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
   if (isCustomInput) return PenLine;
@@ -389,6 +396,14 @@ export function DocumentCard({
             <p className="mt-2 flex items-center gap-1 text-xs text-amber-400/90">
               <AlertTriangle className="w-3 h-3 shrink-0" />
               {degradedReason} — reprocess to retry
+            </p>
+          )}
+
+          {/* Prompt-injection scan flag (non-blocking) */}
+          {isInjectionFlagged(doc) && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-red-400/90">
+              <ShieldAlert className="w-3 h-3 shrink-0" />
+              Possible prompt injection detected{doc.injection_reason ? ` — ${doc.injection_reason}` : ""}
             </p>
           )}
 

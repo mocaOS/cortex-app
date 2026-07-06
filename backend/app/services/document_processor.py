@@ -61,7 +61,9 @@ from app.services.prompt_security import (
     get_anti_injection_instruction,
     get_safe_refusal_message,
     validate_and_process_input,
+    wrap_untrusted,
 )
+from app.services.injection_scanner import scan_document
 from app.services.vision_analyzer import get_vision_analyzer
 
 logger = logging.getLogger(__name__)
@@ -1420,6 +1422,35 @@ class DocumentProcessor:
 
             # Check for cancellation after conversion
             self._check_cancellation(doc_id)
+
+            # =================================================================
+            # Prompt-injection scan (flag-only; never blocks ingestion)
+            # =================================================================
+            # Free heuristic always runs; the LLM classifier runs only when the
+            # runtime toggle is on (env default overridable via SystemMeta).
+            # Fully guarded so a scanner failure never fails ingestion.
+            try:
+                _llm_scan_enabled = await asyncio.to_thread(
+                    self.neo4j.get_runtime_setting,
+                    "ingestion_injection_scan",
+                    self.settings.ingestion_injection_scan,
+                )
+                _scan = await scan_document(
+                    md_text, llm_enabled=_llm_scan_enabled, settings=self.settings
+                )
+                await asyncio.to_thread(
+                    self.neo4j.set_document_injection_flag,
+                    doc_id, _scan.flagged, _scan.reason or "",
+                )
+                if _scan.flagged:
+                    logger.warning(
+                        "Ingestion injection scan flagged document %s via %s: %s",
+                        doc_id, _scan.method, _scan.reason,
+                    )
+            except Exception as _scan_err:
+                logger.warning(
+                    "Injection scan skipped for document %s: %s", doc_id, _scan_err
+                )
 
             # =================================================================
             # Image Extraction and Analysis (runs in background)
@@ -4442,12 +4473,21 @@ Never mention "context", "provided documents", "knowledge graph", or similar phr
             for msg in conversation_history[-self.settings.max_conversation_history :]:
                 messages.append({"role": msg.role, "content": msg.content})
 
+        # Fence retrieved/graph context as untrusted data (spotlighting).
+        _sec = self.settings.prompt_security
+        fenced_sources = wrap_untrusted(
+            formatted_sources, source="retrieved documents", enabled=_sec
+        )
+        fenced_graph = wrap_untrusted(
+            graph_context_str, source="knowledge graph", enabled=_sec
+        )
+
         messages.append(
             {
                 "role": "user",
                 "content": f"""Research Context:
-{formatted_sources}
-{graph_context_str}
+{fenced_sources}
+{fenced_graph}
 
 Question: {question}
 

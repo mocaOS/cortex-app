@@ -1008,6 +1008,15 @@ class LibraryImportResult(BaseModel):
 # System Configuration (Safe to expose - no secrets)
 # =============================================================================
 
+class RuntimeSettingsUpdate(BaseModel):
+    """Admin-editable runtime setting overrides (persisted, take effect without
+    restart). All fields optional — only provided fields are updated."""
+    ingestion_injection_scan: Optional[bool] = Field(
+        default=None,
+        description="Enable/disable the LLM prompt-injection scan on ingested documents",
+    )
+
+
 class SystemConfigResponse(BaseModel):
     """System configuration response - excludes sensitive data like API keys and passwords."""
     
@@ -1103,6 +1112,7 @@ class SystemConfigResponse(BaseModel):
     
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
+    ingestion_injection_scan: bool = Field(default=True, description="Whether ingested documents are scanned for prompt-injection (effective value: env default overlaid with the runtime admin override)")
 
     # Privacy — LLM observability content handling. Lets an admin verify the
     # host is not storing prompt/completion text in external tracing.

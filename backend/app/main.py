@@ -74,6 +74,7 @@ from app.models import (
     SystemResetResponse,
     # System Config model
     SystemConfigResponse,
+    RuntimeSettingsUpdate,
     # Agent Skills models
     SkillInstallRequest,
     SkillUpdateRequest,
@@ -100,8 +101,9 @@ from app.services.graph_extractor import get_graph_extractor
 from app.services.prompt_security import (
     validate_and_process_input,
     get_anti_injection_instruction,
-    filter_output,
+    filter_stream,
     get_safe_refusal_message,
+    wrap_untrusted,
 )
 from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services import usage_meter
@@ -2790,25 +2792,31 @@ Important: Do NOT include any thinking, reasoning, or internal monologue in your
                         })
                     # For follow-up questions, just pass the question directly
                     # This allows natural conversation flow
-                    messages.append({"role": "user", "content": request.question})
+                    messages.append({"role": "user", "content": processed_question})
                 else:
                     # First message - do vector search and include context
                     # Sync embed+Neo4j — offload so it doesn't pin the event
                     # loop for every other in-flight stream (loop invariant).
                     results = await asyncio.to_thread(
-                        processor.search, request.question, top_k=request.top_k,
+                        processor.search, processed_question, top_k=request.top_k,
                         collection_id=_stream_effective_collection_id,
                         allowed_collection_ids=_stream_allowed_collection_ids)
                     context = "\n\n".join([r['content'][:600] for r in results[:3]])
-                    
-                    if context:
-                        prompt = f"""Reference information:
-{context}
 
-Question: {request.question}"""
+                    if context:
+                        # Fence retrieved content as untrusted data (spotlighting).
+                        fenced_context = wrap_untrusted(
+                            context,
+                            source="knowledge base",
+                            enabled=settings.prompt_security,
+                        )
+                        prompt = f"""Reference information:
+{fenced_context}
+
+Question: {processed_question}"""
                     else:
-                        prompt = request.question
-                    
+                        prompt = processed_question
+
                     messages.append({"role": "user", "content": prompt})
                 
                 # For fast mode, use the fast mode model (OPENAI_MODEL_FAST_MODE)
@@ -2836,10 +2844,17 @@ Question: {request.question}"""
                     **build_chat_params(llm_config.model, temperature=0.2, max_tokens=600),
                 )
                 
-                async for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        content = chunk.choices[0].delta.content
-                        yield f"data: {json.dumps({'content': content})}\n\n"
+                # Redact any system-prompt leakage from the streamed answer
+                # (sliding-window filter; no-op when prompt_security is off).
+                async def _fast_deltas():
+                    async for chunk in stream:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            yield chunk.choices[0].delta.content
+
+                async for safe in filter_stream(
+                    _fast_deltas(), system_prompt, enabled=settings.prompt_security
+                ):
+                    yield f"data: {json.dumps({'content': safe})}\n\n"
 
                 yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
                 
@@ -2884,7 +2899,7 @@ Question: {request.question}"""
             # Speed mode agent pipeline for standard chat (opt-in via config)
             if settings.enable_agent_chat:
                 async for event in processor.agent_rag_stream(
-                    question=request.question,
+                    question=processed_question,
                     mode="speed",
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id,
@@ -2907,7 +2922,7 @@ Question: {request.question}"""
 
             if request.use_graph:
                 search_result = await processor.graph_search_async(
-                    request.question,
+                    processed_question,
                     top_k=request.top_k * 2,
                     max_hops=request.max_hops,
                     use_hybrid_rrf=settings.enable_hybrid_search,
@@ -2926,7 +2941,7 @@ Question: {request.question}"""
             else:
                 # Sync embed+Neo4j — offload so it doesn't pin the event loop.
                 results = await asyncio.to_thread(
-                    processor.search, request.question, top_k=request.top_k * 2,
+                    processor.search, processed_question, top_k=request.top_k * 2,
                     collection_id=_stream_effective_collection_id,
                     allowed_collection_ids=_stream_allowed_collection_ids)
 
@@ -2935,7 +2950,7 @@ Question: {request.question}"""
                 if _emit_status:
                     yield f"data: {json.dumps({'status': {'stage': 'reranking', 'message': 'Ranking the most relevant sources'}})}\n\n"
                 results = await processor.rerank_results_async(
-                    request.question, results, request.top_k
+                    processed_question, results, request.top_k
                 )
             else:
                 results = results[:request.top_k]
@@ -3000,8 +3015,9 @@ Question: {request.question}"""
                 mode="speed",
                 formatted_sources=formatted_sources,
                 graph_context_str=graph_context_str,
-                question=request.question,
+                question=processed_question,
                 has_history=has_history,
+                secure=settings.prompt_security,
             )
             messages.append({"role": "user", "content": prompt})
 
@@ -3031,10 +3047,17 @@ Question: {request.question}"""
                 ),
             )
 
-            async for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    yield f"data: {json.dumps({'content': content})}\n\n"
+            # Redact any system-prompt leakage from the streamed answer
+            # (sliding-window filter; no-op when prompt_security is off).
+            async def _writer_deltas():
+                async for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+
+            async for safe in filter_stream(
+                _writer_deltas(), system_prompt, enabled=settings.prompt_security
+            ):
+                yield f"data: {json.dumps({'content': safe})}\n\n"
 
             yield f"data: {json.dumps({'done': True})}\n\n"
 
@@ -4308,7 +4331,14 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
     sensitive data like API keys, passwords, and secrets.
     """
     settings = get_settings()
-    
+
+    # Effective value = env default overlaid with the runtime admin override.
+    ingestion_injection_scan = await asyncio.to_thread(
+        get_neo4j_service().get_runtime_setting,
+        "ingestion_injection_scan",
+        settings.ingestion_injection_scan,
+    )
+
     return SystemConfigResponse(
         # LLM Configuration
         openai_model=settings.openai_model,
@@ -4402,6 +4432,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         
         # Security
         prompt_security=settings.prompt_security,
+        ingestion_injection_scan=ingestion_injection_scan,
 
         # Privacy (LLM observability content handling)
         langfuse_tracing_active=settings.langfuse_tracing_active,
@@ -4418,6 +4449,32 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         # MDHarvest powered by Crawl4ai
         enable_web_crawl=settings.enable_web_crawl,
     )
+
+
+@app.patch("/api/admin/config", response_model=SystemConfigResponse)
+async def update_runtime_settings(
+    update: RuntimeSettingsUpdate,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Update admin-editable runtime settings.
+
+    Persisted as overrides over the env defaults (via SystemMeta) and effective
+    immediately for new work — e.g. toggling the ingestion injection scan
+    applies to subsequently-ingested documents without a restart. Returns the
+    full, updated system configuration.
+    """
+    neo4j = get_neo4j_service()
+    if update.ingestion_injection_scan is not None:
+        await asyncio.to_thread(
+            neo4j.set_runtime_setting,
+            "ingestion_injection_scan",
+            update.ingestion_injection_scan,
+        )
+        logger.info(
+            "Admin set runtime setting ingestion_injection_scan=%s",
+            update.ingestion_injection_scan,
+        )
+    return await get_system_config(auth=auth)
 
 
 # =============================================================================

@@ -489,7 +489,27 @@ class Neo4jService:
             params["entity_count"] = entity_count
         with self.driver.session() as session:
             session.run(query, **params)
-    
+
+    def set_document_injection_flag(
+        self, doc_id: str, flagged: bool, reason: str = ""
+    ) -> None:
+        """Persist the ingestion prompt-injection scan result on a Document.
+
+        Always writes both properties so a reprocess of a previously-flagged
+        document that is now clean clears the flag.
+        """
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.injection_flagged = $flagged,
+                    d.injection_reason = $reason
+                """,
+                id=doc_id,
+                flagged=bool(flagged),
+                reason=reason or "",
+            )
+
     def update_document_progress(
         self,
         doc_id: str,
@@ -808,6 +828,8 @@ class Neo4jService:
                        coalesce(d.custom_topic_hint, '') as custom_topic_hint,
                        coalesce(d.source, 'upload') as source,
                        coalesce(d.entity_count, -1) as entity_count,
+                       coalesce(d.injection_flagged, false) as injection_flagged,
+                       coalesce(d.injection_reason, '') as injection_reason,
                        size([(d)-[:HAS_CHUNK]->(uc:Chunk) WHERE uc.has_embedding = false | 1]) as unembedded_chunk_count
                 ORDER BY d.upload_date DESC
             """)
@@ -850,6 +872,8 @@ class Neo4jService:
                        coalesce(d.image_progress_message, '') as image_progress_message,
                        coalesce(d.source, 'upload') as source,
                        coalesce(d.entity_count, -1) as entity_count,
+                       coalesce(d.injection_flagged, false) as injection_flagged,
+                       coalesce(d.injection_reason, '') as injection_reason,
                        unembedded_chunk_count,
                        col.id as collection_id,
                        col.name as collection_name,
@@ -5468,6 +5492,22 @@ class Neo4jService:
             )
             record = result.single()
             return record["value"] if record else None
+
+    # ------------------------------------------------------------------
+    # Runtime settings (admin-editable overrides over env defaults).
+    # Persisted as SystemMeta under a "setting:" namespace so they are
+    # distinct from internal metadata (staleness timestamps, etc.).
+    # ------------------------------------------------------------------
+    def set_runtime_setting(self, key: str, value: bool) -> None:
+        """Persist a boolean runtime-setting override."""
+        self.set_meta(f"setting:{key}", "true" if value else "false")
+
+    def get_runtime_setting(self, key: str, default: bool) -> bool:
+        """Read a boolean runtime-setting override; return `default` if unset."""
+        raw = self._get_meta(f"setting:{key}")
+        if raw is None:
+            return default
+        return raw == "true"
 
     # =========================================================================
     # API Key Management

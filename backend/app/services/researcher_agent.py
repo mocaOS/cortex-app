@@ -54,7 +54,12 @@ def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
     if mode == "speed":
         return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
     return ReasoningMode.AUTO
-from app.services.prompt_security import get_anti_injection_instruction
+from app.services.prompt_security import (
+    get_anti_injection_instruction,
+    get_safe_refusal_message,
+    validate_and_process_input,
+    wrap_untrusted,
+)
 from app.services.llm_config import build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services.context_curator import (
     build_context,
@@ -860,7 +865,11 @@ async def _run_researcher_loop(
                         "content": f"Found {len(sources)} sources",
                     }
 
-                    agent_text = _format_search_results_for_agent(sources, graph_ctx)
+                    agent_text = wrap_untrusted(
+                        _format_search_results_for_agent(sources, graph_ctx),
+                        source="knowledge base search",
+                        enabled=settings.prompt_security,
+                    )
                     _search_cache[_dedup_key] = agent_text
                     messages.append(
                         {
@@ -1231,7 +1240,15 @@ async def _run_researcher_loop(
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": response_text,
+                    # External HTTP response — fence it as untrusted data so an
+                    # injected page/API body can't steer the agent. The copy
+                    # stored as a writer source (below) is fenced later by
+                    # get_writer_user_prompt.
+                    "content": wrap_untrusted(
+                        response_text,
+                        source=f"HTTP {method} {url}",
+                        enabled=settings.prompt_security,
+                    ),
                 })
 
                 _http_request_called = True
@@ -1392,7 +1409,12 @@ async def _run_researcher_loop(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": tool_result[:4000],
+                        # External skill/API output — fence as untrusted data.
+                        "content": wrap_untrusted(
+                            tool_result[:4000],
+                            source=f"skill {original_name}",
+                            enabled=settings.prompt_security,
+                        ),
                     }
                 )
 
@@ -1519,6 +1541,22 @@ async def run_research_pipeline(
     - {"done": True, "communities_used": [...]} — completion signal
     """
     conversation_history = conversation_history or []
+
+    # Input gate: block prompt-injection attempts before any retrieval or LLM
+    # work. agent_rag_stream delegates straight here without its own check, so
+    # this is the only guard on that path (other entry points validate too —
+    # a redundant block simply returns the refusal before doing work).
+    _security_enabled = bool(getattr(settings, "prompt_security", True))
+    _processed_question, _was_blocked, _reason = validate_and_process_input(
+        question, strict_mode=True, enabled=_security_enabled
+    )
+    if _was_blocked:
+        logger.warning(f"Blocked potential prompt injection in research pipeline: {_reason}")
+        yield {"content": get_safe_refusal_message()}
+        yield {"done": True}
+        return
+    question = _processed_question
+
     # Bound the client-carried memory blob before anything trusts it (a buggy
     # or malicious client can inflate it without limit).
     conversation_memory = clamp_memory_blob(conversation_memory, settings)
@@ -1745,6 +1783,7 @@ async def run_research_pipeline(
         researcher_summary=research_result.summary,
         has_history=has_history,
         failed_actions=research_result.failed_actions,
+        secure=settings.prompt_security,
     )
 
     writer_messages = [{"role": "system", "content": writer_system}]

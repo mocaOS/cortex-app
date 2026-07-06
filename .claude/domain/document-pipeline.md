@@ -121,6 +121,40 @@ query (`get_document_fingerprint`) also returns both signals. Otherwise a
 degraded doc's reprocess would be no-op'd as "Content unchanged".
 Tests: `backend/tests/test_degraded_documents.py`.
 
+### Ingestion prompt-injection scan
+
+After the full text is available in `_process_document` (post-convert,
+pre-chunk) the document is scanned once for planted prompt-injection instructions
+(`injection_scanner.scan_document`, hooked in a fully-guarded `try/except` so a
+scanner failure never fails ingestion). Two layers:
+
+- **Free heuristic** (`prompt_security.scan_untrusted_content`) — always runs;
+  a hit short-circuits (no LLM query spent).
+- **LLM classifier** — runs only when the runtime toggle is on; scans the text
+  in windows (`WINDOW_CHARS`/`MAX_WINDOWS`, head+tail when over the cap),
+  short-circuits on the first positive. Uses the **extraction tier**
+  (`get_extraction_llm_config` + `safe_chat_completion`, same as graph
+  extraction) so it is auto-metered as processing usage (`KIND_PROCESSING`,
+  already set at pipeline entry — counts toward the monthly LLM quota) and
+  Langfuse-traced via the factory client. Reasoning is **forced OFF**
+  (`ReasoningMode.OFF`, no overrides) — a binary classifier needs no think
+  budget and thinking would slow every ingested doc. Prompted to distinguish
+  content that *contains* an injection from content that *discusses* it.
+
+Result is **flag-only** (never blocks): `set_document_injection_flag` persists
+`Document.injection_flagged`/`injection_reason` (always written, so a clean
+reprocess clears a stale flag). `get_all_documents`/`get_document` return both,
+surfaced as an "Injection Flagged" badge/filter in the document UI.
+
+**Runtime toggle** (first runtime-editable setting): effective value =
+`INGESTION_INJECTION_SCAN` env default overlaid with the `SystemMeta`
+override read via `neo4j.get_runtime_setting("ingestion_injection_scan", ...)`.
+Admin flips it through `PATCH /api/admin/config` (Admin → Features & Security);
+takes effect for subsequent ingestions without a restart. Off = heuristic only
+(zero queries). Tests: `backend/tests/test_injection_scanner.py`,
+`test_runtime_settings.py`. See `.claude/domain/admin-features.md` (runtime
+settings) and `handbook/05-security.md`.
+
 ### Step 1 Gate on Image Analysis
 
 `_run_batch_processing_task` in `backend/app/main.py` calls `_wait_for_image_analysis_complete()` after text processing finishes. That helper polls Neo4j every 3 s for any document with `processing_status == "completed" AND image_progress_current < image_progress_total`, updating the task's progress message with `"... — analyzing images: N/total across K document(s)..."` until none remain. Only then does `complete_task` run, which lets the backend chain advance to Step 2.

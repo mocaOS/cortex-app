@@ -760,6 +760,13 @@ class Settings(BaseSettings):
         default=True
     )  # Enable prompt injection detection and protection
 
+    # Ingestion-time prompt-injection scan: flag (never block) documents whose
+    # content carries injection attempts planted for a downstream AI assistant.
+    # The free heuristic always runs; this flag is the DEFAULT for the extra LLM
+    # classifier and is admin-overridable at runtime (SystemMeta key
+    # "ingestion_injection_scan"). Disable to save queries.
+    ingestion_injection_scan: bool = Field(default=True)
+
     # ==========================================================================
     # Admin Authentication
     # ==========================================================================
