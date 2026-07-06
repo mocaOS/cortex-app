@@ -283,6 +283,7 @@ Optional LLM tracing/cost. All empty = disabled; the same image runs identically
 - `MAX_FILE_SIZE_MB` (default: 50) — per-file upload cap; enforced with a chunked read on both `/api/upload` and the reprocess path (413 mid-stream, never fully buffered first)
 - `MAX_REQUEST_BODY_MB` (default: 32) — global request-body ceiling enforced by `app/body_limit.py:BodySizeLimitMiddleware` (Content-Length precheck + streamed-byte cap → 413). Upload routes get `MAX_FILE_SIZE_MB` + 8MB multipart slack instead; import routes use `MAX_IMPORT_BODY_MB`. `0` disables the middleware.
 - `MAX_IMPORT_BODY_MB` (default: 2048) — body ceiling for `/api/admin/import*` (ZIPs stream to disk, so this is a disk guard, not a RAM guard). `0` = unlimited.
+- `MIN_FREE_DISK_MB` (default: 500) — free-space floor for the uploads filesystem: uploads, reprocess-with-file, and import sessions are rejected with **507** when accepting the payload would leave less free (`main._ensure_disk_space`; disk-full corrupts Neo4j checkpoints). `0` disables. Observability: `cortex_disk_free_bytes`/`cortex_disk_total_bytes` gauges + `cortex_uploads_rejected_disk_total` counter in `/metrics`; `disk_free_mb`/`disk_total_mb` on `GET /api/stats`.
 
 ## Instance Limits
 

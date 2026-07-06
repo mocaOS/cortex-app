@@ -100,11 +100,49 @@ RATE_LIMITED = Counter(
     "Requests rejected by the per-key rate limiter",
     ["route"],
 )
+DISK_FREE_BYTES = Gauge(
+    "cortex_disk_free_bytes",
+    "Free bytes on the filesystem backing a data directory",
+    ["dir"],
+)
+DISK_TOTAL_BYTES = Gauge(
+    "cortex_disk_total_bytes",
+    "Total bytes on the filesystem backing a data directory",
+    ["dir"],
+)
+UPLOADS_REJECTED_DISK = Counter(
+    "cortex_uploads_rejected_disk_total",
+    "Uploads/imports rejected by the free-disk-space guard",
+)
+
+
+def _refresh_disk_gauges() -> None:
+    """Set disk gauges at scrape time. Disk-full corrupts Neo4j checkpoints —
+    this is the operator's early-warning signal (alert on it fleet-side)."""
+    import shutil
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    for name, path in (
+        ("uploads", settings.upload_dir),
+        ("custom_inputs", settings.custom_inputs_dir),
+    ):
+        try:
+            usage = shutil.disk_usage(path)
+            DISK_FREE_BYTES.labels(dir=name).set(usage.free)
+            DISK_TOTAL_BYTES.labels(dir=name).set(usage.total)
+        except OSError:
+            pass
 
 
 def render() -> tuple[bytes, str]:
     """(payload, content_type) for the /metrics endpoint."""
     if AVAILABLE:
+        try:
+            _refresh_disk_gauges()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             from app.services.helper_client import get_breaker_states
 

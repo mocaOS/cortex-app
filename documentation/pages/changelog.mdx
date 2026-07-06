@@ -40,6 +40,19 @@ paths. No API breakage.
   carries an explicit timeout (`LLM_REQUEST_TIMEOUT_SECONDS`, default 360s)
   instead of the SDK's 600s default, so one hung provider connection can't
   pin an ingestion slot for 10 minutes.
+- **Task state survives restarts** — background task records (batch
+  processing, relationship analysis, community detection, library
+  export/import) are now write-through persisted to Neo4j. After a redeploy,
+  polling a task no longer returns 404: interrupted tasks report `failed`
+  with "interrupted by server restart", terminal states are preserved for
+  7 days, and stale records are pruned automatically every hour.
+- **Free-disk guardrail** — uploads, reprocessing, and library-import
+  sessions are refused with **507 Insufficient Storage** when accepting the
+  payload would leave the uploads filesystem below `MIN_FREE_DISK_MB`
+  (default 500) — disk-full corrupts Neo4j checkpoints, so refusing new data
+  early is strictly safer. Operators get `cortex_disk_free_bytes` /
+  `cortex_disk_total_bytes` gauges and a rejection counter in `/metrics`,
+  plus `disk_free_mb` / `disk_total_mb` on `GET /api/stats`.
 
 ### Request hygiene
 

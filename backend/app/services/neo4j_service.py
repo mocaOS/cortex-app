@@ -7047,6 +7047,79 @@ class Neo4jService:
             record = result.single()
             return record["cnt"] if record else 0
 
+    # =========================================================================
+    # Background task records (persistence for main.py's in-memory task store)
+    # =========================================================================
+    # The live store stays in process memory; these records are a write-through
+    # shadow so a restart doesn't turn every in-flight task id into a 404.
+    # `result` is stored as a JSON string (Neo4j properties can't nest maps).
+
+    @retry_on_transient
+    def upsert_task_records(self, records: list[dict]) -> int:
+        """Batch-upsert task snapshots. Each dict is flat (see main._serialize_task)."""
+        if not records:
+            return 0
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $records AS rec
+                MERGE (t:TaskRecord {task_id: rec.task_id})
+                SET t += rec
+                RETURN count(t) as cnt
+            """, records=records)
+            record = result.single()
+            return record["cnt"] if record else 0
+
+    @retry_on_transient
+    def get_task_record(self, task_id: str) -> Optional[dict]:
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (t:TaskRecord {task_id: $task_id})
+                RETURN t
+            """, task_id=task_id)
+            record = result.single()
+            return dict(record["t"]) if record else None
+
+    def fail_interrupted_task_records(self) -> int:
+        """Mark persisted pending/running tasks as failed (startup reconcile).
+
+        Tasks run as in-process coroutines — anything not terminal at startup
+        can never make progress again. Failing the record turns the UI's
+        eternal poll into an actionable error.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (t:TaskRecord)
+                WHERE t.status IN ['pending', 'running']
+                SET t.status = 'failed',
+                    t.error = 'Interrupted by server restart',
+                    t.message = 'Failed: interrupted by server restart',
+                    t.completed_at = $now
+                RETURN count(t) as cnt
+            """, now=datetime.utcnow().isoformat())
+            record = result.single()
+            return record["cnt"] if record else 0
+
+    def delete_task_record(self, task_id: str) -> None:
+        with self.driver.session() as session:
+            session.run(
+                "MATCH (t:TaskRecord {task_id: $task_id}) DELETE t",
+                task_id=task_id,
+            )
+
+    def prune_task_records(self, max_age_days: int = 7) -> int:
+        """Delete terminal task records older than the retention window."""
+        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (t:TaskRecord)
+                WHERE t.status IN ['completed', 'failed']
+                  AND coalesce(t.completed_at, t.started_at, '') < $cutoff
+                DELETE t
+                RETURN count(t) as cnt
+            """, cutoff=cutoff)
+            record = result.single()
+            return record["cnt"] if record else 0
+
 
 # Singleton instance
 _neo4j_service: Optional[Neo4jService] = None

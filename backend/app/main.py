@@ -345,6 +345,22 @@ async def lifespan(app: FastAPI):
     # transient state at startup can never resume on its own — it would spin
     # forever in the UI and keep `/api/instance/status` permanently
     # unsafe-to-redeploy. Reset them to 'pending' so they rejoin the queue.
+    # Reconcile persisted task records from the previous process: anything
+    # still pending/running can never resume (tasks are in-process coroutines)
+    # — mark failed so pollers get a real answer instead of an eternal 404/202.
+    try:
+        interrupted = await asyncio.to_thread(neo4j.fail_interrupted_task_records)
+        if interrupted:
+            logger.warning(
+                "Marked %d persisted task record(s) from the previous run as "
+                "failed (interrupted by restart)", interrupted,
+            )
+    except Exception as e:
+        logger.warning(f"Could not reconcile persisted task records: {e}")
+
+    # Start the write-through persistence loop for the in-memory task store.
+    task_persist_task = asyncio.create_task(_task_persist_loop())
+
     reset_ids: list[str] = []
     try:
         reset_ids = neo4j.reset_orphaned_processing_documents()
@@ -517,7 +533,15 @@ async def lifespan(app: FastAPI):
     # clients reconnect instead of seeing a dead socket.
     SHUTTING_DOWN.set()
 
-    background_tasks = [watchdog_task, reranker_reaper_task, backfill_task]
+    # Final write-through flush so terminal task states from this run survive
+    # the restart (the reconcile above only has to catch true crashes).
+    try:
+        await _flush_dirty_tasks()
+    except Exception:
+        pass
+
+    background_tasks = [watchdog_task, reranker_reaper_task, backfill_task,
+                        task_persist_task]
     if schema_retry_task:
         background_tasks.append(schema_retry_task)
     if git_scheduler_task:
@@ -677,6 +701,39 @@ async def enforce_rate_limit(request: Request) -> None:
             status_code=429,
             detail=f"Rate limit exceeded ({qpm} requests/minute). Slow down.",
             headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
+
+
+def _ensure_disk_space(incoming_bytes: int = 0) -> None:
+    """Refuse new data when the uploads filesystem is nearly full (507).
+
+    Disk-full corrupts Neo4j checkpoints, so rejecting an upload early is
+    strictly safer than accepting it and letting the volume fill. Guarded by
+    MIN_FREE_DISK_MB (0 disables). incoming_bytes is added to the requirement
+    when the payload size is known up front.
+    """
+    settings = get_settings()
+    floor_mb = settings.min_free_disk_mb
+    if floor_mb <= 0:
+        return
+    try:
+        free = shutil.disk_usage(settings.upload_dir).free
+    except OSError:
+        return  # can't measure — don't block ingestion on a stat failure
+    required = floor_mb * 1024 * 1024 + max(0, incoming_bytes)
+    if free < required:
+        metrics.UPLOADS_REJECTED_DISK.inc()
+        logger.error(
+            "Rejecting ingest: %d MB free on uploads filesystem, %d MB required "
+            "(MIN_FREE_DISK_MB=%d + incoming %d bytes)",
+            free // (1024 * 1024), required // (1024 * 1024), floor_mb, incoming_bytes,
+        )
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                "Insufficient storage on this instance. Free up space "
+                "(delete documents or old data) or contact your operator."
+            ),
         )
 
 
@@ -942,8 +999,123 @@ async def prometheus_metrics(auth: AuthResult = Depends(require_admin)):
 # Background Task Store
 # =============================================================================
 
-# In-memory task store (for production, consider Redis or database)
+# In-memory task store — the live source of truth for this process. A
+# write-through shadow is persisted to Neo4j (TaskRecord nodes) by
+# _task_persist_loop so a restart doesn't turn every in-flight task id into a
+# 404: startup marks persisted pending/running records failed ("interrupted by
+# server restart") and the task endpoints fall back to the record when the id
+# is no longer in memory.
 _task_store: Dict[str, TaskProgress] = {}
+
+# Task ids mutated since the last persist flush. Helpers below are called from
+# the event loop AND from worker threads (processing progress callbacks), so
+# writes go through this dirty-set + periodic flusher instead of hitting Neo4j
+# inline. set.add() is atomic under the GIL — no lock needed.
+_task_dirty: set = set()
+
+_TASK_PERSIST_INTERVAL_S = 3.0
+_TASK_CLEANUP_INTERVAL_S = 3600.0
+_TASK_RESULT_JSON_MAX = 200_000  # cap persisted result size (Neo4j property)
+
+
+def _serialize_task(task: TaskProgress) -> dict:
+    """Flatten a TaskProgress for storage as a Neo4j node (no nested maps)."""
+    result_json = None
+    if task.result is not None:
+        try:
+            result_json = json.dumps(task.result, default=str)
+            if len(result_json) > _TASK_RESULT_JSON_MAX:
+                result_json = json.dumps({"truncated": True})
+        except (TypeError, ValueError):
+            result_json = json.dumps({"unserializable": True})
+    return {
+        "task_id": task.task_id,
+        "task_type": task.task_type,
+        "status": task.status.value,
+        "progress_current": task.progress_current,
+        "progress_total": task.progress_total,
+        "progress_percent": task.progress_percent,
+        "message": task.message,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "error": task.error,
+        "result_json": result_json,
+    }
+
+
+def _deserialize_task_record(record: dict) -> TaskProgress:
+    """Rebuild a TaskProgress from a persisted TaskRecord node."""
+    result = None
+    if record.get("result_json"):
+        try:
+            result = json.loads(record["result_json"])
+        except (TypeError, ValueError):
+            result = None
+
+    def _parse_dt(value):
+        try:
+            return datetime.fromisoformat(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    return TaskProgress(
+        task_id=record["task_id"],
+        task_type=record.get("task_type", "unknown"),
+        status=TaskStatus(record.get("status", "failed")),
+        progress_current=record.get("progress_current", 0),
+        progress_total=record.get("progress_total", 0),
+        progress_percent=record.get("progress_percent", 0.0),
+        message=record.get("message", ""),
+        started_at=_parse_dt(record.get("started_at")),
+        completed_at=_parse_dt(record.get("completed_at")),
+        error=record.get("error"),
+        result=result,
+    )
+
+
+async def _flush_dirty_tasks() -> None:
+    """Persist every dirty task snapshot; re-mark on failure for the next tick."""
+    if not _task_dirty:
+        return
+    dirty_ids = list(_task_dirty)
+    _task_dirty.difference_update(dirty_ids)
+    records = [
+        _serialize_task(task)
+        for task_id in dirty_ids
+        if (task := _task_store.get(task_id)) is not None
+    ]
+    if not records:
+        return
+    try:
+        neo4j = get_neo4j_service()
+        await asyncio.to_thread(neo4j.upsert_task_records, records)
+    except Exception as e:
+        _task_dirty.update(dirty_ids)  # retry next tick
+        logger.warning(f"Task persistence flush failed ({len(records)} task(s)): {e}")
+
+
+async def _task_persist_loop():
+    """Flush dirty task snapshots every few seconds; prune old records hourly."""
+    last_cleanup = time.monotonic()
+    while True:
+        try:
+            await asyncio.sleep(_TASK_PERSIST_INTERVAL_S)
+            await _flush_dirty_tasks()
+            if time.monotonic() - last_cleanup >= _TASK_CLEANUP_INTERVAL_S:
+                last_cleanup = time.monotonic()
+                removed = cleanup_old_tasks(max_age_hours=24)
+                pruned = await asyncio.to_thread(
+                    get_neo4j_service().prune_task_records, 7
+                )
+                if removed or pruned:
+                    logger.info(
+                        f"Task cleanup: {removed} in-memory, {pruned} persisted "
+                        "record(s) removed"
+                    )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Task persist loop tick failed: {e}")
 
 
 # =============================================================================
@@ -991,6 +1163,7 @@ def create_task(task_type: str) -> TaskProgress:
         started_at=datetime.utcnow()
     )
     _task_store[task_id] = task
+    _task_dirty.add(task_id)
     return task
 
 
@@ -1014,6 +1187,7 @@ def update_task_progress(
         task.progress_percent = (current / total * 100) if total > 0 else 0
         task.message = message
         task.status = status
+        _task_dirty.add(task_id)
 
 
 def complete_task(task_id: str, result: dict) -> None:
@@ -1025,6 +1199,7 @@ def complete_task(task_id: str, result: dict) -> None:
         task.completed_at = datetime.utcnow()
         task.result = result
         task.message = "Completed successfully"
+        _task_dirty.add(task_id)
 
 
 def fail_task(task_id: str, error: str) -> None:
@@ -1035,6 +1210,7 @@ def fail_task(task_id: str, error: str) -> None:
         task.completed_at = datetime.utcnow()
         task.error = error
         task.message = f"Failed: {error}"
+        _task_dirty.add(task_id)
 
 
 def cleanup_old_tasks(max_age_hours: int = 24) -> int:
@@ -1153,13 +1329,16 @@ async def get_task_status(task_id: str, auth: AuthResult = Depends(require_read_
     """
     task = get_task(task_id)
     if not task:
-        # The task store is in-memory, so a known-recent task id that 404s here
-        # most likely means the backend restarted (redeploy) and dropped in-flight
-        # tasks — not a bad id. Say so, so the client/operator can re-run.
+        # Not in the live store — fall back to the persisted shadow record.
+        # After a restart this returns the task's last known state (terminal
+        # states survive as-is; interrupted ones were marked failed at boot).
+        record = await asyncio.to_thread(get_neo4j_service().get_task_record, task_id)
+        if record:
+            return _deserialize_task_record(record)
         raise HTTPException(
             status_code=404,
-            detail=f"Task {task_id} not found — it may have completed and been cleaned up, "
-                   "or been interrupted by a server restart. Re-run the operation if needed.",
+            detail=f"Task {task_id} not found — it may have been cleaned up "
+                   "after the retention window. Re-run the operation if needed.",
         )
     return task
 
@@ -1174,11 +1353,16 @@ async def get_task_result(task_id: str, auth: AuthResult = Depends(require_read_
     """
     task = get_task(task_id)
     if not task:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found — it may have completed and been cleaned up, "
-                   "or been interrupted by a server restart. Re-run the operation if needed.",
-        )
+        # Fall back to the persisted shadow record (restart survivor).
+        record = await asyncio.to_thread(get_neo4j_service().get_task_record, task_id)
+        if record:
+            task = _deserialize_task_record(record)
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found — it may have been cleaned up "
+                       "after the retention window. Re-run the operation if needed.",
+            )
 
     if task.status == TaskStatus.PENDING or task.status == TaskStatus.RUNNING:
         return JSONResponse(
@@ -1231,8 +1415,13 @@ async def cancel_task(task_id: str, auth: AuthResult = Depends(require_manage_pe
     task = get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    
+
     del _task_store[task_id]
+    _task_dirty.discard(task_id)
+    try:
+        await asyncio.to_thread(get_neo4j_service().delete_task_record, task_id)
+    except Exception as e:
+        logger.warning(f"Could not delete persisted record for task {task_id}: {e}")
     return {"message": f"Task {task_id} removed"}
 
 
@@ -1272,7 +1461,16 @@ async def get_stats(auth: AuthResult = Depends(require_read_permission)):
         stats = await asyncio.to_thread(neo4j.get_stats, collection_filter)
         # Instance-wide (never collection-scoped): the unit quota meter.
         usage = await asyncio.to_thread(usage_meter.get_completions_this_month)
+        disk_free_mb = disk_total_mb = 0
+        try:
+            du = shutil.disk_usage(get_settings().upload_dir)
+            disk_free_mb = du.free // (1024 * 1024)
+            disk_total_mb = du.total // (1024 * 1024)
+        except OSError:
+            pass
         return GraphStatsResponse(
+            disk_free_mb=disk_free_mb,
+            disk_total_mb=disk_total_mb,
             monthly_usage_used=usage["total"],
             monthly_usage_limit=max(0, get_settings().max_queries_per_month),
             monthly_usage_query=usage["query"],
@@ -1464,6 +1662,9 @@ async def upload_file(
             )
         chunks.append(chunk)
     content = b"".join(chunks)
+
+    # Refuse the upload if saving it would leave the disk nearly full.
+    _ensure_disk_space(file_size)
 
     # Check for duplicate document (same filename and file size)
     neo4j = get_neo4j_service()
@@ -2279,7 +2480,10 @@ async def reprocess_document(
                 )
             chunks.append(chunk)
         content = b"".join(chunks)
-        
+
+        # Refuse the new file if saving it would leave the disk nearly full.
+        _ensure_disk_space(file_size)
+
         # Save new file (use document_id to maintain consistent path)
         new_filename = f"{document_id}{file_ext}"
         file_path = os.path.join(settings.upload_dir, new_filename)
@@ -5926,6 +6130,9 @@ async def start_import_upload(request: ImportUploadStartRequest, auth: AuthResul
 
     _purge_stale_import_uploads()
     _guard_no_transfer_in_progress()
+    # The client declares the ZIP size up front — refuse the whole session
+    # early if assembling it would leave the disk nearly full.
+    _ensure_disk_space(request.total_size)
 
     tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="cortex_import_")
     os.close(tmp_fd)
@@ -6042,6 +6249,8 @@ async def start_library_import(
     import tempfile as _tempfile
 
     _guard_no_transfer_in_progress()
+    # Size unknown until streamed — at least require the free-space floor.
+    _ensure_disk_space()
 
     # Save uploaded file to temp location
     tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="cortex_import_")

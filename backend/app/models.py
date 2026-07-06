@@ -335,6 +335,9 @@ class GraphStatsResponse(BaseModel):
     monthly_usage_limit: int = Field(default=0, description="Monthly LLM-completion quota (0 = unlimited)")
     monthly_usage_query: int = Field(default=0, description="Portion of monthly usage consumed by Q&A/search")
     monthly_usage_processing: int = Field(default=0, description="Portion of monthly usage consumed by document/graph processing")
+    # Disk headroom on the uploads filesystem (0 when unmeasurable)
+    disk_free_mb: int = Field(default=0, description="Free MB on the uploads filesystem")
+    disk_total_mb: int = Field(default=0, description="Total MB on the uploads filesystem")
 
 
 class UploadResponse(BaseModel):

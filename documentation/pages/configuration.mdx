@@ -818,6 +818,7 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `RATE_LIMIT_BURST` | `10` | Token-bucket burst capacity for `RATE_LIMIT_QPM`. |
 | `MAX_REQUEST_BODY_MB` | `32` | Global request-body ceiling (Content-Length precheck + streamed cap → 413). Upload routes get `MAX_FILE_SIZE_MB` + 8MB multipart slack instead. `0` disables. |
 | `MAX_IMPORT_BODY_MB` | `2048` | Body ceiling for `/api/admin/import*` (ZIPs stream to disk — a disk guard, not a RAM guard). `0` = unlimited. |
+| `MIN_FREE_DISK_MB` | `500` | Free-space floor for the uploads filesystem: uploads, reprocessing, and import sessions are refused with 507 when accepting them would leave less free (disk-full corrupts Neo4j checkpoints). Disk gauges + rejection counter exposed in `/metrics`; `disk_free_mb`/`disk_total_mb` on `GET /api/stats`. `0` disables. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `360` | Timeout applied to every LLM client the backend builds (replaces the SDK's 600s default). For streaming, bounds the gap between chunks, not the whole stream. `0` restores the SDK default. |
 | `LLM_MAX_RETRIES` | `2` | Retry count for LLM transport errors (SDK-level). |
 | `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | When a restart strands documents mid-processing, automatically restart batch processing for them (quota-guarded). Bulk uploads parked with `start_processing=false` are never auto-started. |

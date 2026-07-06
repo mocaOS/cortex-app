@@ -215,6 +215,12 @@ def mock_neo4j(monkeypatch):
         "total": 0, "query": 0, "processing": 0,
     }
     fake.increment_llm_completions.return_value = None
+    # Task-record persistence (write-through shadow of the in-memory store)
+    fake.get_task_record.return_value = None
+    fake.upsert_task_records.return_value = 0
+    fake.fail_interrupted_task_records.return_value = 0
+    fake.prune_task_records.return_value = 0
+    fake.delete_task_record.return_value = None
 
     def _set_document_count(n: int) -> None:
         current = dict(fake.get_stats.return_value)

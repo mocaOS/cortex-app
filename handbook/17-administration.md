@@ -47,7 +47,7 @@ Returns a single snapshot designed for deploy automation:
 - `processing_count` — documents currently being processed/extracted (blocks redeploy)
 - `pending_count` — documents queued; **informational only** — these persist in Neo4j and resume after a restart, so they never block
 - `failed_count` — documents in failed state
-- `running_task_count` / `running_tasks` — background jobs (batch processing, relationship analysis, community detection) held in an in-memory store that a restart would lose (blocks redeploy)
+- `running_task_count` / `running_tasks` — background jobs (batch processing, relationship analysis, community detection); a restart interrupts the work (the task record survives and is marked failed, but the job must be re-run), so this blocks redeploy
 - `active_query_count` — in-flight AskAI/research queries; a restart kills the stream (blocks redeploy)
 - `last_query_at` — timestamp of the most recent AskAI query
 - `last_relationship_analysis_at`, `last_community_detection_at`, `last_entity_merge_at` — last pipeline operations (informational)
@@ -117,7 +117,12 @@ docker system df -v
 
 ## Background Task Management
 
-Long-running operations run as background tasks stored in an in-memory task store:
+Long-running operations run as in-process background tasks. The live store is
+in memory, with a write-through shadow persisted to Neo4j: task state survives
+restarts (a task interrupted by a redeploy reports `failed` with
+"interrupted by server restart" instead of 404ing), completed/failed records
+are kept for 7 days, and stale records are pruned automatically every hour —
+the manual cleanup endpoint below remains for forcing it early:
 
 ```bash
 # List all tasks (optionally filter by status/type)

@@ -105,7 +105,7 @@ On import completion, clears client-side caches (same as system reset).
 
 `safe_to_redeploy` is **False** while destructible work is in flight:
 - `processing_count > 0` — documents mid-processing/extraction (a restart strands them in `processing` state).
-- running/pending tasks in the in-memory `_task_store` (`running_tasks`/`running_task_count`) — a restart loses them.
+- running/pending tasks in the in-memory `_task_store` (`running_tasks`/`running_task_count`) — a restart interrupts the work (records survive as Neo4j `TaskRecord` shadows and get marked failed at startup, but the job must be re-run).
 - `active_query_count > 0` — in-flight AskAI/research queries (a restart kills the stream).
 - Neo4j unreachable — state can't be verified, so treated as unsafe.
 

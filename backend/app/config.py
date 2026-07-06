@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     max_import_body_mb: int = Field(
         default=2048
     )  # Body ceiling for the library-import routes (/api/admin/import*). Import ZIPs stream to disk (not RAM), so this can be far above max_request_body_mb — it exists to stop a runaway/abusive upload from filling the disk. Set 0 for unlimited.
+    min_free_disk_mb: int = Field(
+        default=500
+    )  # Free-space floor for the uploads filesystem. Uploads and library-import sessions are rejected with 507 when accepting them would leave less than this free — disk-full corrupts Neo4j checkpoints, so refusing new data early is strictly safer. 0 disables the guard.
     allowed_extensions: list[str] = Field(
         default=[
             ".pdf",

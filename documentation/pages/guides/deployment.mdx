@@ -269,7 +269,7 @@ curl https://api.yourdomain.com/api/instance/status \
 }
 ```
 
-`safe_to_redeploy` is `false` while documents are processing/extracting, background tasks are running (the task store is in-memory and a restart loses them), or an AskAI/research query is in flight (a restart kills the stream). Pending documents persist in Neo4j and resume after a restart, so they never block. Poll this endpoint in deploy automation and proceed only once `safe_to_redeploy` is `true`. Requires `manage` permission.
+`safe_to_redeploy` is `false` while documents are processing/extracting, background tasks are running (a restart interrupts them — their records survive in Neo4j and are marked failed so pollers get a real answer, but the work must be re-run), or an AskAI/research query is in flight (a restart kills the stream). Pending documents persist in Neo4j and resume after a restart, so they never block. Poll this endpoint in deploy automation and proceed only once `safe_to_redeploy` is `true`. Requires `manage` permission.
 
 ## Scaling
 
