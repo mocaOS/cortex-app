@@ -68,7 +68,7 @@ This handbook covers both perspectives. Cloud users will find the end-user chapt
 ```
 ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
 │                     │     │                     │     │                     │
-│   Next.js 15 UI     │────▶│   FastAPI Backend    │────▶│      Neo4j 5.x      │
+│   Next.js 16 UI     │────▶│   FastAPI Backend    │────▶│      Neo4j 5.x      │
 │   React 19          │     │   Haystack 2.0       │     │   Graph + Vector     │
 │   TypeScript        │     │   Python 3.11+       │     │   Full-Text Search   │
 │   Tailwind CSS      │     │                     │     │                     │
@@ -87,7 +87,7 @@ This handbook covers both perspectives. Cloud users will find the end-user chapt
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS, Framer Motion | Document management, graph visualization, Q&A interface, admin dashboard |
+| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS, Framer Motion | Document management, graph visualization, Q&A interface, admin dashboard |
 | **Backend** | FastAPI, Haystack 2.0, Python 3.11+, Pydantic | Document processing, embeddings, RAG pipelines, entity extraction, API |
 | **Database** | Neo4j 5.x with APOC plugin | Graph storage, vector similarity search, full-text search, community detection |
 | **Embeddings** | OpenAI / sentence-transformers | Convert text to semantic vectors for similarity search |

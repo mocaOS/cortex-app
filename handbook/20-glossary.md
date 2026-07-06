@@ -27,7 +27,7 @@
 | **Neo4j** | The graph database used by the Library for storing documents, chunks, entities, relationships, communities, and vector embeddings. Supports Cypher query language. |
 | **Phase A** | Per-document entity extraction — The first phase of knowledge graph construction, where each document's chunks are analyzed individually by an LLM to extract entities. |
 | **Phase B** | Cross-document relationship analysis — The second phase, where entities across the entire collection are analyzed together to discover how they relate to each other. |
-| **Prompt Injection** | An attack where malicious input attempts to manipulate an LLM's behavior — extracting system prompts, bypassing safety instructions, or changing the model's role. The Library includes 50+ pattern detectors for protection. |
+| **Prompt Injection** | An attack where malicious input attempts to manipulate an LLM's behavior — extracting system prompts, bypassing safety instructions, or changing the model's role. The Library includes 25+ pattern detectors, plus a query-time classifier (Prompt Guard), for protection. |
 | **Pydantic** | A Python data validation library used by FastAPI for request/response models and by the Library for configuration management (BaseSettings). |
 | **RAG** | Retrieval-Augmented Generation — The technique of grounding LLM answers in retrieved document content rather than relying solely on the model's training data. |
 | **rapidfuzz** | A fast string matching library used for entity deduplication, entity type normalization, and relationship type matching. Provides ratio, token_sort_ratio, and partial_ratio comparisons. |

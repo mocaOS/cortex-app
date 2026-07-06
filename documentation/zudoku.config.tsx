@@ -109,6 +109,8 @@ const config: ZudokuConfig = {
             "/guides/authentication",
             "/guides/security",
             "/guides/data-transfer",
+            "/guides/image-analysis",
+            "/guides/image-analysis-advanced",
           ],
         },
         {
@@ -132,12 +134,6 @@ const config: ZudokuConfig = {
               icon: "github",
               label: "GitHub",
               to: "https://github.com/mocaOS/cortex-app",
-            },
-            {
-              type: "link",
-              icon: "book",
-              label: "mdharvest Scraper",
-              to: "https://github.com/mocaOS/mdharvest",
             },
             {
               type: "link",

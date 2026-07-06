@@ -68,8 +68,8 @@ SESSION_SECRET=at-least-32-characters-long-random-secret
 
 # ── Primary LLM ─────────────────────────────────────────────────
 OPENAI_API_KEY=sk-your-openai-key
-OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_BASE=https://api.openai.com/v1   # point at whichever OpenAI-compatible provider serves your model
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
 ```
 
 **Generating secure secrets:**
@@ -276,14 +276,14 @@ The Library is LLM-agnostic. Each capability can point to a different model or p
 # Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
 # (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
 OPENAI_API_KEY=sk-your-key
-OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_MODEL_FAST_MODE=gpt-4o-mini    # Optional: faster model for "Fast Mode"
+OPENAI_API_BASE=https://api.openai.com/v1   # point at whichever OpenAI-compatible provider serves these models
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MODEL_FAST_MODE=google-gemma-4-26b-a4b-it    # Optional: faster model for "Fast Mode"
 
 # ── Graph Extraction (entity discovery + community summarization) ─
 # Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 # Defaults to Primary LLM if not set
-GRAPH_EXTRACTION_MODEL=gpt-4o          # Instruction-following model for extraction
+GRAPH_EXTRACTION_MODEL=qwen3-6-27b     # Instruction-following model for extraction
 GRAPH_EXTRACTION_API_BASE=https://api.openai.com/v1
 GRAPH_EXTRACTION_API_KEY=sk-your-key
 

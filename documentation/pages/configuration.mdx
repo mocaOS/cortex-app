@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Complete reference for all 50+ environment variables in Cortex
+description: Complete reference for all 160+ environment variables in Cortex
 ---
 
 Cortex is configured through environment variables. This page documents every available option.
@@ -22,10 +22,10 @@ NEO4J_PASSWORD=your-secure-password-here
 At least one LLM provider is required:
 
 ```bash
-# OpenAI (recommended)
+# OpenAI-compatible provider (any endpoint that speaks the OpenAI API)
 OPENAI_API_KEY=sk-your-api-key-here
 OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
 ```
 
 ### Admin Authentication
@@ -50,7 +50,7 @@ SESSION_SECRET=your-session-secret-key-at-least-32-characters-long
 OPENAI_MODEL=google-gemma-4-26b-a4b-it
 
 # Optional: Faster/cheaper model for "Fast Mode"
-OPENAI_MODEL_FAST_MODE=gpt-4o-mini
+OPENAI_MODEL_FAST_MODE=google-gemma-4-26b-a4b-it
 
 # Primary token budgets (floor of the fallback chain — see "Budget Fallback Chain" below)
 OPENAI_MAX_OUTPUT_TOKENS=8000   # Default output tokens for every LLM call
@@ -120,7 +120,7 @@ ENABLE_GRAPH_EXTRACTION=true
 # extraction during RAG search (defaults to OPENAI_MODEL)
 # Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)
 # Also handles community summarization for consistent structured output
-# GRAPH_EXTRACTION_MODEL=gpt-4o-mini
+# GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 
 # API base/key for extraction model (defaults to OPENAI_API_BASE / OPENAI_API_KEY)
 # GRAPH_EXTRACTION_API_BASE=http://localhost:11434/v1
@@ -359,10 +359,10 @@ RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 
 # Lifecycle (per-instance footprint tuning)
 RERANKER_PRELOAD=false          # eager-load at startup; off = lazy, leaner idle instances
-RERANKER_IDLE_TTL_SECONDS=1800  # unload idle model to reclaim ~1 GB; 0 = never unload
+RERANKER_IDLE_TTL_SECONDS=0     # 0 = keep resident (default); set >0 to unload after N idle seconds and reclaim ~1 GB
 ```
 
-The local cross-encoder pulls ~780 MB into the process. It is lazy-loaded by default; the first reranked query's load is hidden behind the preceding LLM/search work, and the model unloads after `RERANKER_IDLE_TTL_SECONDS` of inactivity.
+The local cross-encoder pulls ~780 MB into the process. It is lazy-loaded by default; the first reranked query's load is hidden behind the preceding LLM/search work. By default the model stays resident (`RERANKER_IDLE_TTL_SECONDS=0`) so it is never idle-unloaded; set a positive TTL to reclaim its memory after a period of inactivity at the cost of a reload on the next query.
 
 ### Shared Model Services (cortex-helper)
 
@@ -417,7 +417,7 @@ ENABLE_AGENT_CHAT=true
 
 # Max agent loop iterations per mode
 # RESEARCHER_MAX_ITERATIONS_SPEED=3      # Chat mode (speed)
-# RESEARCHER_MAX_ITERATIONS_QUALITY=10   # Deep research mode (quality)
+# RESEARCHER_MAX_ITERATIONS_QUALITY=8    # Deep research mode (quality)
 
 # Max output tokens for the writer per mode
 # WRITER_MAX_TOKENS_SPEED=1200           # Chat mode
@@ -647,14 +647,31 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_LOGO_URL=https://example.com/logo.png
 
 # Custom Accent Color (optional)
-# If set, overrides the default accent color in the UI
+# If set, overrides the default accent color in the UI.
+# Deliberately NOT NEXT_PUBLIC_-prefixed: it is read from process.env at runtime
+# (server-side), so it takes effect without a frontend rebuild.
 # Accepts any valid CSS color value (hex, rgb, hsl, oklch, etc.)
 # Examples:
-#   NEXT_PUBLIC_ACCENT_COLOR=#3b82f6
-#   NEXT_PUBLIC_ACCENT_COLOR=rgb(59, 130, 246)
-#   NEXT_PUBLIC_ACCENT_COLOR=oklch(0.65 0.2 250)
-# NEXT_PUBLIC_ACCENT_COLOR=
+#   ACCENT_COLOR=#3b82f6
+#   ACCENT_COLOR=rgb(59, 130, 246)
+#   ACCENT_COLOR=oklch(0.65 0.2 250)
+# ACCENT_COLOR=
 ```
+
+---
+
+## Resource Limits & Quota
+
+Optional caps for capacity planning and multi-tenant deployments. All default to `0` = unlimited.
+
+```bash
+MAX_FILES=0              # Max total documents (uploads + custom inputs)
+MAX_COLLECTIONS=0        # Max collections (the default collection counts as 1)
+MAX_ENTITIES=0           # Max total entities across the graph
+MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions ("units")
+```
+
+`MAX_QUERIES_PER_MONTH` is **unit-denominated**: the quota is spent in internal LLM completions — every Q&A loop call plus every document/graph processing (extraction) call — not in raw user queries. Embedding calls are excluded. A single question can therefore consume several units (search + answer + any tool/skill rounds), and a query blocked by the prompt guard still costs 1 unit. The counter resets per UTC calendar month and is instance-wide. Current usage is surfaced on the instance status endpoint (`monthly_usage_*` fields).
 
 ---
 
@@ -666,7 +683,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `NEO4J_USER` | Yes | - | Neo4j username |
 | `NEO4J_PASSWORD` | Yes | - | Neo4j password |
 | `OPENAI_API_KEY` | Yes | - | OpenAI API key |
-| `OPENAI_MODEL` | No | `gpt-4o-mini` | LLM model |
+| `OPENAI_MODEL` | No | `google-gemma-4-26b-a4b-it` | Primary LLM for Q&A, research, chat |
 | `OPENAI_MAX_OUTPUT_TOKENS` | No | `8000` | Floor of the output-token budget chain |
 | `OPENAI_MAX_CONTEXT` | No | `32768` | Floor of the input-context budget chain |
 | `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |
@@ -708,16 +725,17 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `EXTRACTION_REASONING_MODE` | No | `off` | Force reasoning OFF on extraction/summary/community calls. Values: `off\|minimal\|auto\|low\|medium\|high` |
 | `RELATIONSHIP_REASONING_MODE` | No | `off` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above |
 | `VISION_REASONING_MODE` | No | `off` | Force reasoning OFF on the vision model's image-description call. Same values as above |
-| `DEFAULT_REASONING_MODE` | No | `auto` | Reasoning mode for Q&A path (researcher agent stays AUTO to preserve parallel tool calls) |
+| `DEFAULT_REASONING_MODE` | No | `off` | Reasoning mode for the Q&A/answer path. Same values as above |
 | `REASONING_MODEL_OVERRIDES` | No | empty | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |
 | `RERANKER_PRELOAD` | No | `false` | Eager-load cross-encoder at startup |
-| `RERANKER_IDLE_TTL_SECONDS` | No | `1800` | Unload idle reranker after N s (0 = never) |
+| `RERANKER_IDLE_TTL_SECONDS` | No | `0` | Unload idle reranker after N s (0 = never unload, keep resident) |
 | `RERANKER_SERVICE_URL` | No | - | Offload reranking to cortex-helper |
 | `DOCLING_SERVICE_URL` | No | - | Offload Docling conversion to cortex-helper |
 | `PROMPT_GUARD_SERVICE_URL` | No | - | Offload query-time prompt-injection classifier to cortex-helper (`/classify`); empty = no remote guard (see `PROMPT_GUARD_LOCAL`) |
 | `PROMPT_GUARD_THRESHOLD` | No | `0.5` | Injection-class probability at/above which a question is refused |
+| `PROMPT_GUARD_MODEL` | No | `leolee99/PIGuard` | HuggingFace model id for the in-process (local) classifier |
 | `HELPER_SERVICE_TOKEN` | No | - | Shared secret for the helper service (reranker, docling, prompt-guard) |
 | `ENVIRONMENT` | No | `development` | `production` = fail fast on weak secrets |
 | `CORS_ALLOWED_ORIGINS` | No | `*` | Comma-separated CORS allowlist |
@@ -725,7 +743,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `ENABLE_AGENT_RESEARCH` | No | `true` | Use agent pipeline for deep research (vs legacy) |
 | `ENABLE_AGENT_CHAT` | No | `true` | Use agent pipeline for standard chat (required for skills) |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | No | `3` | Agent loop iterations for chat mode |
-| `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `10` | Agent loop iterations for deep research |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `8` | Agent loop iterations for deep research |
 | `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |
 | `WRITER_MAX_TOKENS_QUALITY` | No | `4000` | Max output tokens for deep research answers |
 | `RESEARCHER_SPEED_EARLY_WRITE` | No | `true` | Chat skips the agent's final confirmation LLM call after a fruitful search |
@@ -754,7 +772,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | `LANGFUSE_SAMPLE_RATE` | No | `1.0` | Trace sampling rate (0.0–1.0) |
 | `LANGFUSE_LOG_EXTENDED` | No | `false` | Content logging mode. `false` redacts all prompt/completion/tool/embedding/vision text before export (structure only); `true` logs full content for debugging |
 | `NEXT_PUBLIC_LOGO_URL` | No | - | Custom logo URL |
-| `NEXT_PUBLIC_ACCENT_COLOR` | No | - | Custom UI accent color (CSS) |
+| `ACCENT_COLOR` | No | - | Custom UI accent color (any CSS color). Read server-side at runtime — **not** `NEXT_PUBLIC_`-prefixed, so no rebuild needed |
+| `MAX_FILES` | No | `0` | Max total documents (0 = unlimited) |
+| `MAX_COLLECTIONS` | No | `0` | Max collections (0 = unlimited) |
+| `MAX_ENTITIES` | No | `0` | Max total entities (0 = unlimited) |
+| `MAX_QUERIES_PER_MONTH` | No | `0` | Monthly quota in internal LLM completions ("units"); Q&A + processing calls, embeddings excluded; UTC month, instance-wide (0 = unlimited) |
 
 ---
 

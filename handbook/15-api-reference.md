@@ -1,8 +1,8 @@
 # Chapter 15: API Reference
 
-The Library exposes 70+ REST API endpoints. All endpoints except `/health` require an `X-API-Key` header. This chapter provides a complete endpoint reference.
+The Library exposes 100+ REST API endpoints. All endpoints except `/health` require an `X-API-Key` header. This chapter covers the most commonly used endpoints grouped by area; it is not exhaustive.
 
-For interactive API documentation, visit `/docs` (Swagger UI) or `/redoc` (ReDoc) on your running instance. The full OpenAPI 3.0.3 specification is also available in `documentation/apis/openapi.yaml`.
+For the authoritative, always-complete reference, visit `/docs` (Swagger UI) or `/redoc` (ReDoc) on your running instance. The full OpenAPI 3.0.3 specification is also available in `documentation/apis/openapi.yaml`.
 
 ## Authentication
 

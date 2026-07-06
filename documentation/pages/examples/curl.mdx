@@ -354,7 +354,8 @@ curl "$CORTEX_URL/api/graph/entities?search=neural&limit=20" \
 ### Get Entity Details
 
 ```bash
-curl "$CORTEX_URL/api/graph/entities/ent_abc123" \
+# Single entity is keyed by name (URL-encode it), not an opaque id
+curl "$CORTEX_URL/api/graph/entity/Neural%20Network" \
   -H "X-API-Key: $CORTEX_API_KEY"
 ```
 

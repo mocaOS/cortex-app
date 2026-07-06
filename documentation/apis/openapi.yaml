@@ -47,6 +47,12 @@ tags:
     description: Background task management
   - name: Admin
     description: API key management, system configuration, library import/export
+  - name: Web Import
+    description: Harvest web pages into the knowledge base as markdown (MDHarvest / crawl4ai)
+  - name: Git Integration
+    description: GitHub / GitLab / Gitea connectors for repository ingestion
+  - name: Skills
+    description: Agent Skills (agentskills.io) installation and configuration
 
 security:
   - ApiKeyAuth: []
@@ -214,6 +220,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DocumentContent'
+
+  /api/documents/{document_id}/file:
+    get:
+      tags: [Documents]
+      summary: Get original document file
+      description: >
+        Serve the original uploaded file for viewing or download. Returns the
+        raw file with its stored filename and content type. For restricted API
+        keys, access is validated against the document's collection.
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Original file stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Document not found or original file not available
 
   /api/documents/{document_id}/reprocess:
     post:
@@ -580,6 +611,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EntityList'
+    delete:
+      tags: [Knowledge Graph]
+      summary: Delete ALL entities
+      description: >
+        Delete ALL entities and their connections (including chunk MENTIONS links)
+        from the knowledge graph. Requires `manage` permission. Useful before
+        re-running the full extraction pipeline.
+      responses:
+        '200':
+          description: Entities deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities_deleted:
+                    type: integer
+                    description: Number of entities deleted
+
+  /api/graph/entity-types:
+    get:
+      tags: [Knowledge Graph]
+      summary: List entity types
+      description: >
+        Get all distinct entity types in the knowledge graph. For restricted
+        API keys, results are scoped to accessible collections.
+      responses:
+        '200':
+          description: Entity types retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      type: string
+
+  /api/graph/relationship-types:
+    get:
+      tags: [Knowledge Graph]
+      summary: List relationship types
+      description: >
+        Get all distinct relationship types in the knowledge graph. For restricted
+        API keys, results are scoped to accessible collections.
+      responses:
+        '200':
+          description: Relationship types retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  types:
+                    type: array
+                    items:
+                      type: string
 
   /api/graph/entity/{name}:
     get:
@@ -917,6 +1006,43 @@ paths:
                 $ref: '#/components/schemas/EntityList'
 
   /api/graph/relationships:
+    get:
+      tags: [Knowledge Graph]
+      summary: List relationships
+      description: >
+        List relationships between entities with server-side pagination and search.
+        Excludes internal edge types (MENTIONS, HAS_MEMBER, FROM_DOCUMENT, CO_MENTION).
+        For restricted API keys, results are scoped to accessible collections.
+      parameters:
+        - name: rel_type
+          in: query
+          schema:
+            type: string
+          description: Filter by relationship type
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search in source, target, and description
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: Relationships retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipList'
     delete:
       tags: [Knowledge Graph]
       summary: Delete all relationships
@@ -1279,6 +1405,32 @@ paths:
                     type: string
                   embedding_send_dimensions:
                     type: boolean
+        '401':
+          description: Admin authentication required
+    patch:
+      tags: [Admin]
+      summary: Update runtime settings
+      description: >
+        Update admin-editable runtime settings. Overrides are persisted (over the
+        env defaults) and take effect immediately for new work without a restart.
+        Only provided fields are changed. Returns the full, updated system
+        configuration. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeSettingsUpdate'
+      responses:
+        '200':
+          description: Updated system configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                description: The full system configuration after applying the update (same shape as GET /api/admin/config)
         '401':
           description: Admin authentication required
 
@@ -1751,6 +1903,743 @@ paths:
                     description: ISO timestamp when this snapshot was taken
         '401':
           description: Manage authentication required
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      description: >
+        Prometheus exposition-format metrics. Admin-only and not routed through
+        the production nginx. Returns 404 when metrics are disabled and 501 when
+        prometheus-client is not installed in the image.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Metrics disabled
+        '501':
+          description: prometheus-client not installed in this image
+
+  /api/features:
+    get:
+      tags: [Health]
+      summary: Get UI feature flags
+      description: >
+        Lightweight, non-admin feature flags for gating UI features (Collections,
+        Skills, Git integration, Web import) without exposing the full system
+        configuration. Requires `read` permission.
+      responses:
+        '200':
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enable_collections:
+                    type: boolean
+                  enable_skills:
+                    type: boolean
+                  enable_git_integration:
+                    type: boolean
+                  enable_web_crawl:
+                    type: boolean
+                    description: True only when the master switch is on AND a crawl service is configured
+
+  /api/web-import:
+    post:
+      tags: [Web Import]
+      summary: Import web pages as markdown
+      description: >
+        Harvest one or more URLs into the knowledge base as clean markdown.
+        Returns a task_id immediately; poll `GET /api/tasks/{task_id}` for
+        progress. Requires `manage` permission and web crawling to be enabled
+        (returns 404 when disabled).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebImportRequest'
+      responses:
+        '200':
+          description: Web import job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebImportResponse'
+        '400':
+          description: No valid http(s) URLs, or too many URLs for the plan
+        '403':
+          description: File limit reached for the plan
+        '404':
+          description: Web crawling is disabled
+
+  /api/web-import/discover:
+    post:
+      tags: [Web Import]
+      summary: Discover same-site links
+      description: >
+        Scan a page for same-host candidate links, for selective import.
+        Requires `manage` permission and web crawling to be enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebDiscoverRequest'
+      responses:
+        '200':
+          description: Discovered candidate links
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebDiscoverResponse'
+        '400':
+          description: Invalid URL
+        '404':
+          description: Web crawling is disabled
+        '502':
+          description: Crawl service unavailable
+
+  /api/integrations/git/verify:
+    post:
+      tags: [Git Integration]
+      summary: Verify git credentials
+      description: >
+        Validate a personal access token against the provider before creating a
+        connection. Admin-only. Requires git integration to be enabled.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitConnectionVerifyRequest'
+      responses:
+        '200':
+          description: Verification result (valid flag; login/message when applicable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitVerifyResponse'
+        '404':
+          description: Git integration is disabled
+
+  /api/integrations/git/browse:
+    get:
+      tags: [Git Integration]
+      summary: Browse accessible repositories
+      description: >
+        List repositories the token can access, for the connection setup picker.
+        Admin-only. Requires git integration to be enabled.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: vendor
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, gitea]
+        - name: pat
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Personal access token
+        - name: base_url
+          in: query
+          schema:
+            type: string
+          description: API base URL for self-hosted GitLab/Gitea
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+      responses:
+        '200':
+          description: Repositories retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GitRepoBrowseItem'
+        '404':
+          description: Git integration is disabled
+        '502':
+          description: Provider error
+
+  /api/integrations/git/connections:
+    get:
+      tags: [Git Integration]
+      summary: List git connections
+      description: List all git connections (PATs masked). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Connections retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GitConnectionResponse'
+        '404':
+          description: Git integration is disabled
+    post:
+      tags: [Git Integration]
+      summary: Create git connection
+      description: >
+        Create a git connection. Verifies the PAT and resolves the default branch
+        before persisting. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitConnectionCreate'
+      responses:
+        '200':
+          description: Connection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitConnectionResponse'
+        '400':
+          description: Invalid credentials or bad request
+        '404':
+          description: Git integration disabled, or repository not found/inaccessible
+        '502':
+          description: Provider error
+
+  /api/integrations/git/connections/{connection_id}:
+    get:
+      tags: [Git Integration]
+      summary: Get git connection
+      description: Get a single git connection (PAT masked). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Connection retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitConnectionResponse'
+        '404':
+          description: Connection not found or git integration disabled
+    patch:
+      tags: [Git Integration]
+      summary: Update git connection
+      description: >
+        Partially update a git connection. The PAT is rotated only when provided.
+        Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitConnectionUpdate'
+      responses:
+        '200':
+          description: Connection updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitConnectionResponse'
+        '404':
+          description: Connection not found or git integration disabled
+    delete:
+      tags: [Git Integration]
+      summary: Delete git connection
+      description: >
+        Delete a git connection. With `purge_documents=true`, also removes all
+        documents ingested from this connection. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: purge_documents
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Also delete all documents ingested from this connection
+      responses:
+        '200':
+          description: Connection deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  connection_id:
+                    type: string
+                  documents_purged:
+                    type: integer
+        '404':
+          description: Connection not found or git integration disabled
+
+  /api/integrations/git/connections/{connection_id}/sync:
+    post:
+      tags: [Git Integration]
+      summary: Trigger a git sync
+      description: >
+        Trigger an incremental sync for a connection. Returns a task id to poll
+        via `GET /api/tasks/{task_id}`. Admin-only. Returns 409 if a sync is
+        already running for this connection.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sync started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitSyncTriggerResponse'
+        '404':
+          description: Connection not found or git integration disabled
+        '409':
+          description: A sync is already running for this connection
+
+  /api/integrations/git/connections/{connection_id}/orphaned:
+    get:
+      tags: [Git Integration]
+      summary: List orphaned git documents
+      description: >
+        List documents whose source file was removed from the repository
+        (flagged for review). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Orphaned documents retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      description: Document summary (id, filename, source path, etc.)
+        '404':
+          description: Connection not found or git integration disabled
+
+  /api/admin/skills:
+    get:
+      tags: [Skills]
+      summary: List installed skills
+      description: List all installed agent skills. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Installed skills retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Skill summary (id, name, description, enabled, source, etc.)
+
+  /api/admin/skills/registry/search:
+    get:
+      tags: [Skills]
+      summary: Search the skills registry
+      description: Search the skills.sh registry for skills. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+      responses:
+        '200':
+          description: Registry search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  description: Registry item (namespace, name, description, install_count, download_url)
+
+  /api/admin/skills/install:
+    post:
+      tags: [Skills]
+      summary: Install a skill
+      description: >
+        Install a skill from a direct URL or a skills.sh registry identifier.
+        Provide exactly one of `url` or `registry_id`. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillInstallRequest'
+      responses:
+        '200':
+          description: Skill installed
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Installed skill details
+        '400':
+          description: Neither url nor registry_id provided, or invalid input
+        '502':
+          description: Failed to fetch skill from source
+
+  /api/admin/skills/discover:
+    post:
+      tags: [Skills]
+      summary: Discover local skills
+      description: Re-scan the local skills directory for newly added skills. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Discovery completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  count:
+                    type: integer
+
+  /api/admin/skills/{skill_id}:
+    get:
+      tags: [Skills]
+      summary: Get skill detail
+      description: Get full skill details including the SKILL.md body and tools config. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill detail retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Full skill detail
+        '404':
+          description: Skill not found
+    patch:
+      tags: [Skills]
+      summary: Update skill settings
+      description: Update a skill's settings (enable/disable). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillUpdateRequest'
+      responses:
+        '200':
+          description: Skill updated
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Updated skill
+        '404':
+          description: Skill not found
+    delete:
+      tags: [Skills]
+      summary: Uninstall a skill
+      description: Uninstall a skill and delete its files. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          description: Skill not found
+
+  /api/admin/skills/{skill_id}/analyze:
+    post:
+      tags: [Skills]
+      summary: Analyze skill configuration
+      description: >
+        Analyze a skill's SKILL.md with the primary LLM to extract configuration
+        variables and API base URL. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skill_id:
+                    type: string
+                  variables:
+                    type: array
+                    items:
+                      type: object
+                      description: Config variable (name, description, required, type)
+                  base_url:
+                    type: string
+                    nullable: true
+        '404':
+          description: Skill not found
+
+  /api/admin/skills/{skill_id}/config:
+    get:
+      tags: [Skills]
+      summary: Get skill configuration
+      description: >
+        Get a skill's configuration schema, base URL, and current values
+        (secret values are masked). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skill_id:
+                    type: string
+                  schema:
+                    type: array
+                    items:
+                      type: object
+                      description: Config variable schema
+                  values:
+                    type: object
+                    description: Current values (secrets masked as '********')
+                  base_url:
+                    type: string
+                    nullable: true
+    put:
+      tags: [Skills]
+      summary: Save skill configuration
+      description: >
+        Save a skill's configuration values. Masked values ('********') preserve
+        the existing secret. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: skill_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillConfigSaveRequest'
+      responses:
+        '200':
+          description: Configuration saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  skill_id:
+                    type: string
+        '404':
+          description: Skill not found
+
+  /api/admin/api-keys/with-stats:
+    get:
+      tags: [Admin]
+      summary: List API keys with usage stats
+      description: >
+        List all API keys with embedded usage statistics (total/today/week/month
+        requests, error counts, endpoint breakdown). Admin-only.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: API keys with stats retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APIKeyWithStats'
+
+  /api/admin/api-keys/{key_id}/stats:
+    get:
+      tags: [Admin]
+      summary: Get API key usage stats
+      description: >
+        Get detailed usage statistics for a specific API key. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usage statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyStats'
+        '404':
+          description: API key not found
+
+  /api/admin/api-keys/{key_id}/usage-history:
+    get:
+      tags: [Admin]
+      summary: Get API key usage history
+      description: >
+        Get daily request and error counts for an API key over the given number
+        of days (default 30, max 365). Useful for charting usage trends. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+            minimum: 1
+            maximum: 365
+          description: Number of days of history
+      responses:
+        '200':
+          description: Usage history retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyUsageHistoryResponse'
+        '404':
+          description: API key not found
+
+  /api/admin/stats/overview:
+    get:
+      tags: [Admin]
+      summary: Get admin stats overview
+      description: >
+        Get aggregated statistics across all API keys for the admin dashboard:
+        total/active key counts, request totals over multiple windows, total
+        errors, most active key, and aggregated endpoint breakdown. Admin-only.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Overview retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatsOverview'
 
 components:
   securitySchemes:
@@ -2554,3 +3443,441 @@ components:
           items:
             type: string
           description: Any warnings encountered during import (e.g., embedding mismatch)
+
+    RelationshipList:
+      type: object
+      properties:
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+                description: Source entity name
+              target:
+                type: string
+                description: Target entity name
+              type:
+                type: string
+                description: Relationship type
+              description:
+                type: string
+              weight:
+                type: number
+        total:
+          type: integer
+          description: Total number of matching relationships
+
+    RuntimeSettingsUpdate:
+      type: object
+      description: >
+        Admin-editable runtime setting overrides (persisted, take effect without
+        a restart). All fields optional — only provided fields are updated.
+      properties:
+        ingestion_injection_scan:
+          type: boolean
+          nullable: true
+          description: Enable/disable the LLM prompt-injection scan on ingested documents
+        prompt_guard:
+          type: boolean
+          nullable: true
+          description: Enable/disable the query-time prompt-guard classifier gate (costs one extra query per guarded ask)
+
+    WebImportRequest:
+      type: object
+      required:
+        - urls
+      properties:
+        urls:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: Absolute http(s) URLs to crawl
+        collection_id:
+          type: string
+          description: Collection to add the harvested documents to
+        content_filter:
+          type: string
+          description: "crawl4ai filter: 'fit' (readability, default), 'raw', or 'bm25'"
+        query:
+          type: string
+          description: Relevance query (only used by the 'bm25' filter)
+
+    WebImportResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+          description: Background task id to poll for progress
+        accepted_urls:
+          type: integer
+          description: Number of URLs accepted into the job
+        message:
+          type: string
+
+    WebDiscoverRequest:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          description: Page URL to scan for same-host links
+
+    WebDiscoverResponse:
+      type: object
+      properties:
+        source_url:
+          type: string
+        domain:
+          type: string
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+              title:
+                type: string
+
+    GitConnectionCreate:
+      type: object
+      required:
+        - vendor
+        - repo_owner
+        - repo_name
+        - pat
+      properties:
+        vendor:
+          type: string
+          enum: [github, gitlab, gitea]
+          description: Git hosting provider
+        base_url:
+          type: string
+          description: API base URL for self-hosted GitLab/Gitea (omit for github.com/gitlab.com)
+        repo_owner:
+          type: string
+          description: Repo owner / org / group (or GitLab namespace path)
+        repo_name:
+          type: string
+        pat:
+          type: string
+          minLength: 8
+          description: Personal access token used for clone + API
+        access_level:
+          type: string
+          enum: [read, read_write]
+          default: read
+        branch:
+          type: string
+          description: Branch to sync (defaults to repo default branch)
+        include_globs:
+          type: array
+          items:
+            type: string
+          description: gitignore-style include patterns (empty = all files)
+        exclude_globs:
+          type: array
+          items:
+            type: string
+          description: gitignore-style exclude patterns
+        wiki_enabled:
+          type: boolean
+          default: false
+          description: Also ingest the repo wiki
+        collection_id:
+          type: string
+          description: Target collection for ingested documents
+        sync_interval_minutes:
+          type: integer
+          default: 0
+          minimum: 0
+          description: Scheduled-sync interval in minutes (0 = manual only)
+
+    GitConnectionUpdate:
+      type: object
+      description: Partial update of a git connection. PAT is rotated only if provided.
+      properties:
+        pat:
+          type: string
+          minLength: 8
+          description: New PAT (rotation); omit to keep existing
+        access_level:
+          type: string
+          enum: [read, read_write]
+        branch:
+          type: string
+        include_globs:
+          type: array
+          items:
+            type: string
+        exclude_globs:
+          type: array
+          items:
+            type: string
+        wiki_enabled:
+          type: boolean
+        collection_id:
+          type: string
+        sync_interval_minutes:
+          type: integer
+          minimum: 0
+
+    GitConnectionResponse:
+      type: object
+      description: Git connection for API responses. PAT is always masked.
+      properties:
+        id:
+          type: string
+        vendor:
+          type: string
+          enum: [github, gitlab, gitea]
+        base_url:
+          type: string
+          nullable: true
+        repo_owner:
+          type: string
+        repo_name:
+          type: string
+        pat_masked:
+          type: string
+          description: Masked token, e.g. '••••abcd'
+        access_level:
+          type: string
+          enum: [read, read_write]
+        branch:
+          type: string
+          nullable: true
+        default_branch:
+          type: string
+          nullable: true
+        include_globs:
+          type: array
+          items:
+            type: string
+        exclude_globs:
+          type: array
+          items:
+            type: string
+        wiki_enabled:
+          type: boolean
+        collection_id:
+          type: string
+          nullable: true
+        sync_interval_minutes:
+          type: integer
+        last_synced_sha:
+          type: string
+          nullable: true
+        last_synced_at:
+          type: string
+          nullable: true
+        next_sync_due:
+          type: string
+          nullable: true
+        sync_status:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          nullable: true
+
+    GitConnectionVerifyRequest:
+      type: object
+      required:
+        - vendor
+        - pat
+      properties:
+        vendor:
+          type: string
+          enum: [github, gitlab, gitea]
+        base_url:
+          type: string
+        pat:
+          type: string
+          minLength: 8
+
+    GitVerifyResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        login:
+          type: string
+          nullable: true
+          description: Authenticated account/login
+        message:
+          type: string
+          nullable: true
+
+    GitRepoBrowseItem:
+      type: object
+      properties:
+        owner:
+          type: string
+        name:
+          type: string
+        full_name:
+          type: string
+        default_branch:
+          type: string
+          nullable: true
+        private:
+          type: boolean
+        web_url:
+          type: string
+          nullable: true
+
+    GitSyncTriggerResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        connection_id:
+          type: string
+        message:
+          type: string
+
+    SkillInstallRequest:
+      type: object
+      description: Provide exactly one of url or registry_id.
+      properties:
+        url:
+          type: string
+          description: Direct URL to SKILL.md or ZIP archive
+        registry_id:
+          type: string
+          description: Registry identifier (namespace/name) from skills.sh
+
+    SkillUpdateRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          nullable: true
+          description: Enable or disable the skill
+
+    SkillConfigSaveRequest:
+      type: object
+      required:
+        - values
+      properties:
+        values:
+          type: object
+          description: Map of variable name to value
+
+    APIKeyStats:
+      type: object
+      properties:
+        total_requests:
+          type: integer
+        requests_today:
+          type: integer
+        requests_this_week:
+          type: integer
+        requests_this_month:
+          type: integer
+        error_count:
+          type: integer
+        last_error_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error_message:
+          type: string
+          nullable: true
+        endpoint_breakdown:
+          type: object
+          description: Request counts by endpoint category
+
+    APIKeyWithStats:
+      type: object
+      description: API key list item with usage statistics attached.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [read, manage, admin]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+        collection_scope:
+          type: string
+        allowed_collections:
+          type: array
+          items:
+            type: string
+        allowed_collection_names:
+          type: array
+          items:
+            type: string
+          nullable: true
+        stats:
+          $ref: '#/components/schemas/APIKeyStats'
+
+    APIKeyUsageDataPoint:
+      type: object
+      properties:
+        date:
+          type: string
+          description: Date in YYYY-MM-DD format
+        requests:
+          type: integer
+        errors:
+          type: integer
+
+    APIKeyUsageHistoryResponse:
+      type: object
+      properties:
+        key_id:
+          type: string
+        key_name:
+          type: string
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyUsageDataPoint'
+        period_days:
+          type: integer
+
+    AdminStatsOverview:
+      type: object
+      properties:
+        total_keys:
+          type: integer
+        active_keys:
+          type: integer
+        total_requests_all_time:
+          type: integer
+        total_requests_today:
+          type: integer
+        total_requests_this_week:
+          type: integer
+        total_requests_this_month:
+          type: integer
+        total_errors:
+          type: integer
+        most_active_key:
+          type: string
+          nullable: true
+        endpoint_breakdown:
+          type: object
+          description: Aggregated endpoint usage across all keys

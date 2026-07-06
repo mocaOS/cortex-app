@@ -35,7 +35,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 ## ✨ Features
 
 ### Core Features
-- **📁 Document Upload**: Support for PDF, TXT, Markdown, DOCX, and XLSX files with source tracking for API integrations
+- **📁 Document Upload**: Broad format support via Docling — PDF, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
@@ -70,7 +70,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 - **🔗 Git Integration**: Connect **GitHub, GitLab, and Gitea** repositories (including self-hosted) as a living knowledge source. Cortex ingests a repo's files and wiki into the knowledge graph and keeps them in sync **incrementally** via git history (added / modified / deleted / renamed), with a curated `.pdf`/`.md`-only default and custom glob filters. The whole connector is **off by default** — an admin turns it on with `ENABLE_GIT_INTEGRATION=true`, which enables ingestion *and* the agent capability. Each connection is then **read-only (ingest)** unless you grant **read/write**, in which case the research agent gains a `git_repo` tool that opens **pull requests** for your review (never a direct push). Per-connection access tokens, manual or scheduled sync.
 
 ### Security & Performance Features
-- **🛡️ Prompt Security**: Protection against prompt injection attacks with configurable detection
+- **🛡️ Prompt Security**: Layered prompt-injection defense — a query-time ML classifier (**Prompt Guard** / PIGuard), 25+ pattern detectors, untrusted-content fencing, output filtering, and an ingestion-time scan
 - **🔐 Collection-Scoped API Keys**: Restrict API keys to specific collections — one instance, multiple isolated tenants. Both `read` and `read+write` keys support collection scoping. Restricted keys automatically receive filtered results across all endpoints — documents, collections, graph entities, relationships, communities, stats, and search — using the 4-hop `Collection→Document→Chunk→Entity` pattern. Out-of-scope single-resource requests return 403. New collections require explicit access grants.
 - **📦 Bulk Upload**: Upload hundreds of files with batch processing and progress tracking
 - **📥 Bulk Download**: Download selected documents as a ZIP archive (ZIP64, supports 1000+ files)
@@ -95,7 +95,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Frontend | Next.js 15 + React 19 + TypeScript | Document management, graph exploration, Q&A interface |
+| Frontend | Next.js 16 + React 19 + TypeScript | Document management, graph exploration, Q&A interface |
 | Backend | FastAPI + Haystack 2.0 | Document processing, embeddings, RAG |
 | Database | Neo4j 5.x | Graph storage + vector similarity search |
 | Embeddings | OpenAI / sentence-transformers | Convert text to semantic vectors |
@@ -396,6 +396,7 @@ npm run dev
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | GET | `/api/admin/config` | System configuration (model names, API base URLs, context windows — no secrets) | Admin |
+| PATCH | `/api/admin/config` | Update runtime-overridable settings (feature toggles, guard settings) | Admin |
 | POST | `/api/admin/reset` | System reset — selective deletion of all data | Admin |
 | GET | `/api/admin/api-keys` | List all API keys (includes `collection_scope`, `allowed_collections`) | Admin |
 | POST | `/api/admin/api-keys` | Create new API key (supports `collection_scope` + `allowed_collections`) | Admin |
@@ -404,6 +405,30 @@ npm run dev
 | DELETE | `/api/admin/api-keys/{id}` | Delete API key | Admin |
 | POST | `/api/admin/api-keys/{id}/revoke` | Revoke API key | Admin |
 | POST | `/api/admin/api-keys/{id}/activate` | Reactivate API key | Admin |
+| GET | `/api/admin/api-keys/with-stats` | List API keys with usage analytics | Admin |
+| GET | `/api/admin/api-keys/{id}/stats` | Usage stats for one API key | Admin |
+| GET | `/api/admin/api-keys/{id}/usage-history` | Time-series usage history for one API key | Admin |
+| GET | `/api/admin/stats/overview` | Instance-wide usage overview | Admin |
+| POST | `/api/admin/export` | Start a library export (background task) | Admin |
+| GET | `/api/admin/export/{task_id}/download` | Download a completed library export | Admin |
+| POST | `/api/admin/import` | Start a library import from an uploaded archive | Admin |
+| POST/PUT/DELETE | `/api/admin/import/upload/*` | Chunked upload of an import archive (init/part/complete/abort) | Admin |
+| GET/POST/PUT/DELETE | `/api/admin/skills/*` | Agent Skills management — list, registry search, install, discover, per-skill config & analyze | Admin |
+
+### Integrations Endpoints
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| POST | `/api/web-import` | Harvest one or more URLs into the graph (crawl4ai) | Manage |
+| POST | `/api/web-import/discover` | Discover links on a page for selective import | Manage |
+| POST | `/api/integrations/git/verify` | Verify git provider credentials | Admin |
+| GET | `/api/integrations/git/browse` | Browse repositories/branches for a provider | Admin |
+| GET/POST | `/api/integrations/git/connections` | List / create git connections | Admin |
+| GET/PATCH/DELETE | `/api/integrations/git/connections/{id}` | Get / update / delete a git connection | Admin |
+| POST | `/api/integrations/git/connections/{id}/sync` | Trigger an incremental sync | Admin |
+| GET | `/api/integrations/git/connections/{id}/orphaned` | List documents orphaned since last sync | Admin |
+
+> The tables above cover the commonly used endpoints. The **authoritative, complete** contract is the OpenAPI spec at [`documentation/apis/openapi.yaml`](documentation/apis/openapi.yaml) (also served at `/docs` and `/redoc`).
 
 > **Authentication**: All endpoints except `/health` require an `X-API-Key` header. The admin API key has full access. Generated API keys can have `read` (Ask AI, search, view graph/stats) or `manage` (upload, delete, reprocess, run analysis) permissions, and can optionally be **restricted to specific collections** — enabling multi-tenant deployments from a single instance. Collection-scoped keys automatically receive filtered results across all graph, entity, community, and stats endpoints using the 4-hop `Collection→Document→Chunk→Entity` pattern.
 
@@ -695,7 +720,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `DEFAULT_REASONING_MODE` | Reasoning mode for Q&A path (researcher agent stays on AUTO to preserve parallel tool calls) | No | `auto` |
 | `REASONING_MODEL_OVERRIDES` | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` | No | - |
 | `MAX_GRAPH_HOPS` | Max hops for graph traversal | No | `2` |
-| `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `20` |
+| `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `3` |
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
 | `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `32768` |
@@ -858,7 +883,21 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `PROMPT_SECURITY` | Enable prompt injection detection and protection | No | `true` |
+| `PROMPT_SECURITY` | Master switch for pattern detection, output filtering, and untrusted-content fencing | No | `true` |
+| `PROMPT_GUARD` | Enable the query-time Prompt Guard (PIGuard) injection classifier (active when a service URL is set or `PROMPT_GUARD_LOCAL=true`; admin-overridable) | No | `true` |
+| `PROMPT_GUARD_SERVICE_URL` | Offload the classifier to the shared `cortex-helper` service (`/classify`); empty = no remote guard | No | - |
+| `PROMPT_GUARD_LOCAL` | Run the classifier in-process (needs torch) when no service URL is set | No | `false` |
+| `PROMPT_GUARD_THRESHOLD` | Injection-probability at/above which a question is refused | No | `0.5` |
+| `INGESTION_INJECTION_SCAN` | Scan ingested documents for embedded injection attempts during processing | No | `true` |
+
+#### Resource Limits & Quota
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `MAX_FILES` | Max total documents (uploads + custom inputs); `0` = unlimited | No | `0` |
+| `MAX_COLLECTIONS` | Max collections (the default collection counts as 1); `0` = unlimited | No | `0` |
+| `MAX_ENTITIES` | Max total entities across the graph; `0` = unlimited | No | `0` |
+| `MAX_QUERIES_PER_MONTH` | Monthly quota in **internal LLM completions** ("units") — every Q&A loop call + document/graph processing call, embeddings excluded; UTC calendar month, instance-wide; `0` = unlimited | No | `0` |
 
 #### Admin Authentication
 
@@ -877,7 +916,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 |----------|-------------|----------|---------|
 | `NEXT_PUBLIC_API_URL` | Backend API URL | Yes | `http://localhost:8000` |
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | Cortex logo |
-| `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No | Cortex theme |
+| `ACCENT_COLOR` | Custom accent color (any CSS color value). Read server-side at runtime — **not** `NEXT_PUBLIC_`-prefixed, so no rebuild needed | No | Cortex theme |
 
 ## 🔧 Configuration
 
@@ -896,18 +935,28 @@ embedding_dimension: int = 1536
 
 # File limits
 max_file_size_mb: int = 50
-allowed_extensions: list[str] = [".pdf", ".txt", ".md", ".docx", ".xlsx"]
+# Full default set (see config.py for the authoritative list):
+allowed_extensions: list[str] = [
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",   # Office
+    ".html", ".htm", ".txt", ".md", ".mdx", ".markdown", ".rst", # Web/text
+    ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",            # Images (OCR)
+    ".wav", ".mp3", ".webvtt", ".vtt",                           # Audio (ASR)
+    ".tex", ".latex", ".xml",                                    # LaTeX / XML
+]
 ```
 
 ### Supported File Types
 
-| Type | Extension | Converter |
-|------|-----------|-----------|
-| PDF | `.pdf` | PyPDFToDocument |
-| Text | `.txt` | TextFileToDocument |
-| Markdown | `.md`, `.markdown` | MarkdownToDocument |
-| Word | `.docx` | python-docx |
-| Excel | `.xlsx` | openpyxl |
+All formats are converted through **Docling** (locally or via the shared `cortex-helper` service), which unifies them into structured Markdown before chunking and extraction:
+
+| Type | Extensions |
+|------|-----------|
+| PDF | `.pdf` |
+| Office | `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt` |
+| Web / markup | `.html`, `.htm`, `.xml` |
+| Text | `.txt`, `.md`, `.mdx`, `.markdown`, `.rst`, `.tex`, `.latex` |
+| Images (OCR) | `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.bmp` |
+| Audio (ASR) | `.wav`, `.mp3`, `.webvtt`, `.vtt` |
 
 ### Custom Input Types
 
@@ -1089,18 +1138,20 @@ The system includes protection against prompt injection attacks that attempt to:
 - Bypass safety instructions
 - Manipulate model behavior through encoded instructions
 
-**Features:**
-- Pattern-based detection of common injection techniques
-- Input sanitization to neutralize malicious content
-- Output filtering to prevent system prompt leakage
-- Configurable strict mode (block) vs soft mode (sanitize)
+**Layered defenses:**
+- **Prompt Guard classifier** (query-time) — an ML injection classifier (PIGuard) scores each incoming question before retrieval and refuses those above a probability threshold. Runs via the shared `cortex-helper` service (`PROMPT_GUARD_SERVICE_URL`) or in-process (`PROMPT_GUARD_LOCAL=true`); fails open if unavailable. Toggle with `PROMPT_GUARD`, tune with `PROMPT_GUARD_THRESHOLD` (default `0.5`).
+- **Pattern-based detection** — 25+ regex/heuristic detectors for common injection techniques, plus input sanitization to neutralize malicious content.
+- **Untrusted-content fencing** — retrieved documents and tool output are delimited/spotlighted so the model treats them as data, not instructions.
+- **Output filtering** — streamed answers are scanned to prevent system-prompt leakage.
+- **Ingestion-time scan** — ingested documents are scanned for embedded injection attempts during processing (`INGESTION_INJECTION_SCAN`, default on).
+- Configurable strict mode (block) vs soft mode (sanitize).
 
-Disable with `PROMPT_SECURITY=false` if not needed.
+Disable the whole subsystem with `PROMPT_SECURITY=false` if not needed. See the [Security guide](documentation/pages/guides/security.mdx) for the full model.
 
 ## 🛠️ Tech Stack
 
 ### Frontend
-- **Next.js 15** - React framework with App Router
+- **Next.js 16** - React framework with App Router
 - **React 19** - Latest React with improved performance
 - **TypeScript 5** - Type safety
 - **Tailwind CSS 3** - Styling

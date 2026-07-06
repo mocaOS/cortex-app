@@ -4,7 +4,7 @@ This chapter provides a complete walkthrough of the Library's web interface — 
 
 ## Interface Overview
 
-The Library's web interface is built with Next.js 15 and React 19, featuring a dark-mode-first design with glass morphism surfaces, smooth Framer Motion animations, and a monochrome palette with a single configurable accent color.
+The Library's web interface is built with Next.js 16 and React 19, featuring a dark-mode-first design with glass morphism surfaces, smooth Framer Motion animations, and a monochrome palette with a single configurable accent color.
 
 ### Layout Structure
 
@@ -281,7 +281,7 @@ Type "DELETE" to confirm. The reset also cleans up:
 
 The Library uses a portable design system with these characteristics:
 
-- **Color**: Monochrome foundation with a single dynamic accent color (configurable via `NEXT_PUBLIC_ACCENT_COLOR`)
+- **Color**: Monochrome foundation with a single dynamic accent color (configurable via `ACCENT_COLOR`)
 - **Mode**: Dark mode default, light mode supported
 - **Surfaces**: Glass morphism (24px backdrop blur, semitransparent backgrounds)
 - **Typography**: Inter (UI text) + JetBrains Mono (code/monospace)

@@ -202,7 +202,7 @@ The Library includes built-in protection against prompt injection attacks — at
 
 ### What It Protects Against
 
-The system detects and blocks 30+ attack patterns and heuristics including:
+The system detects and blocks 25+ attack patterns and heuristics including:
 
 | Category | Examples |
 |----------|---------|

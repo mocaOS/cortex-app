@@ -132,6 +132,10 @@ A document with `status: "completed"` may still have background image analysis r
 **Startup recovery:** If the backend is restarted while a document is mid-processing, on startup any document left in a transient state (`processing`/`extracting`) is reset to `pending` so it rejoins the queue instead of spinning forever. A WARNING log lists the reset document ids.
 :::
 
+:::note
+**Degraded-document detection:** Reprocessing an unchanged file with unchanged config normally short-circuits (delta-skip) to avoid redundant work. A document is treated as **degraded** — and always fully reprocessed regardless of the delta-skip — when it reached `completed` but yielded **zero extracted entities** or still has **chunks missing embeddings**. This ensures a document that processed incompletely (e.g. a transient LLM/embedding failure) is repaired on the next reprocess rather than silently skipped.
+:::
+
 ## Custom Inputs
 
 In addition to file uploads, you can add knowledge manually:
