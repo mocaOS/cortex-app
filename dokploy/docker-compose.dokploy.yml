@@ -220,8 +220,19 @@ services:
       # give startup schema-init time before the gate counts failures.
       start_period: 60s
     networks:
-      - default
-      - dokploy-network
+      # `backend` as a DNS name is AMBIGUOUS on the shared dokploy-network:
+      # every tenant stack on the host auto-aliases its own service there, and
+      # Docker DNS aggregates the records across all networks the caller is
+      # attached to — server-side calls to http://backend:8000 intermittently
+      # reached ANOTHER tenant's backend, which rejects this tenant's API keys
+      # (random 401s in chat/frontend). Internal consumers must use
+      # cortex-backend-internal, which exists ONLY on this stack's private
+      # default network. Do not target bare `backend` from anything that also
+      # joins dokploy-network.
+      default:
+        aliases:
+          - cortex-backend-internal
+      dokploy-network: {}
     # Uncomment to configure domains via Traefik labels instead of Dokploy UI:
     # labels:
     #   - "traefik.enable=true"
@@ -240,13 +251,16 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
         - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
         - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
-        # Server-side API URL baked into next.config.mjs rewrites at build time
-        - API_URL=http://backend:8000
+        # Server-side API URL baked into next.config.mjs rewrites at build time.
+        # cortex-backend-internal (NOT bare `backend`) — see the backend
+        # service's networks comment: the bare name crosses tenant stacks on
+        # the shared dokploy-network.
+        - API_URL=http://cortex-backend-internal:8000
     environment:
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-      # Internal API URL for server-side requests
-      - API_URL=http://backend:8000
+      # Internal API URL for server-side requests (stack-private alias)
+      - API_URL=http://cortex-backend-internal:8000
       # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
       - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
       - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
@@ -284,8 +298,10 @@ services:
       dockerfile: Dockerfile
     environment:
       # Cortex backend over the internal compose network (server-side only —
-      # the browser talks to chat, chat proxies to the backend)
-      - CORTEX_API_URL=http://backend:8000
+      # the browser talks to chat, chat proxies to the backend).
+      # cortex-backend-internal (NOT bare `backend`) — the bare name crosses
+      # tenant stacks on the shared dokploy-network (see backend networks).
+      - CORTEX_API_URL=http://cortex-backend-internal:8000
       # Reuse the tenant admin credentials: the chat superadmin signs in with
       # the same email/password as Cortex, and scoped backend keys are minted
       # with the tenant admin API key.

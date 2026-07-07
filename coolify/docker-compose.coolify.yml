@@ -118,6 +118,16 @@ services:
       # /health returns 503 while degraded (Neo4j down / schema unconfirmed);
       # give startup schema-init time before the gate counts failures.
       start_period: 60s
+    networks:
+      # Stack-private alias for internal consumers. Bare `backend` becomes
+      # ambiguous the moment Coolify attaches two cortex stacks to the shared
+      # coolify proxy network: Docker DNS aggregates same-name aliases across
+      # all networks the caller joins, so internal calls randomly reach another
+      # stack's backend, which rejects this stack's API keys (intermittent
+      # 401s). Coolify appends its proxy network to this list on deploy.
+      default:
+        aliases:
+          - cortex-backend-internal
 
   frontend:
     build:
@@ -133,8 +143,9 @@ services:
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${BACKEND_URL}
-      # Internal API URL for server-side requests
-      - API_URL=http://backend:8000
+      # Internal API URL for server-side requests (stack-private alias — bare
+      # `backend` crosses stacks on the shared coolify network; see backend)
+      - API_URL=http://cortex-backend-internal:8000
       # Branding (NEXT_PUBLIC_ for build-time client inlining, non-prefixed for runtime Server Components)
       - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
       - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}

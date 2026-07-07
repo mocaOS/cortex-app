@@ -57,6 +57,10 @@ Use `coolify/docker-compose.coolify.yml`. Important: services with `SERVICE_FQDN
 
 Use `dokploy/docker-compose.dokploy.yml`. Configure domains in Dokploy UI (Domains tab) or uncomment Traefik labels in the compose file. See `dokploy/README.md` for full setup.
 
+### Multi-tenant hosts: never dial bare service names across the shared proxy network
+
+On a host running **multiple** cortex stacks (Dokploy `dokploy-network`, Coolify `coolify`), every stack auto-aliases its services (`backend`, `chat`, `frontend`) on the shared network, and Docker DNS aggregates same-name records across all networks the calling container joins. Server-side calls to `http://backend:8000` therefore intermittently reached **another tenant's backend**, which rejects the caller's API keys → random 401s in chat/frontend (diagnosed live on the moca/creazy pair 2026-07-07: moca's chat requests landed as `4xx` in creazy's `/metrics` while moca's backend showed zero). Fix in both composes: the backend declares a `cortex-backend-internal` alias on the **stack-private default network only**, and all internal consumers (`frontend` `API_URL`, `chat` `CORTEX_API_URL`) dial that alias. Keep it this way for any new internal consumer; `neo4j` is safe as a bare name because it joins only the default network.
+
 ### Standalone Docker
 
 `docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`).

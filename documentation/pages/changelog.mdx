@@ -104,6 +104,17 @@ tens of identical log lines per minute.
   once instead of a dozen times, and no longer fails a request when the
   best-effort `last_used_at` bookkeeping write fails. Per-key usage
   recording moved off the event loop.
+- **Cross-tenant DNS misrouting on shared proxy networks** — on hosts
+  running multiple cortex stacks, internal server-side calls to
+  `http://backend:8000` could resolve to **another tenant's backend**:
+  every stack auto-aliases `backend` on the shared Dokploy/Coolify proxy
+  network, and Docker DNS aggregates same-name aliases across networks —
+  the wrong tenant then rejects the caller's keys, surfacing as random
+  401s in chat and frontend that no amount of backend-side resilience
+  can prevent. The deploy composes now give the backend a
+  `cortex-backend-internal` alias on the stack-private network and all
+  internal consumers dial that alias, making cross-tenant resolution
+  impossible.
 - **Server-side query timeout** — the deploy composes set a Neo4j
   transaction timeout (`CORTEX_NEO4J_TX_TIMEOUT`, default 300s) so a runaway
   query can no longer pin a connection and an API worker forever.
