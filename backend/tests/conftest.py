@@ -60,6 +60,7 @@ def _isolate_env(tmp_path, monkeypatch):
         "admin_api_key": settings.admin_api_key,
         "enable_skills": settings.enable_skills,
         "track_admin_api_key_usage": settings.track_admin_api_key_usage,
+        "api_key_cache_ttl_seconds": settings.api_key_cache_ttl_seconds,
     }
 
     settings.max_files = 0
@@ -74,9 +75,16 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.admin_api_key = "test-admin-key"
     settings.enable_skills = False
     settings.track_admin_api_key_usage = False
+    settings.api_key_cache_ttl_seconds = 30
+
+    # The auth validation cache is module-global; never leak entries between
+    # tests (a cached AuthResult would mask each test's mock_neo4j setup).
+    from app.services.auth_service import invalidate_api_key_cache
+    invalidate_api_key_cache()
 
     yield settings
 
+    invalidate_api_key_cache()
     for k, v in saved.items():
         setattr(settings, k, v)
 

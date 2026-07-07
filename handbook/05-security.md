@@ -102,11 +102,13 @@ When an API request arrives:
 
 1. Extract `X-API-Key` from the request header
 2. If it matches the admin API key (constant-time comparison): grant full access
-3. Otherwise, extract the key prefix (first 12 characters)
-4. Look up matching keys in Neo4j by prefix
-5. For each candidate, verify the full key hash (SHA-256, constant-time comparison)
-6. If a match is found: check permissions, update `last_used_at`, grant appropriate access
-7. If no match: return 401 Unauthorized
+3. Check the in-process validation cache (successful validations only, TTL `API_KEY_CACHE_TTL_SECONDS`, default 30s; invalidated immediately on key create/update/revoke/delete)
+4. Otherwise, extract the key prefix (first 12 characters)
+5. Look up matching keys in Neo4j by prefix (retried on transient Neo4j errors)
+6. For each candidate, verify the full key hash (SHA-256, constant-time comparison)
+7. If a match is found: check permissions, grant appropriate access, and update `last_used_at` best-effort (throttled; a failed timestamp write never rejects a verified key)
+8. If no match: return **401 Unauthorized** (authoritative — the key was checked and rejected)
+9. If the key could not be checked at all (Neo4j unreachable): return **503 Service Unavailable** with `Retry-After` — the credential may be valid, so clients should retry, not log out
 
 ### Key Generation
 

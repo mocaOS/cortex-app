@@ -763,6 +763,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `ADMIN_EMAIL` | Yes | - | Admin login email |
 | `ADMIN_PASSWORD` | Yes | - | Admin login password |
 | `ADMIN_API_KEY` | Yes | - | Admin API key |
+| `API_KEY_CACHE_TTL_SECONDS` | No | `30` | In-process cache for successful API-key validations (0 = disabled). Key changes invalidate it immediately; on multi-worker deployments a revocation propagates within the TTL |
 | `SESSION_SECRET` | Yes | - | JWT session secret |
 | `ENCRYPTION_KEY` | No | - | At-rest encryption for git PATs + skill secrets (comma-separated Fernet keys; first encrypts, all decrypt) |
 | `LANGFUSE_BASE_URL` | No | - | Langfuse instance URL (enables LLM tracing when set with the key pair) |

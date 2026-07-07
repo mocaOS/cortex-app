@@ -121,6 +121,16 @@ AskAI activity is tracked via the `track_ask_activity` FastAPI `yield` dependenc
 - `services/api_usage_service.py` — Request logging per key, endpoint categorization, error tracking, statistics aggregation. `categorize_endpoint()` matches the **longest** (most-specific) prefix in `ENDPOINT_CATEGORIES` — required so `/api/custom-inputs/{id}` resolves to `documents` rather than being swallowed by the shorter `/api/custom-input` (`upload`) prefix.
 - `services/auth_service.py` — Admin API key validation, generated API key validation against Neo4j, permission + collection access checking
 
+### Validation resilience (2026-07 — the intermittent-401 fix)
+
+Key validation is the hottest Neo4j path (every request, twice: `APIUsageMiddleware` + route dependency) and used to convert **any** Neo4j exception into 401 "Authentication service error" — so a Neo4j restart/blip/lock contention read as "invalid key" to clients (cortex-chat correctly treats 401 as authoritative and never retries it). Current behavior:
+
+- **Infra failure ≠ invalid key**: `validate_api_key` returns `AuthResult(service_error=True)` when the store can't be consulted; the `require_*` dependencies map it to **503 + `Retry-After: 2`**. 401 only for missing/rejected keys. The middleware skips the `auth.key_rejected` audit event on `service_error`.
+- **Retries**: `get_api_key_by_prefix` / `update_api_key_last_used` wear `@retry_on_transient` (3 attempts, 0.5s/1.5s) like the other idempotent Neo4j methods.
+- **TTL cache**: successful validations cached in-process for `API_KEY_CACHE_TTL_SECONDS` (default 30, keyed by key hash, negatives never cached); invalidated by `invalidate_api_key_cache()` on key update/delete and system-reset key wipe. One page-load burst = one Neo4j validation.
+- **`last_used_at` is telemetry, not auth**: written best-effort in its own try/except (a failed write can't reject a just-verified key) and throttled to ≥60s (usage tracking stamps it per-request anyway).
+- **Usage recording off the event loop**: the middleware runs `record_request` via `run_in_threadpool` so slow bookkeeping writes can't stall unrelated requests.
+
 ### Collection-Scoped API Keys
 
 Keys can be restricted to specific collections via `collection_scope` + `allowed_collections`:

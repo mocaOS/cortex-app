@@ -261,6 +261,7 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 ## Auth
 
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_API_KEY`, `SESSION_SECRET` — admin auth. Login validation happens in the Next.js frontend (`lib/auth.ts` consumes `ADMIN_EMAIL`/`ADMIN_PASSWORD`/`SESSION_SECRET`); the backend consumes `ADMIN_API_KEY` (and checks `ADMIN_PASSWORD`/`SESSION_SECRET` only in the production-hardening validator). In `ENVIRONMENT=production`, startup fails fast if `SESSION_SECRET` is < 32 chars while `ADMIN_PASSWORD` is set (see [Deployment & CORS](#deployment--cors)).
+- `API_KEY_CACHE_TTL_SECONDS` (default: 30, 0 = disabled) — in-process TTL cache for **successful** generated-key validations (`auth_service`). Collapses the per-request double validation (usage middleware + route dependency) and page-load bursts to one Neo4j read; invalidated on any key CRUD/system-reset in-process, so revocation is immediate on single-worker deployments and bounded by the TTL with `UVICORN_WORKERS>1`. Invalid keys are never cached. Note: auth-store outages now answer **503 + Retry-After** (transient, retriable), never 401 — 401 is reserved for missing/rejected keys.
 
 ## Secret Encryption
 

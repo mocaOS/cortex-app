@@ -9,6 +9,8 @@ This module provides:
 import secrets
 import hashlib
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 from enum import Enum
 
@@ -27,7 +29,7 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 class AuthResult:
     """Result of an authentication attempt."""
-    
+
     def __init__(
         self,
         is_authenticated: bool,
@@ -37,7 +39,8 @@ class AuthResult:
         error: Optional[str] = None,
         key_name: Optional[str] = None,
         collection_scope: str = "all",
-        allowed_collections: List[str] = None
+        allowed_collections: List[str] = None,
+        service_error: bool = False
     ):
         self.is_authenticated = is_authenticated
         self.is_admin = is_admin
@@ -47,6 +50,10 @@ class AuthResult:
         self.key_name = key_name
         self.collection_scope = collection_scope
         self.allowed_collections = allowed_collections or []
+        # True when the key could not be checked at all (auth store down),
+        # as opposed to checked-and-rejected. Callers map this to 503, never
+        # 401 — a transient Neo4j failure must not read as "invalid key".
+        self.service_error = service_error
     
     def has_permission(self, permission: APIKeyPermission) -> bool:
         """Check if this auth result has a specific permission."""
@@ -101,7 +108,7 @@ def verify_api_key_hash(api_key: str, stored_hash: str) -> bool:
 def generate_api_key(prefix: str = "cortex_") -> Tuple[str, str]:
     """
     Generate a new API key with a prefix.
-    
+
     Returns:
         Tuple of (full_key, key_prefix) where key_prefix is for identification
     """
@@ -112,25 +119,92 @@ def generate_api_key(prefix: str = "cortex_") -> Tuple[str, str]:
     return full_key, key_prefix
 
 
+# ---------------------------------------------------------------------------
+# Validation cache
+#
+# Every request validates its key twice (usage middleware + route dependency),
+# and a chat page load fires several requests with the SAME group key — without
+# a cache that is a burst of identical Neo4j reads plus last-used writes on one
+# APIKey node. Successful validations are cached by key hash for a short TTL;
+# negatives are never cached. CRUD mutations call invalidate_api_key_cache().
+# ---------------------------------------------------------------------------
+
+_validation_cache: dict[str, Tuple[float, AuthResult]] = {}
+
+# Write last_used_at at most this often per key. The usage middleware already
+# stamps it on every tracked request; this one only matters as a fallback.
+_LAST_USED_MIN_INTERVAL_SECONDS = 60
+
+
+def invalidate_api_key_cache() -> None:
+    """Drop all cached validations (called on any API-key CRUD mutation)."""
+    _validation_cache.clear()
+
+
+def _cache_get(cache_key: str) -> Optional[AuthResult]:
+    entry = _validation_cache.get(cache_key)
+    if entry is None:
+        return None
+    expires_at, result = entry
+    if time.monotonic() >= expires_at:
+        _validation_cache.pop(cache_key, None)
+        return None
+    return result
+
+
+def _cache_put(cache_key: str, result: AuthResult, ttl: float) -> None:
+    # Only valid keys are cached, so this stays at "number of minted keys"
+    # entries; the sweep is a cheap safety net, not a real eviction policy.
+    if len(_validation_cache) > 512:
+        now = time.monotonic()
+        for k in [k for k, (exp, _) in _validation_cache.items() if exp <= now]:
+            _validation_cache.pop(k, None)
+    _validation_cache[cache_key] = (time.monotonic() + ttl, result)
+
+
+def _last_used_is_fresh(last_used_at) -> bool:
+    """True if the stored last_used_at is recent enough to skip the write.
+
+    Neo4j returns a neo4j.time.DateTime; imports/tests may yield a native
+    datetime or an ISO string. Anything unparsable counts as stale (write).
+    """
+    if last_used_at is None:
+        return False
+    try:
+        value = last_used_at
+        if hasattr(value, "to_native"):
+            value = value.to_native()
+        elif isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - value).total_seconds()
+        return 0 <= age < _LAST_USED_MIN_INTERVAL_SECONDS
+    except Exception:
+        return False
+
+
 async def validate_api_key(api_key: Optional[str]) -> AuthResult:
     """
     Validate an API key and return authentication result.
-    
+
     Checks in order:
     1. Admin API key from environment
-    2. Generated API keys stored in Neo4j
-    
-    Returns:
-        AuthResult with authentication status and permissions
+    2. Cached prior validation (short TTL)
+    3. Generated API keys stored in Neo4j
+
+    Fail-closed: never authenticates on error. But infra failures return
+    `service_error=True` (callers answer 503), NOT a plain rejection — an
+    unreachable auth store does not mean the credential is invalid.
     """
     if not api_key:
         return AuthResult(
             is_authenticated=False,
             error="API key required"
         )
-    
+
     settings = get_settings()
-    
+
     # Check if it's the admin API key
     if settings.admin_api_key and secrets.compare_digest(api_key, settings.admin_api_key):
         logger.debug("Admin API key authenticated")
@@ -140,34 +214,38 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
             permissions=[APIKeyPermission.READ, APIKeyPermission.MANAGE],
             key_id="admin"
         )
-    
+
+    cache_ttl = max(0, settings.api_key_cache_ttl_seconds)
+    cache_key = hash_api_key(api_key)
+    if cache_ttl:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     # Check generated API keys in Neo4j
     try:
         neo4j_service = get_neo4j_service()
-        
+
         # Extract prefix from the key for lookup
         key_prefix = api_key[:12] if len(api_key) >= 12 else api_key
-        
+
         # Get potential matching keys by prefix
         matching_keys = neo4j_service.get_api_key_by_prefix(key_prefix)
-        
+
         for stored_key in matching_keys:
             if verify_api_key_hash(api_key, stored_key["key_hash"]):
-                # Valid key found - update last used timestamp
-                neo4j_service.update_api_key_last_used(stored_key["id"])
-                
                 # Convert permission strings to enum
                 permissions = [
                     APIKeyPermission(p) for p in stored_key["permissions"]
                     if p in [e.value for e in APIKeyPermission]
                 ]
-                
+
                 # Get collection scope info
                 collection_scope = stored_key.get("collection_scope", "all")
                 allowed_collections = stored_key.get("allowed_collections", []) or []
-                
+
                 logger.debug(f"API key authenticated: {stored_key['name']} ({stored_key['id']})")
-                return AuthResult(
+                result = AuthResult(
                     is_authenticated=True,
                     is_admin=False,
                     permissions=permissions,
@@ -176,24 +254,62 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                     collection_scope=collection_scope,
                     allowed_collections=allowed_collections
                 )
-        
+
+                # Telemetry, not auth: throttled, and a failure here must
+                # never reject a key that just verified.
+                if not _last_used_is_fresh(stored_key.get("last_used_at")):
+                    try:
+                        neo4j_service.update_api_key_last_used(stored_key["id"])
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update last_used_at for key "
+                            f"{stored_key['id']}: {e}"
+                        )
+
+                if cache_ttl:
+                    _cache_put(cache_key, result, cache_ttl)
+                return result
+
         # No matching key found
         return AuthResult(
             is_authenticated=False,
             error="Invalid API key"
         )
-        
+
     except Exception as e:
-        logger.error(f"Error validating API key: {e}")
+        logger.error(f"Error validating API key (auth store unavailable?): {e}")
         return AuthResult(
             is_authenticated=False,
-            error="Authentication service error"
+            error="Authentication service temporarily unavailable",
+            service_error=True
         )
 
 
 # =============================================================================
 # FastAPI Dependencies for Route Protection
 # =============================================================================
+
+def _raise_if_unauthenticated(auth: AuthResult) -> None:
+    """Shared 401/503 mapping for the require_* dependencies.
+
+    503 (with Retry-After) when the auth store couldn't be consulted — clients
+    treat it as transient and retry. 401 only for missing/rejected keys, which
+    IS authoritative: clients must not retry those.
+    """
+    if auth.is_authenticated:
+        return
+    if auth.service_error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=auth.error or "Authentication service temporarily unavailable",
+            headers={"Retry-After": "2"}
+        )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=auth.error or "Invalid API key",
+        headers={"WWW-Authenticate": "APIKey"}
+    )
+
 
 async def get_current_auth(api_key: Optional[str] = Depends(api_key_header)) -> AuthResult:
     """
@@ -209,14 +325,7 @@ async def require_api_key(api_key: Optional[str] = Depends(api_key_header)) -> A
     Raises HTTPException if not authenticated.
     """
     auth = await validate_api_key(api_key)
-    
-    if not auth.is_authenticated:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=auth.error or "Invalid API key",
-            headers={"WWW-Authenticate": "APIKey"}
-        )
-    
+    _raise_if_unauthenticated(auth)
     return auth
 
 
@@ -226,20 +335,14 @@ async def require_read_permission(api_key: Optional[str] = Depends(api_key_heade
     Admin keys automatically have this permission.
     """
     auth = await validate_api_key(api_key)
-    
-    if not auth.is_authenticated:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=auth.error or "Invalid API key",
-            headers={"WWW-Authenticate": "APIKey"}
-        )
-    
+    _raise_if_unauthenticated(auth)
+
     if not auth.has_permission(APIKeyPermission.READ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions: READ access required"
         )
-    
+
     return auth
 
 
@@ -249,20 +352,14 @@ async def require_manage_permission(api_key: Optional[str] = Depends(api_key_hea
     Admin keys automatically have this permission.
     """
     auth = await validate_api_key(api_key)
-    
-    if not auth.is_authenticated:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=auth.error or "Invalid API key",
-            headers={"WWW-Authenticate": "APIKey"}
-        )
-    
+    _raise_if_unauthenticated(auth)
+
     if not auth.has_permission(APIKeyPermission.MANAGE):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions: MANAGE access required"
         )
-    
+
     return auth
 
 
@@ -272,20 +369,14 @@ async def require_admin(api_key: Optional[str] = Depends(api_key_header)) -> Aut
     Only the admin API key from environment has this.
     """
     auth = await validate_api_key(api_key)
-    
-    if not auth.is_authenticated:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=auth.error or "Invalid API key",
-            headers={"WWW-Authenticate": "APIKey"}
-        )
-    
+    _raise_if_unauthenticated(auth)
+
     if not auth.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
-    
+
     return auth
 
 

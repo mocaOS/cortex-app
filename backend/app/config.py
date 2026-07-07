@@ -832,6 +832,11 @@ class Settings(BaseSettings):
     track_admin_api_key_usage: bool = Field(
         default=False
     )  # Track usage analytics for admin API key
+    api_key_cache_ttl_seconds: int = Field(
+        default=30
+    )  # In-process TTL cache for successful API-key validations (0 disables).
+    # Bounds how long a revoked/edited key stays usable in workers that didn't
+    # handle the CRUD call (single-worker deployments invalidate instantly).
     encryption_key: str = Field(
         default=""
     )  # Comma-separated Fernet keys for at-rest secret encryption (git PATs, skill

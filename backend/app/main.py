@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 import aiofiles
@@ -116,6 +117,7 @@ from app.services.auth_service import (
     require_manage_permission,
     require_admin,
     AuthResult,
+    invalidate_api_key_cache,
     validate_collection_access,
 )
 from app.services.api_key_service import get_api_key_service
@@ -831,14 +833,17 @@ class APIUsageMiddleware(BaseHTTPMiddleware):
         is_admin_key = False
         
         if api_key:
-            # Validate and get key_id
+            # Validate and get key_id (short-TTL cached; the route dependency
+            # doing the authoritative check right after hits the same cache).
             from app.services.auth_service import validate_api_key
             auth = await validate_api_key(api_key)
             if auth.is_authenticated and auth.key_id:
                 key_id = auth.key_id
                 is_admin_key = auth.is_admin
-            else:
+            elif not auth.service_error:
                 # Authentication event: a key was presented and rejected.
+                # (service_error means the key couldn't be checked, which is
+                # an availability incident, not a rejection.)
                 audit(
                     "auth.key_rejected", outcome="denied",
                     method=request.method, path=request.url.path,
@@ -878,9 +883,12 @@ class APIUsageMiddleware(BaseHTTPMiddleware):
                 error_message = None
                 if is_error:
                     error_message = f"HTTP {response.status_code}"
-                
+
                 usage_service = get_api_usage_service()
-                usage_service.record_request(
+                # Sync Neo4j writes — threadpool keeps them off the event loop
+                # so slow usage bookkeeping can't stall unrelated requests.
+                await run_in_threadpool(
+                    usage_service.record_request,
                     key_id=key_id,
                     endpoint_path=request.url.path,
                     is_error=is_error,
@@ -6058,6 +6066,7 @@ async def reset_system(request: SystemResetRequest, auth: AuthResult = Depends(r
         # Step 6: Delete API keys (if requested - dangerous!)
         if request.delete_api_keys:
             result.api_keys_deleted = await asyncio.to_thread(neo4j.delete_all_api_keys)
+            invalidate_api_key_cache()
             logger.info(f"System reset: Deleted {result.api_keys_deleted} API keys")
         
         # Build summary message

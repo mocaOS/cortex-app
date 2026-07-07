@@ -13,7 +13,11 @@ from typing import Optional, List, Any
 from datetime import datetime
 
 from app.services.neo4j_service import get_neo4j_service
-from app.services.auth_service import generate_api_key, hash_api_key
+from app.services.auth_service import (
+    generate_api_key,
+    hash_api_key,
+    invalidate_api_key_cache,
+)
 from app.models import (
     APIKey,
     APIKeyPermission,
@@ -231,7 +235,11 @@ class APIKeyService:
             collection_scope=collection_scope_str,
             allowed_collections=request.allowed_collections
         )
-        
+
+        # Revocation/permission changes must take effect immediately, not
+        # after the validation cache's TTL.
+        invalidate_api_key_cache()
+
         if not result:
             return None
         
@@ -269,7 +277,9 @@ class APIKeyService:
         Returns:
             True if deleted, False if not found
         """
-        return self.neo4j_service.delete_api_key(key_id)
+        deleted = self.neo4j_service.delete_api_key(key_id)
+        invalidate_api_key_cache()
+        return deleted
     
     def revoke_api_key(self, key_id: str) -> Optional[APIKeyListItem]:
         """

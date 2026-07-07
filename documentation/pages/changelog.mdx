@@ -93,6 +93,17 @@ tens of identical log lines per minute.
 - **Neo4j transient-error retry** — idempotent reads and status upserts
   retry automatically (3 attempts with backoff) across a Neo4j restart
   instead of failing the request or stranding a document in `failed`.
+- **No more phantom 401s** — API-key validation previously turned *any*
+  Neo4j hiccup (restart, brief lock contention) into **401 Unauthorized**,
+  which clients rightly treat as "your key is invalid" and surface as
+  auth errors. Validation now retries transient errors, answers **503 +
+  `Retry-After`** when the auth store is genuinely unreachable (401 is
+  reserved for keys that were checked and rejected), caches successful
+  validations in-process for `API_KEY_CACHE_TTL_SECONDS` (default 30s,
+  invalidated instantly on key changes) so a page-load burst validates
+  once instead of a dozen times, and no longer fails a request when the
+  best-effort `last_used_at` bookkeeping write fails. Per-key usage
+  recording moved off the event loop.
 - **Server-side query timeout** — the deploy composes set a Neo4j
   transaction timeout (`CORTEX_NEO4J_TX_TIMEOUT`, default 300s) so a runaway
   query can no longer pin a connection and an API worker forever.

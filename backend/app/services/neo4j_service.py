@@ -5792,6 +5792,7 @@ class Neo4jService:
                 return data
             return None
     
+    @retry_on_transient
     def get_api_key_by_prefix(self, key_prefix: str) -> List[dict]:
         """Get API keys by their prefix (for validation lookup)."""
         with self.driver.session() as session:
@@ -5934,6 +5935,7 @@ class Neo4jService:
                 return True
             return False
     
+    @retry_on_transient
     def update_api_key_last_used(self, key_id: str) -> None:
         """Update the last_used_at timestamp for an API key."""
         with self.driver.session() as session:

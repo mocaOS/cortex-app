@@ -255,6 +255,14 @@ With the default `RELATIONSHIP_DISCOVERY_MODE=targeted`, Step 2 finishes in minu
 - [ ] Key hasn't expired
 - [ ] For admin operations, use the admin key (not a generated key)
 
+A 401 is authoritative: the key was checked against the store and rejected. When the auth store itself can't be consulted, the API answers 503 instead (below) — clients should never see a 401 just because Neo4j blinked.
+
+### API Key Returns 503 (`Retry-After` header present)
+
+**Cause:** The key could not be validated because Neo4j was unreachable (restart, OOM recovery, network blip). The key itself may be perfectly valid.
+
+**Fix:** Retry after the `Retry-After` interval. If it persists, check Neo4j health and the backend logs around "Error validating API key".
+
 ### API Key Returns 403
 
 **Cause:** The key doesn't have sufficient permissions.
