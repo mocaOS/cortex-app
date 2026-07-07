@@ -1183,7 +1183,7 @@ Disable the whole subsystem with `PROMPT_SECURITY=false` if not needed. See the 
 
 ## 📝 License
 
-MIT License - feel free to use this project for any purpose.
+Licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify, and distribute this project freely — including commercially. The license includes an explicit patent grant from all contributors.
 
 ## 🤝 Contributing
 
