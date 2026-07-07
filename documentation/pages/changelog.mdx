@@ -234,9 +234,9 @@ avoid over-flagging benign questions that merely contain trigger words.
 
 ---
 
-## July 4, 2026 (Unit-based usage metering & degraded-document detection)
+## July 4, 2026 (Usage metering, degraded documents & leaner graph builds)
 
-Two operational features: the monthly quota now measures what actually costs money, and silently broken documents are now visible and fixable from the UI.
+The monthly quota now measures what actually costs money, silently broken documents are now visible and fixable from the UI, and the knowledge-graph build pipeline got a pass focused on API-call economy and robustness on large libraries.
 
 ### Unit-denominated usage metering
 
@@ -247,10 +247,6 @@ Two operational features: the monthly quota now measures what actually costs mon
 - **Usage meter in the admin UI** — the Settings page's Statistics panel shows a monthly usage bar with a queries vs. processing breakdown, turning amber at 80% and red when exhausted. `GET /api/stats` exposes `monthly_usage_used`, `monthly_usage_limit`, `monthly_usage_query`, `monthly_usage_processing`.
 - **Fleet orchestration surface** — `GET /api/instance/status` (admin) now also reports library size (`document_count`, `entity_count`, `collection_count`) and the same monthly usage fields, so deployment automation can read plan consumption from the endpoint it already polls for redeploy safety.
 
-### Other changes
-
-- **`BATCH_PROCESSING_CONCURRENCY` default raised from `2` to `3`** — the bench-validated, Venice-safe setting from the June recalibration is now the shipped default. Deployments that pinned the variable explicitly are unaffected; unset deployments process one more document in parallel during batch ingestion.
-
 ### Failed & degraded documents
 
 A document can complete processing yet be silently broken — e.g. an extraction timeout leaving it with 0 entities, or chunks missing embeddings (invisible to semantic search). These are now **flagged as degraded**:
@@ -260,11 +256,9 @@ A document can complete processing yet be silently broken — e.g. an extraction
 - Reprocessing a degraded document automatically bypasses the "content unchanged" skip.
 - Signals (`entity_count`, unembedded chunk count) are persisted at processing time and backfilled once at startup for existing libraries.
 
----
+### Graph builds: leaner extraction & rebuild hardening
 
-## July 4, 2026 (Graph builds: leaner extraction & rebuild hardening)
-
-A pass over the knowledge-graph build pipeline focused on API-call economy and robustness on large libraries. Graph content and quality semantics are unchanged; builds complete faster and make substantially fewer LLM calls, especially under provider rate limits.
+Graph content and quality semantics are unchanged; builds complete faster and make substantially fewer LLM calls, especially under provider rate limits.
 
 - **Entity extraction skips redundant summary calls** — the per-document summary is now generated as extraction context only when a document spans multiple extraction batches. Single-batch documents (the common case) already carry their full text in the extraction prompt, so no separate summary call is made for them.
 - **Entity extraction is protected against output truncation** — a batch whose LLM response hits the output-token cap is automatically split in half and retried, so entity-dense documents keep their tail entities. A single chunk that still truncates logs a warning naming `EXTRACTION_MAX_OUTPUT_TOKENS`.
@@ -274,16 +268,22 @@ A pass over the knowledge-graph build pipeline focused on API-call economy and r
 - **Robust to embedding-model switches** — entities carrying vectors from a previously configured embedding model are re-embedded when merged into and treated as missing by Step 2's automatic backfill, and the kNN candidate scan skips incompatible vectors instead of aborting. Changing `EMBEDDING_MODEL`/`EMBEDDING_DIMENSION` no longer quietly degrades semantic dedup or targeted relationship discovery.
 - **Graph-wide deletes scale with library size** — "delete all entities", "delete all relationships", and the rebuild's batch-relationship cleanup now run in bounded batches (`CALL {} IN TRANSACTIONS`), matching the system-reset behavior, instead of a single whole-graph transaction that can exceed Neo4j's transaction memory limit on large graphs.
 
+### Other changes
+
+- **`BATCH_PROCESSING_CONCURRENCY` default raised from `2` to `3`** — the bench-validated, Venice-safe setting from the June recalibration is now the shipped default. Deployments that pinned the variable explicitly are unaffected; unset deployments process one more document in parallel during batch ingestion.
+
 ---
 
-## July 3, 2026 (Step 1: relationship descriptions & batched extraction)
+## July 3, 2026 (Graph build: batched Step 1 extraction & targeted Step 2 discovery)
+
+Both knowledge-graph build steps got cheaper, faster defaults — substantially fewer LLM calls at equivalent extraction quality, with the previous behaviors preserved behind flags.
+
+### Step 1: relationship descriptions & batched extraction
 
 - **Relationship descriptions are now reliably captured in Step 1** — the per-chunk extraction prompts now pin the exact output format, so models consistently include a short evidence-grounded description with every relationship (previously most per-chunk relations were stored without one). The parser also accepts the common `<relation>` tag variant. Descriptions appear in the Explore relationship browser and enrich RAG context.
 - **Chunk-batched relationship extraction is now the default** — `ENABLE_BATCHED_CHUNK_RELATIONSHIPS` (now default `true`, with `RELATIONSHIP_CHUNKS_PER_CALL=4`) packs several chunks into one extraction call: several times fewer Step 1 LLM calls at equivalent extraction quality, which speeds up graph generation considerably when your LLM provider enforces request-rate limits. Set it to `false` to restore the previous one-call-per-chunk behavior.
 
----
-
-## July 3, 2026 (Step 2: targeted relationship discovery)
+### Step 2: targeted relationship discovery
 
 Deep relationship analysis (Step 2) got a new default engine that scales much better on large graphs. Candidate entity pairs are now identified directly in Neo4j and the LLM focuses on verifying pairs with actual signal, which substantially reduces analysis time and token cost as libraries grow.
 
@@ -295,21 +295,19 @@ Deep relationship analysis (Step 2) got a new default engine that scales much be
 
 ---
 
-## July 2, 2026 (Reliability: system reset & library import at scale)
+## July 2, 2026 (Reliability at scale & AskAI v2 — faster Chat & Deep Research)
 
-Two operations that worked fine on small instances but failed on grown ones are now size-independent.
+Two operations that worked fine on small instances but failed on grown ones are now size-independent, and a structural latency pass over the agentic ask pipeline cut average chat time-to-first-token by **~65%** on the reference deployment.
+
+### System reset & library import at scale
 
 - **System reset no longer runs out of Neo4j memory** — deleting the knowledge graph now happens in bounded batches (`CALL {} IN TRANSACTIONS`) instead of one whole-graph transaction, which on large libraries exceeded Neo4j's transaction memory limit (`MemoryPoolOutOfMemoryError`). Orphaned chunks are swept too.
 - **Library import uploads are chunked** — the web UI uploads export archives in 8MB sequential requests (`/api/admin/import/upload/*`) with live upload progress, then starts the import task. Single-request uploads of large archives were cut off mid-body by reverse proxies with body-read timeouts (Traefik v3 on Coolify defaults to 60s → HTTP 502). The single-request `POST /api/admin/import` remains for API use.
 - **Long admin calls survive the frontend proxy** — the Next.js rewrite proxy timeout was raised from its 30s default to 300s (it previously returned a bare HTTP 500 for a reset that took ~33s, even though the reset completed).
 
----
+### AskAI v2 — the pipeline
 
-## July 2, 2026 (AskAI v2 — faster Chat & Deep Research)
-
-A structural latency pass over the agentic ask pipeline. A chat turn now costs **2 LLM calls instead of 3** (plus one eliminated helper call per search); on the reference deployment this cut average chat time-to-first-token by **~65%**, and long Deep Research questions that previously hit gateway limits now complete. Answer quality and citation behavior are unchanged — the writer stage is untouched.
-
-**Pipeline (all default-on, each individually revertible via env flag)**
+A chat turn now costs **2 LLM calls instead of 3** (plus one eliminated helper call per search), and long Deep Research questions that previously hit gateway limits now complete. Answer quality and citation behavior are unchanged — the writer stage is untouched. All changes below are default-on, each individually revertible via env flag:
 
 - **Chat early-write** (`RESEARCHER_SPEED_EARLY_WRITE`) — once a search iteration has produced sources (and no skill/git action ran), the answer is written immediately instead of spending one more full LLM round-trip asking the agent to confirm it is done.
 - **Concurrent searches** (`RESEARCHER_PARALLEL_TOOL_CALLS`) — read-only tool calls issued in one agent turn (knowledge / community / entity searches) now execute in parallel; skill and git actions stay sequential.
@@ -318,14 +316,14 @@ A structural latency pass over the agentic ask pipeline. A chat turn now costs *
 - **Faster turn completion** (`EMIT_DONE_BEFORE_MEMORY`) — the SSE `done` event now fires as soon as the last answer token streams, **before** the post-answer memory compaction; the `memory_update` blob follows 1–4 s later and then the stream closes. The `done` frame carries `pending_memory: true` when an update is still coming. **Integrator note:** consume the stream to its actual end — a client that stops reading at `done` loses memory continuity. Set `EMIT_DONE_BEFORE_MEMORY=false` to restore the legacy order. See the [Ask AI event reference](/features/ask-ai#sse-event-reference).
 - Connection reuse for LLM calls, skill/git metadata caching, and event-loop hygiene fixes reduce per-request overhead further; SSE responses now send `X-Accel-Buffering: no` so customer-managed reverse proxies can't buffer the stream.
 
-**Skills**
+### AskAI v2 — skills
 
 - The `MAX_SKILL_INSTRUCTIONS_TOKENS` budget is now actually enforced (with an explicit truncation marker) — previously skill instructions grew the system prompt without bound as more skills were enabled.
 - Deployments with **no** skills installed no longer receive skill instructions referencing a tool that doesn't exist (which occasionally provoked hallucinated tool calls on small models).
 - Truncated skill API responses are now labeled as truncated with pagination guidance, so the model paginates instead of confidently answering from cut data; the answer stage caps oversized API payloads.
 - Action requests ("create a ticket for that") can no longer be swallowed by the memory fast-path — they always run the full pipeline.
 
-**Chat UI**
+### AskAI v2 — chat UI
 
 - **Live citations** — sources and `[src_N]` badges are clickable while the answer is still streaming, and survive pressing Stop.
 - **Conversation memory wired end-to-end** — the web UI now round-trips the conversation-memory blob, so memory-answerable follow-ups ("summarize that") skip retrieval entirely.
@@ -339,6 +337,8 @@ A structural latency pass over the agentic ask pipeline. A chat turn now costs *
 
 The bench-validated default primary for Q&A / research / chat is now **Gemma4 26B A4B** (`google-gemma-4-26b-a4b-it` on Venice) — a 26B/4B-active MoE that benches **even faster than MiniMax-M3 at similar answer quality**, making it an ideal fit for fast data retrieval from Cortex. MiniMax M2.7 / M3 were comparatively slower on this workload.
 
+### What changed
+
 - `OPENAI_MODEL` default changed from `openai/minimax-m3` to `google-gemma-4-26b-a4b-it`.
 - `OPENAI_MAX_CONTEXT` recommended value is now `256000` (Gemma4 26B A4B's full 256K input window).
 - Recommended-stack blocks updated across `.env.recommended`, `.env.example`, `README.md`, the handbook, and the docs; the admin **Primary Model** panel reflects the new recommendation.
@@ -351,7 +351,7 @@ Existing deployments are unaffected — any explicit `OPENAI_MODEL` you set stil
 
 A round of reliability and UX hardening across the backend pipeline and the chat experience.
 
-**Reliability**
+### Reliability
 
 - **Startup recovery of orphaned documents** — on startup, any document left mid-processing (`processing`/`extracting`) by a prior shutdown or crash is reset to `pending` so it rejoins the queue instead of spinning forever (and `/api/instance/status` no longer reports `safe_to_redeploy: false` permanently after a redeploy). A WARNING log lists the reset ids.
 - **`DOCLING_CONVERSION_TIMEOUT`** (default `600` s) bounds a hung local Docling subprocess conversion — on timeout the worker is killed and the document is marked `failed` with a clear message instead of hanging on a large or corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path.
@@ -359,14 +359,14 @@ A round of reliability and UX hardening across the backend pipeline and the chat
 - **Streaming uploads** are rejected with HTTP `413` once they exceed `MAX_FILE_SIZE_MB`, instead of being fully buffered first.
 - **Clearer messages** for partial / zero-match delete and move operations, and for task lookups after a restart.
 
-**Chat UX**
+### Chat UX
 
 - Multi-line composer (Enter sends, Shift+Enter inserts a newline).
 - A **Stop** button to cancel generation mid-stream.
 - Graceful handling of interrupted streams — no endless typing cursor after a redeploy.
 - Real backend errors are now surfaced to the user.
 
-**General UX**
+### General UX
 
 - Error + retry states where failures were previously silent (documents, search, collections, entity/community detail).
 - Escape-to-close and focus trap on modals.
@@ -375,15 +375,17 @@ A round of reliability and UX hardening across the backend pipeline and the chat
 
 ---
 
-## June 26, 2026 (Langfuse content masking — privacy by default)
+## June 26, 2026 (Privacy by default & a curated system config)
+
+Two admin-surface improvements: Langfuse traces now redact all authored content by default, and the System Configuration panel gained a curated view.
+
+### Langfuse content masking — privacy by default
 
 Langfuse tracing now **redacts all prompt, completion, tool, embedding, and vision text by default**. A new `LANGFUSE_LOG_EXTENDED` flag (default **`false`**) wires a client-side `mask` hook so authored content never leaves the app — only structure reaches the Langfuse server: message roles, model + parameters, tool names + argument keys, parameter keys, token usage, cost, latency, and tags. This protects user content (we don't store what users prompt) and sharply cuts trace storage.
 
 Set `LANGFUSE_LOG_EXTENDED=true` to log full content for local debugging (the previous behavior). Masking is **deny-by-default and fail-closed** — any unclassifiable text is redacted, never leaked. The **Admin → System Configuration** panel now has a **Privacy** section showing "Prompt & Content Redaction" and "LLM Tracing" status, so an operator (or a customer auditing a hosted instance) can verify at a glance that prompt content never leaves the box. **No API or schema breakage** — purely additive, and tracing stays fully env-gated (no keys = no tracing). See the [Configuration guide](/configuration#observability-langfuse).
 
----
-
-## June 26, 2026 (Admin System Config — curated view)
+### Admin System Config — curated view
 
 The **Admin → System Configuration** panel can now show a curated view. A new `DISPLAY_FULL_SYSTEM_CONFIG` flag (default **`false`**) hides advanced tuning knobs — output-token budgets, concurrency counts, chunking parameters, hybrid-search weights, graph hops, community sizes, and similarity thresholds — leaving models, API bases, context windows, dimensions, and feature toggles. Set it to `true` to reveal every knob.
 
@@ -391,7 +393,11 @@ This is **display-only** — settings, the `/api/admin/config` response shape, a
 
 ---
 
-## June 23, 2026 (LLM observability — Langfuse tracing)
+## June 23, 2026 (LLM observability & redeploy safety)
+
+Two additive operator features: optional LLM tracing and cost tracking via a self-hosted Langfuse instance, and a status endpoint deploy automation can poll before restarting an instance.
+
+### LLM observability — Langfuse tracing
 
 Optional, env-driven **LLM tracing and cost tracking** via a self-hosted [Langfuse](https://langfuse.com) instance. When `LANGFUSE_BASE_URL` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set, every LLM, embedding, and vision call is traced (cost, tokens, latency, errors), and each agentic Q&A is grouped into one inspectable trace — across Venice, OpenRouter, and any OpenAI-compatible provider.
 
@@ -399,9 +405,7 @@ Activation is fully env-gated: with no keys the same image runs **identically un
 
 For accurate USD cost, add your Venice/OpenRouter models under the Langfuse project's **Models** settings (token counts are tracked regardless). **No API or schema breakage** — purely additive. See the [Configuration guide](/configuration#observability-langfuse).
 
----
-
-## June 23, 2026 (Instance status endpoint — redeploy safety)
+### Instance status endpoint — redeploy safety
 
 A new admin endpoint, **`GET /api/instance/status`**, gives deploy automation a single call to decide whether an instance can be safely restarted or upgraded.
 
@@ -413,13 +417,17 @@ Requires `manage` permission. **No API or schema breakage** — the endpoint is 
 
 ---
 
-## June 22, 2026 (Web Import — MDHarvest powered by Crawl4ai)
+## June 22, 2026 (Web Import & a systematic QA pass)
+
+Two additions: **Web Import** harvests web pages into the knowledge base as clean markdown, and a systematic QA pass expanded the backend test suite and fixed four defects.
+
+### Web Import — MDHarvest powered by Crawl4ai
 
 A new way to get web content into your knowledge base: **Web Import** harvests web pages into clean markdown and ingests them exactly like uploaded documents — chunked, embedded, and run through entity/relationship extraction, so they show up in Search, Ask AI, and the knowledge graph. It supersedes the standalone `mdharvest` tool.
 
 Cortex never embeds a browser. It calls an open-source [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP — you run crawl4ai once and a single instance can serve many Cortex deployments (in hosted setups, one per server, shared across tenants). There is no local crawler fallback, which keeps the per-instance footprint small.
 
-### Using it
+#### Using it
 
 On the **Documents** page, the **Upload** button now has a **▾** menu beside it with a **Web Import** option (it appears only when the feature is enabled). It opens a modal where you:
 
@@ -430,7 +438,7 @@ On the **Documents** page, the **Upload** button now has a **▾** menu beside i
 
 A progress bar tracks the crawl and processing; when it finishes you get a clear "imported N of M — close this window to see your documents" summary, and the document list refreshes automatically. Each imported page carries a provenance header recording its source URL and the extraction date.
 
-### Enabling it
+#### Enabling it
 
 ```bash
 ENABLE_WEB_CRAWL=true
@@ -444,21 +452,19 @@ With the flag off or no service URL set, the feature stays hidden. See the [Web 
 
 **No API or schema breakage** — the feature is additive and off by default.
 
----
-
-## June 22, 2026 (QA pass — test coverage, fixes & docs hardening)
+### QA pass — test coverage, fixes & docs hardening
 
 A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_master.ods` — Features/Defects/Summary sheets), a large expansion of the backend test suite, a live end-to-end harness, and four fixes.
 
-### New config
+#### New config
 - **`EXPOSE_API_DOCS`** (default `auto`) — gates the interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` keeps them on in development and **off in production**, so a directly-reachable backend no longer discloses its full API schema to anonymous callers. Set `true`/`false` to force. (Closes D-004 below.)
 
-### Fixes
+#### Fixes
 - **D-001 (Medium)** — the git connector's extension check (`GitConnectorService._supported`) instantiated a full `DocumentProcessor` (building the embedder) just to read a class-level constant; it now reads the class attribute directly. This also restored hermetic test isolation on machines with a real `.env`.
 - **D-003 (Low)** — API-usage endpoint categorization used dict-order prefix matching, mislabeling `/api/custom-inputs/{id}` as `upload` instead of `documents`; now longest-prefix-wins (analytics data integrity).
 - **D-004 (Low)** — interactive API docs were served unauthenticated; now gated by `EXPOSE_API_DOCS` (see above).
 
-### Testing
+#### Testing
 - Backend suite expanded from 322 to **458 hermetic tests** (new modules for auth, API-usage, vision image-prep, context-curator memory, library-transfer NDJSON round-trip, researcher-agent helpers, skill-service parsing, RRF fusion, and FastAPI endpoint contracts).
 - New **live end-to-end harness** (`backend/tests/test_live_e2e*.py`) exercises real journeys (health, auth boundary, collections CRUD, hybrid search, streaming chat, full document ingestion→extraction) against a running stack; auto-skips when none is reachable. Authenticated runs read the key from `CORTEX_E2E_API_KEY`.
 
@@ -490,7 +496,9 @@ A major overhaul of the chat/answer path. Reasoning-capable models (especially o
 
 ---
 
-## June 10, 2026 (v-next efficiency & hardening)
+## June 10, 2026 (v-next efficiency, leaner instances & production hardening)
+
+Opt-in flags that cut the LLM and database cost of graph building, leaner instance memory with an optional shared per-machine model service, and a broad production-hardening pass. All changes are additive or flag-gated — existing `.env` files and deployments keep working unchanged.
 
 ### LLM-stack efficiency (flag-gated, default off)
 
@@ -513,24 +521,15 @@ A set of opt-in flags cuts the LLM and database cost of knowledge-graph building
 - **Slim backend image**: `Dockerfile.prod --build-arg INSTALL_LOCAL_ML=false` builds a torch-free image (~1.2 GB vs ~7 GB dev image) for stacks that fully offload to cortex-helper — the biggest per-tenant footprint lever yet. CI smoke-builds it on every PR.
 - **Backups**: an opt-in compose overlay (`docker-compose.backup.yml`) runs nightly online graph exports (APOC, works on Community) + file-volume archives with retention, plus a documented restore runbook (`ops/backup/backup.sh`).
 - Fixes: skill HTTP calls now honor `SKILL_HTTP_TIMEOUT` (was hardcoded 15s); vector-index health is verified at startup and silent semantic-dedup degradation is surfaced in `/api/stats` (`vector_search_failures`); inbound conversation-memory blobs are size-clamped.
-
-**No API or schema breakage** — all changes are additive or flag-gated; existing `.env` files and deployments keep working unchanged.
-
----
-
-## June 10, 2026
+- **CORS** is now allowlist-driven via `CORS_ALLOWED_ORIGINS` (default `*` allows any origin but with credentials disabled, since auth is header-based). Set an explicit allowlist for production.
+- **Fail-fast secrets**: `ENVIRONMENT=production` refuses to boot on weak/default secrets — an empty/`password123` `NEO4J_PASSWORD`, or a `SESSION_SECRET` under 32 characters when `ADMIN_PASSWORD` is set.
+- **CI**: a GitHub Actions workflow now runs backend tests + lint and frontend type-check + lint on every PR.
 
 ### Leaner instances: lazy models + a shared per-machine model service
 
 Backend startup memory dropped from ~2.2 GB to ~1 GB by deferring heavy model loads. The cross-encoder reranker no longer loads at startup (`RERANKER_PRELOAD=false` by default) — its ~7 s cold start is now hidden behind the query-analysis and search work that precedes reranking, and the model unloads after an idle period (`RERANKER_IDLE_TTL_SECONDS`, default 1800; `0` = never) to reclaim ~1 GB. Docling is no longer imported at startup (it ran in a subprocess anyway), saving ~244 MB per instance.
 
 **New `cortex-helper` service.** For deployments running many isolated stacks on one host, the cross-encoder reranker and Docling converter can now be hosted **once per physical machine** and shared by all stacks via `RERANKER_SERVICE_URL` / `DOCLING_SERVICE_URL` / `HELPER_SERVICE_TOKEN`. Models stay warm (Docling conversions skip the per-document model reload — ~0.04 s vs ~4.5 s), and both clients fall back to the built-in local path automatically if the service is unset or unreachable. Single-instance and on-prem users are unaffected.
-
-### Production hardening
-
-- **CORS** is now allowlist-driven via `CORS_ALLOWED_ORIGINS` (default `*` allows any origin but with credentials disabled, since auth is header-based). Set an explicit allowlist for production.
-- **Fail-fast secrets**: `ENVIRONMENT=production` refuses to boot on weak/default secrets — an empty/`password123` `NEO4J_PASSWORD`, or a `SESSION_SECRET` under 32 characters when `ADMIN_PASSWORD` is set.
-- **CI**: a GitHub Actions workflow now runs backend tests + lint and frontend type-check + lint on every PR.
 
 ### Upgrade notes
 

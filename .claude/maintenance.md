@@ -7,6 +7,28 @@ When making changes to the codebase, keep all documentation layers in sync. Each
 ### `documentation/` — API & Feature Docs (Zudoku)
 When adding, modifying, or removing API endpoints, features, or configuration options, update the corresponding pages in `documentation/` (Zudoku-based docs site with pages in `documentation/pages/` and API specs in `documentation/apis/`).
 
+#### Changelog structure (`documentation/pages/changelog.mdx`)
+
+Newest entries first. **Exactly one `##` heading per calendar day** — never two `##` entries for the same date. Each day follows this shape:
+
+```markdown
+## <Month> <D>, <YYYY> (<short combined theme for the day>)
+
+One intro paragraph summarizing what the day's changes accomplish and why they matter.
+
+### <Topic section>
+
+Optional context paragraph, then bullets (`- **Bold lead-in** — detail.`).
+
+### <Next topic section>
+...
+```
+
+- If a day covers several unrelated ships, each becomes its own `###` section under the single day heading; combine their themes in the `##` parenthetical and merge their intros into one paragraph.
+- Never use bold pseudo-headers (`**Skills**`) as section dividers — use `###`. Sub-structure inside a `###` section uses `####`.
+- Separate days with `---`; no `---` between sections within a day.
+- Keep operator-relevant details in bullets: env vars in backticks with defaults, behavior changes and revert flags called out, and a "No API or schema breakage" note (or explicit breakage warning) where relevant.
+
 ### `handbook/` — End-User Handbook
 The handbook contains 21 chapters (`01-introduction.md` through `21-glossary.md`) covering features end-to-end from a user perspective. When adding or changing user-facing features, update the relevant handbook chapter(s):
 - `07-documents.md` — document upload, management, filtering
