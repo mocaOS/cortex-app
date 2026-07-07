@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from contextvars import ContextVar
 from typing import Optional
@@ -55,6 +56,33 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)
+
+
+# Per-key state for rate_limited_warning: key -> (last_emit_monotonic, suppressed_count).
+# Dict writes are atomic under the GIL; callers span the event loop and worker
+# threads, and an occasional lost increment of the suppressed counter is fine.
+_warn_state: dict[str, tuple[float, int]] = {}
+
+
+def rate_limited_warning(
+    log: logging.Logger, key: str, message: str, min_interval_s: float = 300.0
+) -> None:
+    """Emit a warning at most once per `min_interval_s` per key.
+
+    Background loops that tick every few seconds (task persistence, usage-meter
+    flush, schedulers) would otherwise emit tens of identical warnings per
+    minute for the whole duration of a Neo4j outage. Suppressed repeats are
+    counted and reported with the next emitted warning.
+    """
+    now = time.monotonic()
+    last, suppressed = _warn_state.get(key, (0.0, 0))
+    if now - last >= min_interval_s:
+        if suppressed:
+            message = f"{message} [{suppressed} similar warning(s) suppressed]"
+        log.warning(message)
+        _warn_state[key] = (now, 0)
+    else:
+        _warn_state[key] = (last, suppressed + 1)
 
 
 def configure(log_format: str = "plain", level: int = logging.INFO) -> None:

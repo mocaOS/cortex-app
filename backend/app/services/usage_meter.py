@@ -134,8 +134,12 @@ def _flush() -> None:
     try:
         date_str = datetime.utcnow().strftime("%Y-%m-%d")
         _neo4j_getter().increment_llm_completions(date_str, snapshot)
-    except Exception:  # noqa: BLE001 — put the counts back for the next attempt
-        logger.warning("usage_meter: flush to Neo4j failed; retrying later", exc_info=True)
+    except Exception as e:  # noqa: BLE001 — put the counts back for the next attempt
+        from ..logging_setup import rate_limited_warning
+        rate_limited_warning(
+            logger, "usage-meter-flush",
+            f"usage_meter: flush to Neo4j failed; retrying later ({e})",
+        )
         with _lock:
             for k, n in snapshot.items():
                 _pending[k] = _pending.get(k, 0) + n

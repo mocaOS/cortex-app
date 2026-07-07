@@ -32,12 +32,18 @@ services:
       # 300s clears every legit workload (batched deletes/imports commit in
       # bounded inner transactions); analytic explores on huge graphs can raise it.
       - NEO4J_db_transaction_timeout=${CORTEX_NEO4J_TX_TIMEOUT:-300s}
+      # Required by the backup sidecar: APOC writes the nightly logical export
+      # server-side (byte-exact, no client round-trip) into the import dir,
+      # which is bound to the shared backups volume below.
+      - NEO4J_apoc_export_file_enabled=true
     # Hard ceiling so one tenant's graph blowing up self-OOMs in its cgroup
     # instead of letting the kernel OOM-killer pick another stack's container.
     mem_limit: ${CORTEX_NEO4J_MEM_LIMIT:-4g}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+      # Shared with the backup sidecar: APOC exports land here (see above).
+      - backups:/var/lib/neo4j/import
     healthcheck:
       test:
         [
@@ -109,6 +115,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      # /health returns 503 while degraded (Neo4j down / schema unconfirmed);
+      # give startup schema-init time before the gate counts failures.
+      start_period: 60s
 
   frontend:
     build:
@@ -143,12 +152,16 @@ services:
     mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
 
   backup:
-    # Nightly online backup of the instance's data: APOC logical export of the
-    # graph + tar of the uploads/custom_inputs volumes, BACKUP_RETENTION_DAYS
-    # rotation. Backups land in the `backups` named volume; ship it off-host
-    # with restic/rclone for disaster recovery.
+    # Nightly online backup of the instance's data: server-side APOC logical
+    # export of the graph (verified: row counts + checksums + .complete marker;
+    # retention only rotates after a verified success) + tar of the
+    # uploads/custom_inputs volumes. Backups land in the `backups` named
+    # volume; ship it off-host with restic/rclone for disaster recovery. The
+    # healthcheck goes unhealthy when the newest verified backup is older than
+    # 2x the interval — a silently failing backup is visible.
     # Manual run:  docker compose exec backup /backup.sh
-    # Restore:     see ops/backup/backup.sh header.
+    # Restore:     docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <ts>
+    #              (full runbook: ops/backup/restore.sh header)
     build:
       context: ./ops/backup
       args:
@@ -159,13 +172,29 @@ services:
     environment:
       - NEO4J_ADDRESS=neo4j://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      # Coolify generates SERVICE_PASSWORD_NEO4J (same value the neo4j and
+      # backend services use). NEO4J_PASSWORD here previously pointed at an
+      # env var this stack never sets — the sidecar could not authenticate.
+      - NEO4J_PASSWORD=${SERVICE_PASSWORD_NEO4J}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_INITIAL_DELAY_SECONDS=${BACKUP_INITIAL_DELAY_SECONDS:-120}
     volumes:
       - backups:/backups
       - uploads_data:/data/uploads:ro
       - custom_inputs_data:/data/custom_inputs:ro
+    healthcheck:
+      # Healthy = a verified backup completed within the last 2 intervals.
+      # start_period covers the initial delay + a large first export.
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /backups/LAST_SUCCESS && [ $$(( $$(date +%s) - $$(cat /backups/LAST_SUCCESS) )) -lt $$(( $${BACKUP_INTERVAL_SECONDS:-86400} * 2 )) ]",
+        ]
+      interval: 15m
+      timeout: 10s
+      retries: 2
+      start_period: 2h
     depends_on:
       neo4j:
         condition: service_healthy

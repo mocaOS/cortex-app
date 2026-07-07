@@ -2,16 +2,29 @@
 #
 #   docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d
 #
-# Nightly (BACKUP_INTERVAL_SECONDS) online backup of the graph (APOC logical
-# export — works on Community and Enterprise) plus the uploads/custom_inputs
-# volumes, with BACKUP_RETENTION_DAYS rotation. Backups land in the `backups`
-# named volume; bind it to a host path (or ship it with restic/rclone — the
-# operator's concern) for off-host copies.
+# Nightly (BACKUP_INTERVAL_SECONDS) online backup of the graph — a server-side
+# APOC logical export (works on Community and Enterprise), verified (row
+# counts + checksums + .complete marker; retention only rotates after a
+# verified success) — plus the uploads/custom_inputs volumes. Backups land in
+# the `backups` named volume; bind it to a host path (or ship it with
+# restic/rclone — the operator's concern) for off-host copies. The healthcheck
+# goes unhealthy when the newest verified backup is older than 2x the
+# interval, so a silently failing backup is visible.
 #
 # Trigger a manual backup:   docker compose exec backup /backup.sh
-# Restore procedure:         see ops/backup/backup.sh header.
+# Restore procedure:         docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <ts>
+#                            (full runbook: ops/backup/restore.sh header)
 
 services:
+  # The overlay extends the stack's neo4j service: APOC writes the export
+  # server-side (byte-exact, no client round-trip) into its import directory,
+  # which is bound to the shared backups volume.
+  neo4j:
+    environment:
+      - NEO4J_apoc_export_file_enabled=true
+    volumes:
+      - backups:/var/lib/neo4j/import
+
   backup:
     build:
       context: ./ops/backup
@@ -27,12 +40,25 @@ services:
       - NEO4J_PASSWORD=${NEO4J_PASSWORD}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_INITIAL_DELAY_SECONDS=${BACKUP_INITIAL_DELAY_SECONDS:-120}
       # Enterprise stacks may switch to the physical online backup:
       - NEO4J_ENTERPRISE_BACKUP=${NEO4J_ENTERPRISE_BACKUP:-false}
     volumes:
       - backups:/backups
       - uploads_data:/data/uploads:ro
       - custom_inputs_data:/data/custom_inputs:ro
+    healthcheck:
+      # Healthy = a verified backup completed within the last 2 intervals.
+      # start_period covers the initial delay + a large first export.
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /backups/LAST_SUCCESS && [ $$(( $$(date +%s) - $$(cat /backups/LAST_SUCCESS) )) -lt $$(( $${BACKUP_INTERVAL_SECONDS:-86400} * 2 )) ]",
+        ]
+      interval: 15m
+      timeout: 10s
+      retries: 2
+      start_period: 2h
     depends_on:
       neo4j:
         condition: service_healthy

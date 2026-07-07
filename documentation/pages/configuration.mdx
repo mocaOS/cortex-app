@@ -834,6 +834,6 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `NEO4J_CONNECTION_TIMEOUT` | `10` | Neo4j TCP connect timeout (seconds). |
 | `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | `60` | Max wait for a pooled connection (seconds). |
 
-Compose-level: `NEO4J_MEM_LIMIT` (default 4g), `NEO4J_HEAP_INITIAL`/`NEO4J_HEAP_MAX`/`NEO4J_PAGECACHE`, `FRONTEND_MEM_LIMIT` (1g). Backups: overlay `docker-compose.backup.yml` with `BACKUP_INTERVAL_SECONDS` (86400), `BACKUP_RETENTION_DAYS` (7), `NEO4J_ENTERPRISE_BACKUP` (false).
+Compose-level: `NEO4J_MEM_LIMIT` (default 4g), `NEO4J_HEAP_INITIAL`/`NEO4J_HEAP_MAX`/`NEO4J_PAGECACHE`, `FRONTEND_MEM_LIMIT` (1g). Backups: overlay `docker-compose.backup.yml` with `BACKUP_INTERVAL_SECONDS` (86400), `BACKUP_RETENTION_DAYS` (7), `BACKUP_INITIAL_DELAY_SECONDS` (120), `NEO4J_ENTERPRISE_BACKUP` (false); the export is written server-side and each run is verified (checksums + row counts) before retention rotates.
 
 **Slim image**: build with `--build-arg INSTALL_LOCAL_ML=false` for a torch-free backend (~1.2 GB) when reranking + conversion are offloaded to cortex-helper. Requires OpenAI embeddings; pair with `HELPER_STRICT_REMOTE=true`.

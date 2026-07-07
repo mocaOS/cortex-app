@@ -12,15 +12,84 @@ All notable changes to Cortex are documented here, organized by date.
 A resilience-focused release: every change is about keeping an instance
 healthy under real-world failure — provider hangs, database restarts,
 oversized requests, redeploys mid-ingestion — and giving operators a
-compliance-grade audit trail and a real backup story on the cloud deploy
-paths. No API breakage.
+compliance-grade audit trail plus a backup story that is verified on every
+run and proven restorable. It also closes the failure modes that stay
+invisible until the day they matter: backups that silently produce nothing,
+background work that dies without a trace, and a failing git sync that
+hammers the provider forever. No API breakage.
+
+### Backups you can actually restore
+
+- **Backups on every deploy path** — the Coolify and Dokploy stacks now
+  include the nightly backup sidecar that previously shipped only with the
+  standalone prod overlay. Chat data is included where the chat service runs.
+- **Server-side graph export** — the backup sidecar no longer streams the
+  APOC export through a client-side quoting round-trip (which could silently
+  produce an empty or subtly corrupted `graph.cypher`). The neo4j service now
+  writes the export itself (`NEO4J_apoc_export_file_enabled=true` + the
+  backups volume mounted at its import directory): byte-exact output,
+  compressed to `graph.cypher.gz`.
+- **Verified before it counts** — exported row counts are checked against the
+  live database, a `SHA256SUMS` manifest is written, and the run is stamped
+  `.complete` + `LAST_SUCCESS` only after all checks pass. Retention now runs
+  **only after** a verified success and never deletes the newest complete
+  backup — consecutive failures can no longer rotate away the last good copy.
+- **Failures are visible** — the sidecar has a compose healthcheck that goes
+  unhealthy when the newest verified backup is older than 2× the interval.
+  The first backup runs ~2 minutes after start instead of a full interval
+  later.
+- **A tested restore path** — new `/restore.sh <timestamp>`: verifies
+  checksums, wipes, replays, and reports counts; validated end-to-end
+  (backup → restore → byte-identical data, including adversarial
+  newline/quote/backslash content). The handbook and deployment guide now
+  document this runbook instead of a `neo4j-admin dump` procedure that could
+  not restore sidecar backups.
+- **Coolify fix** — the Coolify backup sidecar referenced an env var the
+  stack never sets (`NEO4J_PASSWORD` instead of `SERVICE_PASSWORD_NEO4J`) and
+  could not authenticate; corrected.
+
+### Self-healing background work
+
+- **Stranded-document sweep** — if a document's failure-status write itself
+  loses Neo4j past its retries, the document no longer sits in "processing"
+  until the next restart: an hourly sweep resets transient-state documents
+  that have no live in-process task and no status heartbeat for 30+ minutes.
+- **Dead-task reaper** — a background task whose coroutine died without
+  reporting completion is marked `failed` after 2 hours without a progress
+  heartbeat, instead of living in memory forever, blocking new syncs for its
+  git connection and pinning `safe_to_redeploy: false` until a restart.
+- **Abandoned import uploads** — stale chunked library-import upload sessions
+  are now swept hourly (previously only when the next upload started).
+
+### Git connector
+
+- **Event-loop protection** — the sync engine's per-file database and disk
+  work now runs off the event loop; syncing a multi-hundred-file repository
+  no longer stalls concurrent requests (including `/health`) for the duration
+  of the ingest.
+- **Failure backoff** — a connection whose scheduled sync keeps failing
+  (revoked PAT, oversized repo, network) now backs off exponentially (capped
+  at 24h) instead of being re-cloned on every 5-minute scheduler tick, and
+  reports `sync_status: error`. A successful sync resets the backoff.
+
+### Health checks that actually gate
+
+`GET /health` now answers **HTTP 503** when the instance is degraded (Neo4j
+unreachable or schema not yet confirmed) instead of 200 with a degraded body.
+Compose healthchecks, `depends_on: service_healthy` gates, and health-aware
+proxies key off the status code, so a booting or broken instance is no longer
+reported healthy at the transport level. The backend healthchecks gained a
+60-second `start_period` to cover schema initialization at startup.
+
+### Quieter outages
+
+Background loops (task persistence, usage-meter flush, schema-init retry, git
+scheduler) now rate-limit their failure warnings to one per 5 minutes per
+source, with a suppressed-repeat count — a Neo4j outage no longer produces
+tens of identical log lines per minute.
 
 ### Resilience & data safety
 
-- **Backups on the cloud composes** — the Coolify and Dokploy stacks now
-  include the nightly backup sidecar (APOC logical graph export + file-volume
-  archive, retention rotation) that previously shipped only with the
-  standalone prod overlay. Chat data is included where the chat service runs.
 - **Neo4j transient-error retry** — idempotent reads and status upserts
   retry automatically (3 attempts with backoff) across a Neo4j restart
   instead of failing the request or stranding a document in `failed`.

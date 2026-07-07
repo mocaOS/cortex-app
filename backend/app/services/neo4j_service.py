@@ -515,7 +515,8 @@ class Neo4jService:
                 SET d.processing_status = $status,
                     d.chunk_count = $chunk_count,
                     d.error_message = $error_message,
-                    d.progress_message = $progress_message
+                    d.progress_message = $progress_message,
+                    d.status_updated_at = datetime()
         """
         params = dict(
             id=doc_id,
@@ -564,7 +565,8 @@ class Neo4jService:
                 MATCH (d:Document {id: $id})
                 SET d.progress_current = $current,
                     d.progress_total = $total,
-                    d.progress_message = $message
+                    d.progress_message = $message,
+                    d.status_updated_at = datetime()
             """,
                 id=doc_id,
                 current=current,
@@ -621,6 +623,36 @@ class Neo4jService:
                     d.error_message = null
                 RETURN d.id AS id
             """)
+            return [record["id"] for record in result]
+
+    @retry_on_transient
+    def reset_stranded_processing_documents(
+        self, active_ids: list[str], stale_minutes: int = 30
+    ) -> list[str]:
+        """Periodic-safe variant of reset_orphaned_processing_documents.
+
+        The startup reset assumes nothing can legitimately be in flight; this
+        one runs hourly while the instance is live, so it only resets a
+        transient-state document when BOTH hold: no in-process task/flag is
+        tracking it (`active_ids`), and it hasn't written a status/progress
+        heartbeat (`status_updated_at`) for `stale_minutes`. Catches the rare
+        strand where the failure-path status write itself lost its Neo4j
+        connection past the transient retries — without it, such a document
+        spins forever and pins `safe_to_redeploy: false` until a restart.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE d.processing_status IN ['processing', 'extracting']
+                  AND NOT d.id IN $active
+                  AND (d.status_updated_at IS NULL
+                       OR d.status_updated_at < datetime() - duration({minutes: $stale}))
+                SET d.processing_status = 'pending',
+                    d.progress_message = 'Reset to pending after processing stalled with no live task — reprocess to retry',
+                    d.error_message = null,
+                    d.status_updated_at = datetime()
+                RETURN d.id AS id
+            """, active=active_ids, stale=stale_minutes)
             return [record["id"] for record in result]
 
     def backfill_degraded_document_signals(self, include_entity_counts: bool = True) -> dict:

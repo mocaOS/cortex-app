@@ -422,4 +422,4 @@ Hardening & operations:
 | `INSTANCE_ID` | hostname | Tenant identity for helper fair-queuing. |
 | `NEO4J_MAX_POOL_SIZE` / `NEO4J_CONNECTION_TIMEOUT` / `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | `100` / `10` / `60` | Database driver pool tuning. |
 | `CORTEX_NEO4J_MEM_LIMIT`, `CORTEX_NEO4J_HEAP_MAX`, `FRONTEND_MEM_LIMIT` | `4g`, `2G`, `1g` | Compose memory caps per service. The neo4j caps are deliberately **not** `NEO4J_`-prefixed: PaaS platforms inject all env vars into every container, and neo4j parses any `NEO4J_*` var as a config setting (strict_validation then refuses to boot). |
-| `BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS` | `86400`, `7` | Backup sidecar (overlay `docker-compose.backup.yml`). |
+| `BACKUP_INTERVAL_SECONDS`, `BACKUP_RETENTION_DAYS`, `BACKUP_INITIAL_DELAY_SECONDS` | `86400`, `7`, `120` | Backup sidecar (overlay `docker-compose.backup.yml`; also in the Coolify/Dokploy composes). Verified server-side APOC export — retention rotates only after a verified success. |

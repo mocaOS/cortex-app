@@ -9,12 +9,16 @@ This chapter covers day-to-day administration tasks for self-hosted Cortex Libra
 ```bash
 # Backend health (includes Neo4j connectivity)
 curl http://localhost:8000/health
-# Expected: {"status": "healthy", "neo4j_connected": true, "version": "1.0.0"}
+# Expected: {"status": "healthy", "neo4j_connected": true,
+#            "schema_initialized": true, "version": "1.0.0"}
 ```
 
+A degraded instance (Neo4j unreachable or schema not yet confirmed) answers
+**HTTP 503** with `"status": "degraded"`, so `curl -f`, compose healthchecks,
+and health-aware proxies gate on the status code.
+
 In Docker Compose, the backend health check runs automatically:
-- **Development**: Not configured (relies on Docker restart)
-- **Production**: `curl http://localhost:8000/health` every 30 seconds, 10s timeout, 3 retries
+- **Backend**: `curl -f http://localhost:8000/health` every 30 seconds, 10s timeout, 3 retries, 60s start period (covers schema init at startup)
 - **Neo4j**: HTTP check on port 7474 every 10 seconds, 5 retries
 
 ### System Statistics
@@ -157,71 +161,95 @@ curl -X POST "http://localhost:8000/api/tasks/cleanup?max_age_hours=24" \
 - `library_export` — Full library export to ZIP
 - `library_import` — Library import from ZIP
 
-Tasks are stored in-memory and do not survive backend restarts. The frontend persists active task IDs in sessionStorage for resume-on-reload.
+The frontend persists active task IDs in sessionStorage for resume-on-reload.
+A running task whose in-process coroutine dies without reporting completion is
+reaped automatically: after 2 hours with no progress heartbeat it is marked
+`failed` ("reaped as dead") so it can't block new syncs or keep the instance
+reporting unsafe-to-redeploy forever.
 
 ## Backup and Recovery
 
-### Neo4j Database Backup
+### The backup sidecar (recommended)
+
+Every deploy compose (Dokploy, Coolify, and the `docker-compose.backup.yml`
+overlay for the standalone prod stack) ships a backup sidecar. Nightly
+(`BACKUP_INTERVAL_SECONDS`, first run `BACKUP_INITIAL_DELAY_SECONDS` after
+start) it takes an **online, verified** backup — no downtime:
+
+- **Graph**: a server-side APOC logical export (`graph.cypher.gz`). The neo4j
+  service writes the file itself (`NEO4J_apoc_export_file_enabled=true` + the
+  `backups` volume mounted at its import directory), so there is no client
+  quoting round-trip that could corrupt content. Works on Community and
+  Enterprise.
+- **Files**: a tar of `uploads`, `custom_inputs` (and `chat` where the chat
+  service runs).
+- **Verification**: exported row counts are checked against the live database,
+  a `SHA256SUMS` manifest is written, and only then is the run stamped
+  `.complete` + `LAST_SUCCESS`. Retention (`BACKUP_RETENTION_DAYS`, default 7)
+  only rotates after a verified success and never deletes the newest complete
+  backup — a string of failures cannot rotate away the last good copy.
+- **Observability**: the sidecar's compose healthcheck goes unhealthy when the
+  newest verified backup is older than 2× the interval, so a silently failing
+  backup is visible in `docker ps` / the PaaS dashboard.
 
 ```bash
-# Stop the application for consistent backup
+# Trigger a manual backup
+docker compose exec backup /backup.sh
+
+# List available backups
+docker compose exec backup ls /backups
+```
+
+### Restore (sidecar backups)
+
+```bash
+# 1. Stop the backend
+docker compose stop backend
+
+# 2. Wipe + replay the graph from a chosen backup timestamp
+docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
+
+# 3. Restore the file volumes (mounted read-only in the sidecar, so this runs
+#    in a throwaway container — adjust volume names to your stack):
+docker run --rm \
+  -v <stack>_uploads_data:/data/uploads \
+  -v <stack>_custom_inputs_data:/data/custom_inputs \
+  -v <stack>_backups:/backups:ro \
+  alpine tar -xzf /backups/<timestamp>/files.tar.gz -C /
+
+# 4. Start the backend — startup recreates every constraint/index, including
+#    the vector indexes the logical export doesn't carry.
+docker compose start backend
+
+# 5. Verify document/entity counts
+curl http://localhost:8000/api/stats -H "X-API-Key: your-admin-key"
+```
+
+`restore.sh` verifies the backup's checksums before touching anything and
+refuses incomplete backups. `RESTORE_WIPE=yes` is required because step 2
+deletes the entire existing graph first.
+
+### Manual physical dump (alternative, requires downtime)
+
+`neo4j-admin database dump/load` remains available for stacks without the
+sidecar. Note the two formats are **not interchangeable**: a `.dump` restores
+only via `neo4j-admin database load`, a sidecar `graph.cypher.gz` only via
+`restore.sh`.
+
+```bash
 docker compose stop backend frontend
-
-# Create a database dump
 docker compose exec neo4j neo4j-admin database dump neo4j --to-path=/backups
-
-# Copy backup from container
 docker cp $(docker compose ps -q neo4j):/backups/neo4j.dump ./backups/
-
-# Restart services
 docker compose start backend frontend
 ```
 
-### Neo4j Database Restore
+### What else to back up
 
-```bash
-# Stop all services
-docker compose stop
-
-# Copy backup into container
-docker cp ./backups/neo4j.dump $(docker compose ps -q neo4j):/backups/
-
-# Restore (overwrites existing data)
-docker compose exec neo4j neo4j-admin database load neo4j \
-  --from-path=/backups --overwrite-destination=true
-
-# Restart services
-docker compose start
-```
-
-### File Backup
-
-In addition to the Neo4j database, back up these directories:
-- **`uploads/`** (or `UPLOAD_DIR`) — Original uploaded files
-- **`custom_inputs/`** (or `CUSTOM_INPUTS_DIR`) — Custom input files
-- **`.env`** — Your configuration (store securely!)
-
-### Automated Backup Script
-
-```bash
-#!/bin/bash
-# backup.sh — Run daily via cron
-BACKUP_DIR="/path/to/backups/$(date +%Y-%m-%d)"
-mkdir -p "$BACKUP_DIR"
-
-# Neo4j dump
-docker compose exec -T neo4j neo4j-admin database dump neo4j --to-path=/backups
-docker cp $(docker compose ps -q neo4j):/backups/neo4j.dump "$BACKUP_DIR/"
-
-# File backups
-cp -r uploads/ "$BACKUP_DIR/uploads/"
-cp -r custom_inputs/ "$BACKUP_DIR/custom_inputs/"
-
-# Clean old backups (keep 30 days)
-find /path/to/backups/ -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
-
-echo "Backup completed: $BACKUP_DIR"
-```
+- **`.env`** — your configuration and secrets (store securely!). The sidecar
+  backs up data volumes, never configuration.
+- **Off-host copies** — backups land in the `backups` named volume **on the
+  same host** as the data they protect. Ship them off-host (restic/rclone/
+  object storage) for real disaster recovery.
 
 ## System Reset
 

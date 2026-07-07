@@ -240,6 +240,12 @@ Expected response:
 }
 ```
 
+A degraded instance (Neo4j unreachable or schema not yet confirmed) answers
+**HTTP 503** with `"status": "degraded"` — so `curl -f`, the compose
+healthchecks, `depends_on: service_healthy`, and health-aware proxies all
+gate on it. The compose healthchecks carry a 60s `start_period` to cover
+schema initialization at startup.
+
 ### Neo4j Health
 
 ```bash
@@ -311,22 +317,53 @@ neo4j:
 
 ## Backup & Recovery
 
-### Backup Neo4j
+### The backup sidecar (recommended)
+
+The Dokploy and Coolify composes include the backup sidecar; on the standalone
+prod stack add the overlay:
 
 ```bash
-# Stop writes
+docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d
+```
+
+Nightly (`BACKUP_INTERVAL_SECONDS`), online and verified: a server-side APOC
+logical export of the graph (`graph.cypher.gz`) plus a tar of the file
+volumes, with checksums and a `.complete` marker. Retention
+(`BACKUP_RETENTION_DAYS`, default 7) only rotates after a verified success and
+never removes the newest complete backup. The sidecar's healthcheck goes
+unhealthy when the newest verified backup is older than twice the interval, so
+a silently failing backup shows up in `docker ps`.
+
+```bash
+# Manual backup / list backups
+docker compose exec backup /backup.sh
+docker compose exec backup ls /backups
+```
+
+### Restore
+
+```bash
+docker compose stop backend
+docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
+docker compose start backend   # startup recreates all indexes (incl. vector)
+```
+
+File volumes are mounted read-only in the sidecar — restore them from the host
+with a throwaway container (full runbook in `ops/backup/restore.sh`). Backups
+live in the `backups` volume **on the same host**; ship them off-host
+(restic/rclone) for disaster recovery.
+
+### Manual physical dump (alternative, requires downtime)
+
+```bash
+docker compose stop backend frontend
 docker compose exec neo4j neo4j-admin database dump neo4j --to-path=/backups
-
-# Copy backup
 docker cp $(docker compose ps -q neo4j):/backups/neo4j.dump ./backups/
+docker compose start backend frontend
 ```
 
-### Restore Neo4j
-
-```bash
-docker cp ./backups/neo4j.dump $(docker compose ps -q neo4j):/backups/
-docker compose exec neo4j neo4j-admin database load neo4j --from-path=/backups
-```
+The two formats are not interchangeable: a `.dump` restores only via
+`neo4j-admin database load`, a sidecar export only via `restore.sh`.
 
 ## Monitoring
 

@@ -18,7 +18,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/health` | Public | Health check. Returns `{status, neo4j_connected, version}` |
+| `GET` | `/health` | Public | Health check. Returns `{status, neo4j_connected, schema_initialized, version}`; HTTP 503 while degraded |
 | `GET` | `/api/stats` | Read | Knowledge base statistics: document/entity/relationship/community counts, processing status breakdown, entity type distribution, staleness timestamps |
 | `GET` | `/api/admin/config` | Admin | System configuration (model names, API bases, context windows, feature flags — no secrets) |
 

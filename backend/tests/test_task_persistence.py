@@ -109,3 +109,88 @@ class TestRestartFallback:
         }
         resp = client.get("/api/tasks/task_gone/result")
         assert resp.status_code == 500
+
+
+class TestStuckTaskReaper:
+    """cleanup_old_tasks must fail-and-age-out tasks whose coroutine died."""
+
+    def _fresh_store(self, monkeypatch):
+        monkeypatch.setattr(app_main, "_task_store", {})
+        monkeypatch.setattr(app_main, "_task_dirty", set())
+        monkeypatch.setattr(app_main, "_task_last_touch", {})
+
+    def test_silent_running_task_is_reaped(self, monkeypatch):
+        self._fresh_store(monkeypatch)
+        task = app_main.create_task("git_repo_sync")
+        app_main.update_task_progress(task.task_id, 1, 10, "working")
+        # Simulate 2h+ of silence
+        app_main._task_last_touch[task.task_id] -= app_main._TASK_STALE_REAP_S + 1
+
+        app_main.cleanup_old_tasks(max_age_hours=24)
+
+        reaped = app_main._task_store[task.task_id]
+        assert reaped.status == TaskStatus.FAILED
+        assert "reaped" in (reaped.error or "")
+        assert reaped.completed_at is not None  # ages out via the normal path
+
+    def test_heartbeating_task_survives(self, monkeypatch):
+        """A 10h+ rebuild that keeps reporting progress must never be reaped."""
+        self._fresh_store(monkeypatch)
+        task = app_main.create_task("batch_processing")
+        task.started_at = datetime(2020, 1, 1)  # ancient start time
+        app_main.update_task_progress(task.task_id, 900, 1267, "doc 900")  # fresh touch
+
+        app_main.cleanup_old_tasks(max_age_hours=24)
+
+        assert app_main._task_store[task.task_id].status == TaskStatus.RUNNING
+
+    def test_reaped_task_unblocks_git_sync_guard(self, monkeypatch):
+        """A dead git sync task must stop blocking new syncs for its connection."""
+        self._fresh_store(monkeypatch)
+        task = app_main.create_task("git_repo_sync")
+        task.result = {"connection_id": "conn1"}
+        app_main._task_last_touch[task.task_id] -= app_main._TASK_STALE_REAP_S + 1
+
+        assert app_main._git_connection_has_active_sync("conn1") is True
+        app_main.cleanup_old_tasks(max_age_hours=24)
+        assert app_main._git_connection_has_active_sync("conn1") is False
+
+
+class TestRateLimitedWarning:
+    def test_suppresses_repeats_within_window(self, caplog):
+        import logging as _logging
+        from app.logging_setup import rate_limited_warning, _warn_state
+
+        _warn_state.clear()
+        log = _logging.getLogger("test.ratelimit")
+        with caplog.at_level(_logging.WARNING, logger="test.ratelimit"):
+            for _ in range(50):
+                rate_limited_warning(log, "k1", "boom", min_interval_s=300)
+        assert len(caplog.records) == 1
+
+        # After the window passes, the next call emits and reports suppression
+        _warn_state["k1"] = (_warn_state["k1"][0] - 301, _warn_state["k1"][1])
+        with caplog.at_level(_logging.WARNING, logger="test.ratelimit"):
+            rate_limited_warning(log, "k1", "boom", min_interval_s=300)
+        assert "49 similar warning(s) suppressed" in caplog.records[-1].message
+
+
+class TestActiveProcessingIds:
+    """get_active_processing_ids must cover both processing entry paths."""
+
+    def test_union_of_tracked_tasks_and_batch_flags(self, monkeypatch):
+        import asyncio
+        from app.services import document_processor as dp
+
+        class FakeTask:
+            def __init__(self, done):
+                self._done = done
+
+            def done(self):
+                return self._done
+
+        monkeypatch.setattr(dp, "_active_tasks", {"doc-a": FakeTask(False),
+                                                  "doc-done": FakeTask(True)})
+        monkeypatch.setattr(dp, "_cancellation_flags", {"doc-b": asyncio.Event()})
+
+        assert dp.get_active_processing_ids() == ["doc-a", "doc-b"]

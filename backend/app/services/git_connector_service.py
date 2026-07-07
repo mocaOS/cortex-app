@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +65,16 @@ class GitConnectorService:
 
     def _sync_lock(self, connection_id: str) -> asyncio.Lock:
         return self._sync_locks.setdefault(connection_id, asyncio.Lock())
+
+    @staticmethod
+    async def _db(fn, *args, **kwargs):
+        """Run a blocking (Neo4j/disk) call off the event loop.
+
+        A sync touches the database and the filesystem once per changed file;
+        inline, a multi-hundred-file repo sync stalls every concurrent request
+        on the instance (including /health) for the whole ingest.
+        """
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
     # ----- lazy service handles (avoid import cycles at module load) ---------
 
@@ -288,10 +298,40 @@ class GitConnectorService:
 
     async def _sync_connection(self, connection_id: str, task_id: Optional[str] = None,
                                progress=None) -> dict:
-        conn = self.neo4j.get_git_connection(connection_id)
+        conn = await self._db(self.neo4j.get_git_connection, connection_id)
         if not conn:
             raise GitSyncError(f"Connection {connection_id} not found")
+        try:
+            return await self._sync_connection_inner(conn, connection_id, task_id, progress)
+        except Exception:
+            await self._record_sync_failure(conn, connection_id)
+            raise
 
+    async def _record_sync_failure(self, conn: dict, connection_id: str) -> None:
+        """Back off a failing connection instead of re-syncing every scheduler tick.
+
+        next_sync_due normally advances only at the end of a successful sync, so
+        a connection that keeps failing (revoked PAT, oversized repo, network)
+        would otherwise be re-cloned on every poll interval forever. Exponential
+        backoff per consecutive failure, capped at 24h (or the configured
+        interval, if that is larger); a successful sync resets the counter.
+        """
+        try:
+            failures = int(conn.get("consecutive_sync_failures") or 0) + 1
+            state = {"sync_status": "error", "consecutive_sync_failures": failures}
+            interval = int(conn.get("sync_interval_minutes") or 0)
+            if interval > 0:
+                delay_min = min(interval * (2 ** min(failures - 1, 8)),
+                                max(interval, 1440))
+                state["next_sync_due"] = (
+                    datetime.now(timezone.utc) + timedelta(minutes=delay_min)
+                ).isoformat()
+            await self._db(self.neo4j.set_git_connection_sync_state, connection_id, **state)
+        except Exception as e:
+            logger.warning(f"could not record sync failure for {connection_id}: {e}")
+
+    async def _sync_connection_inner(self, conn: dict, connection_id: str,
+                                     task_id: Optional[str] = None, progress=None) -> dict:
         from app.services.crypto_service import get_crypto_service, CryptoError
         try:
             token = get_crypto_service().decrypt(conn["pat"])
@@ -323,7 +363,8 @@ class GitConnectorService:
         # Size guard
         max_repo = int(self.settings.git_max_repo_size_mb or 0)
         if max_repo > 0:
-            total_bytes = sum(f.stat().st_size for f in repo_dir.rglob("*") if f.is_file())
+            total_bytes = await self._db(
+                lambda: sum(f.stat().st_size for f in repo_dir.rglob("*") if f.is_file()))
             if total_bytes > max_repo * 1024 * 1024:
                 raise GitSyncError(f"Repository exceeds {max_repo} MB size limit")
 
@@ -368,22 +409,22 @@ class GitConnectorService:
 
         # Bump graph staleness so the UI flags re-extraction (only if something changed)
         if changed or stats["orphaned"]:
-            self.neo4j.set_meta("last_relationship_analysis_at", _STALE_SENTINEL)
-            self.neo4j.set_meta("last_community_detection_at", _STALE_SENTINEL)
+            await self._db(self.neo4j.set_meta, "last_relationship_analysis_at", _STALE_SENTINEL)
+            await self._db(self.neo4j.set_meta, "last_community_detection_at", _STALE_SENTINEL)
 
         # Advance the synced SHA only when no hard failures occurred
         now = datetime.now(timezone.utc).isoformat()
         sync_state = {"last_synced_at": now,
-                      "sync_status": "success" if stats["failed"] == 0 else "partial"}
+                      "sync_status": "success" if stats["failed"] == 0 else "partial",
+                      "consecutive_sync_failures": 0}
         if stats["failed"] == 0:
             sync_state["last_synced_sha"] = new_head
         interval = int(conn.get("sync_interval_minutes") or 0)
         if interval > 0:
-            from datetime import timedelta
             sync_state["next_sync_due"] = (
                 datetime.now(timezone.utc) + timedelta(minutes=interval)
             ).isoformat()
-        self.neo4j.set_git_connection_sync_state(connection_id, **sync_state)
+        await self._db(self.neo4j.set_git_connection_sync_state, connection_id, **sync_state)
 
         report(100, 100, "Sync complete")
         stats["new_sha"] = new_head
@@ -404,10 +445,13 @@ class GitConnectorService:
             stats["failed"] += 1
             return
         dest = self._content_path(connection_id, path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
 
-        existing = self.neo4j.find_git_document(connection_id, path)
+        def _write_content():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
+        await self._db(_write_content)
+
+        existing = await self._db(self.neo4j.find_git_document, connection_id, path)
         provenance = {
             "git_connection_id": connection_id,
             "git_path": path,
@@ -417,10 +461,13 @@ class GitConnectorService:
         }
         if existing or force_modify:
             doc_id = existing["id"]
-            self.neo4j.delete_document_chunks(doc_id)  # clears chunks + rels (global fix)
-            self.processor.neo4j.update_document_status(doc_id, _pending_status(), 0)
-            self.neo4j.set_document_git_provenance(
-                doc_id, blob_sha=blob_sha, commit_sha=commit_sha, sync_status="synced")
+            # clears chunks + rels (global fix)
+            await self._db(self.neo4j.delete_document_chunks, doc_id)
+            await self._db(self.processor.neo4j.update_document_status,
+                           doc_id, _pending_status(), 0)
+            await self._db(self.neo4j.set_document_git_provenance,
+                           doc_id, blob_sha=blob_sha, commit_sha=commit_sha,
+                           sync_status="synced")
             touched.append(doc_id)
             if not force_modify:
                 stats["modified"] += 1
@@ -441,21 +488,21 @@ class GitConnectorService:
             if op["status"] in ("A", "M", "R") and not (self._supported(path) and self._passes_globs(path, inc, exc)):
                 # If a file became excluded/unsupported, drop any prior doc.
                 if op["status"] == "M":
-                    prior = self.neo4j.find_git_document(connection_id, path)
+                    prior = await self._db(self.neo4j.find_git_document, connection_id, path)
                     if prior:
-                        self.neo4j.mark_git_document_orphaned(prior["id"])
+                        await self._db(self.neo4j.mark_git_document_orphaned, prior["id"])
                         stats["orphaned"] += 1
                 continue
             try:
                 if op["status"] == "D":
-                    doc = self.neo4j.find_git_document(connection_id, path)
+                    doc = await self._db(self.neo4j.find_git_document, connection_id, path)
                     if doc:
-                        self.neo4j.mark_git_document_orphaned(doc["id"])
+                        await self._db(self.neo4j.mark_git_document_orphaned, doc["id"])
                         stats["orphaned"] += 1
                 elif op["status"] == "R":
-                    old_doc = self.neo4j.find_git_document(connection_id, op["old_path"])
+                    old_doc = await self._db(self.neo4j.find_git_document, connection_id, op["old_path"])
                     if old_doc:
-                        self.neo4j.remap_git_document(old_doc["id"], path, path)
+                        await self._db(self.neo4j.remap_git_document, old_doc["id"], path, path)
                         stats["renamed"] += 1
                     if op.get("modified") or not old_doc:
                         blob_sha = (await self._git(["-C", str(repo_dir), "rev-parse", f"{commit_sha}:{path}"])).strip()
@@ -483,7 +530,7 @@ class GitConnectorService:
         for idx, (path, blob_sha, size) in enumerate(candidates):
             current_paths.add(path)
             report(10 + int(45 * idx / total), 100, f"Reconciling ({idx+1}/{total})")
-            existing = self.neo4j.find_git_document(connection_id, path)
+            existing = await self._db(self.neo4j.find_git_document, connection_id, path)
             if existing and existing.get("git_blob_sha") == blob_sha \
                     and existing.get("git_sync_status") != "orphaned":
                 continue  # unchanged
@@ -494,11 +541,11 @@ class GitConnectorService:
                 logger.warning(f"git fulltree ingest {path} failed: {e}")
                 stats["failed"] += 1
         # Deletes: stored docs whose path no longer exists in the tree
-        for doc in self.neo4j.list_documents_for_git_connection(connection_id):
+        for doc in await self._db(self.neo4j.list_documents_for_git_connection, connection_id):
             gp = doc.get("git_path")
             if gp and gp not in current_paths and not gp.startswith("wiki/") \
                     and doc.get("git_sync_status") != "orphaned":
-                self.neo4j.mark_git_document_orphaned(doc["id"])
+                await self._db(self.neo4j.mark_git_document_orphaned, doc["id"])
                 stats["orphaned"] += 1
 
     async def _sync_wiki(self, connection_id, provider, owner, name, host, token,
@@ -519,12 +566,12 @@ class GitConnectorService:
                 await self._git(["-C", str(wiki_dir), "reset", "--hard", "FETCH_HEAD"], token=token)
             self._scrub_fetch_head(wiki_dir, token)
             current_pages: set[str] = set()
-            for md in wiki_dir.rglob("*.md"):
+            for md in await self._db(lambda: list(wiki_dir.rglob("*.md"))):
                 if ".git" in md.parts:
                     continue
                 rel = "wiki/" + str(md.relative_to(wiki_dir))
                 current_pages.add(rel)
-                content = md.read_bytes()
+                content = await self._db(md.read_bytes)
                 await self._ingest_raw(connection_id, rel, content, collection_id, commit_sha,
                                        stats, touched, blob_sha=_wiki_sha(content))
         else:
@@ -538,31 +585,35 @@ class GitConnectorService:
                                        stats, touched, blob_sha=_wiki_sha(content))
         # Pages removed from the wiki → flag for review (mirrors _apply_fulltree,
         # which deliberately leaves wiki/ paths to this sweep).
-        for doc in self.neo4j.list_documents_for_git_connection(connection_id):
+        for doc in await self._db(self.neo4j.list_documents_for_git_connection, connection_id):
             gp = doc.get("git_path")
             if gp and gp.startswith("wiki/") and gp not in current_pages \
                     and doc.get("git_sync_status") != "orphaned":
-                self.neo4j.mark_git_document_orphaned(doc["id"])
+                await self._db(self.neo4j.mark_git_document_orphaned, doc["id"])
                 stats["orphaned"] += 1
 
     async def _ingest_raw(self, connection_id, rel_path, content: bytes, collection_id,
                           commit_sha, stats, touched, *, blob_sha: str):
         """Ingest already-fetched content (wiki pages) as a markdown document."""
-        existing = self.neo4j.find_git_document(connection_id, rel_path)
+        existing = await self._db(self.neo4j.find_git_document, connection_id, rel_path)
         if existing and existing.get("git_blob_sha") == blob_sha \
                 and existing.get("git_sync_status") != "orphaned":
             return  # unchanged — don't re-chunk/re-embed/re-extract
         dest = self._content_path(connection_id, rel_path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
         if not dest.name.endswith(".md"):
             dest = dest.with_suffix(".md")
-        dest.write_bytes(content)
+
+        def _write_content():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
+        await self._db(_write_content)
         if existing:
             doc_id = existing["id"]
-            self.neo4j.delete_document_chunks(doc_id)
-            self.processor.neo4j.update_document_status(doc_id, _pending_status(), 0)
-            self.neo4j.set_document_git_provenance(doc_id, blob_sha=blob_sha,
-                                                   commit_sha=commit_sha, sync_status="synced")
+            await self._db(self.neo4j.delete_document_chunks, doc_id)
+            await self._db(self.processor.neo4j.update_document_status,
+                           doc_id, _pending_status(), 0)
+            await self._db(self.neo4j.set_document_git_provenance, doc_id, blob_sha=blob_sha,
+                           commit_sha=commit_sha, sync_status="synced")
             touched.append(doc_id)
             stats["modified"] += 1
         else:

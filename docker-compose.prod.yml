@@ -69,6 +69,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      # /health returns 503 while degraded (Neo4j down / schema unconfirmed);
+      # give startup schema-init time before the gate counts failures.
+      start_period: 60s
 
   frontend:
     build:

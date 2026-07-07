@@ -457,6 +457,20 @@ def _get_task_lock() -> asyncio.Lock:
     return _task_lock
 
 
+def get_active_processing_ids() -> list[str]:
+    """Doc ids with any live in-process activity, across both entry paths.
+
+    Individually-started docs register an asyncio task in `_active_tasks`;
+    batch processing (`process_pending_documents`) deliberately doesn't, but
+    always holds a `_cancellation_flags` entry for the docs it is running.
+    Module-level so callers (the hourly stranded-document sweep) don't have
+    to construct the heavy DocumentProcessor just to read the registries.
+    """
+    ids = {doc_id for doc_id, task in _active_tasks.items() if not task.done()}
+    ids.update(_cancellation_flags.keys())
+    return sorted(ids)
+
+
 class CancellationRequested(Exception):
     """Raised when document processing is cancelled."""
 
@@ -2107,15 +2121,25 @@ class DocumentProcessor:
                 DOCUMENTS_PROCESSED.labels(status="failed").inc()
             except Exception:
                 pass
-            await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(
-                    self.neo4j.update_document_status,
-                    doc_id,
-                    ProcessingStatus.FAILED,
-                    error_message=str(e),
-                ),
-            )
+            try:
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_status,
+                        doc_id,
+                        ProcessingStatus.FAILED,
+                        error_message=str(e),
+                    ),
+                )
+            except Exception as status_err:
+                # If even the (transient-retried) failure write can't reach
+                # Neo4j, don't let it escape — the document would silently
+                # strand in 'processing'. The hourly stranded-document sweep
+                # resets it to pending once its heartbeat goes stale.
+                logger.critical(
+                    f"Could not mark document {doc_id} as failed ({status_err}); "
+                    "leaving it for the stranded-document sweep"
+                )
         # NOTE: We no longer delete the file after processing.
         # Files are kept for reprocessing without needing re-upload.
 

@@ -64,6 +64,8 @@ Next.js App Router with unified navigation structure:
 - Backend uses singleton service instances (Neo4jService, DocumentProcessor, etc.)
 - Background tasks via FastAPI's `BackgroundTasks` for document processing
 - **Task-store persistence**: the in-memory `_task_store` is write-through shadowed to Neo4j `TaskRecord` nodes (dirty-set + 3s flusher `_task_persist_loop` in `main.py`; hourly prune, 7-day retention). Startup marks persisted pending/running records failed ("interrupted by server restart"); `GET /api/tasks/{id}` and `/result` fall back to the record when the id isn't in memory — restart no longer means 404.
+- **Hourly maintenance** (`_hourly_maintenance` in `main.py`): task age-out + **dead-task reaper** (PENDING/RUNNING with no `_task_last_touch` heartbeat for 2h → marked failed; long rebuilds heartbeat via `update_task_progress`, so they're safe), **stranded-document sweep** (`reset_stranded_processing_documents`: transient-status docs with no live task per `document_processor.get_active_processing_ids()` and a stale `status_updated_at` heartbeat → reset to pending), stale import-upload purge, and persisted TaskRecord pruning.
+- **Rate-limited warnings**: background loops (task flush, usage-meter flush, schema-init retry, git scheduler) log failures via `logging_setup.rate_limited_warning` (one per 5 min per key, suppressed-repeat count) — a Neo4j outage doesn't spam the log every 2-3s.
 - Streaming responses for `/api/ask/stream` and `/api/ask/stream/thinking` endpoints
 - Frontend uses `"use client"` directive for interactive components; API calls go through `lib/api.ts`
 - All API endpoints are in `main.py` (no separate router modules)

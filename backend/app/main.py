@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -129,6 +129,7 @@ from app.logging_setup import (
     configure as _configure_logging,
     get_request_id,
     new_request_id,
+    rate_limited_warning,
     set_request_id,
 )
 from app import metrics
@@ -331,7 +332,9 @@ async def lifespan(app: FastAPI):
                 _schema_initialized = True
                 logger.info("Neo4j schema initialized (background retry)")
             except Exception as e:
-                logger.warning(f"Neo4j schema init still failing: {e}")
+                rate_limited_warning(
+                    logger, "schema-init", f"Neo4j schema init still failing: {e}"
+                )
 
     schema_retry_task = None
     if not _schema_initialized:
@@ -1017,6 +1020,14 @@ _TASK_PERSIST_INTERVAL_S = 3.0
 _TASK_CLEANUP_INTERVAL_S = 3600.0
 _TASK_RESULT_JSON_MAX = 200_000  # cap persisted result size (Neo4j property)
 
+# Last time each task was created/progressed (monotonic). Every live task
+# heartbeats through update_task_progress — even 10h+ graph rebuilds report
+# per-document progress — so a PENDING/RUNNING task silent for this long has
+# lost its coroutine (cancelled, killed by a BaseException outside its
+# try-block) and will never complete on its own.
+_task_last_touch: Dict[str, float] = {}
+_TASK_STALE_REAP_S = 2 * 3600.0
+
 
 def _serialize_task(task: TaskProgress) -> dict:
     """Flatten a TaskProgress for storage as a Neo4j node (no nested maps)."""
@@ -1091,11 +1102,45 @@ async def _flush_dirty_tasks() -> None:
         await asyncio.to_thread(neo4j.upsert_task_records, records)
     except Exception as e:
         _task_dirty.update(dirty_ids)  # retry next tick
-        logger.warning(f"Task persistence flush failed ({len(records)} task(s)): {e}")
+        rate_limited_warning(
+            logger, "task-persist-flush",
+            f"Task persistence flush failed ({len(records)} task(s)): {e}",
+        )
+
+
+async def _hourly_maintenance() -> None:
+    """Hourly housekeeping run from the persist loop."""
+    removed = cleanup_old_tasks(max_age_hours=24)
+    pruned = await asyncio.to_thread(get_neo4j_service().prune_task_records, 7)
+    if removed or pruned:
+        logger.info(
+            f"Task cleanup: {removed} in-memory, {pruned} persisted record(s) removed"
+        )
+    # Documents stranded in 'processing' with no live task (e.g. the failure
+    # status write itself lost Neo4j past its retries) — reset to pending.
+    try:
+        from app.services.document_processor import get_active_processing_ids
+        stranded = await asyncio.to_thread(
+            get_neo4j_service().reset_stranded_processing_documents,
+            get_active_processing_ids(),
+        )
+        if stranded:
+            logger.warning(
+                f"Stranded-document sweep reset {len(stranded)} document(s) "
+                f"to pending: {stranded[:5]}"
+            )
+    except Exception as e:
+        logger.warning(f"Stranded-document sweep failed: {e}")
+    # Abandoned chunked import-upload sessions (otherwise only swept when the
+    # next import upload starts, which may be never).
+    try:
+        await asyncio.to_thread(_purge_stale_import_uploads)
+    except Exception as e:
+        logger.warning(f"Import upload sweep failed: {e}")
 
 
 async def _task_persist_loop():
-    """Flush dirty task snapshots every few seconds; prune old records hourly."""
+    """Flush dirty task snapshots every few seconds; run maintenance hourly."""
     last_cleanup = time.monotonic()
     while True:
         try:
@@ -1103,19 +1148,13 @@ async def _task_persist_loop():
             await _flush_dirty_tasks()
             if time.monotonic() - last_cleanup >= _TASK_CLEANUP_INTERVAL_S:
                 last_cleanup = time.monotonic()
-                removed = cleanup_old_tasks(max_age_hours=24)
-                pruned = await asyncio.to_thread(
-                    get_neo4j_service().prune_task_records, 7
-                )
-                if removed or pruned:
-                    logger.info(
-                        f"Task cleanup: {removed} in-memory, {pruned} persisted "
-                        "record(s) removed"
-                    )
+                await _hourly_maintenance()
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.warning(f"Task persist loop tick failed: {e}")
+            rate_limited_warning(
+                logger, "task-persist-loop", f"Task persist loop tick failed: {e}"
+            )
 
 
 # =============================================================================
@@ -1164,6 +1203,7 @@ def create_task(task_type: str) -> TaskProgress:
     )
     _task_store[task_id] = task
     _task_dirty.add(task_id)
+    _task_last_touch[task_id] = time.monotonic()
     return task
 
 
@@ -1188,6 +1228,7 @@ def update_task_progress(
         task.message = message
         task.status = status
         _task_dirty.add(task_id)
+        _task_last_touch[task_id] = time.monotonic()
 
 
 def complete_task(task_id: str, result: dict) -> None:
@@ -1214,8 +1255,30 @@ def fail_task(task_id: str, error: str) -> None:
 
 
 def cleanup_old_tasks(max_age_hours: int = 24) -> int:
-    """Remove completed/failed tasks older than max_age_hours."""
+    """Remove completed/failed tasks older than max_age_hours; reap dead ones.
+
+    A PENDING/RUNNING task whose coroutine died without reaching
+    complete_task/fail_task has no completed_at, so the age-out alone would
+    keep it in the store forever — permanently reporting the instance as
+    unsafe to redeploy. Any such task silent past _TASK_STALE_REAP_S is marked
+    failed here (see _task_last_touch) and then ages out normally.
+    """
     now = datetime.utcnow()
+    mono = time.monotonic()
+    for task_id, task in list(_task_store.items()):
+        if task.status in (TaskStatus.PENDING, TaskStatus.RUNNING) and not task.completed_at:
+            touched = _task_last_touch.get(task_id)
+            if touched is not None:
+                stale = mono - touched >= _TASK_STALE_REAP_S
+            else:  # no touch record (shouldn't happen) — fall back to start time
+                started = task.started_at or now
+                stale = (now - started).total_seconds() >= _TASK_STALE_REAP_S
+            if stale:
+                logger.warning(
+                    f"Reaping dead task {task_id} ({task.task_type}): no progress "
+                    f"heartbeat for {int(_TASK_STALE_REAP_S / 3600)}h"
+                )
+                fail_task(task_id, "task stalled with no progress heartbeat — reaped as dead")
     to_remove = []
     for task_id, task in _task_store.items():
         if task.completed_at:
@@ -1224,6 +1287,7 @@ def cleanup_old_tasks(max_age_hours: int = 24) -> int:
                 to_remove.append(task_id)
     for task_id in to_remove:
         del _task_store[task_id]
+        _task_last_touch.pop(task_id, None)
     return len(to_remove)
 
 
@@ -1418,6 +1482,7 @@ async def cancel_task(task_id: str, auth: AuthResult = Depends(require_manage_pe
 
     del _task_store[task_id]
     _task_dirty.discard(task_id)
+    _task_last_touch.pop(task_id, None)
     try:
         await asyncio.to_thread(get_neo4j_service().delete_task_record, task_id)
     except Exception as e:
@@ -1436,13 +1501,23 @@ async def cleanup_tasks(
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
+async def health_check(response: Response):
+    """Health check endpoint.
+
+    Degraded (Neo4j unreachable or schema not yet confirmed) returns HTTP 503,
+    not 200-with-a-degraded-body: the compose healthchecks (`curl -f`),
+    `depends_on: service_healthy` gates, and Traefik's health-aware routing
+    all key off the status code, so an instance with dead vector search or
+    broken dedup must not report itself healthy at the transport level.
+    """
     neo4j = get_neo4j_service()
     connected = await asyncio.to_thread(neo4j.verify_connectivity)
+    healthy = bool(connected) and _schema_initialized
+    if not healthy:
+        response.status_code = 503
 
     return HealthResponse(
-        status="healthy" if (connected and _schema_initialized) else "degraded",
+        status="healthy" if healthy else "degraded",
         neo4j_connected=connected,
         schema_initialized=_schema_initialized,
         version="1.0.0"
@@ -5530,7 +5605,9 @@ async def _git_sync_scheduler():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.warning(f"git sync scheduler tick failed: {e}")
+            rate_limited_warning(
+                logger, "git-scheduler", f"git sync scheduler tick failed: {e}"
+            )
 
 
 @app.post("/api/integrations/git/connections/{connection_id}/sync", response_model=GitSyncTriggerResponse)

@@ -42,12 +42,18 @@ services:
       # 300s clears every legit workload (batched deletes/imports commit in
       # bounded inner transactions); analytic explores on huge graphs can raise it.
       - NEO4J_db_transaction_timeout=${CORTEX_NEO4J_TX_TIMEOUT:-300s}
+      # Required by the backup sidecar: APOC writes the nightly logical export
+      # server-side (byte-exact, no client round-trip) into the import dir,
+      # which is bound to the shared backups volume below.
+      - NEO4J_apoc_export_file_enabled=true
     # Hard ceiling so one tenant's graph blowing up self-OOMs in its cgroup
     # instead of letting the kernel OOM-killer pick another stack's container.
     mem_limit: ${CORTEX_NEO4J_MEM_LIMIT:-4g}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+      # Shared with the backup sidecar: APOC exports land here (see above).
+      - backups:/var/lib/neo4j/import
     healthcheck:
       test:
         [
@@ -173,7 +179,9 @@ services:
       - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
       - GRAPH_EXTRACTION_MAX_CONTEXT=${GRAPH_EXTRACTION_MAX_CONTEXT:-0}
       - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-0}
-      - RELATIONSHIP_ANALYSIS_BATCH_SIZE=${RELATIONSHIP_ANALYSIS_BATCH_SIZE:-100}
+      # (RELATIONSHIP_ANALYSIS_BATCH_SIZE was removed here: the knob no longer
+      # exists in config.py — the targeted-discovery Step 2 replaced the legacy
+      # batch scan — so the var was silently ignored.)
       - CONCURRENT_EXTRACTIONS=${CONCURRENT_EXTRACTIONS:-3}
       - CONCURRENT_RELATIONS=${CONCURRENT_RELATIONS:-3}
       - BATCH_PROCESSING_CONCURRENCY=${BATCH_PROCESSING_CONCURRENCY:-2}
@@ -208,6 +216,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      # /health returns 503 while degraded (Neo4j down / schema unconfirmed);
+      # give startup schema-init time before the gate counts failures.
+      start_period: 60s
     networks:
       - default
       - dokploy-network
@@ -304,15 +315,19 @@ services:
     #   - "traefik.docker.network=dokploy-network"
 
   backup:
-    # Nightly online backup of the tenant's data: APOC logical export of the
-    # graph + tar of uploads/custom_inputs/chat volumes, BACKUP_RETENTION_DAYS
-    # rotation. Without this, a bad redeploy or volume cleanup is total,
-    # unrecoverable tenant data loss — the control plane only backs up its own
-    # Postgres, never tenant volumes. Backups land in the `backups` named
-    # volume (persisted by Dokploy across redeploys); ship them off-host with
-    # restic/rclone at the fleet level for disaster recovery.
+    # Nightly online backup of the tenant's data: server-side APOC logical
+    # export of the graph (verified: row counts + checksums + .complete marker;
+    # retention only rotates after a verified success) + tar of
+    # uploads/custom_inputs/chat volumes. Without this, a bad redeploy or
+    # volume cleanup is total, unrecoverable tenant data loss — the control
+    # plane only backs up its own Postgres, never tenant volumes. Backups land
+    # in the `backups` named volume (persisted by Dokploy across redeploys);
+    # ship them off-host with restic/rclone at the fleet level for disaster
+    # recovery. The healthcheck goes unhealthy when the newest verified backup
+    # is older than 2x the interval — a silently failing backup is visible.
     # Manual run:  docker compose exec backup /backup.sh
-    # Restore:     see ops/backup/backup.sh header.
+    # Restore:     docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <ts>
+    #              (full runbook: ops/backup/restore.sh header)
     build:
       context: ../ops/backup
       args:
@@ -326,11 +341,24 @@ services:
       - NEO4J_PASSWORD=${NEO4J_PASSWORD}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_INITIAL_DELAY_SECONDS=${BACKUP_INITIAL_DELAY_SECONDS:-120}
     volumes:
       - backups:/backups
       - uploads_data:/data/uploads:ro
       - custom_inputs_data:/data/custom_inputs:ro
       - chat_data:/data/chat:ro
+    healthcheck:
+      # Healthy = a verified backup completed within the last 2 intervals.
+      # start_period covers the initial delay + a large first export.
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /backups/LAST_SUCCESS && [ $$(( $$(date +%s) - $$(cat /backups/LAST_SUCCESS) )) -lt $$(( $${BACKUP_INTERVAL_SECONDS:-86400} * 2 )) ]",
+        ]
+      interval: 15m
+      timeout: 10s
+      retries: 2
+      start_period: 2h
     depends_on:
       neo4j:
         condition: service_healthy

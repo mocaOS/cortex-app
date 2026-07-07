@@ -188,3 +188,75 @@ def test_git_subprocess_timeout(monkeypatch):
     with pytest.raises(GitSyncError, match="timed out"):
         asyncio.run(GitConnectorService._communicate(proc, "fetch"))
     assert proc.killed is True
+
+
+def _backoff_fake(monkeypatch, conn):
+    """Fake neo4j capturing the sync-state write; sync body always raises."""
+    from app.services.git_connector_service import GitSyncError
+
+    class FakeNeo4j:
+        def __init__(self):
+            self.state = None
+
+        def get_git_connection(self, cid):
+            return conn
+
+        def set_git_connection_sync_state(self, cid, **state):
+            self.state = state
+
+    fake = FakeNeo4j()
+    monkeypatch.setattr(GitConnectorService, "neo4j", property(lambda self: fake))
+    svc = GitConnectorService()
+
+    async def boom(*a, **k):
+        raise GitSyncError("clone failed")
+
+    monkeypatch.setattr(svc, "_sync_connection_inner", boom)
+    return svc, fake, GitSyncError
+
+
+def test_sync_failure_records_exponential_backoff(monkeypatch):
+    """A failing sync must set sync_status=error and push next_sync_due out
+    exponentially — otherwise the scheduler re-clones it every poll tick."""
+    from datetime import datetime, timedelta, timezone
+
+    conn = {"id": "c1", "sync_interval_minutes": 5, "consecutive_sync_failures": 2}
+    svc, fake, GitSyncError = _backoff_fake(monkeypatch, conn)
+
+    with pytest.raises(GitSyncError):
+        asyncio.run(svc.sync_connection("c1"))
+
+    assert fake.state["sync_status"] == "error"
+    assert fake.state["consecutive_sync_failures"] == 3
+    # third consecutive failure -> 5 * 2^2 = 20 minutes out
+    due = datetime.fromisoformat(fake.state["next_sync_due"])
+    delta = due - datetime.now(timezone.utc)
+    assert timedelta(minutes=18) < delta <= timedelta(minutes=20, seconds=5)
+
+
+def test_sync_failure_backoff_caps_at_24h(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    conn = {"id": "c1", "sync_interval_minutes": 5, "consecutive_sync_failures": 50}
+    svc, fake, GitSyncError = _backoff_fake(monkeypatch, conn)
+
+    with pytest.raises(GitSyncError):
+        asyncio.run(svc.sync_connection("c1"))
+
+    due = datetime.fromisoformat(fake.state["next_sync_due"])
+    delta = due - datetime.now(timezone.utc)
+    assert delta <= timedelta(hours=24, seconds=5)
+
+
+def test_sync_failure_manual_connection_gets_no_due_date(monkeypatch):
+    """interval=0 (manual-only) connections are never scheduler-driven, so a
+    failure records the error without inventing a next_sync_due."""
+    conn = {"id": "c1", "sync_interval_minutes": 0}
+    svc, fake, GitSyncError = _backoff_fake(monkeypatch, conn)
+
+    with pytest.raises(GitSyncError):
+        asyncio.run(svc.sync_connection("c1"))
+
+    assert fake.state["sync_status"] == "error"
+    assert fake.state["consecutive_sync_failures"] == 1
+    assert "next_sync_due" not in fake.state

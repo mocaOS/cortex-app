@@ -46,6 +46,10 @@ PAT is encrypted at rest (`enc:`-prefixed Fernet ciphertext via `crypto_service.
 6. **Staleness bump**: if anything changed, reset `last_relationship_analysis_at` / `last_community_detection_at` to the epoch sentinel `"2000-01-01T00:00:00+00:00"` so the UI flags re-extraction. (Sync ingests + embeds only; the user triggers Steps 2/3 manually.)
 7. **SHA advance**: `last_synced_sha = HEAD` only on zero hard failures (else keep old SHA so the next run re-diffs and retries — A→M idempotency makes this safe).
 
+**Event-loop hygiene**: the engine's per-file Neo4j calls and disk writes all go through `_db()` (= `asyncio.to_thread`) — inline they'd stall every concurrent request (incl. `/health`) for the duration of a multi-hundred-file ingest. Keep new sync-path DB/disk work behind `_db()`.
+
+**Failure backoff**: an exception anywhere in `_sync_connection` runs `_record_sync_failure` — `sync_status: "error"`, `consecutive_sync_failures += 1`, and (for scheduled connections) `next_sync_due` pushed out exponentially (`interval * 2^(n-1)`, capped at 24h or the interval if larger). Without it a revoked-PAT/oversized-repo connection is re-cloned every scheduler tick forever. A successful sync resets the counter to 0.
+
 **Wiki**: GitHub → clone `repo.wiki.git`, paths prefixed `wiki/`. GitLab/Gitea → Wikis API. Both paths use a content hash (`_wiki_sha`) as the pseudo blob sha; `_ingest_raw` skips unchanged pages, and pages removed from the wiki are flagged orphaned (the main fulltree sweep deliberately leaves `wiki/` paths to this sweep).
 
 ### Global stale-relationship fix
@@ -62,7 +66,7 @@ Read-only enforcement is server-side: write actions on a `read` connection retur
 
 ## Scheduled polling
 
-A lifespan asyncio loop (`_git_sync_scheduler` in `main.py`, every `GIT_SYNC_POLL_INTERVAL` min, guarded by the flag) triggers `sync_connection` for connections whose `sync_interval_minutes > 0` and `next_sync_due <= now`, skipping any with an in-flight sync. No webhooks.
+A lifespan asyncio loop (`_git_sync_scheduler` in `main.py`, every `GIT_SYNC_POLL_INTERVAL` min, guarded by the flag) triggers `sync_connection` for connections whose `sync_interval_minutes > 0` and `next_sync_due <= now`, skipping any with an in-flight sync. Failing connections back off exponentially (see above). A sync task whose coroutine dies silently is reaped by the task store after 2h without a heartbeat, so it can't block the connection's future syncs. No webhooks.
 
 ## API endpoints (`/api/integrations/git/*`, admin-gated)
 

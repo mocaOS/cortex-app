@@ -4,9 +4,12 @@ ARG NEO4J_IMAGE=neo4j:5.26-community
 FROM ${NEO4J_IMAGE}
 
 USER root
-COPY backup.sh /backup.sh
-RUN chmod +x /backup.sh
+COPY backup.sh restore.sh /
+RUN chmod +x /backup.sh /restore.sh
 
-# BACKUP_INTERVAL_SECONDS defaults to nightly. The first run happens one
-# interval after start (so a crash-looping sidecar can't hammer the DB).
-ENTRYPOINT ["/bin/sh", "-c", "while true; do sleep ${BACKUP_INTERVAL_SECONDS:-86400}; /backup.sh || echo '[backup] FAILED (will retry next interval)'; done"]
+# First backup runs BACKUP_INITIAL_DELAY_SECONDS after start (default 120s —
+# long enough for neo4j to come up, short enough that a fresh stack isn't
+# unprotected for a whole interval), then every BACKUP_INTERVAL_SECONDS.
+# Failures echo and retry next interval; the compose healthcheck watches
+# /backups/LAST_SUCCESS freshness so a silently failing backup goes unhealthy.
+ENTRYPOINT ["/bin/bash", "-c", "sleep ${BACKUP_INITIAL_DELAY_SECONDS:-120}; while true; do /backup.sh || echo '[backup] FAILED (will retry next interval)'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"]
