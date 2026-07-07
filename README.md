@@ -32,6 +32,16 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 > **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
 
+## 🌐 The Cortex Ecosystem
+
+This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on its REST API:
+
+| Repository | What it is |
+|------------|-----------|
+| [**cortex-chat**](https://github.com/mocaOS/cortex-chat) | Lean, multi-tenant chat frontend for end users. Email/password auth, user & group management with group-scoped collection access, streaming Ask AI + Deep Research, inline citations, document upload, and runtime branding — all on top of any Cortex instance via scoped API keys. |
+| [**cortex-skills**](https://github.com/mocaOS/cortex-skills) | The knowledge layer between AI agents and Cortex. Curated `SKILL.md` files (served at [cortexskills.org](https://cortexskills.org)) that agents fetch via HTTP to get ground-truth knowledge about the Cortex API — so they build correct integrations on the first try instead of hallucinating endpoints. |
+| [**cortex-explorer**](https://github.com/mocaOS/cortex-explorer) | Standalone, iframe-ready knowledge graph visualizer. 2D/3D force-directed graph with entity search, click-to-expand neighborhood traversal, spaceship-style 3D flight, and an accent-derived palette — a single static bundle pointed at any Cortex backend with a read-only key. |
+
 ## ✨ Features
 
 ### Core Features

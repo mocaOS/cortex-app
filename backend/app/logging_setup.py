@@ -75,7 +75,9 @@ def rate_limited_warning(
     counted and reported with the next emitted warning.
     """
     now = time.monotonic()
-    last, suppressed = _warn_state.get(key, (0.0, 0))
+    # -inf sentinel: monotonic time is host uptime, which can be < min_interval_s
+    # shortly after boot — a 0.0 default would swallow a key's first warning there.
+    last, suppressed = _warn_state.get(key, (float("-inf"), 0))
     if now - last >= min_interval_s:
         if suppressed:
             message = f"{message} [{suppressed} similar warning(s) suppressed]"

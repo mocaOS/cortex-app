@@ -671,7 +671,7 @@ export default function AdminPage() {
                     {/* Primary Model */}
                     <div className="mb-4">
                       <h4 className="text-sm font-medium text-foreground mb-0.5">Primary Model</h4>
-                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Gemma4 26B A4B recommended — a blazing-fast MoE that's an ideal fit for data retrieval and deep research.</p>
+                      <p className="text-muted-foreground text-xs mb-2">Handles agentic inference, Q&A, deep research, and chat. Gemma4 26B A4B recommended — a blazing-fast MoE that&apos;s an ideal fit for data retrieval and deep research.</p>
                       <ConfigItem label="Model" value={config.openai_model} format="model" tooltip="The main LLM used for agentic inference, Q&A, research, and chat (OPENAI_MODEL)" />
                       <ConfigItem label="API Base" value={config.openai_api_base} format="apiBase" tooltip="OpenAI-compatible API endpoint for the primary model (OPENAI_API_BASE)" />
                       <ConfigItem label="Context Window" value={config.openai_max_context.toLocaleString()} tooltip="Input context budget for the primary model. Floor of the context-budget fallback chain — sub-tier *_MAX_CONTEXT knobs inherit from this when set to 0 (OPENAI_MAX_CONTEXT)" />
