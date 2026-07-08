@@ -22,7 +22,7 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
 | [`.claude/domain/git-integration.md`](.claude/domain/git-integration.md) | Git connector (GitHub/GitLab/Gitea): provider abstraction, incremental sync engine, document provenance, `git_repo` write tool, scheduled polling |
 | [`.claude/domain/web-crawl.md`](.claude/domain/web-crawl.md) | MDHarvest powered by Crawl4ai — web→markdown harvesting via a (self-hosted or shared) crawl4ai service, crawl client, Web Import endpoints/UI, multi-tenant privacy model |
-| [`.claude/domain/observability.md`](.claude/domain/observability.md) | Langfuse LLM tracing & cost — env-driven activation, OpenAI client factory, agentic-trace grouping (`observed_trace`/`traced_sse`), manual records for Haystack embeddings + raw-httpx vision, streaming usage capture |
+| [`.claude/domain/observability.md`](.claude/domain/observability.md) | Langfuse LLM tracing & cost — env-driven activation, OpenAI client factory, agentic-trace grouping (`observed_trace`/`traced_sse`), manual records for Haystack embeddings + raw-httpx vision, streaming usage capture. GlitchTip error tracking (`SENTRY_*`): backend `error_tracking.py`, frontend `@sentry/nextjs` + source-map upload |
 | [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
 | [`.claude/qa.md`](.claude/qa.md) | QA & testing — backend pytest suite (`.qa-venv`, conftest fixtures, coverage map), live E2E harness (`test_live_e2e*.py`), canonical QA spreadsheet (`qa/`), defect log |
 
@@ -36,7 +36,8 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/config.py`, `.env*` | `environment.md` |
 | `backend/app/models.py` | `architecture.md` |
 | `backend/app/services/document_processor.py`, `docling_worker.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
-| `backend/app/services/observability.py` | `domain/observability.md` |
+| `backend/app/services/observability.py`, `error_tracking.py` | `domain/observability.md` |
+| `frontend/src/instrumentation*.ts`, `frontend/sentry.*.config.ts`, `frontend/next.config.mjs` | `domain/observability.md` (error tracking) |
 | `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |
 | `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md` |
 | `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md`, `domain/observability.md` (trace grouping) |

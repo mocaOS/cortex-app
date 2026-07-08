@@ -277,6 +277,27 @@ Optional LLM tracing/cost. All empty = disabled; the same image runs identically
 - `LANGFUSE_SAMPLE_RATE` (default: `1.0`) — 0.0–1.0 trace sampling; lower on high-traffic instances. Passed to the SDK at init (`observability.init_langfuse`).
 - `LANGFUSE_LOG_EXTENDED` (default: `false`) — content logging mode. When `false` (default) a client-side `mask` hook redacts **all** user/model authored text (prompts, completions, tool-call arg values, tool descriptions, embedding inputs, vision text, extraction text) before export → only structure reaches the server (roles, model + params, tool names + arg/param keys, allow-listed metadata, tokens, cost, latency, tags). Set `true` to log full content for local debugging. See [`.claude/domain/observability.md`](domain/observability.md#content-masking) for the redaction policy.
 
+## Error Tracking (GlitchTip)
+
+Optional crash/error reporting via the Sentry protocol (`services/error_tracking.py` backend, `@sentry/nextjs` frontend). Empty DSN = disabled; same image runs tracked or untracked. Backend and frontend report to **separate GlitchTip projects**. See [`.claude/domain/observability.md`](domain/observability.md#error-tracking-glitchtip).
+
+Backend (also inherited by the docling worker subprocess):
+
+- `SENTRY_DSN` (default: empty) — backend project DSN. When set, `init_sentry()` runs before app construction: unhandled endpoint exceptions and any `logger.error/exception` (API, background pipeline, worker) become events, tagged `service` + `request_id` (correlates with `X-Request-ID` in logs/responses). Python events carry source-context lines read from the container's files — no upload step needed.
+- `SENTRY_ENVIRONMENT` (default: empty) — issue segmentation; empty falls back to `ENVIRONMENT`.
+- `SENTRY_RELEASE` (default: empty) — optional deploy tag (e.g. git SHA); auto-detected from git in local dev.
+- `SENTRY_TRACES_SAMPLE_RATE` (default: `0`) — `0` = errors only (tracing fully off); `>0` samples performance transactions (GlitchTip supports them).
+- `SENTRY_MAX_REQUEST_BODY_SIZE` (default: `never`) — request bodies carry authored content (ask questions, document text); privacy deny-by-default mirrors `LANGFUSE_LOG_EXTENDED`. Raise to `small`/`medium` only to debug.
+- `SENTRY_SEND_DEFAULT_PII` (default: `false`) — IPs/cookies/user context off unless opted in.
+
+Frontend (compose files map `SENTRY_DSN_FRONTEND` onto these so the container never inherits the backend DSN via `env_file`):
+
+- `NEXT_PUBLIC_SENTRY_DSN` (build-time, inlined into the client bundle) + `SENTRY_DSN` (runtime, Node server side) — frontend project DSN.
+- `NEXT_PUBLIC_SENTRY_ENVIRONMENT` / `SENTRY_ENVIRONMENT` — segmentation, as above.
+- `SENTRY_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` (build-time only) — enable the source-map upload during `next build` (debug-ID artifact bundles; GlitchTip ≥ 4.2) so production stack traces show original TypeScript. Token needs `project:releases` scope; it stays in the Docker builder stage. Without them the build is unchanged and stack traces stay minified.
+
+**Shipped defaults:** the committed compose files (dev/prod/Dokploy/Coolify) default `SENTRY_DSN_BACKEND`, `SENTRY_DSN_FRONTEND`, `SENTRY_URL`, `SENTRY_ORG`, and `SENTRY_PROJECT` to this project's own GlitchTip instance via the no-colon `${VAR-default}` form, so tracking is on out of the box — **unset → default, empty string → disabled** (a stack/tenant opts out by setting the var to `""`). Only `SENTRY_AUTH_TOKEN` is not defaulted (it's a secret): set it where the frontend image is built to enable source-map upload.
+
 ## Document Processing
 
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHUNK_BY` (word/sentence) — document processing

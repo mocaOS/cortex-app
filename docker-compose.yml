@@ -94,6 +94,12 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Error tracking (GlitchTip) — override what env_file would inherit:
+      # SENTRY_DSN in .env is the BACKEND project's DSN; the frontend reports to
+      # its own project. Defaults to this project's frontend GlitchTip; empty
+      # string disables (no-colon `-` form: unset → default, empty → off).
+      - SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+      - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
     ports:
       - "3000:3000"
     volumes:

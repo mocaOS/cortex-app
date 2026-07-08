@@ -329,6 +329,30 @@ Optional LLM tracing and cost tracking via a self-hosted [Langfuse](https://lang
 
 > **Accurate cost:** Langfuse prices a call by matching the model name against price definitions in your project. Venice/OpenRouter models aren't in Langfuse's built-in catalog, so add them under the project's **Models** settings to get USD cost (token counts are tracked regardless).
 
+## Error Tracking (GlitchTip)
+
+Optional crash and error reporting via a self-hosted [GlitchTip](https://glitchtip.com) instance (Sentry-protocol compatible, hence the `SENTRY_*` names). Backend and frontend report to **separate GlitchTip projects**: create one project per app in GlitchTip and use each project's DSN. Leave the DSNs blank to run without error tracking; Cortex behaves identically either way.
+
+Backend variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SENTRY_DSN` | — | DSN of the backend's GlitchTip project. When set, unhandled API exceptions and ERROR-level logs (including background ingestion and the document-conversion worker) are reported with source-context lines and a `request_id` tag that matches the `X-Request-ID` in logs and responses. |
+| `SENTRY_ENVIRONMENT` | — | Environment label on issues (e.g. `production`, a tenant slug). Empty falls back to `ENVIRONMENT`. |
+| `SENTRY_RELEASE` | — | Optional deploy tag (e.g. git SHA). |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0` | `0` = errors only. Set `0.0`–`1.0` to sample performance transactions (GlitchTip supports them). |
+| `SENTRY_MAX_REQUEST_BODY_SIZE` | `never` | Whether request bodies are attached to events (`never`/`small`/`medium`/`always`). Bodies can contain question text and document content — raise only while debugging. |
+| `SENTRY_SEND_DEFAULT_PII` | `false` | Attach IPs/cookies/user context to events. |
+
+Frontend variables (the compose files map a single `SENTRY_DSN_FRONTEND` value onto both):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_SENTRY_DSN` | — | Frontend project DSN, inlined into the browser bundle at **build time**. |
+| `SENTRY_DSN` (frontend container) | — | Same DSN, read at runtime by the Next.js server side (Server Components / proxy errors). |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` / `SENTRY_ENVIRONMENT` | — | Environment label, as backend. |
+| `SENTRY_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` | — | **Build-time only.** When all set, `next build` uploads source maps to GlitchTip (debug-ID artifact bundles, GlitchTip ≥ 4.2) so production stack traces show your original TypeScript instead of minified chunks; the `.map` files are deleted after upload and never served. The token needs the `project:releases` scope. Unset = build unchanged. |
+
 ## Security Configuration
 
 | Variable | Default | Description |

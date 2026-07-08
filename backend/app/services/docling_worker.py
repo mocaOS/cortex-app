@@ -335,6 +335,17 @@ def convert(file_path: str, use_vision: bool):
 
 
 def main():
+    # Error tracking (no-op unless SENTRY_DSN is set in the shared container
+    # env). Conversion failures are caught below and logged at ERROR, which the
+    # SDK's logging integration turns into a GlitchTip event; the atexit hook
+    # flushes pending events before this short-lived process exits.
+    try:
+        from app.services.error_tracking import init_sentry
+
+        init_sentry(service="docling-worker")
+    except Exception as exc:  # noqa: BLE001 — tracking must never block conversion
+        logger.debug(f"Error tracking init skipped: {exc}")
+
     line = sys.stdin.readline()
     if not line:
         sys.exit(1)

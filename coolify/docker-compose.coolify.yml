@@ -80,6 +80,15 @@ services:
       # Optional trace-environment label (e.g. set per self-host instance).
       # Empty → backend falls back to the deployment ENVIRONMENT at init.
       - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
+      # --- Error tracking (GlitchTip) ---
+      # Defaults to this project's GlitchTip (backend project) so tracking works
+      # with zero Coolify config; override SENTRY_DSN_BACKEND to point elsewhere,
+      # or set it empty to disable (no-colon `-` form: unset → default,
+      # empty → off). Backend and frontend report to different GlitchTip
+      # projects, hence the _BACKEND/_FRONTEND-suffixed vars mapped onto the
+      # standard SENTRY_DSN name each container reads.
+      - SENTRY_DSN=${SENTRY_DSN_BACKEND-https://93e9456b69bd475e89dc8c1b5756ed23@glitchtip.cortex.eco/2}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
@@ -138,6 +147,18 @@ services:
         - NEXT_PUBLIC_API_URL=${BACKEND_URL}
         - NEXT_PUBLIC_LOGO_URL=${NEXT_PUBLIC_LOGO_URL:-}
         - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
+        # Error tracking (GlitchTip) — DSN + upload config default to this
+        # project's GlitchTip (override the SENTRY_* vars; empty string disables
+        # — no-colon `-` form). SENTRY_AUTH_TOKEN is a real secret and is NOT
+        # defaulted — set it in the Coolify env to upload source maps (readable
+        # prod stack traces); without it the build still succeeds, traces stay
+        # minified. The token stays in the builder stage, never the runtime image.
+        - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+        - NEXT_PUBLIC_SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+        - SENTRY_URL=${SENTRY_URL-https://glitchtip.cortex.eco}
+        - SENTRY_ORG=${SENTRY_ORG-cortex}
+        - SENTRY_PROJECT=${SENTRY_PROJECT-cortex-frontend}
+        - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
     environment:
       # Expose frontend at kg subdomain on port 3000 (set FRONTEND_URL in Coolify)
       - SERVICE_FQDN_FRONTEND_3000=${FRONTEND_URL}
@@ -157,6 +178,11 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Error tracking (GlitchTip) — server-side runtime DSN (client DSN is
+      # inlined at build via the build arg above). Defaults to this project's
+      # frontend GlitchTip; empty string disables (no-colon `-` form).
+      - SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
     depends_on:
       - backend
     restart: unless-stopped

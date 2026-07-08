@@ -32,6 +32,31 @@ ENV NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR}
 ARG API_URL=http://backend:8000
 ENV API_URL=${API_URL}
 
+# Error tracking (GlitchTip/Sentry) — all optional; empty args build exactly as
+# before. NEXT_PUBLIC_SENTRY_DSN is inlined into the client bundle; the
+# SENTRY_* quartet drives build-time source-map upload (readable stack traces)
+# and only lives in this builder stage, never in the runtime image.
+ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
+ENV NEXT_PUBLIC_SENTRY_ENVIRONMENT=${NEXT_PUBLIC_SENTRY_ENVIRONMENT}
+
+ARG SENTRY_URL
+ENV SENTRY_URL=${SENTRY_URL}
+
+ARG SENTRY_ORG
+ENV SENTRY_ORG=${SENTRY_ORG}
+
+ARG SENTRY_PROJECT
+ENV SENTRY_PROJECT=${SENTRY_PROJECT}
+
+ARG SENTRY_AUTH_TOKEN
+ENV SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN}
+
+ARG SENTRY_RELEASE
+ENV SENTRY_RELEASE=${SENTRY_RELEASE}
+
 RUN npm run build
 
 # Production image

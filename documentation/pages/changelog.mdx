@@ -7,6 +7,49 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 8, 2026 (Error tracking with GlitchTip)
+
+Full-stack crash and error reporting via a self-hosted
+[GlitchTip](https://glitchtip.com) instance (Sentry-protocol compatible).
+Backend and frontend report to separate GlitchTip projects with readable
+stack traces on both sides — Python events carry source-context lines out of
+the box, and production frontend builds upload source maps so browser errors
+show original TypeScript instead of minified chunks. Entirely opt-in and
+env-driven: without a DSN the images run exactly as before. No API or schema
+breakage.
+
+### Backend error tracking
+
+- **`SENTRY_DSN`** (default: empty) activates `sentry-sdk` at startup —
+  unhandled endpoint exceptions and ERROR-level logs from any code path
+  (API, background ingestion, the Docling conversion worker) become GlitchTip
+  events. The client-facing 5xx sanitization is unchanged; capture happens
+  before it.
+- **Log correlation** — every event is tagged with the same `request_id`
+  that appears in server logs and `X-Request-ID` response headers, plus a
+  `service` tag (`backend` / `docling-worker`).
+- **Privacy deny-by-default** — request bodies are never attached
+  (`SENTRY_MAX_REQUEST_BODY_SIZE=never`) and PII capture is off
+  (`SENTRY_SEND_DEFAULT_PII=false`), mirroring the Langfuse content-masking
+  posture. `SENTRY_TRACES_SAMPLE_RATE=0` keeps it errors-only by default.
+
+### Frontend error tracking
+
+- **`@sentry/nextjs`** wired for browser, Server Components, and proxy
+  errors (`instrumentation-client.ts`, `instrumentation.ts` +
+  `onRequestError`, `global-error.tsx`), enabled by
+  `NEXT_PUBLIC_SENTRY_DSN`/`SENTRY_DSN` (empty = disabled).
+- **Readable production stack traces** — when `SENTRY_URL`, `SENTRY_ORG`,
+  `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` are provided at image build time,
+  `next build` uploads source maps as debug-ID artifact bundles
+  (GlitchTip ≥ 4.2, verified against Turbopack builds) and deletes the `.map`
+  files afterward so they are never served publicly.
+- **Deploy wiring** — dev/prod/Dokploy/Coolify compose files map
+  `SENTRY_DSN_BACKEND`/`SENTRY_DSN_FRONTEND` onto each container so the two
+  apps report to their own projects; all values optional with empty defaults.
+
+---
+
 ## July 7, 2026 (Production hardening for launch)
 
 A resilience-focused release: every change is about keeping an instance

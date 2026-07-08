@@ -40,6 +40,12 @@ tiktoken>=0.6.0
 # needed). Pinned to the v3 line to match the self-hosted server major (:3).
 langfuse>=3.0.0,<4.0.0
 
+# Error tracking (GlitchTip) — optional, activated only when SENTRY_DSN is set
+# (see app/services/error_tracking.py). GlitchTip speaks the Sentry protocol,
+# so the stock SDK works against it. Pinned <3: the 3.x line is a breaking
+# OTel-based rewrite, unvalidated against GlitchTip.
+sentry-sdk[fastapi]>=2.20.0,<3.0.0
+
 # Utilities
 python-dotenv>=1.0.1
 aiofiles>=23.2.1

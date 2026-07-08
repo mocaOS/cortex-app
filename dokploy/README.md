@@ -119,6 +119,24 @@ standalone Dokploy deploy, set them yourself.
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo URL | No |
 | `NEXT_PUBLIC_ACCENT_COLOR` | Custom accent color (any CSS color value) | No |
 
+### Error Tracking — GlitchTip
+
+Crash/error reporting to a self-hosted [GlitchTip](https://glitchtip.com) instance (Sentry-protocol compatible, hence the `SENTRY_*` names). Backend and frontend report to **separate GlitchTip projects**.
+
+**The compose file ships with this project's GlitchTip instance as the default** for every value below except the auth token, so backend and frontend error tracking work with **zero env config** — you only set a variable to point at a *different* instance, to disable a stack, or to turn on frontend source-map upload.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `SENTRY_DSN_BACKEND` | Override the backend project DSN (mapped to the container's `SENTRY_DSN`). Unset → project default; empty string → disable backend tracking. | No |
+| `SENTRY_DSN_FRONTEND` | Override the frontend project DSN (client bundle + Next.js server side). Unset → project default; empty string → disable. | No |
+| `SENTRY_ENVIRONMENT` | Issue segmentation label; empty → falls back to `production`. Set per stack (e.g. a tenant slug) to separate issues in a shared project. | No |
+| `SENTRY_URL` | Override the GlitchTip base URL for source-map upload. | No |
+| `SENTRY_ORG` | Override the GlitchTip organization slug for source-map upload. | No |
+| `SENTRY_PROJECT` | Override the GlitchTip frontend project slug for source-map upload. | No |
+| `SENTRY_AUTH_TOKEN` | **The one value not defaulted** (it's a secret). Set a GlitchTip API token with `project:releases` scope to make each frontend build upload source maps, so production stack traces show original TypeScript. Build-time only; never in the runtime image. | No (recommended) |
+
+> Without `SENTRY_AUTH_TOKEN`, errors are still tracked on both apps — the backend already shows source context, and the frontend just reports minified frames. Set it once in the Environment tab to get readable frontend traces too.
+
 ### Chat
 
 The `chat` service runs [Cortex Chat](https://github.com/mocaOS/cortex-chat), built from its public repo as a remote build context. It reuses `ADMIN_API_KEY`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` (the chat superadmin signs in with the same credentials as Cortex), so only one extra variable is needed:

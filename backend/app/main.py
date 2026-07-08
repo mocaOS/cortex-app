@@ -141,6 +141,14 @@ _configure_logging(getattr(get_settings(), "log_format", "plain"))
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
+# Error tracking (GlitchTip/Sentry) — no-op unless SENTRY_DSN is set. Must run
+# BEFORE `app = FastAPI(...)` below so the SDK's Starlette/FastAPI integrations
+# hook the app while it is constructed; they capture unhandled exceptions ahead
+# of the sanitizing exception handlers at the bottom of this file.
+from app.services.error_tracking import init_sentry  # noqa: E402
+
+init_sentry(service="backend")
+
 
 _HEARTBEAT_DONE = object()
 

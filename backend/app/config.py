@@ -262,6 +262,24 @@ class Settings(BaseSettings):
     # debugging. See .claude/domain/observability.md (content masking).
     langfuse_log_extended: bool = Field(default=False)  # LANGFUSE_LOG_EXTENDED
 
+    # Error tracking (GlitchTip/Sentry) — optional. When SENTRY_DSN is set,
+    # sentry-sdk initializes at startup (see services/error_tracking.py):
+    # unhandled endpoint exceptions and ERROR-level logs from any code path
+    # (API, background pipeline, docling worker) become GlitchTip events with
+    # source context and a request_id tag. Leave empty to run the exact same
+    # image untracked. GlitchTip speaks the Sentry protocol, hence the SENTRY_*
+    # names.
+    sentry_dsn: str = Field(default="")  # SENTRY_DSN e.g. https://<key>@glitchtip.example.com/2
+    sentry_environment: str = Field(default="")  # SENTRY_ENVIRONMENT; empty → `environment`
+    sentry_release: str = Field(default="")  # SENTRY_RELEASE (e.g. git SHA stamped at deploy)
+    sentry_traces_sample_rate: float = Field(default=0.0)  # 0 = errors only; >0 samples perf transactions
+    # Privacy (deny-by-default, mirroring LANGFUSE_LOG_EXTENDED): request
+    # bodies carry authored content (ask questions, document text) and are
+    # never attached unless raised to small/medium/always; PII (IPs, cookies,
+    # user ids) requires the explicit opt-in.
+    sentry_max_request_body_size: str = Field(default="never")  # never|small|medium|always
+    sentry_send_default_pii: bool = Field(default=False)  # SENTRY_SEND_DEFAULT_PII
+
     # Reasoning Control for ingestion pipelines
     # Values: off | minimal | auto | low | medium | high
     # Defaults: extraction/relationship/vision OFF (reasoning hurts structured

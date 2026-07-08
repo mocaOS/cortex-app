@@ -117,6 +117,17 @@ services:
       # Without this declaration the value never reaches the container, so every
       # tenant's traces collapse into one environment.
       - LANGFUSE_TRACING_ENVIRONMENT=${LANGFUSE_TRACING_ENVIRONMENT:-}
+      # --- Error tracking (GlitchTip) ---
+      # Defaults to this project's GlitchTip (backend project) so tracking works
+      # with zero Dokploy config. Override SENTRY_DSN_BACKEND to point elsewhere,
+      # or set it to an empty string to disable (note the no-colon `-` form:
+      # unset → default, empty → off — lets a tenant opt out). Backend and
+      # frontend report to different GlitchTip projects, hence the _BACKEND/
+      # _FRONTEND-suffixed vars mapped onto the standard SENTRY_DSN name.
+      - SENTRY_DSN=${SENTRY_DSN_BACKEND-https://93e9456b69bd475e89dc8c1b5756ed23@glitchtip.cortex.eco/2}
+      # Empty → falls back to ENVIRONMENT (production). Set e.g. a tenant slug
+      # to segment issues per stack in a shared GlitchTip project.
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
       # --- Runtime paths (do not change) ---
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs
@@ -256,6 +267,22 @@ services:
         # service's networks comment: the bare name crosses tenant stacks on
         # the shared dokploy-network.
         - API_URL=http://cortex-backend-internal:8000
+        # --- Error tracking (GlitchTip) — DSN + upload config default to this
+        # project's GlitchTip (override the SENTRY_* vars to point elsewhere;
+        # empty string disables — no-colon `-` form). The DSN is inlined into
+        # the client bundle at build time. SENTRY_URL/ORG/PROJECT plus a
+        # SENTRY_AUTH_TOKEN enable the build-time source-map upload so prod stack
+        # traces show original TypeScript. The token is a real secret and is
+        # intentionally NOT defaulted — set SENTRY_AUTH_TOKEN in the Dokploy env
+        # to turn on uploads; without it the build still succeeds (frontend
+        # traces just stay minified). It stays in the builder stage, never the
+        # runtime image.
+        - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+        - NEXT_PUBLIC_SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+        - SENTRY_URL=${SENTRY_URL-https://glitchtip.cortex.eco}
+        - SENTRY_ORG=${SENTRY_ORG-cortex}
+        - SENTRY_PROJECT=${SENTRY_PROJECT-cortex-frontend}
+        - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
     environment:
       # Public API URL for client-side requests
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
@@ -272,6 +299,12 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Error tracking (GlitchTip) — server-side runtime DSN (the client DSN is
+      # inlined at build via the build arg above; this covers Server
+      # Components/proxy errors reported by the Node process). Defaults to this
+      # project's frontend GlitchTip; empty string disables (no-colon `-` form).
+      - SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
     expose:
       - "3000"
     depends_on:

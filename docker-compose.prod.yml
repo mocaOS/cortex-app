@@ -79,6 +79,17 @@ services:
       dockerfile: Dockerfile.prod
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        # Error tracking (GlitchTip) — DSN + upload config default to this
+        # project's GlitchTip (override the SENTRY_* vars; empty string disables
+        # — no-colon `-` form). SENTRY_AUTH_TOKEN is a real secret and is NOT
+        # defaulted — set it to upload source maps (readable prod stack traces);
+        # without it the build still succeeds, traces stay minified.
+        - NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
+        - NEXT_PUBLIC_SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+        - SENTRY_URL=${SENTRY_URL-https://glitchtip.cortex.eco}
+        - SENTRY_ORG=${SENTRY_ORG-cortex}
+        - SENTRY_PROJECT=${SENTRY_PROJECT-cortex-frontend}
+        - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
     container_name: cortex-frontend
     env_file:
       - .env
@@ -90,6 +101,11 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Error tracking (GlitchTip) — override what env_file would inherit:
+      # SENTRY_DSN in .env is the BACKEND project's DSN; the frontend server
+      # runtime reports to its own project. Defaults to this project's frontend
+      # GlitchTip; empty string disables (no-colon `-` form).
+      - SENTRY_DSN=${SENTRY_DSN_FRONTEND-https://cba599d7d91a4bc99c5024ec03eab733@glitchtip.cortex.eco/3}
     depends_on:
       - backend
     restart: unless-stopped

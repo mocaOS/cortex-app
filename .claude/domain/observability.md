@@ -1,4 +1,4 @@
-# Observability (Langfuse)
+# Observability (Langfuse + GlitchTip)
 
 LLM observability for the backend: every LLM / embedding / vision call is traced
 and costed in [Langfuse](https://langfuse.com/docs), and agentic Q&A flows are
@@ -6,6 +6,10 @@ grouped into one trace per request. **Fully env-driven** — when the credential
 are absent the same image runs identically with zero tracing overhead. Designed
 for multi-tenant deployments where each tenant `cortex-app` points at one
 Langfuse project (per-project cost + isolation; the org rolls everything up).
+
+Crash/error reporting is a separate, equally env-driven concern — GlitchTip via
+the Sentry protocol, covering backend *and* frontend with readable stack traces.
+See [Error tracking (GlitchTip)](#error-tracking-glitchtip) at the bottom.
 
 ## Activation
 
@@ -226,3 +230,45 @@ Boot with the `LANGFUSE_*` vars set; the startup log prints `Langfuse tracing
 ACTIVE → <url>`. Run a `/api/ask/stream` query and an ingest; traces appear in the
 project with generations carrying tokens. The untraced no-op path (no keys → plain
 client, all helpers inert) is covered by design and should stay that way.
+
+## Error tracking (GlitchTip)
+
+Separate concern from Langfuse (LLM traces/cost): GlitchTip captures **crashes
+and error logs** app-wide. It speaks the Sentry protocol, so both sides use
+stock Sentry SDKs; env vars are `SENTRY_*` (see
+[`environment.md`](../environment.md#error-tracking-glitchtip)). Backend and
+frontend report to **separate GlitchTip projects** (distinct DSNs); compose
+files map operator-facing `SENTRY_DSN_BACKEND`/`SENTRY_DSN_FRONTEND` vars onto
+the standard names each container reads.
+
+**Backend** — `services/error_tracking.py` owns the lifecycle, mirroring
+`observability.py`: `init_sentry(service=...)` is a no-op without `SENTRY_DSN`,
+reads Settings (`.env`-aware) with a raw-env fallback, and runs in `main.py`
+**before** `app = FastAPI(...)` so the SDK's Starlette/FastAPI integrations
+hook app construction — they capture unhandled exceptions *before* the
+sanitizing 5xx handlers run, so tracking and client-facing sanitization
+coexist. The logging integration (SDK default) turns any `logger.error/
+exception` — background pipeline, flush loops, the docling worker (which calls
+`init_sentry(service="docling-worker")` in its `main()`) — into events.
+A `before_send` hook stamps the `request_id` tag from the logging contextvar
+(inherited by request-spawned tasks), so issues correlate 1:1 with log lines
+and `X-Request-ID` response headers. Source context comes free: the Python SDK
+reads the lines around each frame from the container's own files. Privacy
+mirrors the Langfuse mask: request bodies `never` by default, PII off.
+
+**Frontend** — `@sentry/nextjs`: `src/instrumentation-client.ts` (browser),
+`sentry.server.config.ts` + `src/instrumentation.ts` (`register()` +
+`onRequestError = captureRequestError` for Server Components/proxy),
+`src/app/global-error.tsx` (root-layout crashes). `next.config.mjs` wraps the
+config in `withSentryConfig`, which — only when `SENTRY_AUTH_TOKEN` is set at
+build time — generates + uploads source maps as **debug-ID artifact bundles**
+(GlitchTip ≥ 4.2) and then deletes the `.map` files so the runtime image never
+serves them. Verified working against a Turbopack `next build` (Next 16).
+Upload config (`SENTRY_URL/ORG/PROJECT/AUTH_TOKEN`) enters `Dockerfile.prod`
+as build args and stays out of the runner stage.
+
+**Verifying**: set `SENTRY_DSN`, boot, and check the startup log for `Error
+tracking active (service=backend, ...)`; a forced exception appears in the
+GlitchTip project within seconds with context lines around the crash site. For
+the frontend, `npm run build` with the four upload vars set must log
+`Successfully uploaded source maps to Sentry`.
