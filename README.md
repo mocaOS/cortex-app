@@ -2,7 +2,7 @@
 
 ![Cortex](frontend/public/banner.jpg)
 
-# 🧠 Cortex
+# Cortex
 
 **Institutional memory for the agentic era**
 
@@ -13,13 +13,13 @@
 
 </div>
 
-## 🚀 What is Cortex?
+## What is Cortex?
 
 **Cortex** is institutional memory for the agentic era — a shared knowledge base that both humans and agents can read, write, and reason over. It ingests your documents and analyzes their contents via LLM-assisted workflows, automatically extracting entities and building the relationships between them into a **scalable knowledge graph** that grows smarter with every source you add.
 
 Point it at one enthusiast's notes and it becomes their personal long-term memory. Point it at a company or a community and it becomes *collective* memory: every member — and every agent they run — can enrich their understanding from the shared knowledge of the cortexes they have access to. The more people and agents that draw on it, the more valuable that memory compounds. And because the whole graph is exposed over a clean REST API — framework-agnostic and portable by design — it plugs into Q+A interfaces, enriches your agents' understanding, and serves as the long-term memory backbone for your entire AI stack, no matter which model or harness comes next.
 
-### 💡 Why Cortex?
+### Why Cortex?
 
 Think of the memory hierarchy in your AI systems:
 - **Context** = Short-term memory
@@ -32,7 +32,7 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 > **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
 
-## 🌐 The Cortex Ecosystem
+## The Cortex Ecosystem
 
 This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on its REST API:
 
@@ -42,7 +42,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 | [**cortex-skills**](https://github.com/mocaOS/cortex-skills) | The knowledge layer between AI agents and Cortex. Curated `SKILL.md` files (served at [cortexskills.org](https://cortexskills.org)) that agents fetch via HTTP to get ground-truth knowledge about the Cortex API — so they build correct integrations on the first try instead of hallucinating endpoints. |
 | [**cortex-explorer**](https://github.com/mocaOS/cortex-explorer) | Standalone, iframe-ready knowledge graph visualizer. 2D/3D force-directed graph with entity search, click-to-expand neighborhood traversal, spaceship-style 3D flight, and an accent-derived palette — a single static bundle pointed at any Cortex backend with a read-only key. |
 
-## ✨ Features
+## Features
 
 ### Core Features
 - **📁 Document Upload**: Broad format support via Docling — PDF, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — with source tracking for API integrations
@@ -69,7 +69,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 - **📝 Community Summarization**: LLM-generated summaries for entity communities using the extraction model, with assistant prefill for reliable JSON output
 - **🔮 Extended Thinking**: Visible reasoning chains during agentic RAG (stream thinking)
 - **📂 Collection-Level Graphs**: Organize documents into collections with scoped knowledge graphs
-- **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking and proper document provenance tracking (`source_documents`, `extraction_count`) — catches semantic matches like "Museum of Crypto Art" / "MOCA" that string similarity misses
+- **🎯 Semantic Entity Resolution**: Embedding-based vector similarity deduplication (with Levenshtein 85% fallback) during entity extraction with alias tracking and proper document provenance tracking (`source_documents`, `extraction_count`) — catches semantic matches like "Massachusetts Institute of Technology" / "MIT" that string similarity misses
 - **🔀 Entity Deduplication**: Post-extraction duplicate scanning using multi-strategy fuzzy matching (rapidfuzz) with Person-aware name gating (word-prefix validation prevents false matches on shared first names), entity-level deduplicate button in Explore for quick access, inspect modal for reviewing entity details before merging, LLM-generated combined descriptions, review-and-merge UI, inline entity search, and full merge history with audit trail
 - **🔄 Targeted Relationship Discovery**: Default Step 2 engine (`RELATIONSHIP_DISCOVERY_MODE=targeted`) generates candidate entity pairs without the LLM — entity-embedding kNN over a Neo4j vector index (missing embeddings backfilled automatically) plus document co-mention — then verifies them in small batched LLM calls (~40 pairs/call), scaling efficiently on large graphs. Legacy `llm_scan` mode keeps the multi-round full-batch scan (up to `RELATIONSHIP_MAX_ROUNDS` rounds, stopping early at the target Entity-Relationship Ratio). Anti-hub protections in both modes: per-entity relationship cap (`RELATIONSHIP_MAX_PER_ENTITY`), candidate caps and doc-frequency hub guard (targeted), degree-aware batching and evidence-based prompts (legacy). Supports incremental (build on existing) and rebuild (delete cross-document relations, preserving per-chunk relations) modes.
 - **📈 ERR Metric**: Entity-Relationship Ratio displayed on the Knowledge Graph page (2 decimal places) with color-coded health indicator
@@ -90,7 +90,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 - **🩺 Production Operations**: Prometheus `GET /metrics` (admin-protected, incl. disk-headroom gauges), optional JSON logs with `X-Request-ID` correlation, per-key rate limiting, request-body ceilings + free-disk guard (413/507 before memory or disk pressure), background-task state that survives restarts, an optional JSONL audit trail (`ENABLE_AUDIT_LOG`), graceful shutdown with SSE drain, per-service memory caps, a nightly backup sidecar (standalone overlay + built into the Coolify/Dokploy composes), and a **slim torch-free image variant** (`INSTALL_LOCAL_ML=false`) for stacks backed by the shared `cortex-helper`
 - **🔭 LLM Observability (optional)**: point `LANGFUSE_*` at a self-hosted [Langfuse](https://langfuse.com) instance to trace every LLM/embedding/vision call (cost, tokens, latency, errors) and group agentic Q&A flows into one trace per request — Venice/OpenRouter included. Env-driven; no keys = no tracing, identical image. Prompt/completion content is **redacted by default** (privacy-first); set `LANGFUSE_LOG_EXTENDED=true` to log full text for debugging. See [`.claude/domain/observability.md`](.claude/domain/observability.md)
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -110,7 +110,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 | Database | Neo4j 5.x | Graph storage + vector similarity search |
 | Embeddings | OpenAI / sentence-transformers | Convert text to semantic vectors |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -292,7 +292,7 @@ npm install
 npm run dev
 ```
 
-## 📖 API Endpoints
+## API Endpoints
 
 ### Core Endpoints
 
@@ -587,11 +587,11 @@ curl -X POST http://localhost:8000/api/admin/api-keys \
 
 # That key can only see its own collection
 curl -H "X-API-Key: cortex_ro_..." http://localhost:8000/api/collections
-# → returns only Tenant A's collection
+# returns only Tenant A's collection
 
 # It gets a 403 for any other collection
 curl -H "X-API-Key: cortex_ro_..." http://localhost:8000/api/collections/<tenant-b-id>
-# → {"detail": "API key does not have permission to view collection: ..."}
+# {"detail": "API key does not have permission to view collection: ..."}
 
 # Update collection access on an existing key
 curl -X PATCH http://localhost:8000/api/admin/api-keys/<key-id> \
@@ -667,7 +667,7 @@ curl -X POST http://localhost:8000/api/custom-input \
 curl http://localhost:8000/api/graph/visualization?limit=100
 ```
 
-## 🚢 Production Deployment
+## Production Deployment
 
 ### Option 1: Docker Compose (Standalone)
 
@@ -928,7 +928,7 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 | `NEXT_PUBLIC_LOGO_URL` | Custom logo image URL | No | Cortex logo |
 | `ACCENT_COLOR` | Custom accent color (any CSS color value). Read server-side at runtime — **not** `NEXT_PUBLIC_`-prefixed, so no rebuild needed | No | Cortex theme |
 
-## 🔧 Configuration
+## Configuration
 
 ### Document Processing
 
@@ -980,7 +980,7 @@ In addition to file uploads, you can manually add knowledge:
 
 Custom inputs are processed through the same GraphRAG pipeline as uploaded documents, including entity extraction and graph building.
 
-## 🧪 Testing
+## Testing
 
 The backend suite is fully hermetic — LLM, Neo4j, and the ML stack are mocked in `conftest.py`, so it runs with no external services. The system Python has no pytest; create a torch-free venv from the base requirements:
 
@@ -1007,7 +1007,7 @@ CORTEX_E2E_API_KEY=<key> .qa-venv/bin/python -m pytest tests/test_live_e2e_authe
 
 The canonical QA feature/defect inventory lives in [`qa/cortex_qa_master.ods`](qa/) with a written summary in [`qa/QA_REPORT.md`](qa/QA_REPORT.md); see [`.claude/qa.md`](.claude/qa.md) for the full harness reference.
 
-## 📊 Neo4j Schema
+## Neo4j Schema
 
 The knowledge base uses this graph structure with GraphRAG entities:
 
@@ -1056,7 +1056,7 @@ CREATE FULLTEXT INDEX entity_name_fulltext
 FOR (e:Entity) ON EACH [e.name, e.description]
 ```
 
-## 🧠 GraphRAG Pipeline
+## GraphRAG Pipeline
 
 When a document is uploaded (or custom input is added), the following pipeline executes:
 
@@ -1141,7 +1141,7 @@ This ensures your knowledge graph stays clean and free of orphaned data, even wh
 }
 ```
 
-## 🛡️ Prompt Security
+## Prompt Security
 
 The system includes protection against prompt injection attacks that attempt to:
 - Extract or leak system prompts
@@ -1158,7 +1158,7 @@ The system includes protection against prompt injection attacks that attempt to:
 
 Disable the whole subsystem with `PROMPT_SECURITY=false` if not needed. See the [Security guide](documentation/pages/guides/security.mdx) for the full model.
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 - **Next.js 16** - React framework with App Router
@@ -1181,11 +1181,11 @@ Disable the whole subsystem with `PROMPT_SECURITY=false` if not needed. See the 
 - **Neo4j 5.26** - Graph database with vector search (Community or Enterprise) — 4096-dim vector indexes supported
 - **APOC** - Neo4j procedures library
 
-## 📝 License
+## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify, and distribute this project freely — including commercially. The license includes an explicit patent grant from all contributors.
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
 
