@@ -828,7 +828,6 @@ export default function ExtractAnalyzePage() {
               {(processingDocs.length > 0 || analyzingImagesDocs.length > 0) && (
                 <div className="mb-3 p-3 bg-accent/5 border border-accent/20 rounded-lg">
                   <div className="flex items-center gap-2 mb-2 text-sm text-accent">
-                    <Loader2 className="w-4 h-4 animate-spin" />
                     <span>
                       {processingDocs.length > 0 &&
                         `${processingDocs.length} document${processingDocs.length !== 1 ? "s" : ""} in the text pipeline`}
@@ -938,7 +937,9 @@ export default function ExtractAnalyzePage() {
                 </div>
               )}
 
-              {entityTaskMessage && (
+              {/* Aggregate task message — only when the per-document breakdown
+                  above isn't showing (it tells the same story in more detail) */}
+              {entityTaskMessage && processingDocs.length === 0 && analyzingImagesDocs.length === 0 && (
                 <div className="flex items-center gap-2 mb-3 p-3 bg-accent/10 border border-accent/20 rounded-lg">
                   {isExtractingEntities && <Loader2 className="w-4 h-4 animate-spin text-accent" />}
                   <span className="text-sm text-accent">{entityTaskMessage}</span>
