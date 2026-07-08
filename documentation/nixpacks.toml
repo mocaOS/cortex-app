@@ -1,0 +1,21 @@
+# Nixpacks build configuration for the Cortex docs (Coolify → docs.cortex.eco).
+#
+# Why this file exists
+# --------------------
+# Nixpacks' Node provider installs npm from railwayapp/nix-npm-overlay, which it
+# fetches UNPINNED from that overlay's `main` branch at build time. On 2026-07-07
+# the overlay's `npm-9.9.4` derivation began failing to build — it dies in
+# `installPhase` with no error and exit code 255, aborting every deploy even
+# though nothing in this repository changed.
+#
+# nixpacks' default setup packages for this app are:
+#     ["nodejs_18", "npm-9_x", "openssl"]   (Node forced to 22 via Coolify env)
+# The `npm-9_x` entry is the broken overlay build. Overriding `nixPkgs` REPLACES
+# the whole array (a bare list replaces; only the "..." spread preserves), so we
+# restate the set WITHOUT the overlay npm. The full `nodejs_22` package already
+# bundles npm 10.x, which runs the auto-detected `npm ci` / `npm run build`.
+#
+# `nodejs_22` (not 18) matches the Node version these deploys have always used.
+# The install / build / start phases are left to nixpacks' auto-detection.
+[phases.setup]
+nixPkgs = ["nodejs_22", "openssl"]
