@@ -13,6 +13,7 @@ Features:
 """
 
 import asyncio
+import dataclasses
 import functools
 import gc
 import hashlib
@@ -27,7 +28,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # NOTE: docling is intentionally NOT imported at module scope. Importing it
 # (docling.document_converter et al.) pulls torch + docling-ibm-models (~244 MB)
@@ -114,6 +115,46 @@ def _clean_image_placeholders(text: str) -> str:
 # negligible vs losing the entire embedding to an HTTP 400.
 _EMBED_CHARS_PER_TOKEN = 2.8
 
+# Lazily-built tiktoken encoding for token-accurate embed caps. False = tried
+# and unavailable (fall back to the char heuristic).
+_tiktoken_encoding = None
+
+
+def _token_len(text: str) -> Optional[int]:
+    """Count embed-input tokens (cl100k_base), or None when tiktoken is missing.
+
+    The char heuristic (`_EMBED_CHARS_PER_TOKEN` = 2.8) undercounts dense
+    punctuation/number text — a book's index page measured ~2.4 chars/token,
+    putting a 22.4k-char chunk at ~9.5k real tokens, past the API's 8192 cap.
+    """
+    global _tiktoken_encoding
+    if _tiktoken_encoding is None:
+        try:
+            import tiktoken
+
+            _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:  # noqa: BLE001 — optional accuracy, never required
+            _tiktoken_encoding = False
+    if _tiktoken_encoding is False:
+        return None
+    return len(_tiktoken_encoding.encode(text))
+
+
+def _drop_empty_chunks(docs):
+    """Drop chunks whose content is empty/whitespace-only before embedding.
+
+    Embed APIs reject empty strings with HTTP 400 — and some gateways (Venice)
+    wrap that upstream error in an HTTP 200 envelope with `data: null`, which
+    the OpenAI SDK parses as a success; downstream len()/iteration on the null
+    data then raises and fails the whole document. Empty chunks carry no
+    retrieval value, so remove them before the API ever sees one.
+    """
+    kept = [d for d in docs if (getattr(d, "content", None) or "").strip()]
+    dropped = len(docs) - len(kept)
+    if dropped:
+        logger.warning(f"Dropped {dropped} empty chunk(s) before embedding")
+    return kept
+
 
 def _truncate_for_embedding(docs, max_tokens: int):
     """Truncate Haystack Document content client-side to stay under the embed API's token cap.
@@ -132,7 +173,16 @@ def _truncate_for_embedding(docs, max_tokens: int):
     truncated = 0
     for d in docs:
         content = getattr(d, "content", None)
-        if content and len(content) > char_budget:
+        if not content:
+            continue
+        tokens = _token_len(content)
+        if tokens is not None:
+            if tokens > max_tokens:
+                # Cut proportionally to this text's own chars-per-token ratio,
+                # with 10% headroom for boundary effects.
+                d.content = content[: max(1, int(len(content) / tokens * max_tokens * 0.9))]
+                truncated += 1
+        elif len(content) > char_budget:
             d.content = content[:char_budget]
             truncated += 1
     if truncated:
@@ -181,6 +231,26 @@ def _split_to_budget(text: str, char_budget: int) -> List[str]:
     return [text]  # unreachable, satisfies type checker
 
 
+def _split_to_token_budget(content: str, max_tokens: int, char_budget: int) -> List[str]:
+    """Split to a char budget, then re-verify each piece's REAL token count.
+
+    A piece that still exceeds the token cap (denser text than the ratio the
+    budget was derived from) is recursively re-split with a budget derived
+    from its own chars-per-token ratio. Pieces of <=64 chars are accepted as
+    is — 64 chars cannot exceed any realistic token cap.
+    """
+    pieces = _split_to_budget(content, char_budget)
+    out: List[str] = []
+    for p in pieces:
+        tokens = _token_len(p)
+        if tokens is not None and tokens > max_tokens and len(p) > 64:
+            tighter = max(64, int(len(p) / tokens * max_tokens * 0.9))
+            out.extend(_split_to_token_budget(p, max_tokens, tighter))
+        else:
+            out.append(p)
+    return out
+
+
 def _enforce_embed_token_cap(docs, max_tokens: int):
     """Sub-split any chunk that exceeds the embed token budget into safe pieces.
 
@@ -199,7 +269,22 @@ def _enforce_embed_token_cap(docs, max_tokens: int):
     if max_tokens <= 0:
         return docs
     char_budget = int(max_tokens * _EMBED_CHARS_PER_TOKEN)
-    over_budget = [(i, d) for i, d in enumerate(docs) if len(getattr(d, "content", "") or "") > char_budget]
+
+    def _is_over(content: str) -> Optional[int]:
+        """Return the real token count when over the cap, else None.
+
+        Token-accurate when tiktoken is available (the char heuristic
+        undercounts dense punctuation/number text like book indexes — measured
+        ~2.4 chars/token vs the assumed 2.8, letting ~9.5k-token chunks
+        through a "8192-token" cap and 400-ing the embed call); falls back to
+        the char budget otherwise (returning -1 as "over, count unknown").
+        """
+        tokens = _token_len(content)
+        if tokens is not None:
+            return tokens if tokens > max_tokens else None
+        return -1 if len(content) > char_budget else None
+
+    over_budget = [d for d in docs if _is_over(getattr(d, "content", "") or "")]
     if not over_budget:
         return docs
 
@@ -209,11 +294,17 @@ def _enforce_embed_token_cap(docs, max_tokens: int):
     extra_pieces = 0
     for d in docs:
         content = getattr(d, "content", None) or ""
-        if len(content) <= char_budget:
+        tokens = _is_over(content)
+        if tokens is None:
             result.append(d)
             continue
         meta = dict(getattr(d, "meta", {}) or {})
-        pieces = _split_to_budget(content, char_budget)
+        # Derive the char budget from this text's own chars-per-token ratio
+        # (10% headroom); pieces are re-verified against the real token count.
+        budget = char_budget
+        if tokens > 0:
+            budget = min(budget, max(64, int(len(content) / tokens * max_tokens * 0.9)))
+        pieces = _split_to_token_budget(content, max_tokens, budget)
         for piece in pieces:
             result.append(HaystackDocument(content=piece, meta=dict(meta)))
         extra_pieces += len(pieces) - 1
@@ -319,7 +410,11 @@ async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
     return result
 
 
-async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict:
+async def _convert_document_subprocess(
+    file_path: str,
+    use_vision: bool,
+    on_progress: Optional[Callable[[str, float], Awaitable[None]]] = None,
+) -> dict:
     """Convert a document to markdown.
 
     Uses the shared docling service when DOCLING_SERVICE_URL is set. On
@@ -327,6 +422,12 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
     HELPER_STRICT_REMOTE the document fails cleanly; otherwise it falls back
     to the local subprocess. Without a service URL, Docling runs in a
     subprocess to avoid GIL contention.
+
+    on_progress(message, fraction) is fired when the conversion actually
+    starts (after the conversion-slot semaphore is acquired — callers should
+    show "waiting for a slot" until then) and on every page-chunk line the
+    worker logs, giving large PDFs a real progress fraction instead of a
+    frozen "Converting document...". Callback errors are swallowed.
 
     Returns dict with keys: markdown, filename, images, error.
     """
@@ -366,6 +467,11 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
     async with sem:
         _t0 = time.monotonic()
         logger.info(f"Starting subprocess conversion for {Path(file_path).name}")
+        if on_progress:
+            try:
+                await on_progress("Converting document...", 0.0)
+            except Exception:  # noqa: BLE001 — progress must never fail conversion
+                pass
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "app.services.docling_worker",
             stdin=asyncio.subprocess.PIPE,
@@ -374,10 +480,81 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
         )
 
         request_data = _json.dumps({"file_path": file_path, "use_vision": use_vision}) + "\n"
+
+        # Stream stderr live instead of buffering until exit: the worker logs
+        # "Converting pages X-Y of Z" per page chunk, which is the only real
+        # progress signal during a multi-minute conversion. Chunked reads with
+        # manual \n/\r splitting — tqdm redraws use bare \r and would overflow
+        # readline()'s line limit.
+        stderr_tail: list[str] = []
+        _page_rx = re.compile(r"Converting pages \d+-(\d+) of (\d+)")
+
+        async def _handle_stderr_line(text: str) -> None:
+            text = text.strip()
+            if not text:
+                return
+            stderr_tail.append(text)
+            if len(stderr_tail) > 200:
+                stderr_tail.pop(0)
+            # tqdm redraw fragments ("... 37%|███| ... it/s]") are debug noise
+            if "it/s" in text or "%|" in text:
+                logger.debug(f"[docling-worker] {text}")
+            else:
+                logger.info(f"[docling-worker] {text}")
+            if on_progress:
+                m = _page_rx.search(text)
+                if m:
+                    page_end, page_total = int(m.group(1)), int(m.group(2))
+                    try:
+                        await on_progress(
+                            f"Converting document: page {page_end}/{page_total}...",
+                            page_end / max(1, page_total),
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        async def _pump_stderr() -> None:
+            assert proc.stderr is not None
+            buf = b""
+            while True:
+                chunk = await proc.stderr.read(4096)
+                if not chunk:
+                    if buf:
+                        await _handle_stderr_line(buf.decode(errors="replace"))
+                    return
+                buf += chunk
+                while True:
+                    nl = buf.find(b"\n")
+                    cr = buf.find(b"\r")
+                    idx = min(i for i in (nl, cr) if i >= 0) if (nl >= 0 or cr >= 0) else -1
+                    if idx < 0:
+                        break
+                    line, buf = buf[:idx], buf[idx + 1 :]
+                    await _handle_stderr_line(line.decode(errors="replace"))
+                if len(buf) > 65536:  # runaway unterminated line guard
+                    buf = buf[-4096:]
+
+        async def _run_worker() -> bytes:
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(request_data.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+            pump = asyncio.create_task(_pump_stderr())
+            try:
+                out = await proc.stdout.read()
+                await proc.wait()
+            finally:
+                # stderr hits EOF when the process exits; bound the wait so a
+                # pathological pipe state can't hang us past the timeout.
+                try:
+                    await asyncio.wait_for(pump, timeout=10)
+                except Exception:  # noqa: BLE001
+                    pump.cancel()
+            return out
+
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(request_data.encode()),
-                timeout=settings.docling_conversion_timeout,
+            stdout = await asyncio.wait_for(
+                _run_worker(), timeout=settings.docling_conversion_timeout
             )
         except asyncio.TimeoutError:
             # Kill the hung worker so it can't linger holding the conversion
@@ -394,15 +571,10 @@ async def _convert_document_subprocess(file_path: str, use_vision: bool) -> dict
                 f"{Path(file_path).name} (file may be too large or malformed)"
             )
 
-        if stderr:
-            for line in stderr.decode(errors="replace").strip().split("\n"):
-                if line.strip():
-                    logger.info(f"[docling-worker] {line.strip()}")
-
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Docling worker exited with code {proc.returncode}: "
-                f"{stderr.decode(errors='replace')[:500]}"
+                f"{' | '.join(stderr_tail[-8:])[:500]}"
             )
 
         stdout_text = stdout.decode().strip()
@@ -777,6 +949,142 @@ class DocumentProcessor:
             _active_tasks[doc_id] = task
             logger.info(f"Started processing task for document {doc_id}")
 
+    def _get_strict_embedder(self):
+        """Embedder that raises APIError instead of skipping a failed batch.
+
+        Recovery needs the HTTP status to tell throttling (429/5xx → wait and
+        retry the same text) from input rejection (400 → halve the text). The
+        regular embedder swallows APIErrors (raise_on_failure=False), making
+        the two cases indistinguishable.
+        """
+        if getattr(self, "_strict_embedder", None) is not None:
+            return self._strict_embedder
+        if self.settings.use_openai_embeddings and self.settings.embed_api_key:
+            from haystack.components.embedders import OpenAIDocumentEmbedder
+            from haystack.utils import Secret
+
+            kwargs = dict(
+                api_key=Secret.from_token(self.settings.embed_api_key),
+                api_base_url=self.settings.embed_api_base,
+                model=self.settings.embedding_model,
+                raise_on_failure=True,
+            )
+            if self.settings.embedding_send_dimensions:
+                kwargs["dimensions"] = self.settings.embedding_dimension
+            self._strict_embedder = OpenAIDocumentEmbedder(**kwargs)
+        else:
+            self._strict_embedder = self.embedder
+        return self._strict_embedder
+
+    async def _recover_missing_embeddings(self, loop, docs):
+        """Re-embed docs the batch pass left without embeddings, one by one.
+
+        A batched embed request is rejected wholesale when ANY input fails the
+        provider's validation — Haystack logs the APIError and returns every
+        doc of that batch embedding-less (raise_on_failure=False), so one bad
+        input silently strips embeddings from 31 innocent neighbours. Venice
+        also validates the 8192-token input cap with its own tokenizer, which
+        counts punctuation-heavy text ~1.2-1.4x higher than cl100k — a chunk
+        can pass our client-side cap and still be rejected.
+
+        Retrying each missing doc alone embeds the innocents. 429/5xx waits
+        and retries the same text (halving a rate-limited input would only
+        generate more rate-limited calls); a 400 rejection halves the text
+        (both halves keep the parent's meta) until accepted or 512 chars, so
+        every stored chunk ends up with an embedding regardless of tokenizer
+        mismatches.
+        """
+        missing_idx = [
+            i for i, d in enumerate(docs) if getattr(d, "embedding", None) is None
+        ]
+        if not missing_idx:
+            return docs
+
+        logger.warning(
+            f"{len(missing_idx)} chunk(s) missing embeddings after batch pass; "
+            f"retrying individually"
+        )
+        strict = self._get_strict_embedder()
+
+        async def _embed_one(text: str, meta: dict):
+            result = await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    strict.run,
+                    documents=[HaystackDocument(content=text, meta=dict(meta))],
+                ),
+            )
+            out = result.get("documents") or []
+            return out[0] if out and out[0].embedding is not None else None
+
+        recovered: Dict[int, list] = {}
+        for i in missing_idx:
+            d = docs[i]
+            meta = getattr(d, "meta", {}) or {}
+            queue = [d.content or ""]
+            done = []
+            while queue:
+                piece = queue.pop(0)
+                if not piece.strip():
+                    continue
+                embedded = None
+                rejected = False
+                throttle_retries = 3
+                while True:
+                    try:
+                        embedded = await _embed_one(piece, meta)
+                        break
+                    except Exception as exc:  # noqa: BLE001 — keep recovering others
+                        status = getattr(exc, "status_code", None)
+                        if (
+                            status == 429 or (status is not None and status >= 500)
+                        ) and throttle_retries > 0:
+                            throttle_retries -= 1
+                            await asyncio.sleep(10)
+                            continue
+                        if status is not None and 400 <= status < 500:
+                            rejected = True  # input the provider won't take — halve
+                            break
+                        # Unknown failure (e.g. a 200-wrapped error envelope):
+                        # one blind retry, then treat as rejection.
+                        if throttle_retries > 0:
+                            throttle_retries = 0
+                            await asyncio.sleep(5)
+                            continue
+                        logger.warning(f"Singleton embed retry failed: {exc}")
+                        rejected = True
+                        break
+                if embedded is not None:
+                    done.append(embedded)
+                elif rejected and len(piece) > 512:
+                    mid = len(piece) // 2
+                    queue = [piece[:mid], piece[mid:]] + queue
+                else:
+                    # Exhausted retries or the provider rejects even a tiny
+                    # piece — store unembedded (surfaces via the degraded-
+                    # document signal).
+                    logger.warning(
+                        f"Chunk piece ({len(piece)} chars) could not be embedded; "
+                        f"storing without embedding"
+                    )
+                    done.append(HaystackDocument(content=piece, meta=dict(meta)))
+            recovered[i] = done
+
+        rebuilt = []
+        for i, d in enumerate(docs):
+            if i in recovered:
+                rebuilt.extend(recovered[i])
+            else:
+                rebuilt.append(d)
+        still_missing = sum(
+            1 for d in rebuilt if getattr(d, "embedding", None) is None
+        )
+        logger.info(
+            f"Embedding recovery: {len(missing_idx)} missing -> "
+            f"{still_missing} still unembedded ({len(rebuilt)} chunks total)"
+        )
+        return rebuilt
+
     async def _process_document_with_cleanup(
         self, doc_id: str, file_path: str, file_type: str
     ) -> None:
@@ -850,6 +1158,13 @@ class DocumentProcessor:
             str(s.enable_semantic_entity_resolution),
             s.embedding_model,
             str(s.embedding_dimension),
+            # Batching/capping budgets change what gets embedded and extracted
+            str(s.embedding_max_input_tokens),
+            str(s.extraction_max_context),
+            # Bump when extraction prompt/output format changes materially —
+            # existing docs must re-extract instead of delta-skipping.
+            # compact-v1: ENT|/REL| line format (2026-07-08).
+            "extraction-prompts:compact-v1",
         ])
         return hashlib.sha256(src.encode()).hexdigest()[:16]
 
@@ -1394,7 +1709,10 @@ class DocumentProcessor:
                     doc_id,
                     0,
                     100,
-                    "Converting document...",
+                    # Flipped to "Converting document..." by the on_progress
+                    # callback once the conversion-slot semaphore is acquired —
+                    # a queued doc no longer claims to be converting.
+                    "Waiting for a conversion slot...",
                 ),
             )
 
@@ -1403,6 +1721,19 @@ class DocumentProcessor:
 
             # Check for cancellation before conversion
             self._check_cancellation(doc_id)
+
+            async def _conversion_progress(message: str, fraction: float) -> None:
+                # Conversion owns the 0→10% band of the pipeline.
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        int(10 * max(0.0, min(1.0, fraction))),
+                        100,
+                        message,
+                    ),
+                )
 
             # Choose conversion path. Code/markdown is ingested as-is (fast path);
             # everything else goes through Docling.
@@ -1419,7 +1750,9 @@ class DocumentProcessor:
                 conversion_result = {"markdown": md_text, "filename": filename, "images": []}
             elif ext in self.DOCLING_EXTENSIONS:
                 use_vision = self.vision_analyzer.is_vision_model_available
-                conversion_result = await _convert_document_subprocess(file_path, use_vision)
+                conversion_result = await _convert_document_subprocess(
+                    file_path, use_vision, on_progress=_conversion_progress
+                )
                 md_text = conversion_result["markdown"]
                 if not md_text:
                     raise ValueError("No content extracted from file")
@@ -1504,8 +1837,12 @@ class DocumentProcessor:
             # Clean image placeholders from markdown before chunking
             # =================================================================
             if use_vision:
-                for doc in documents:
-                    doc.content = _clean_image_placeholders(doc.content)
+                documents = [
+                    dataclasses.replace(
+                        doc, content=_clean_image_placeholders(doc.content)
+                    )
+                    for doc in documents
+                ]
 
             # =================================================================
             # URL Protection: Prevent URLs from being split across chunks
@@ -1549,6 +1886,7 @@ class DocumentProcessor:
             # Splits any oversize chunk into safe pieces so the downstream embed call
             # never trips ContextWindowExceeded errors on managed providers / litellm
             # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
+            chunks = _drop_empty_chunks(chunks)
             chunks = _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
 
             # Check for cancellation after chunking
@@ -1573,11 +1911,27 @@ class DocumentProcessor:
 
             # Generate embeddings (most CPU-intensive - run in thread pool)
             _truncate_for_embedding(chunks, self.settings.embedding_max_input_tokens)
-            embed_result = await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(self.embedder.run, documents=chunks),
-            )
+            _embed_call = functools.partial(self.embedder.run, documents=chunks)
+            try:
+                embed_result = await loop.run_in_executor(
+                    _get_processing_executor(), _embed_call
+                )
+            except Exception as exc:
+                # One retry: gateways like Venice wrap upstream errors in an
+                # HTTP 200 envelope with data=null, which surfaces here as a
+                # TypeError from response parsing rather than an APIError the
+                # embedder would handle — transient causes deserve a second try.
+                logger.warning(
+                    f"Embedding pass failed ({exc}); retrying once", exc_info=True
+                )
+                await asyncio.sleep(5)
+                embed_result = await loop.run_in_executor(
+                    _get_processing_executor(), _embed_call
+                )
             embedded_chunks = embed_result.get("documents", [])
+            embedded_chunks = await self._recover_missing_embeddings(
+                loop, embedded_chunks
+            )
 
             # Check for cancellation after embedding
             self._check_cancellation(doc_id)
@@ -1691,9 +2045,25 @@ class DocumentProcessor:
                 # for multi-batch documents — a single-batch prompt already
                 # contains the full document text.
                 chunk_contents = [c.content for c in embedded_chunks if c.content]
+
+                async def _entity_progress(done: int, total: int) -> None:
+                    # Entity extraction owns the 40→68% band of the pipeline.
+                    pct = 40 + int(28 * done / max(1, total))
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.update_document_progress,
+                            doc_id,
+                            pct,
+                            100,
+                            f"Finding entities: {done}/{total} chunks...",
+                        ),
+                    )
+
                 entities = await self.graph_extractor.extract_entities_from_document_async(
                     chunks=chunk_contents,
                     max_tokens=self.settings.extraction_max_context,
+                    progress_callback=_entity_progress,
                 )
 
                 # Decide dedup strategy up-front so we can pre-batch embeddings
@@ -3067,23 +3437,29 @@ class DocumentProcessor:
                     metadata=image_metadata,
                 )
 
-                image_doc = HaystackDocument(
-                    content=image_content,
-                    meta=image_chunk.metadata,
-                )
-                _truncate_for_embedding(
-                    [image_doc], self.settings.embedding_max_input_tokens
-                )
-                embed_result = await loop.run_in_executor(
-                    img_executor,
-                    functools.partial(
-                        self.embedder.run,
-                        documents=[image_doc],
-                    ),
-                )
-                embedded_docs = embed_result.get("documents", [])
-                if embedded_docs:
-                    image_chunk.embedding = embedded_docs[0].embedding
+                if (image_content or "").strip():
+                    image_doc = HaystackDocument(
+                        content=image_content,
+                        meta=image_chunk.metadata,
+                    )
+                    _truncate_for_embedding(
+                        [image_doc], self.settings.embedding_max_input_tokens
+                    )
+                    embed_result = await loop.run_in_executor(
+                        img_executor,
+                        functools.partial(
+                            self.embedder.run,
+                            documents=[image_doc],
+                        ),
+                    )
+                    embedded_docs = embed_result.get("documents", [])
+                    # Same recovery as text chunks: a transient 429 on this
+                    # singleton call must not strand the image chunk unembedded.
+                    embedded_docs = await self._recover_missing_embeddings(
+                        loop, embedded_docs
+                    )
+                    if embedded_docs:
+                        image_chunk.embedding = embedded_docs[0].embedding
 
                 await loop.run_in_executor(
                     img_executor,

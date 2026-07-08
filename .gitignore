@@ -86,6 +86,7 @@ git_repos/
 
 # Venice capacity-planning report (local working doc, never commit)
 venice.md
+venice-partner-brief.md
 venice-projection.ods
 HANDOVER-BUILDER.md
 HANDOVER-FINANCE.md

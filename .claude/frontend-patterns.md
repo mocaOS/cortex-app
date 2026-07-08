@@ -74,6 +74,12 @@ The Documents page's "Generate Graph" button uses a query-param handshake instea
 - Image analysis: progress polled via document data refresh every 5 seconds
 - Stats bar: refreshes every 5 seconds
 
+### Ingestion phase stepper (2026-07-08)
+
+`lib/ingestionPhases.ts` maps the backend's raw `progress_message` strings onto the stable text-pipeline phases **Convert → Chunk & Embed → Store → Extract** (`deriveIngestionPhases`), extracting live counts (chunks stored X/Y, per-chunk relationships X/Y, entities N/total) as within-phase fractions. Unknown messages degrade gracefully via `processing_status`. Image analysis is deliberately NOT a linear step — it runs concurrently with extraction, exposed separately via `deriveImageProgress`.
+
+`components/documents/IngestionStepper.tsx` renders the phase chips + overall bar + within-phase fraction bar + a parallel image row; `compact` prop for dense lists. Used in `DocumentCard` (replaces the old bare message+percent bar) and the Knowledge Graph Step 1 panel (per-document breakdown replacing the aggregate "Processing N documents..." banner). Pending docs distinguish "queued by the system" (`progress_message` present → "… — waiting for a processing slot") from plain "Unprocessed". When adding new backend `progress_message` strings, extend `parseMessage` in `ingestionPhases.ts`.
+
 ## Shared Resilience Hooks (`lib/hooks.ts`)
 
 Two reusable hooks back the app-wide robustness conventions:

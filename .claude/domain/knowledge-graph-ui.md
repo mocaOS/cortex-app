@@ -67,6 +67,7 @@ Frontend display:
 - Step 1 stays "In Progress" by virtue of its backend task still running
 - Auto-refresh polls every 5 seconds to keep document state fresh
 - The "Processed" count in the summary grid only includes `fullyCompletedDocs` (completed AND images done)
+- **Per-document breakdown (2026-07-08):** while Step 1 runs, a panel lists every in-flight document with a compact `IngestionStepper` (Convert → Chunk & Embed → Store → Extract phase chips + live counts) and per-doc image-analysis bars — replacing the old aggregate "Processing N documents in parallel..." text. See [`frontend-patterns.md`](../frontend-patterns.md#ingestion-phase-stepper-2026-07-08).
 
 The previous frontend-side `waitingForImagesBeforeStep2` flag was removed when the gate moved to the backend.
 

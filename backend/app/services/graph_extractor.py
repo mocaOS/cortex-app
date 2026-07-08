@@ -93,8 +93,8 @@ Given text (and optionally a document summary for context), identify all entitie
    - entity_type: Type of the entity (use the provided entity types if specified)
    - entity_description: Comprehensive description of the entity based on the text
 
-   Format each entity in XML tags as follows:
-   <entity name="entity"><type>entity_type</type><description>entity_description</description></entity>
+   Format each entity as one line, exactly:
+   ENT|Entity Name|EntityType|Comprehensive entity description.
 
    Note: Generate additional entities from descriptions if they contain named entities needed for relationship mapping.
 
@@ -102,11 +102,11 @@ Given text (and optionally a document summary for context), identify all entitie
    - source_entity: name of the source entity
    - target_entity: name of the target entity
    - relation: relationship type (use the provided relation types if specified)
-   - relationship_description: justification and context for the relationship
    - relationship_weight: strength score from 0-10 (10 = strongest/most direct)
+   - relationship_description: justification and context for the relationship
 
-   Format each relationship in XML tags as follows:
-   <relationship><source>source_entity</source><target>target_entity</target><type>relation</type><description>relationship_description</description><weight>relationship_weight</weight></relationship>
+   Format each relationship as one line, exactly:
+   REL|Source Entity|Target Entity|RELATION_TYPE|weight|Relationship description.
 
 3. Coverage Requirements:
    - Each entity should have at least one relationship when possible
@@ -114,7 +114,7 @@ Given text (and optionally a document summary for context), identify all entitie
    - Focus on the most significant and well-supported relationships
    - Use consistent naming for entities (e.g., always "Neo4j" not "neo4j")
 
-IMPORTANT: Output ONLY the XML entities and relationships, no other text."""
+IMPORTANT: Output ONLY the ENT| and REL| lines, no other text, no XML, no markdown."""
 
 
 EXTRACTION_USER_PROMPT = """Extract entities and relationships from the following text.
@@ -129,9 +129,9 @@ Text:
 
 ######################
 Example Output (for reference):
-<entity name="OpenAI"><type>Organization</type><description>OpenAI is an AI research and deployment company known for developing GPT models.</description></entity>
-<entity name="GPT-4"><type>Technology</type><description>GPT-4 is a large language model developed by OpenAI.</description></entity>
-<relationship><source>OpenAI</source><target>GPT-4</target><type>CREATED_BY</type><description>GPT-4 was developed by OpenAI.</description><weight>9</weight></relationship>
+ENT|OpenAI|Organization|OpenAI is an AI research and deployment company known for developing GPT models.
+ENT|GPT-4|Technology|GPT-4 is a large language model developed by OpenAI.
+REL|OpenAI|GPT-4|CREATED_BY|9|GPT-4 was developed by OpenAI.
 
 ######################
 Now extract entities and relationships from the text above:"""
@@ -226,10 +226,10 @@ Given text and a document summary for context, identify ALL important entities.
 - Use consistent, canonical naming (e.g. always "Neo4j", not "neo4j" or "Neo4J").
 - Write rich, standalone descriptions that include the entity's role and context.
 
-Output Format: Output ONLY XML entities. No other text, no explanations.
+Output Format: one entity per line, exactly:
+ENT|Entity Name|EntityType|Comprehensive description here.
 
-Format:
-<entity name="Entity Name"><type>EntityType</type><description>Comprehensive description here.</description></entity>"""
+No other text, no explanations, no XML, no markdown."""
 
 
 ENTITY_EXTRACTION_USER_PROMPT = """Extract ALL entities from the following document section. Be exhaustive — include every person, organization, technology, concept, product, event, or system mentioned or implied.
@@ -243,7 +243,7 @@ Text:
 {text}
 
 Example Output:
-<entity name="Stable Diffusion"><type>Technology</type><description>Stable Diffusion is a latent diffusion model for text-to-image generation released by Stability AI.</description></entity>
+ENT|Stable Diffusion|Technology|Stable Diffusion is a latent diffusion model for text-to-image generation released by Stability AI.
 
 Now extract all entities:"""
 
@@ -267,7 +267,7 @@ Identify semantic relationships between the provided entities using the allowed 
 - Relationship weight: 1-10 (10 = very direct and important, 6+ = meaningful connection).
 - Include a confidence score (0.0-1.0) for each relationship: 1.0 = explicitly stated in text, 0.8+ = strongly implied, 0.5 = uncertain. Do not create relationships you are less than 0.5 confident about.
 
-Output ONLY XML relationships. No explanations, no chain-of-thought, no other text."""
+Output ONLY relationship records in exactly the format shown in the request. No explanations, no chain-of-thought, no other text."""
 
 
 RELATIONSHIP_ANALYSIS_USER_PROMPT = """Extract relationships between the following entities based on their descriptions and source text context.
@@ -620,6 +620,117 @@ class GraphExtractor:
             return closest
         return "Concept"
 
+    def _normalize_relation_type(self, rtype: str) -> str:
+        """Uppercase/underscore a relation type and fuzzy-map it onto the
+        allowed set (RELATED_TO when nothing comes close)."""
+        rtype = (rtype or "").strip().upper().replace(" ", "_")
+        if rtype in DEFAULT_RELATION_TYPES:
+            return rtype
+        if not rtype:
+            return "RELATED_TO"
+        from rapidfuzz import process as fuzz_process
+
+        closest, score, _ = fuzz_process.extractOne(rtype, DEFAULT_RELATION_TYPES)
+        return closest if score >= 80 else "RELATED_TO"
+
+    # -------------------------------------------------------------------------
+    # Compact line-format parsers (ENT|... / REL|...).
+    #
+    # The XML wire format costs 32% (entities) / 44% (relationships) of the
+    # output tokens in pure scaffolding — and extraction latency is
+    # decode-bound (~70 tok/s on Venice qwen3), so scaffolding directly
+    # inflates wall time and pushes dense batches over the request timeout.
+    # See bench/STEP1_RESEARCH.md (2026-07-08 addendum). The XML parsers stay
+    # as fallback for prompt drift and older models.
+    # -------------------------------------------------------------------------
+
+    _COMPACT_LINE_NOISE = re.compile(r"^[\s>*\-`]+|[\s*`]+$")
+
+    def _parse_compact_entities(self, content: str) -> List[dict]:
+        """Parse `ENT|Name|Type|Description` lines (description may contain pipes)."""
+        entities: List[dict] = []
+        seen = set()
+        for raw in (content or "").splitlines():
+            line = self._COMPACT_LINE_NOISE.sub("", raw).strip()
+            if not line[:4].upper().startswith("ENT|"):
+                continue
+            parts = line.split("|", 3)
+            if len(parts) < 3:
+                continue
+            name = parts[1].strip()
+            if not name or name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            entities.append({
+                "name": name,
+                "type": self._normalize_entity_type(parts[2].strip()),
+                "description": parts[3].strip() if len(parts) > 3 else "",
+            })
+        return entities
+
+    def _parse_compact_relationships(self, content: str) -> List[dict]:
+        """Parse `REL|Source|Target|TYPE|[weight]|[confidence]|Description` lines.
+
+        The numeric fields are adaptive: after the type, leading fields that
+        parse as floats are consumed as weight then confidence; the first
+        non-numeric field starts the description (rejoined, so descriptions
+        may contain pipes). Handles all prompt variants:
+        REL|s|t|T|8|0.9|desc — REL|s|t|T|8|desc — REL|s|t|T|desc — REL|s|t|T
+        """
+        relationships: List[dict] = []
+        existing = set()
+        for raw in (content or "").splitlines():
+            line = self._COMPACT_LINE_NOISE.sub("", raw).strip()
+            if not line[:4].upper().startswith("REL|"):
+                continue
+            parts = line.split("|")
+            if len(parts) < 4:
+                continue
+            source, target = parts[1].strip(), parts[2].strip()
+            rtype = self._normalize_relation_type(parts[3])
+            if not source or not target or source.lower() == target.lower():
+                continue
+
+            weight, confidence = 5.0, 1.0
+            rest = parts[4:]
+            numerics = []
+            while rest and len(numerics) < 2:
+                candidate = rest[0].strip()
+                try:
+                    numerics.append(float(candidate))
+                    rest = rest[1:]
+                except ValueError:
+                    break
+            if len(numerics) >= 1:
+                weight = min(10.0, max(0.0, numerics[0]))
+            if len(numerics) >= 2:
+                confidence = min(1.0, max(0.0, numerics[1]))
+            description = "|".join(rest).strip()
+
+            key = (source.lower(), target.lower(), rtype)
+            if key in existing:
+                continue
+            existing.add(key)
+            relationships.append({
+                "source": source,
+                "target": target,
+                "relationship_type": rtype,
+                "description": description,
+                "weight": weight,
+                "confidence": confidence,
+            })
+        return relationships
+
+    def _parse_entities_output(self, content: str) -> List[dict]:
+        """Compact-first entity parsing with XML fallback."""
+        entities = self._parse_compact_entities(content)
+        return entities if entities else self._extract_xml_entities(content)
+
+    def _parse_relationships_output(self, content: str) -> List[dict]:
+        """Compact-first relationship parsing with XML (+ arrow) fallback."""
+        relationships = self._parse_compact_relationships(content)
+        return relationships if relationships else self._extract_xml_relationships(content)
+
     def _extract_xml_entities(self, content: str) -> List[dict]:
         """
         Extract entities from XML-formatted LLM response.
@@ -677,16 +788,7 @@ class GraphExtractor:
             if source_match and target_match and type_match:
                 source = source_match.group(1).strip()
                 target = target_match.group(1).strip()
-                rtype = type_match.group(1).strip().upper().replace(" ", "_")
-
-                # Normalize to closest standard relationship type
-                if rtype not in DEFAULT_RELATION_TYPES:
-                    from rapidfuzz import process as fuzz_process
-                    closest, score, _ = fuzz_process.extractOne(rtype, DEFAULT_RELATION_TYPES)
-                    if score >= 80:
-                        rtype = closest
-                    else:
-                        rtype = "RELATED_TO"
+                rtype = self._normalize_relation_type(type_match.group(1))
 
                 description = desc_match.group(1).strip() if desc_match else ""
                 
@@ -734,14 +836,9 @@ class GraphExtractor:
                 if not m:
                     continue
                 source = m.group(1).strip().strip("*")
-                rtype = m.group(2).strip().upper().replace(" ", "_")
+                rtype = self._normalize_relation_type(m.group(2))
                 target = m.group(3).strip().strip("*")
                 description = (m.group(4) or "").strip()
-
-                if rtype not in DEFAULT_RELATION_TYPES:
-                    from rapidfuzz import process as fuzz_process
-                    closest, score, _ = fuzz_process.extractOne(rtype, DEFAULT_RELATION_TYPES)
-                    rtype = closest if score >= 80 else "RELATED_TO"
 
                 key = (source.lower(), target.lower(), rtype)
                 if key not in existing and source and target:
@@ -906,8 +1003,8 @@ class GraphExtractor:
                 return ExtractionResult()
 
             # Try XML parsing first
-            xml_entities = self._extract_xml_entities(content)
-            xml_relationships = self._extract_xml_relationships(content)
+            xml_entities = self._parse_entities_output(content)
+            xml_relationships = self._parse_relationships_output(content)
             
             # If XML parsing worked, use those results
             if xml_entities or xml_relationships:
@@ -1105,8 +1202,8 @@ class GraphExtractor:
             content = self._extract_response_content(response)
 
             # Parse response (reuse existing parsing logic)
-            xml_entities = self._extract_xml_entities(content)
-            xml_relationships = self._extract_xml_relationships(content)
+            xml_entities = self._parse_entities_output(content)
+            xml_relationships = self._parse_relationships_output(content)
             
             if xml_entities or xml_relationships:
                 entities = []
@@ -2001,6 +2098,7 @@ Respond with ONLY the community name, nothing else."""
         chunks: List[str],
         document_summary: Optional[str] = None,
         max_tokens: int = 8192,
+        progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
     ) -> List[Entity]:
         """Extract entities from an entire document (batched by token budget).
 
@@ -2017,6 +2115,10 @@ Respond with ONLY the community name, nothing else."""
                 adds nothing there. Pass a string (possibly empty) to force
                 the legacy explicit-summary behavior.
             max_tokens: Approximate context window budget for the extraction model
+            progress_callback: Optional async callback(done_chunks, total_chunks)
+                fired after each batch settles. Chunks in a batch that gets
+                split-retried (truncation/timeout) are only counted once the
+                halves settle, so `done` is monotonic against a stable total.
 
         Returns:
             Deduplicated list of Entity objects
@@ -2029,10 +2131,17 @@ Respond with ONLY the community name, nothing else."""
         model = self.extraction_model_name
         e_types = self.entity_types
 
-        # Token estimation
+        # Token estimation. encoding_for_model only knows OpenAI models — for
+        # extraction models like qwen3 it raises, and the old len//4 fallback
+        # undercounts dense punctuation/number text (a book index measured
+        # ~2.4 chars/token), silently overpacking batches. cl100k_base is a
+        # far closer proxy for any modern tokenizer than chars/4.
         try:
             import tiktoken
-            enc = tiktoken.encoding_for_model(model)
+            try:
+                enc = tiktoken.encoding_for_model(model)
+            except Exception:
+                enc = tiktoken.get_encoding("cl100k_base")
             def count_tokens(text: str) -> int:
                 return len(enc.encode(text))
         except Exception:
@@ -2101,6 +2210,18 @@ Respond with ONLY the community name, nothing else."""
         all_entities: List[Entity] = []
         pending = deque(batches)
         batch_num = 0
+        # Progress accounting: a split batch's halves sum to the parent's chunk
+        # count, so total_units stays stable while done_units climbs.
+        total_units = sum(len(b) for b in batches)
+        done_units = 0
+
+        async def _report_progress() -> None:
+            if progress_callback is None:
+                return
+            try:
+                await progress_callback(done_units, total_units)
+            except Exception as cb_exc:  # noqa: BLE001 — progress must not fail extraction
+                logger.debug(f"Entity extraction progress callback failed: {cb_exc}")
 
         while pending:
             batch = pending.popleft()
@@ -2128,6 +2249,8 @@ Respond with ONLY the community name, nothing else."""
                 content = self._extract_response_content(response)
                 if not content:
                     logger.warning(f"Entity extraction batch {batch_num}: empty response")
+                    done_units += len(batch)
+                    await _report_progress()
                     continue
 
                 choices = getattr(response, "choices", None)
@@ -2149,7 +2272,7 @@ Respond with ONLY the community name, nothing else."""
                         f"lost; raise EXTRACTION_MAX_OUTPUT_TOKENS"
                     )
 
-                xml_entities = self._extract_xml_entities(content)
+                xml_entities = self._parse_entities_output(content)
                 for e in xml_entities:
                     try:
                         all_entities.append(Entity(
@@ -2164,9 +2287,29 @@ Respond with ONLY the community name, nothing else."""
                     f"Entity extraction batch {batch_num} ({len(batch)} chunks): "
                     f"extracted {len(xml_entities)} entities"
                 )
+                done_units += len(batch)
+                await _report_progress()
 
             except Exception as e:
-                logger.error(f"Error in entity extraction batch {batch_num}: {e}")
+                # A timeout on a multi-chunk batch usually means the prompt is
+                # too large for the provider to answer within the client
+                # timeout (observed: 256k-context batches against Venice
+                # qwen3 never completed, so whole batches of entities were
+                # silently lost). Split and retry the halves instead of
+                # dropping the batch.
+                is_timeout = "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower()
+                if is_timeout and len(batch) > 1:
+                    mid = len(batch) // 2
+                    pending.appendleft(batch[mid:])
+                    pending.appendleft(batch[:mid])
+                    logger.warning(
+                        f"Entity extraction batch {batch_num} ({len(batch)} chunks) "
+                        f"timed out — splitting and retrying halves"
+                    )
+                else:
+                    logger.error(f"Error in entity extraction batch {batch_num}: {e}")
+                    done_units += len(batch)
+                    await _report_progress()
 
         # Deduplicate by name (case-insensitive), keep longest description
         seen: dict[str, Entity] = {}
@@ -2415,8 +2558,9 @@ Relation Types (use only these): {", ".join(r_types)}
 === Entities in this text ===
 {entity_list}
 
-Each relationship element must use exactly this format:
-<relationship><source>Entity A</source><target>Entity B</target><type>USES</type><description>How they are related, per the source text.</description><weight>7</weight><confidence>0.9</confidence></relationship>
+Each relationship must be one line, exactly:
+REL|Entity A|Entity B|USES|7|0.9|How they are related, per the source text.
+(fields: source|target|type|weight 0-10|confidence 0.0-1.0|description)
 
 Extract relationships supported by the text above:"""
 
@@ -2451,7 +2595,7 @@ Extract relationships supported by the text above:"""
             if not content:
                 return []
 
-            xml_relationships = self._extract_xml_relationships(content)
+            xml_relationships = self._parse_relationships_output(content)
             relationships = []
             for r in xml_relationships:
                 source = r.get("source", "").strip()
@@ -2517,7 +2661,7 @@ Extract relationships supported by the text above:"""
                 if 0 <= idx < num_items:
                     target = idx
             if 0 <= target < num_items:
-                result[target] = self._extract_xml_relationships(body)
+                result[target] = self._parse_relationships_output(body)
                 covered.add(target)
         return result, covered
 
@@ -2591,8 +2735,9 @@ Relation Types (use only these): {", ".join(r_types)}
 
 {chr(10).join(source_blocks)}
 
-For each source, output one <chunk index="i"> block (matching the source index) containing its <relationship> elements. Each relationship element must use exactly this format:
-<relationship><source>Entity A</source><target>Entity B</target><type>USES</type><description>How they are related, per the source text.</description><weight>7</weight><confidence>0.9</confidence></relationship>
+For each source, output one <chunk index="i"> block (matching the source index) containing its relationships, one per line, exactly:
+REL|Entity A|Entity B|USES|7|0.9|How they are related, per the source text.
+(fields: source|target|type|weight 0-10|confidence 0.0-1.0|description)
 
 Output an empty <chunk index="i"></chunk> when a source has no supported relationships:"""
 
@@ -2649,7 +2794,7 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
         else:
             # Flat fallback: attribute each relationship to the first source
             # whose entity set contains both endpoints.
-            flat = self._extract_xml_relationships(content)
+            flat = self._parse_relationships_output(content)
             grouped = [[] for _ in items]
             for r in flat:
                 s = (r.get("source", "") or "").strip().lower()
@@ -2922,10 +3067,15 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
         # Phase 2 uses main model context
         phase1_context_budget = extraction_max_context if extraction_max_context > 0 else max_context_tokens
 
-        # Token estimation (use fallback estimator — works across models)
+        # Token estimation. encoding_for_model only knows OpenAI models; use
+        # cl100k_base for others (chars/4 undercounts dense text — see the
+        # entity-extraction batcher).
         try:
             import tiktoken
-            enc = tiktoken.encoding_for_model(self.current_model)
+            try:
+                enc = tiktoken.encoding_for_model(self.current_model)
+            except Exception:
+                enc = tiktoken.get_encoding("cl100k_base")
             def count_tokens(text: str) -> int:
                 return len(enc.encode(text))
         except Exception:

@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { IngestionStepper } from "./IngestionStepper";
 
 interface Document {
   id: string;
@@ -257,11 +258,6 @@ export function DocumentCard({
     }
   }, [doc.id, doc.filename, doc.file_path]);
 
-  const progressPercent =
-    doc.progress_current && doc.progress_total
-      ? Math.round((doc.progress_current / doc.progress_total) * 100)
-      : 0;
-
   const imageProgressPercent =
     doc.image_progress_current && doc.image_progress_total
       ? Math.round((doc.image_progress_current / doc.image_progress_total) * 100)
@@ -351,24 +347,16 @@ export function DocumentCard({
             </div>
           </div>
 
-          {/* Progress bar for processing */}
-          {isProcessing(doc.processing_status, doc) && doc.processing_status !== "completed" && doc.processing_status !== "pending" && doc.progress_total && doc.progress_total > 0 && (
+          {/* Phase timeline while the text pipeline runs */}
+          {(doc.processing_status === "processing" || doc.processing_status === "extracting") && (
             <div className="mt-3">
-              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                <span>{doc.progress_message || "Processing..."}</span>
-                <span>{progressPercent}%</span>
-              </div>
-              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-accent transition-all duration-300"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
+              <IngestionStepper doc={doc} />
             </div>
           )}
 
-          {/* Image analysis progress */}
-          {hasImageProgress && !imageAnalysisDone && (
+          {/* Image analysis progress (post-text-pipeline; while processing the
+              stepper renders its own parallel image row) */}
+          {doc.processing_status === "completed" && hasImageProgress && !imageAnalysisDone && (
             <div className="mt-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                 <span className="flex items-center gap-1">
@@ -409,7 +397,11 @@ export function DocumentCard({
 
           {/* Pending status */}
           {doc.processing_status === "pending" && (
-            <div className="mt-2 text-xs text-muted-foreground">Unprocessed</div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              {doc.progress_message
+                ? `${doc.progress_message} — waiting for a processing slot`
+                : "Unprocessed"}
+            </div>
           )}
 
           {/* Chunk count for completed */}

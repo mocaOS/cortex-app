@@ -279,20 +279,20 @@ OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
 OPENAI_MAX_CONTEXT=256000                 # unlock Gemma4 26B A4B full input window
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
-GRAPH_EXTRACTION_MAX_CONTEXT=256000        # unlock Qwen3.6 27B full input window; relationship_max_context inherits
+GRAPH_EXTRACTION_MAX_CONTEXT=24000         # size to the provider's DECODE SPEED, not the model's window — see "Provider Notes: Venice" below
 
 VISION_MODEL=qwen3-6-27b              # image analysis — set explicitly (model name does NOT inherit; empty disables vision → Docling fallback). api_base/api_key inherit from OPENAI_*.
 
 EMBEDDING_MODEL=text-embedding-qwen3-8b    # text embedding (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-# Output budgets cascade through defaults. EMBEDDING_MAX_INPUT_TOKENS stays at default 8192:
-# Venice and OpenAI cap embed inputs at 8192 at the gateway regardless of model. Self-hosted
-# vLLM users running Qwen3-Embedding-8B can lift to 32768.
+# EMBEDDING_MAX_INPUT_TOKENS defaults to 5400 (safe under gateway-side token
+# validators — see "Provider Notes: Venice"). Self-hosted vLLM users running
+# Qwen3-Embedding-8B can lift to 32768.
 ```
 
-Both `*_MAX_CONTEXT` overrides are required because the conservative default (32768) doesn't match either model's actual input window — without them you'd cap Gemma4 26B A4B and Qwen3.6 27B at a fraction of their real capability. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 8192 to match the cap Venice/OpenAI enforce at the API gateway (8192 regardless of the underlying model's native window); oversized inputs are char-truncated client-side to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections. On self-hosted vLLM you can lift to the model's native context (e.g. 32768 for Qwen3-Embedding-8B).
+The extraction `*_MAX_CONTEXT` override matters because batch sizing determines how many output tokens each extraction call must generate — and on hosted providers, generation speed (tok/s), not the model's input window, is what bounds a call. A model with a 256K window served at ~70 tok/s cannot answer a fully-packed prompt inside a request timeout. Cortex clamps the *inherited* extraction context at 48000 for this reason (an explicitly set `GRAPH_EXTRACTION_MAX_CONTEXT` is always honored as-is). The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 5400; oversized inputs are token-accurately sub-split client-side (tiktoken, zero content loss) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections, and chunks a provider still rejects are re-embedded individually with automatic halving.
 
-**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=3`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=3`) are the recommended, reliably-tested setting — leave them as-is unless you have a specific reason to change them.
+**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=3`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=2`) are reliably tested. On providers with limited serving throughput, *lowering* build concurrency often finishes multi-document builds faster — concurrent long extraction calls share the provider's decode rate and can push each other past request timeouts (see "Provider Notes: Venice").
 
 The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. Because they compound, raise them cautiously — `CONCURRENT_EXTRACTIONS` is the biggest multiplier (entity extraction is the heaviest call) and the first knob to lower on a slower provider. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
 
@@ -313,6 +313,26 @@ VISION_MAX_OUTPUT_TOKENS=8000
 **Migration note.** The env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` previously controlled the Phase 2 batch budget (16000). It now feeds the **per-chunk + candidate scan** chain. The Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` (default still 16000, behavior unchanged for users who never set the legacy var). If you explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` in your `.env`, per-chunk extraction will run with a 16000 cap (harmless overkill); migrate to the new name when convenient.
 
 **Migration note.** `EXTRACTION_MAX_CONTEXT` was renamed to `GRAPH_EXTRACTION_MAX_CONTEXT` to match the `GRAPH_EXTRACTION_MODEL`/`GRAPH_EXTRACTION_API_BASE`/`GRAPH_EXTRACTION_API_KEY` prefix convention. The legacy name is honored as a deprecated alias for one release; the backend logs a one-shot `WARN` at startup if your `.env` still uses it. Rename to `GRAPH_EXTRACTION_MAX_CONTEXT` at your convenience — value semantics are identical.
+
+### Provider Notes: Venice
+
+Measured tuning guidance for running the ingestion stack against `api.venice.ai` (July 2026, `qwen3-6-27b` extraction tier + `text-embedding-3-small`):
+
+```bash
+GRAPH_EXTRACTION_MAX_CONTEXT=24000   # right-sized to serving speed (see below)
+EXTRACTION_MAX_OUTPUT_TOKENS=8000    # ≈ what the decode rate delivers inside a request timeout
+EMBEDDING_MAX_INPUT_TOKENS=5400      # safe under Venice's own token validator
+VISION_MAX_CONCURRENT=2              # each in-flight image chains up to 4 API calls
+BATCH_PROCESSING_CONCURRENCY=2       # fewer concurrent builds finish FASTER (shared decode rate)
+```
+
+**Size extraction batches to decode speed, not the context window.** Extraction calls are output-heavy (structured entity/relationship records), and hosted decode throughput — measured at ~70 tok/s (p50) on `qwen3-6-27b`, lower under concurrent load — bounds how much output a call can produce before the request times out. A 24000-token input budget yields responses that complete reliably first-try; packing the model's full 256K window produces calls that *never* finish inside a timeout, and the pipeline's split-retry then re-does the work in halves (self-healing, but slow). The same physics is why lower build concurrency completes multi-document ingestions faster.
+
+**Embed input validation runs on Venice's tokenizer, not yours.** The nominal 8192-token embed cap is enforced with a tokenizer that counts punctuation- and number-dense text (tables of contents, indexes, bibliographies) ~1.2–1.4× higher than cl100k — a chunk measuring 5,795 cl100k tokens client-side was rejected as over 8192. `EMBEDDING_MAX_INPUT_TOKENS=5400` keeps client-side capping safely under the gateway's counter. Cortex also recovers rejected stragglers automatically: a rejected batch is retried per-chunk with automatic halving, so one oversized input can't strip embeddings from its batch neighbours.
+
+**Rate limits are generous; concurrency slots are the real ceiling.** Measured per key: chat 150 req/min + 10M tokens/min, embeddings 500 req/min + 5M tokens/min, and roughly 20 concurrent request slots. A full ingestion build uses well under 10% of the request budgets — but long-running extraction calls hold concurrency slots for minutes, which is why the vision and build concurrency knobs above matter more than any rate limit.
+
+Errors from Venice can arrive as **HTTP 200 responses carrying an error envelope** (`{"error": ...}` with no data payload). Cortex's ingestion pipeline detects and recovers from these; if you see `TypeError`-style failures on response parsing in custom integrations, check for this pattern before suspecting your client code.
 
 ### Semantic Entity Resolution
 

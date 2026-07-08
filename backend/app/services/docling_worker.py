@@ -19,6 +19,8 @@ Protocol (stdin → stdout):
 """
 
 import base64
+import ctypes
+import gc
 import io
 import json
 import logging
@@ -33,11 +35,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("docling_worker")
 
+# pypdf emits one WARNING per malformed xref entry ("Ignoring wrong pointing
+# object ..."), which can be hundreds of lines per PDF — all relayed to the
+# parent log. The objects are skipped either way; keep only real errors.
+logging.getLogger("pypdf").setLevel(logging.ERROR)
+
 # Memory limits for large document processing (env overridable)
 PAGE_CHUNK_SIZE = int(os.environ.get("DOCLING_PAGE_CHUNK_SIZE", "50"))
 MAX_PAGES_PER_CHUNK = int(os.environ.get("DOCLING_MAX_PAGES_PER_CHUNK", "50"))
 MAX_FILE_SIZE_BYTES = int(os.environ.get("DOCLING_MAX_FILE_SIZE_BYTES", "0"))  # 0 = use default
 USE_PYPDFIUM_FOR_LARGE_MB = float(os.environ.get("DOCLING_USE_PYPDFIUM_FOR_LARGE_MB", "0"))  # 0 = disabled
+
+
+def _release_heap_to_os() -> None:
+    """Return freed heap memory to the OS between page chunks.
+
+    Docling releases its page images/buffers after each chunk, but glibc
+    retains the freed blocks in the arena — measured ~500 MB RSS growth per
+    25-page chunk, which SIGKILLs the worker on 300+ page PDFs inside the
+    container memory limit. gc + malloc_trim keeps RSS flat (~1.6 GB).
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # non-glibc libc — gc alone has to do
+        pass
 
 
 def _get_pdf_page_count(file_path: str):  # -> Optional[int]
@@ -292,6 +314,8 @@ def convert(file_path: str, use_vision: bool):
                 if md:
                     all_markdown.append(md)
                 all_images.extend(imgs)
+                del md, imgs
+                _release_heap_to_os()
         finally:
             converter = None  # Allow GC
 

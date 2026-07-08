@@ -107,8 +107,12 @@ class Settings(BaseSettings):
         default=""
     )  # API key for vision model (defaults to openai_api_key if empty)
     vision_max_concurrent: int = Field(
-        default=3
-    )  # Max concurrent vision API calls system-wide (controls semaphore + thread pool sizing)
+        default=2
+    )  # Max concurrent vision API calls system-wide (controls semaphore + thread pool
+    # sizing). Default 2: each in-flight image occupies up to 4 provider slots via its
+    # call chain (vision → extraction → entity embed → chunk embed), and Venice-class
+    # gateways cap ~20 concurrent requests — 3 caused 429 bursts alongside multi-doc
+    # extraction (measured 2026-07-08).
     # Raw field: 0 = inherit through the chain (relationship → extraction → primary).
     # Property `vision_max_output_tokens` resolves the inheritance.
     vision_max_output_tokens_raw: int = Field(
@@ -206,8 +210,15 @@ class Settings(BaseSettings):
         default=""
     )  # API key for embeddings (defaults to openai_api_key if empty)
     embedding_max_input_tokens: int = Field(
-        default=8192
-    )  # Per-input token cap before sending to embeddings endpoint. Raise for models with longer context (e.g. text-embedding-qwen3-8b supports 32768). Oversized inputs are truncated client-side to avoid 400 "Input text exceeds the maximum token limit" errors.
+        default=5400
+    )  # Per-input token cap before sending to embeddings endpoint. Default sits
+    # under the nominal 8192 because gateways (Venice) validate the cap with
+    # their OWN tokenizer, counting punctuation-heavy text ~1.2-1.4x higher
+    # than cl100k (measured 2026-07-08: a 5,795-cl100k-token chunk rejected as
+    # >8192). Raise explicitly for direct-OpenAI or long-context embed models
+    # (e.g. text-embedding-qwen3-8b supports 32768). Oversized inputs are
+    # sub-split/truncated client-side to avoid 400 "Input text exceeds the
+    # maximum token limit" errors.
 
     # Chunking Configuration
     chunk_size: int = Field(default=500)
@@ -953,9 +964,16 @@ class Settings(BaseSettings):
         """Resolved input context budget for entity extraction.
 
         Reads `GRAPH_EXTRACTION_MAX_CONTEXT` (or the deprecated
-        `EXTRACTION_MAX_CONTEXT` alias) and falls back to `OPENAI_MAX_CONTEXT`.
+        `EXTRACTION_MAX_CONTEXT` alias) and falls back to `OPENAI_MAX_CONTEXT` —
+        but the INHERITED value is clamped: a chat model's context (e.g.
+        256000) leaking into extraction packs prompts no extraction tier
+        actually answers within a request timeout (measured 2026-07-08:
+        every 200k-token batch timed out; entities silently lost before the
+        split-retry existed). An explicitly set env value is honored as-is.
         """
-        return self.graph_extraction_max_context_raw or self.openai_max_context
+        if self.graph_extraction_max_context_raw > 0:
+            return self.graph_extraction_max_context_raw
+        return min(self.openai_max_context, 48_000)
 
     @property
     def relationship_max_context(self) -> int:

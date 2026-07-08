@@ -22,6 +22,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IngestionStepper } from "@/components/documents/IngestionStepper";
 
 type StepStatus = "pending" | "in_progress" | "complete";
 
@@ -823,32 +824,57 @@ export default function ExtractAnalyzePage() {
                 </div>
               </div>
 
-              {processingDocs.length > 0 && !entityTaskMessage && (
-                <div className="flex items-center gap-2 mb-3 p-3 bg-accent/10 border border-accent/20 rounded-lg">
-                  <Loader2 className="w-4 h-4 animate-spin text-accent" />
-                  <span className="text-sm text-accent">
-                    Processing {processingDocs.length} document{processingDocs.length !== 1 ? "s" : ""} in parallel... Entities are being extracted... {processingDocs.length + pendingDocs.length} document{processingDocs.length + pendingDocs.length !== 1 ? "s" : ""} remaining...
-                  </span>
-                </div>
-              )}
-
-              {analyzingImagesDocs.length > 0 && !entityTaskMessage && (
-                <div className="mb-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileImage className="w-4 h-4 text-blue-400" />
-                    <span className="text-sm text-blue-300">
-                      Analyzing images in {analyzingImagesDocs.length} document{analyzingImagesDocs.length !== 1 ? "s" : ""}... ({totalImagesCurrent}/{totalImagesTotal} images)
+              {/* Per-document phase breakdown while Step 1 runs */}
+              {(processingDocs.length > 0 || analyzingImagesDocs.length > 0) && (
+                <div className="mb-3 p-3 bg-accent/5 border border-accent/20 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2 text-sm text-accent">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>
+                      {processingDocs.length > 0 &&
+                        `${processingDocs.length} document${processingDocs.length !== 1 ? "s" : ""} in the text pipeline`}
+                      {processingDocs.length > 0 && analyzingImagesDocs.length > 0 && " · "}
+                      {analyzingImagesDocs.length > 0 &&
+                        `${analyzingImagesDocs.length} finishing image analysis (${totalImagesCurrent}/${totalImagesTotal} images)`}
+                      {pendingDocs.length > 0 && ` · ${pendingDocs.length} queued`}
                     </span>
                   </div>
-                  <div className="h-1.5 bg-blue-500/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500/70 rounded-full transition-all duration-500"
-                      style={{ width: `${totalImagesTotal > 0 ? Math.round((totalImagesCurrent / totalImagesTotal) * 100) : 0}%` }}
-                    />
+                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                    {processingDocs.map((d) => (
+                      <div key={d.id} className="min-w-0">
+                        <p className="text-xs text-foreground/80 truncate mb-1" title={d.filename}>
+                          {d.filename}
+                        </p>
+                        <IngestionStepper doc={d} compact />
+                      </div>
+                    ))}
+                    {analyzingImagesDocs.map((d) => (
+                      <div key={d.id} className="min-w-0">
+                        <p className="text-xs text-foreground/80 truncate mb-1" title={d.filename}>
+                          {d.filename}
+                        </p>
+                        <div className="flex items-center justify-between text-[10px] text-blue-400/80">
+                          <span className="flex items-center gap-1">
+                            <FileImage className="w-2.5 h-2.5" />
+                            Analyzing images {d.image_progress_current ?? 0}/{d.image_progress_total ?? 0}
+                          </span>
+                          <span>
+                            {Math.round(((d.image_progress_current ?? 0) / Math.max(1, d.image_progress_total ?? 0)) * 100)}%
+                          </span>
+                        </div>
+                        <div className="h-1 bg-muted rounded-full overflow-hidden mt-0.5">
+                          <div
+                            className="h-full bg-blue-500/70 transition-all duration-500"
+                            style={{ width: `${Math.round(((d.image_progress_current ?? 0) / Math.max(1, d.image_progress_total ?? 0)) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <p className="text-xs text-blue-400/60 mt-1.5">
-                    Entities from images will be included once analysis completes. Step 1 will finish when all images are processed.
-                  </p>
+                  {analyzingImagesDocs.length > 0 && (
+                    <p className="text-xs text-blue-400/60 mt-2">
+                      Entities from images are included once analysis completes; Step 1 finishes when all images are processed.
+                    </p>
+                  )}
                 </div>
               )}
 

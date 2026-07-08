@@ -56,7 +56,11 @@ INJECTION_PATTERNS = [
     r"(pretend|act as if|imagine|assume).{0,30}(no rule|no instruction|no restriction|no limit)",
 
     # Encoding/obfuscation bypass attempts
-    r"(re-?transcript|transcribe|translate|convert|encode|decode).{0,50}(above|system|prompt|instruction|content)",
+    # Common verbs need a prompt/instruction-domain anchor and word boundaries:
+    # the unbounded form fired on prose like "Encoded in the genes ... are
+    # instructions for the biosynthesis". "re-transcript" is attack jargon and
+    # stays broad.
+    r"re-?transcript.{0,50}(above|system|prompt|instruction|content)|(transcribe|translate|convert|encode|decode)\b.{0,50}\b(system prompt|system message|instructions?|the prompt|your prompt|this prompt)\b",
     r"(markdown|json|xml|html|base64|hex|rot13).{0,30}(output|format|encode|convert).{0,30}(system|prompt|instruction|above)",
     r"replace.{0,20}['\"]?<['\"]?.{0,20}(LESS_THAN|GREATER_THAN|bracket|brace)",
 
@@ -67,14 +71,18 @@ INJECTION_PATTERNS = [
     r"(all|every|each).{0,20}(tag|section|block).{0,20}content",
 
     # Role manipulation
-    r"(you are now|now you are|become|switch to|change to).{0,30}(developer|admin|root|jailbreak|unrestricted)",
-    r"(developer|debug|admin|root|sudo|maintenance).{0,10}mode",
+    # Word-bounded role nouns: unbounded "root" matched "firmly rooted" /
+    # "the roots of this modern cult" ("root"+"mode(rn)") in ordinary prose.
+    r"(you are now|now you are|become|switch to|change to).{0,30}\b(developer|admin|root|jailbreak|unrestricted)\b",
+    r"\b(developer|debug|admin|root|sudo|maintenance)\b.{0,10}\bmode\b",
     r"(enable|activate|enter).{0,20}(unrestricted|unlimited|full access)",
 
     # Prompt leakage through formatting tricks
     r"(output|print|write|show).{0,30}(verbatim|exactly|literally|word.?for.?word)",
     r"copy.{0,20}paste.{0,30}(above|system|instruction|prompt)",
-    r"(echo|mirror|reflect).{0,30}(everything|all|input|prompt)",
+    # Requires an instruction/prompt anchor: bare "(echo|mirror|reflect) ...
+    # (all|everything)" fires on ordinary prose ("reflects all aspects of...").
+    r"(echo|mirror|reflect)\b.{0,30}\b(everything|all)\b.{0,20}\b(above|so far|conversation)\b|(echo|mirror|reflect)\b.{0,30}\b(system prompt|instructions?|the prompt|your prompt|entire prompt|full prompt|user input|the input|previous messages?)\b",
 
     # Separator/delimiter tricks
     r"(end|close|terminate).{0,20}(system|instruction|prompt).{0,20}(block|section|message)",
@@ -91,7 +99,10 @@ INJECTION_PATTERNS = [
     r"(ignore|disregard).{0,20}(above|previous|prior|earlier|preceding)",
     r"(new|updated|revised|real|actual|true)\s+(instruction|prompt|rule|system|task)s?\s*[:\-]",
     r"from now on.{0,40}(you|respond|answer|act|ignore|only)",
-    r"(reveal|show|print|repeat|output|list).{0,20}(your|the).{0,20}(prompt|instruction|guideline|rule|configuration|system)",
+    # "your" (addressing the model) required: with "(your|the)" this fired on
+    # prose like "show only the physical configuration of a molecule";
+    # "the <system prompt/...>" forms are already covered by the first pattern.
+    r"(reveal|show|print|repeat|output|list).{0,20}your.{0,20}(prompt|instructions?|guidelines?|rules?|configuration|system)",
 ]
 
 # Compiled patterns for efficiency

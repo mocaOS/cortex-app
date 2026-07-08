@@ -90,10 +90,23 @@ def test_primary_bump_cascades_through_chain():
     assert s.extraction_max_output_tokens == 4000
     assert s.relationship_max_output_tokens == 4000
     assert s.vision_max_output_tokens == 4000
-    assert s.extraction_max_context == 128000
-    assert s.relationship_max_context == 128000
+    # The INHERITED extraction context clamps at 48k — a chat model's large
+    # context must not leak into extraction batch sizing (2026-07-08: 200k
+    # inherited prompts never completed on the extraction tier). The clamp
+    # flows down the chain: relationship inherits the clamped extraction
+    # value (same timeout physics for Phase B batch prompts).
+    assert s.extraction_max_context == 48000
+    assert s.relationship_max_context == 48000
     # Standalone batch field stays at its own default
     assert s.relationship_batch_max_output_tokens == 16000
+
+
+def test_extraction_context_explicit_override_beats_clamp():
+    # An explicitly set env value is honored as-is, above the inherit clamp.
+    s = _fresh_settings(
+        openai_max_context=128000, graph_extraction_max_context_raw=100000
+    )
+    assert s.extraction_max_context == 100000
 
 
 # ---------------------------------------------------------------------------

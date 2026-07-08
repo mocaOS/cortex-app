@@ -24,7 +24,7 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 ## Extraction LLM
 
 - `GRAPH_EXTRACTION_MODEL`, `GRAPH_EXTRACTION_API_BASE`, `GRAPH_EXTRACTION_API_KEY` — Extraction model for entity extraction, community summarization, and query-side entity extraction (RAG search). Qwen3.6 27B recommended, with reasoning suppressed so it behaves like a fast instruct model that solves the task without overthinking. Defaults to primary model equivalents.
-- `GRAPH_EXTRACTION_MAX_CONTEXT` (default: 0 = inherit `OPENAI_MAX_CONTEXT` = 32768) — input context budget for entity extraction batching. Override when extraction model has bigger window than primary.
+- `GRAPH_EXTRACTION_MAX_CONTEXT` (default: 0 = inherit `OPENAI_MAX_CONTEXT`, **inherited value clamped at 48000**) — input context budget for entity extraction batching. Size to the provider's decode speed, not the model window (2026-07-08: 256k-context prompts never completed on Venice qwen3 at ~70 tok/s; 24000 recommended there). Explicit values are honored unclamped.
 - `EXTRACTION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS` = 8000) — output budget for entity-extraction LLM calls (`graph_extractor.py:821/1014/1840`). The inherited 8000 already accommodates Qwen3-family verbose XML; override only if you want to constrain or expand that tier specifically.
 
 ## Relationship LLM
@@ -84,7 +84,7 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 ## Vision
 
-- `VISION_MAX_CONCURRENT` (default: 3) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing)
+- `VISION_MAX_CONCURRENT` (default: 2) — max concurrent vision API calls system-wide for image analysis (controls semaphore + thread pool sizing). Each in-flight image chains up to 4 provider calls; gateways with ~20 concurrent-slot limits (Venice) 429 at 3 alongside multi-doc extraction.
 - `VISION_REASONING_MODE` (default: `off`) — see [Reasoning Control (ingestion)](#reasoning-control-ingestion). Suppresses `<think>` output on reasoning multimodal models (Qwen3-VL, GLM-V, etc.) so image descriptions stay clean.
 - `VISION_MAX_OUTPUT_TOKENS` (default: 0 = inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → `EXTRACTION_MAX_OUTPUT_TOKENS` → `OPENAI_MAX_OUTPUT_TOKENS`) — output budget for the vision-model image-description call (`vision_analyzer.py:304`).
 - `VISION_MIN_IMAGE_SIDE` (default: 64) — minimum image side (pixels) before `analyze_image_with_vision_model` calls the API. PDFs expose bullets/icons/separators as `PictureItem`s; hosted vision APIs reject sub-64px images (Venice returns HTTP 400 *"Supplied image did not pass validation checks"*). Below the threshold Cortex skips the call and lets `process_single_image` fall back to Docling's description (or "no description available"). Set 0 to disable the pre-filter.
@@ -104,13 +104,13 @@ Recommended minimal config when running a 3-tier stack:
 OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
 OPENAI_MAX_CONTEXT=256000                # unlock Gemma4 26B A4B full input window
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
-GRAPH_EXTRACTION_MAX_CONTEXT=256000      # unlock Qwen3.6 27B full input window; relationship_max_context inherits
+GRAPH_EXTRACTION_MAX_CONTEXT=24000       # sized to provider decode speed — see docs.cortex.eco/configuration (Provider Notes: Venice)
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
 EMBEDDING_MODEL=text-embedding-qwen3-8b  # text embedding (native 4096, MRL 32–4096)
 EMBEDDING_DIMENSION=4096                 # native; Neo4j 5.26 (default) supports 4096-dim vector indexes
-# Output budgets cascade automatically. EMBEDDING_MAX_INPUT_TOKENS stays at default
-# 8192 — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of
-# the model's native window. Self-hosted vLLM users can lift to 32768.
+# Output budgets cascade automatically. EMBEDDING_MAX_INPUT_TOKENS default (5400)
+# stays under gateway-side token validators (Venice counts with its own tokenizer).
+# Self-hosted vLLM users can lift to 32768.
 ```
 Both `*_MAX_CONTEXT` overrides are required — the conservative default (32768) doesn't match either model's actual input window.
 
@@ -131,7 +131,7 @@ VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
 
 - `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `USE_OPENAI_EMBEDDINGS` — embedding config
 - `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` — optional separate endpoint/key for embeddings (defaults to `OPENAI_API_BASE`/`OPENAI_API_KEY`)
-- `EMBEDDING_MAX_INPUT_TOKENS` (default: 8192) — per-input token cap before sending to the embeddings endpoint. Oversized inputs are char-truncated client-side (~2.8 chars/token, deliberately conservative to handle markdown/code/CJK content without overshooting the server cap) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* errors. **Keep at 8192 for managed providers** — Venice and OpenAI cap embed inputs at 8192 at the API gateway regardless of the underlying model's native window. Only lift (e.g. to 32768 for Qwen3-Embedding-8B) on self-hosted vLLM where you control the deployment. Applied in `app/services/document_processor.py:_truncate_for_embedding`.
+- `EMBEDDING_MAX_INPUT_TOKENS` (default: **5400**) — per-input token cap before sending to the embeddings endpoint. Oversized inputs are token-accurately sub-split client-side (tiktoken cl100k with char fallback, zero content loss — `_enforce_embed_token_cap`/`_split_to_token_budget`) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* errors; chunks the provider still rejects are re-embedded individually with automatic halving (`_recover_missing_embeddings`). Default sits under the nominal 8192 because gateways (Venice) validate with their OWN tokenizer, counting punctuation-dense text ~1.2-1.4× higher than cl100k (measured 2026-07-08). Lift explicitly for direct OpenAI or self-hosted vLLM (e.g. 32768 for Qwen3-Embedding-8B). Applied in `app/services/document_processor.py`.
 
 ## Reranking
 
