@@ -938,7 +938,10 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
               className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              Generate Graph
+              {/* With an existing graph the autostart flow on /extract runs the
+                  incremental Step 1 (pending docs only), so the label must not
+                  promise a full (re)generation. */}
+              {documents.some((d) => (d.entity_count ?? 0) > 0) ? "Update Graph" : "Generate Graph"}
             </button>
           )}
         </div>

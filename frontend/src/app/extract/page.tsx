@@ -609,22 +609,29 @@ export default function ExtractAnalyzePage() {
     }
   };
 
-  // Auto-trigger graph generation when navigated here with ?autostart=1
-  // (e.g. from the "Generate Graph" button on /documents). Fires exactly once
-  // per arrival; the URL param is stripped immediately so a refresh won't
-  // re-fire. Respects the same preconditions as the manual button (docs must
-  // be loaded and present, no run already in progress).
+  // Auto-trigger graph work when navigated here with ?autostart=1 (the banner
+  // button on /documents). Fires exactly once per arrival; the URL param is
+  // stripped immediately so a refresh won't re-fire. Respects the same
+  // preconditions as the manual buttons (docs must be loaded and present, no
+  // run already in progress). With an existing graph, arriving from the
+  // Documents banner means "fold my new uploads in" — run incremental Step 1
+  // (same as "Extract Entities"), never the destructive full rebuild. Only a
+  // fresh instance (no entities yet) gets the full Generate Graph chain.
   useEffect(() => {
     if (hasAutoStarted.current) return;
     if (searchParams.get("autostart") !== "1") return;
     if (loading) return;
     if (documents.length === 0) return;
-    if (isRegenerating) return;
+    if (isRegenerating || isExtractingEntities) return;
     hasAutoStarted.current = true;
     router.replace("/extract", { scroll: false });
-    handleRegenerateGraph();
+    if ((stats?.entity_count ?? 0) > 0) {
+      handleExtractEntities();
+    } else {
+      handleRegenerateGraph();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, loading, documents.length, isRegenerating, router]);
+  }, [searchParams, loading, documents.length, isRegenerating, isExtractingEntities, router]);
 
   if (loading) {
     return (

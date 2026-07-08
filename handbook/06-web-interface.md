@@ -86,7 +86,7 @@ The default landing page. Shows all uploaded documents in a list with:
 
 **Actions:**
 - **Upload** button — Opens the upload modal (drag-and-drop with collection selector)
-- **Generate Graph** button — Navigates to the Knowledge Graph page (`/extract`)
+- **Update Graph** button ("Generate Graph" on a fresh instance) — Navigates to the Knowledge Graph page (`/extract`) and auto-starts the matching flow: incremental entity extraction over the new documents when a graph already exists, the full 3-step pipeline otherwise
 - **Delete** — Delete individual or selected documents
 - **Reprocess** — Re-run the processing pipeline on a document
 

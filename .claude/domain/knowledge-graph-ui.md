@@ -27,7 +27,12 @@ Cleanup order on click: `deleteAllCommunities()` → `deleteAllRelationships()` 
 
 ### Cross-page auto-start (`?autostart=1`)
 
-The Documents page's "Generate Graph" banner button (`DocumentList.tsx`) navigates to `/extract?autostart=1` instead of plain `/extract`. A one-shot `useEffect` on the Knowledge Graph page (`extract/page.tsx`) detects the param, waits for the initial data fetch + `documents.length > 0`, calls `handleRegenerateGraph()` once, and `router.replace("/extract")`s the URL so a refresh won't re-fire. A `hasAutoStarted` ref guards against double-fires within the same mount. The destructive-action confirm dialog inside `handleRegenerateGraph` still appears when entities already exist — the auto-trigger doesn't bypass it.
+The Documents page's graph banner button (`DocumentList.tsx`) navigates to `/extract?autostart=1` instead of plain `/extract`. A one-shot `useEffect` on the Knowledge Graph page (`extract/page.tsx`) detects the param, waits for the initial data fetch + `documents.length > 0`, dispatches once, and `router.replace("/extract")`s the URL so a refresh won't re-fire. A `hasAutoStarted` ref guards against double-fires within the same mount.
+
+The dispatch depends on graph state (2026-07-09 — previously it always ran the full rebuild, which surprised users who had just uploaded one document):
+
+- **Entities exist** → `handleExtractEntities()` — incremental Step 1 over pending docs only, no confirm, nothing deleted. Steps 2/3 then show as stale per the staleness model. The banner button is labeled **"Update Graph"** (graph existence proxied client-side via `documents.some(d => d.entity_count > 0)`).
+- **No entities (fresh instance)** → `handleRegenerateGraph()` — full 3-step chain; its confirm dialog is skipped by its own `hasExistingGraph` check anyway. Button labeled **"Generate Graph"**.
 
 ## Backend-Orchestrated Chain
 
