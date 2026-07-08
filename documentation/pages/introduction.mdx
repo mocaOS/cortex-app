@@ -116,9 +116,20 @@ Cortex exposes **100+ REST API endpoints** across these categories:
 | Tasks | 5 | Background task tracking |
 | Admin | 5 | API key management |
 
+## For AI Agents
+
+If you are an AI agent (or are directing one) building against the Cortex API, use **[Cortex Skills](https://cortexskills.org)** — curated, up-to-date `SKILL.md` files for every subsystem, fetchable directly over HTTP. Instead of inferring the API from training data, fetch the ground-truth skill file first:
+
+- **Skill index:** `https://cortexskills.org/SKILL.md` — overview of all skills and how to build on Cortex
+- **Per-topic skills:** `https://cortexskills.org/<topic>/SKILL.md` — e.g. `/upload`, `/search`, `/ask`, `/graph`, `/collections`, `/auth`, `/setup`, `/admin`, `/tasks`, `/git-integration`, `/web-import`, `/mcp`, `/integration`, `/hermes`
+- **Source repository:** [github.com/mocaOS/cortex-skills](https://github.com/mocaOS/cortex-skills) — also home of the Cortex MCP server
+
+For example, `https://cortexskills.org/cortex/SKILL.md` teaches an agent to use a running instance as long-term memory (sync, hybrid search, agentic Q&A), and `https://cortexskills.org/hermes/SKILL.md` does the same tailored for Hermes agents.
+
 ## Quick Links
 
 - [Quick Start](/quickstart) - Get running in 5 minutes with Docker
 - [Configuration](/configuration) - All 50+ environment variables
 - [API Reference](/api) - Complete OpenAPI documentation
 - [GitHub](https://github.com/mocaOS/cortex-app) - Source code and issues
+- [Cortex Skills](https://cortexskills.org) - Fetchable SKILL.md files for AI agents ([source](https://github.com/mocaOS/cortex-skills))

@@ -5,6 +5,12 @@ description: Extend Deep Research and Chat with external capabilities from the A
 
 Agent Skills let you add new capabilities to Cortex Library's researcher agent. Skills are reusable instruction sets from the open [AgentSkills](https://agentskills.io/) ecosystem — install them from the [skills.sh](https://skills.sh) registry or any URL, run through a setup wizard, and the agent uses them automatically.
 
+:::tip{title="Skills for building on Cortex"}
+
+This page is about installing skills **into** Cortex's agent. For the reverse direction — teaching an **external** AI agent (Claude, Cursor, Hermes, or any coding assistant) how to use the Cortex API — see **[Cortex Skills](https://cortexskills.org)** ([source repo](https://github.com/mocaOS/cortex-skills)): curated `SKILL.md` files for every Cortex subsystem, fetchable over HTTP. Point your agent at `https://cortexskills.org/SKILL.md` for the index, or `https://cortexskills.org/llms.txt` for a machine-readable listing.
+
+:::
+
 ## Overview
 
 Enabled skills are **automatically activated** at the start of every research session. The agent sees their full instructions and can call external APIs using the built-in `http_request` tool. Authentication is handled entirely server-side — the LLM never sees tokens or API keys.

@@ -5,6 +5,25 @@ description: Integrate Cortex with popular frameworks, tools, and platforms
 
 Examples for integrating Cortex with popular frameworks, AI tools, and automation platforms.
 
+## AI Coding Agents (Cortex Skills)
+
+The fastest way to integrate is to let your AI agent do it. [Cortex Skills](https://cortexskills.org) ([source](https://github.com/mocaOS/cortex-skills)) serves curated, always-current `SKILL.md` files over plain HTTP — one per subsystem — so agents work from ground truth instead of stale training data:
+
+```text
+https://cortexskills.org/SKILL.md            # index: how to build on Cortex
+https://cortexskills.org/upload/SKILL.md     # document ingestion
+https://cortexskills.org/search/SKILL.md     # hybrid search
+https://cortexskills.org/ask/SKILL.md        # RAG Q&A + streaming
+https://cortexskills.org/cortex/SKILL.md     # use Cortex as agent long-term memory
+https://cortexskills.org/hermes/SKILL.md     # long-term memory for Hermes agents
+https://cortexskills.org/mcp/SKILL.md        # MCP server setup (Claude, Cursor, ...)
+https://cortexskills.org/llms.txt            # machine-readable skill listing
+```
+
+Example prompt:
+
+> Fetch `https://cortexskills.org/upload/SKILL.md` and use it to write a Python script that batch-uploads a folder of PDFs to my Cortex instance.
+
 ## Next.js / React Integration
 
 ### API Route Handler

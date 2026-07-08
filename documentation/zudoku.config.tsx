@@ -137,6 +137,12 @@ const config: ZudokuConfig = {
             },
             {
               type: "link",
+              icon: "sparkles",
+              label: "Cortex Skills",
+              to: "https://cortexskills.org",
+            },
+            {
+              type: "link",
               icon: "file-text",
               label: "llms.txt",
               to: `${docsUrl}/llms.txt`,
