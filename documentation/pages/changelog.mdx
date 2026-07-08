@@ -7,7 +7,109 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
-## July 8, 2026 (Error tracking with GlitchTip)
+## July 8, 2026 (Ingestion reliability overhaul, compact extraction format & error tracking)
+
+A deep reliability pass over the entire document-ingestion pipeline, driven by
+live debugging of large-PDF ingestion (multi-hundred-page books) against a
+hosted inference provider: conversion no longer runs out of memory, embedding
+and extraction failures self-heal instead of silently degrading the graph, a
+new compact extraction output format cuts structured-output overhead, and the
+UI finally shows truthfully what the pipeline is doing at every stage. Plus
+full-stack error tracking via GlitchTip. No API or schema breakage.
+
+### Large-document conversion & memory
+
+- **Docling worker heap release** — the conversion worker returns freed page-image
+  memory to the OS after every page chunk (`gc` + `malloc_trim`). Previously the
+  allocator retained it, and conversions of 300+ page PDFs were OOM-killed inside
+  the container's memory limit. Books of any length now convert reliably within
+  a bounded footprint.
+- **Live conversion progress** — the worker's per-page-chunk progress streams into
+  the document's progress state (`Converting document: page 150/320...`) instead
+  of surfacing only after the process exits; a queued document now says
+  `Waiting for a conversion slot...` instead of falsely claiming to convert.
+- pypdf's per-object warnings on malformed PDFs no longer flood the logs.
+
+### Embedding input guards & recovery
+
+- **Token-accurate input capping** — oversized chunks are sub-split against real
+  token counts (tiktoken, char-heuristic fallback) instead of a chars-per-token
+  approximation that undercounted punctuation-dense text (tables of contents,
+  indexes, bibliographies). Zero content loss; `EMBEDDING_MAX_INPUT_TOKENS` now
+  defaults to 5400 to stay under gateway-side token validators (see the new
+  "Provider Notes: Venice" section in Configuration).
+- **Per-chunk recovery** — a batched embed request rejected by the provider no
+  longer strips embeddings from every chunk in the batch: affected chunks are
+  re-embedded individually (rate-limit aware, with automatic halving for inputs
+  the provider still refuses). Image-derived chunks get the same treatment.
+- Empty/whitespace-only chunks are dropped before embedding, and a failed embed
+  pass is retried once before failing the document.
+
+### Extraction self-healing & budgets
+
+- **Timeout and truncation split-retry** — an extraction batch that times out or
+  overflows its output budget is split in half and retried instead of being
+  silently dropped. Previously an oversized batch could lose all of its entities
+  without any error surfaced on the document.
+- **Inherited context clamp** — when `GRAPH_EXTRACTION_MAX_CONTEXT` is unset, the
+  value inherited from `OPENAI_MAX_CONTEXT` is now clamped at 48000: a chat
+  model's large context window must not dictate extraction batch sizing, since
+  hosted providers cannot decode a fully-packed prompt inside a request timeout.
+  Explicitly set values are honored as-is.
+- Token estimation for extraction batching uses tiktoken's `cl100k_base` for
+  non-OpenAI models instead of a chars/4 heuristic.
+- Entity extraction reports per-batch progress (`Finding entities: 240/1511
+  chunks...`) instead of a static message for the whole phase.
+
+### Compact extraction output format
+
+- Entity and per-chunk relationship extraction now instruct the model to emit a
+  **compact line protocol** (`ENT|Name|Type|Description`,
+  `REL|Source|Target|TYPE|weight|confidence|Description`) instead of XML
+  elements — the XML scaffolding consumed a large share of every response's
+  output tokens, and structured-output latency on hosted providers is
+  decode-bound, so scaffolding directly inflated wall time and pushed dense
+  batches past request timeouts. Stored graph content (names, types,
+  descriptions, weights) is unchanged.
+- XML parsing is retained as an automatic fallback for prompt drift and older
+  models; the batched per-chunk path keeps its `<chunk index>` grouping with
+  compact lines inside.
+- The extraction prompt version is part of the reprocess fingerprint, so
+  upgraded instances re-extract documents on their next reprocess instead of
+  delta-skipping them.
+
+### Ingestion progress UI
+
+- **Phase stepper** on the Documents page: processing documents show the pipeline
+  phases (Convert → Chunk & Embed → Store → Extract) with live counts, an overall
+  bar, and a within-phase bar — replacing a single opaque message. Image analysis
+  renders as a parallel track, matching how it actually runs.
+- **Per-document breakdown** on the Knowledge Graph page while Step 1 runs, with
+  compact steppers and per-document image-analysis bars — replacing the aggregate
+  "Processing N documents..." banner.
+- Pending documents distinguish "queued by the system — waiting for a processing
+  slot" from plain "Unprocessed"; stale image counters from interrupted runs are
+  no longer displayed.
+
+### Prompt-injection scan accuracy
+
+- The ingestion-scan heuristics are now word-bounded and require
+  instruction-domain anchors, eliminating false flags on ordinary book-scale
+  prose ("firmly rooted", "reflects all aspects", "encoded … instructions",
+  "show only the physical configuration") while the full attack corpus remains
+  detected. Documents previously flagged by the over-broad patterns are cleared
+  on their next scan.
+
+### Provider notes: Venice (docs)
+
+- New [Configuration](/configuration) section with measured tuning guidance for
+  running the ingestion stack against `api.venice.ai`: extraction batch sizing
+  against serving speed, embed-input validation behavior, rate-limit and
+  concurrency-slot characteristics, and the HTTP-200 error-envelope quirk.
+  The previous guidance recommending full-window extraction budgets was
+  corrected accordingly.
+
+### Error tracking with GlitchTip
 
 Full-stack crash and error reporting via a self-hosted
 [GlitchTip](https://glitchtip.com) instance (Sentry-protocol compatible).
@@ -15,8 +117,7 @@ Backend and frontend report to separate GlitchTip projects with readable
 stack traces on both sides — Python events carry source-context lines out of
 the box, and production frontend builds upload source maps so browser errors
 show original TypeScript instead of minified chunks. Entirely opt-in and
-env-driven: without a DSN the images run exactly as before. No API or schema
-breakage.
+env-driven: without a DSN the images run exactly as before.
 
 ### Backend error tracking
 
