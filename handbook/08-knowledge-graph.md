@@ -18,12 +18,9 @@ Extracts entities from each document's chunks using an LLM. The UI shows entity 
 
 1. Each document's chunks are grouped into batches sized to fit within `GRAPH_EXTRACTION_MAX_CONTEXT`
 2. Consecutive batches share 1 chunk of overlap for context continuity
-3. The LLM receives a system prompt requesting entities in strict XML format:
-   ```xml
-   <entity name="OpenAI">
-     <type>Organization</type>
-     <description>An AI research company founded in 2015...</description>
-   </entity>
+3. The LLM receives a system prompt requesting entities as compact pipe-delimited lines (`ENT|Name|Type|Description`; XML output is still parsed as a legacy fallback):
+   ```
+   ENT|OpenAI|Organization|An AI research company founded in 2015...
    ```
 4. The response is parsed, entity types are normalized to the 10 allowed types (rapidfuzz matching, 75% threshold, fallback to "Concept"). If a response hits the output-token cap, the batch is automatically split in half and retried so entities at the end of dense documents aren't lost. A document summary is generated as extraction context only when a document spans multiple batches — single-batch documents already include their full text in the prompt.
 5. Entity resolution merges similar names using embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches like "Museum of Crypto Art" / "MOCA", with Levenshtein 85% as fallback. "OpenAI" and "Open AI" become a single entity with aliases. This applies symmetrically to entities extracted from text **and** from image descriptions — both surfaces feed the same `entity_embedding` vector index.
@@ -52,7 +49,7 @@ Candidate entity pairs are generated without the LLM; the LLM only verifies and 
 1. Entities missing an embedding are embedded and bulk-written first, so the `entity_embedding` vector index covers the whole set (skipped when no embedding API key is configured — candidates then come from co-mention only)
 2. Candidate pairs are generated in Neo4j: **kNN** over the vector index (`RELATIONSHIP_KNN_K` neighbors per entity, min similarity `RELATIONSHIP_KNN_MIN_SIMILARITY`, already-connected pairs excluded) plus **document co-mention** (unconnected pairs mentioned together in at least `RELATIONSHIP_MIN_SHARED_DOCS` documents; entities in more than `RELATIONSHIP_DOC_FREQ_CAP` documents skipped as hub anchors)
 3. Pairs are scored, deduplicated across directions and sources, and capped (`RELATIONSHIP_CANDIDATES_PER_ENTITY` per entity, `RELATIONSHIP_MAX_CANDIDATE_PAIRS` total)
-4. The LLM verifies the ranked pairs in small batched calls of `RELATIONSHIP_PAIRS_PER_CALL` (default 40) pairs, each with up to `RELATIONSHIP_PAIR_CONTEXT_TOKENS` of chunk context, returning the same XML format with confidence scores as below
+4. The LLM verifies the ranked pairs in small batched calls of `RELATIONSHIP_PAIRS_PER_CALL` (default 40) pairs, each with up to `RELATIONSHIP_PAIR_CONTEXT_TOKENS` of chunk context, returning the same compact `REL|` line format with confidence scores as below
 
 Targeted mode runs a **single pass** — no multi-round discovery. `RELATIONSHIP_MAX_HOURS` is still enforced between verification batches.
 
@@ -72,16 +69,9 @@ Legacy mode supports **multi-round discovery**: initial analysis runs up to `REL
 
 **In both modes:**
 
-5. The LLM returns relationships in XML format with confidence scores:
-   ```xml
-   <relationship>
-     <source>Vitalik Buterin</source>
-     <target>Ethereum</target>
-     <type>CREATED_BY</type>
-     <description>Vitalik Buterin co-founded Ethereum in 2015.</description>
-     <weight>9.5</weight>
-     <confidence>0.95</confidence>
-   </relationship>
+5. The LLM returns relationships as compact pipe-delimited lines (`REL|Source|Target|TYPE|weight|confidence|Description`; XML output is still parsed as a legacy fallback):
+   ```
+   REL|Vitalik Buterin|Ethereum|CREATED_BY|9.5|0.95|Vitalik Buterin co-founded Ethereum in 2015.
    ```
 6. Relationships with confidence < 0.5 are filtered before storage
 7. Self-referential relationships (where source and target are the same entity) are automatically filtered out at both the extraction and storage levels

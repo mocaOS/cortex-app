@@ -104,7 +104,7 @@ curl http://localhost:8000/api/tasks/{task_id} \
   -H "X-API-Key: your-api-key"
 ```
 
-The batch processing concurrency is controlled by `BATCH_PROCESSING_CONCURRENCY` (default: 3).
+The batch processing concurrency is controlled by `BATCH_PROCESSING_CONCURRENCY` (default: 2 — measured faster than 3 for multi-document builds, since more in-flight documents drop per-call decode throughput).
 
 ## The Processing Pipeline
 
@@ -148,7 +148,7 @@ If `ENABLE_GRAPH_EXTRACTION=true`, each document's chunks are analyzed by an LLM
 
 1. Chunks are batched by token budget (fitting within `GRAPH_EXTRACTION_MAX_CONTEXT`)
 2. Each batch includes 1-chunk overlap with the previous batch for continuity
-3. The LLM returns entities in XML format
+3. The LLM returns entities as compact `ENT|Name|Type|Description` lines (XML accepted as a legacy fallback)
 4. Entities are stored with fuzzy resolution (85% Levenshtein threshold)
 5. Entity types are normalized to the 10 allowed types
 6. Entities are linked to their mention chunks via fuzzy substring matching

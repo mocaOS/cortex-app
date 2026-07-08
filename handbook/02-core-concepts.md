@@ -91,7 +91,7 @@ Entities are the named "things" in your documents — the people, organizations,
 During document ingestion, an LLM reads each chunk and identifies entities within it. The extraction process:
 
 1. **Batches chunks** by token budget to fit within the LLM's context window
-2. **Sends each batch** with a structured prompt asking for entities in XML format
+2. **Sends each batch** with a structured prompt asking for entities as compact pipe-delimited lines (`ENT|Name|Type|Description`; XML is still parsed as a legacy fallback)
 3. **Parses the response** to extract entity names, types, and descriptions
 4. **Normalizes entity types** to the 10 allowed categories using fuzzy matching
 5. **Resolves duplicates** via embedding-based vector similarity (when `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`) to catch semantic matches, with Levenshtein fuzzy matching (85% threshold) as fallback

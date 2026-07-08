@@ -362,9 +362,10 @@ class Settings(BaseSettings):
 
     # Batch Processing Configuration
     batch_processing_concurrency: int = Field(
-        default=3
-    )  # Documents processed concurrently in batch mode (default 3,
-    # bench-validated: the recalibrated Venice-safe setting)
+        default=2
+    )  # Documents processed concurrently in batch mode. Default 2: live measurement
+    # (2026-07-08) showed 3 concurrent docs drop per-call decode throughput
+    # ~70 → ~23 tok/s and multiply request timeouts — 2 finishes builds faster.
     processing_thread_workers: int = Field(
         default=4
     )  # Thread pool workers for CPU-intensive operations

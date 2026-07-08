@@ -99,8 +99,9 @@ SENTENCES_PER_CHUNK=5
 ### Batch Processing
 
 ```bash
-# Concurrent document processing
-BATCH_PROCESSING_CONCURRENCY=3
+# Concurrent document processing (2 beats 3 on real providers: concurrent
+# long extraction calls share the provider's decode rate and multiply timeouts)
+BATCH_PROCESSING_CONCURRENCY=2
 
 # Thread workers for processing
 PROCESSING_THREAD_WORKERS=4
@@ -280,19 +281,27 @@ OPENAI_MAX_CONTEXT=256000                 # unlock Gemma4 26B A4B full input win
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=24000         # size to the provider's DECODE SPEED, not the model's window — see "Provider Notes: Venice" below
+EXTRACTION_MAX_OUTPUT_TOKENS=8000          # extraction output cap (explicit; 0 would inherit the same 8000)
+RELATIONSHIP_MAX_CONTEXT=256000            # relationship batching keeps a wide READ window — its output is bounded per call (pairs-per-call cap), unlike extraction
 
 VISION_MODEL=qwen3-6-27b              # image analysis — set explicitly (model name does NOT inherit; empty disables vision → Docling fallback). api_base/api_key inherit from OPENAI_*.
 
-EMBEDDING_MODEL=text-embedding-qwen3-8b    # text embedding (native 4096, MRL 32–4096)
-EMBEDDING_DIMENSION=4096                   # Native; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-# EMBEDDING_MAX_INPUT_TOKENS defaults to 5400 (safe under gateway-side token
-# validators — see "Provider Notes: Venice"). Self-hosted vLLM users running
-# Qwen3-Embedding-8B can lift to 32768.
+EMBEDDING_MODEL=text-embedding-3-small     # recommended: OpenAI text-embedding-3-small (1536-dim)
+EMBEDDING_DIMENSION=1536
+EMBEDDING_API_BASE=https://api.openai.com/v1
+EMBEDDING_API_KEY=
+EMBEDDING_MAX_INPUT_TOKENS=5400            # default; kept well under the 8192 provider cap because
+                                           # providers validate with their OWN tokenizer (counts
+                                           # 1.2–1.4× higher than cl100k on punctuation-heavy text —
+                                           # see "Provider Notes: Venice")
+# Single-provider (Venice-only) alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b +
+# EMBEDDING_DIMENSION=4096 (native dim; Neo4j 5.26 supports up to 4096-dim vector
+# indexes). Self-hosted vLLM users running Qwen3-Embedding-8B can lift the input cap to 32768.
 ```
 
 The extraction `*_MAX_CONTEXT` override matters because batch sizing determines how many output tokens each extraction call must generate — and on hosted providers, generation speed (tok/s), not the model's input window, is what bounds a call. A model with a 256K window served at ~70 tok/s cannot answer a fully-packed prompt inside a request timeout. Cortex clamps the *inherited* extraction context at 48000 for this reason (an explicitly set `GRAPH_EXTRACTION_MAX_CONTEXT` is always honored as-is). The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 5400; oversized inputs are token-accurately sub-split client-side (tiktoken, zero content loss) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections, and chunks a provider still rejects are re-embedded individually with automatic halving.
 
-**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=3`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=2`) are reliably tested. On providers with limited serving throughput, *lowering* build concurrency often finishes multi-document builds faster — concurrent long extraction calls share the provider's decode rate and can push each other past request timeouts (see "Provider Notes: Venice").
+**Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=2`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=2`) are production-validated. Resist raising `BATCH_PROCESSING_CONCURRENCY`: on providers with limited serving throughput, *lower* build concurrency finishes multi-document builds faster — concurrent long extraction calls share the provider's decode rate and can push each other past request timeouts (see "Provider Notes: Venice").
 
 The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `BATCH_PROCESSING_CONCURRENCY` as documents move through the pipeline. The ingestion pipeline staggers extraction, per-chunk relationships, and vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case theoretical product. Because they compound, raise them cautiously — `CONCURRENT_EXTRACTIONS` is the biggest multiplier (entity extraction is the heaviest call) and the first knob to lower on a slower provider. `VISION_MAX_CONCURRENT` is a global semaphore (system-wide) and does *not* multiply with `BATCH_PROCESSING_CONCURRENCY`.
 
@@ -594,7 +603,7 @@ VISION_MODEL_API_KEY=sk-your-api-key-here
 | `VISION_MODEL` | No | - | Vision model for image analysis (e.g., `gpt-4o`, `claude-3-5-sonnet`) |
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | API endpoint for vision model |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | API key for vision model |
-| `VISION_MAX_CONCURRENT` | No | `3` | Max concurrent vision API calls system-wide. Increase for faster image-heavy document processing |
+| `VISION_MAX_CONCURRENT` | No | `2` | Max concurrent vision API calls system-wide. Each in-flight image spawns a multi-call chain; provider concurrent-slot limits (~20/key) bind before RPM |
 | `VISION_REASONING_MODE` | No | `off` | Reasoning mode for the vision-model call. Same value set as the ingestion modes — see [Reasoning Control for ingestion](#reasoning-control-for-ingestion). Lets you use reasoning multimodal models (Qwen3-VL, GLM-V) as `VISION_MODEL` without `<think>` tokens in image descriptions |
 
 When no vision model is configured, Docling's built-in image description (SmolDocling) is used automatically. See [Image Analysis Guide](/guides/image-analysis) for details.
@@ -722,7 +731,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RELATIONSHIP_EXTRACTION_API_BASE` | No | `GRAPH_EXTRACTION_API_BASE` | API base for relationship model |
 | `RELATIONSHIP_EXTRACTION_API_KEY` | No | `GRAPH_EXTRACTION_API_KEY` | API key for relationship model |
 | `CONCURRENT_RELATIONS` | No | `3` | Concurrent per-chunk relationship extractions per document |
-| `GRAPH_EXTRACTION_MAX_CONTEXT` | No | `0` (=inherit) | Input context for entity extraction batching. Inherits `OPENAI_MAX_CONTEXT`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | No | `0` (=inherit) | Input context for entity extraction batching. Inherits `min(OPENAI_MAX_CONTEXT, 48000)` — clamped because extraction is decode-bound; recommended explicit `24000`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) |
 | `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for entity extraction. Inherits `OPENAI_MAX_OUTPUT_TOKENS` |
 | `RELATIONSHIP_MAX_CONTEXT` | No | `0` (=inherit) | Input context for Phase 2 batch. Inherits `GRAPH_EXTRACTION_MAX_CONTEXT` → primary |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for **per-chunk + candidate scan** (was Phase 2 batch in old releases — see migration note). Inherits `EXTRACTION_MAX_OUTPUT_TOKENS` |
@@ -779,7 +788,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `VISION_MODEL` | No | - | Vision model for image analysis |
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | Vision model API endpoint |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | Vision model API key |
-| `VISION_MAX_CONCURRENT` | No | `3` | Max concurrent vision API calls |
+| `VISION_MAX_CONCURRENT` | No | `2` | Max concurrent vision API calls |
 | `ADMIN_EMAIL` | Yes | - | Admin login email |
 | `ADMIN_PASSWORD` | Yes | - | Admin login password |
 | `ADMIN_API_KEY` | Yes | - | Admin API key |

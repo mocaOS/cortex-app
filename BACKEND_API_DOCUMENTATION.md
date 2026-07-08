@@ -1039,10 +1039,10 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `ENABLE_GRAPH_EXTRACTION`: Enable LLM-based extraction (default: `True`)
 - `GRAPH_EXTRACTION_MODEL`: Model for extraction (defaults to `OPENAI_MODEL`)
 - `MAX_GRAPH_HOPS`: Maximum hops for graph traversal (default: `2`)
-- `CONCURRENT_EXTRACTIONS`: Concurrent chunks for extraction (default: `20`)
+- `CONCURRENT_EXTRACTIONS`: Concurrent chunks for extraction (default: `3`)
 
 #### Batch Processing Configuration
-- `BATCH_PROCESSING_CONCURRENCY`: Concurrent documents in batch mode (default: `10`)
+- `BATCH_PROCESSING_CONCURRENCY`: Concurrent documents in batch mode (default: `2`)
 - `PROCESSING_THREAD_WORKERS`: Thread pool workers for CPU operations (default: `4`)
 
 #### Enhanced RAG Configuration

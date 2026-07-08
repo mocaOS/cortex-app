@@ -93,7 +93,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] `ENABLE_GRAPH_EXTRACTION=true`
 - [ ] `OPENAI_API_KEY` (or extraction key) is valid
 - [ ] `GRAPH_EXTRACTION_API_BASE` points to the correct endpoint
-- [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` doesn't exceed the model's actual context window
+- [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` isn't oversized (recommended 24000) — extraction output scales with input, so batches sized to the model's full window time out at real decode speeds and silently lose entities
 - [ ] Check backend logs for LLM API error responses
 
 ### Relationship Analysis Fails
@@ -104,7 +104,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] Entities exist (run Step 1 first)
 - [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window (or leave 0 to inherit from `GRAPH_EXTRACTION_MAX_CONTEXT` / `OPENAI_MAX_CONTEXT`)
 - [ ] `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` is sufficient for Phase 2 batch (default: 16000)
-- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already handles Qwen3-family verbose XML; only override if you've explicitly tightened the chain elsewhere and need to relax it.
+- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already comfortably covers the compact `ENT|`/`REL|` output format; only override if you've explicitly tightened the chain elsewhere and need to relax it.
 - [ ] In the default `targeted` mode with no embedding API key configured, candidates come from document co-mention only — pairs need at least `RELATIONSHIP_MIN_SHARED_DOCS` (default 2) shared documents, so very small or single-document libraries may yield few candidates
 - [ ] LLM API key has sufficient credits/quota
 - [ ] Check task status for error messages: `GET /api/tasks/{task_id}`

@@ -149,29 +149,49 @@ SESSION_SECRET=at-least-32-characters-secret
 
 Cortex uses LLMs for Q&A, entity extraction, relationship analysis, community summarization, and image understanding. Each capability can point to a different model or provider (any OpenAI-compatible API). Entity extraction and community summarization use the extraction model, while all relationship work (per-chunk + batch analysis) uses the dedicated relationship model. Fallback chain: relationship model → extraction model → primary model.
 
-**Quick Setup: Recommended Minimal Stack** — if you want the bench-validated 2-model stack, fill in two API values and you're done. Everything else inherits via the model + budget fallback chains. The two `*_MAX_CONTEXT` lines unlock each model's full input window (defaults are too conservative for these models).
+**Quick Setup: Recommended Minimal Stack** — the production-validated configuration (2026-07-08 tuning). Fill in the API keys and you're done; everything else inherits via the model + budget fallback chains.
 
 ```env
 # Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
 OPENAI_API_KEY=
 OPENAI_API_BASE=https://api.venice.ai/api/v1
 OPENAI_MODEL=google-gemma-4-26b-a4b-it
-OPENAI_MAX_CONTEXT=256000
+OPENAI_MAX_CONTEXT=256000           # chat/research reads benefit from the full window
 
-# Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
+# Extraction — drives relationship via inheritance (Qwen3.6 27B)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
-GRAPH_EXTRACTION_MAX_CONTEXT=256000
+# Deliberately SMALL — extraction is decode-bound: output scales with input (the model
+# re-emits every entity/relation), so batches sized to the model's context window can't
+# finish inside the request timeout at real decode speeds (~70 tok/s) — they retry and
+# silently lose entities. 24000 keeps worst-case output inside the 8000-token cap and
+# completes reliably. It's a graph-density/cost dial (12000 ≈ denser graph, ~2× calls),
+# NOT a "match the model window" setting.
+GRAPH_EXTRACTION_MAX_CONTEXT=24000
+EXTRACTION_MAX_OUTPUT_TOKENS=8000
+# Relationship batching may keep a wide read window: its output is bounded per call
+# (pairs-per-call cap), unlike extraction where output scales with input.
+RELATIONSHIP_MAX_CONTEXT=256000
 
 # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
 # built-in capabilities). Only api_base/api_key inherit from OPENAI_* when unset.
 VISION_MODEL=qwen3-6-27b
 
-# Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
-EMBEDDING_MODEL=text-embedding-qwen3-8b
-EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-# EMBEDDING_MAX_INPUT_TOKENS defaults to 8192 — Venice/OpenAI cap inputs at 8192 server-side.
-# Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
+# Embeddings — recommended: OpenAI text-embedding-3-small (1536-dim)
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_API_BASE=https://api.openai.com/v1
+EMBEDDING_API_KEY=
+# Providers validate input length with their OWN tokenizer, which can count 1.2–1.4×
+# higher than the client-side cl100k count on punctuation-heavy text — chunks that pass
+# an 8192 check locally get 400-rejected upstream. 5400 × ~1.4 ≈ 7500 stays safely under
+# every 8192-cap provider (incl. text-embedding-3-small, cap 8191), and tighter chunks
+# embed more precisely into 1536-dim vectors anyway. This is the code default; set it
+# explicitly so the choice survives config audits.
+EMBEDDING_MAX_INPUT_TOKENS=5400
+# Single-provider (Venice-only) alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b +
+# EMBEDDING_DIMENSION=4096 (Neo4j 5.26 supports up to 4096-dim vector indexes) — keep
+# EMBEDDING_MAX_INPUT_TOKENS=5400 there too (Venice's tokenizer over-counts vs cl100k).
 ```
 
 Or configure each tier explicitly:
@@ -200,13 +220,15 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # Token budgets — primary defaults cascade to sub-tiers via the fallback chain
 # (set sub-tier to 0 = inherit). See "Budget Fallback Chain" further below.
 OPENAI_MAX_OUTPUT_TOKENS=8000                # primary output cap; sub-tiers inherit
-OPENAI_MAX_CONTEXT=32768                     # primary input context; sub-tiers inherit
-# EXTRACTION_MAX_OUTPUT_TOKENS=3500          # bump for verbose-XML models (Qwen3)
+OPENAI_MAX_CONTEXT=256000                    # recommended for large-context primaries (code default 32768)
+EXTRACTION_MAX_OUTPUT_TOKENS=8000            # extraction output cap (0 = inherit OPENAI_MAX_OUTPUT_TOKENS)
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000 # Phase 2 batch (standalone, NOT in chain)
 
-# Context budgets — only override when sub-tier model has bigger window than primary
-GRAPH_EXTRACTION_MAX_CONTEXT=256000                # must match GRAPH_EXTRACTION_MODEL context window
-RELATIONSHIP_MAX_CONTEXT=196608              # must match RELATIONSHIP_EXTRACTION_MODEL context window
+# Context budgets. Extraction stays SMALL on purpose (decode-bound — see the minimal
+# stack above; inherited values are clamped at 48000 anyway). Relationship batching may
+# stay wide (bounded output per call).
+GRAPH_EXTRACTION_MAX_CONTEXT=24000
+RELATIONSHIP_MAX_CONTEXT=256000
 
 # Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
 # off | minimal | auto | low | medium | high. No-op for pure instruct models.
@@ -233,10 +255,12 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 **Performance tuning** — controls how much work runs in parallel:
 
 ```env
-BATCH_PROCESSING_CONCURRENCY=3               # documents processed in parallel
+BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel (2 beats 3: more concurrent
+                                             # docs drop per-call decode ~70→~23 tok/s and multiply timeouts)
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 CONCURRENT_RELATIONS=3                       # relationship extraction thread pool size (separate from entity extraction)
-VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
+VISION_MAX_CONCURRENT=2                      # concurrent vision API calls (each image spawns a multi-call
+                                             # chain; ~20 concurrent slots per provider key is the binding limit)
 PARALLEL_RELATIONSHIP_BATCHES=5              # relationship analysis batches in parallel (0 = use CONCURRENT_RELATIONS)
 ```
 
@@ -714,6 +738,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
 | `EMBEDDING_SEND_DIMENSIONS` | Send `dimensions` param to embedding API. Set `false` for models with fixed output dim (e.g. qwen3-vl-embedding-2b) | No | `true` |
+| `EMBEDDING_MAX_INPUT_TOKENS` | Per-chunk input cap for embedding calls, counted client-side with cl100k. Kept well under the common 8192 provider cap because providers validate with their own tokenizer (can count 1.2–1.4× higher on punctuation-heavy text) | No | `5400` |
 | `USE_OPENAI_EMBEDDINGS` | Embedding transport flag (not provider-specific). `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP API. `false` = ignore `EMBEDDING_MODEL` and run a local `sentence-transformers/all-MiniLM-L6-v2` model | No | `true` |
 | `EMBEDDING_API_BASE` | API base URL for embeddings (defaults to `OPENAI_API_BASE`) | No | - |
 | `EMBEDDING_API_KEY` | API key for embeddings (defaults to `OPENAI_API_KEY`) | No | - |
@@ -734,8 +759,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
 | `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `32768` |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Bump to 3500–4000 for Qwen3-family models | No | `0` (=inherit) |
-| `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `OPENAI_MAX_CONTEXT`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit) |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Recommended: `8000` | No | `0` (=inherit) |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `min(OPENAI_MAX_CONTEXT, 48000)` — the inherited value is clamped because extraction is decode-bound. Recommended: `24000` (see minimal stack). Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit, clamped 48k) |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Output budget for **per-chunk + candidate scan** (in chain). 0 = inherit. **Semantics changed** — see migration note | No | `0` (=inherit) |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | Output budget for **Phase 2 batch** relationship analysis. Standalone — NOT in inheritance chain | No | `16000` |
 | `RELATIONSHIP_MAX_CONTEXT` | Input context for Phase 2 batch. 0 = inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary | No | `0` (=inherit) |
@@ -837,9 +862,9 @@ Cortex calls a [crawl4ai](https://github.com/unclecode/crawl4ai) service over HT
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch | No | `3` |
+| `BATCH_PROCESSING_CONCURRENCY` | Documents to process concurrently in batch (2 beats 3 on real providers: more concurrent docs drop per-call decode speed and multiply timeouts) | No | `2` |
 | `PROCESSING_THREAD_WORKERS` | Thread pool workers for CPU operations | No | `4` |
-| `VISION_MAX_CONCURRENT` | Max concurrent vision API calls for image analysis | No | `3` |
+| `VISION_MAX_CONCURRENT` | Max concurrent vision API calls for image analysis (each image spawns a multi-call chain; provider concurrent-slot limits bind before RPM) | No | `2` |
 
 #### Relationship Analysis
 
@@ -1069,7 +1094,7 @@ When a document is uploaded (or custom input is added), the following pipeline e
 5. **Fuzzy Entity Resolution** - Levenshtein similarity (85% threshold) deduplicates entities at storage time, merging "OpenAI" and "Open AI" into a single node with aliases
 6. **Entity-Chunk Linking** - Fuzzy string matching links entities to the chunks that mention them
 7. **Graph Storage** - Store chunks, entities, and relationships in Neo4j. Self-referential relationships (source == target) are filtered out at storage time and during extraction. Per-chunk relationship extraction tracks original-to-canonical entity name mapping during entity storage, remapping relationship source/target to canonical names before storing (prevents silent failures when entity names were merged during fuzzy resolution).
-8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed concurrently via vision model (configurable concurrency via `VISION_MAX_CONCURRENT`, default 3). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
+8. **Background Image Analysis** - Images extracted during Docling conversion are analyzed concurrently via vision model (configurable concurrency via `VISION_MAX_CONCURRENT`, default 2). Progress tracked per-document (`image_progress_current`/`image_progress_total`). Image chunks are embedded, stored, and included in graph extraction. The Knowledge Graph pipeline (Step 1) stays in-progress until all image analysis completes.
 9. **Collection Assignment** - Optionally add document to a collection scope
 10. **Filename Generation** - For custom inputs, LLM generates a descriptive filename
 11. **Relationship Analysis** (separate step via Knowledge Graph page) - Uses the relationship model. Default `targeted` mode: candidate entity pairs are generated without the LLM (entity-embedding kNN via a Neo4j vector index, with automatic embedding backfill, plus document co-mention with hub guards), scored, capped, and then verified by the LLM in small batched calls (~40 pairs/call, single pass). Legacy `llm_scan` mode: two-phase full-batch pipeline — Phase 1 scans for candidate entity pairs, Phase 2 confirms relationships with XML output (with plaintext arrow-format fallback parser); entities sharing chunks are grouped via Union-Find co-occurrence clustering (scales to 100k+ entities), token budget split 60/40 between entities and dynamic chunk context per batch, up to `RELATIONSHIP_MAX_ROUNDS` (default 3) rounds stopping early when target ERR is reached (re-analyze always does 1 round). Both modes support incremental (build on existing) and rebuild (from scratch) modes.

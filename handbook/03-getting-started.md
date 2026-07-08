@@ -25,7 +25,7 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (Gemma4 26B A4B primary + Qwen3.6 27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. The two `*_MAX_CONTEXT` lines unlock each model's full input window — the conservative defaults would otherwise cap you at 32K.
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (Gemma4 26B A4B primary + Qwen3.6 27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. `OPENAI_MAX_CONTEXT` unlocks the primary's full input window; `GRAPH_EXTRACTION_MAX_CONTEXT` is deliberately *small* — extraction is decode-bound, so batches sized to the model's full window time out (see Chapter 4 § "Budget Fallback Chain").
 >
 > ```env
 > # Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
@@ -34,20 +34,25 @@ cp .env.example .env
 > OPENAI_MODEL=google-gemma-4-26b-a4b-it
 > OPENAI_MAX_CONTEXT=256000
 >
-> # Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
+> # Extraction — deliberately small context: extraction output scales with input, so
+> # full-window batches can't decode inside the request window. 24000 completes reliably
+> # (it's a graph-density/cost dial, NOT a match-the-model's-window setting).
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b
-> GRAPH_EXTRACTION_MAX_CONTEXT=256000
+> GRAPH_EXTRACTION_MAX_CONTEXT=24000
+> RELATIONSHIP_MAX_CONTEXT=256000     # wide is safe here — relationship batch output is bounded
 >
 > # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 > # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
 > # built-in capabilities). Only api_base/api_key inherit from OPENAI_* when unset.
 > VISION_MODEL=qwen3-6-27b
 >
-> # Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
-> EMBEDDING_MODEL=text-embedding-qwen3-8b
-> EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-> # EMBEDDING_MAX_INPUT_TOKENS stays at default 8192 — Venice/OpenAI cap inputs at 8192 server-side.
-> # Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
+> # Embeddings — text-embedding-3-small (1536-dim)
+> EMBEDDING_MODEL=text-embedding-3-small
+> EMBEDDING_DIMENSION=1536
+> EMBEDDING_MAX_INPUT_TOKENS=5400     # default — providers validate with their OWN tokenizer,
+> # which can count 1.2–1.4× higher than the client's cl100k; 5400 stays safely under every
+> # 8192-cap provider. Venice-only alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b +
+> # EMBEDDING_DIMENSION=4096 (Neo4j 5.26 supports up to 4096-dim vector indexes).
 > ```
 >
 > You still need to set `NEO4J_PASSWORD` and the `ADMIN_*` / `SESSION_SECRET` block from Step 2 (those are infrastructure, not part of the LLM stack choice). Requires a provider hosting both models (OpenRouter, self-hosted vLLM, etc.).
@@ -319,7 +324,7 @@ Community names and summaries run on the extraction model (`GRAPH_EXTRACTION_MOD
 
 ### Context Window Configuration
 
-These must match the actual context window of their respective models:
+For the primary and relationship tiers, match the model's actual context window. Extraction is the exception — keep it deliberately small:
 
 ```env
 # Primary budgets — sub-tiers (extraction / relationship / vision) inherit
@@ -327,13 +332,13 @@ These must match the actual context window of their respective models:
 OPENAI_MAX_CONTEXT=256000              # Floor — all input context budgets inherit
 OPENAI_MAX_OUTPUT_TOKENS=8000          # Floor — all output budgets inherit
 
-# Per-tier overrides — only set when a sub-tier model has different limits than primary
-GRAPH_EXTRACTION_MAX_CONTEXT=0               # 0 = inherit OPENAI_MAX_CONTEXT
-RELATIONSHIP_MAX_CONTEXT=0             # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary
+# Per-tier overrides
+GRAPH_EXTRACTION_MAX_CONTEXT=24000     # Recommended. 0 = inherit min(OPENAI_MAX_CONTEXT, 48000) — inherited value is clamped at 48K
+RELATIONSHIP_MAX_CONTEXT=256000        # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary; wide is safe (batch output is bounded)
 RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000  # Phase 2 batch (standalone, NOT in chain)
 ```
 
-Setting these values higher than the model's actual context window will cause errors. Setting them lower wastes capacity.
+Setting these values higher than the model's actual context window will cause errors. But don't chase the model's full window for extraction: extraction is decode-bound — output scales with input (the model re-emits every entity/relation), so at real provider decode speeds (~70 tok/s) full-window batches can't finish inside the request window (timeouts, retries, silently lost entities). `GRAPH_EXTRACTION_MAX_CONTEXT=24000` keeps worst-case output inside `EXTRACTION_MAX_OUTPUT_TOKENS=8000` and completes reliably; treat it as a graph-density/cost dial (12000 ≈ denser graph at ~2× the calls). Relationship batches have bounded output (pairs-per-call cap + `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`), so `RELATIONSHIP_MAX_CONTEXT` can stay wide.
 
 Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled Phase 2 batch (default 16000). It now feeds per-chunk + candidate scan in the inheritance chain, and the Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`. A stale `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` setting is harmless (per-chunk just gets unused headroom) — rename when convenient.
 
@@ -342,9 +347,9 @@ Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled 
 ### Concurrency Settings
 
 ```env
-BATCH_PROCESSING_CONCURRENCY=3        # Documents processed in parallel
+BATCH_PROCESSING_CONCURRENCY=2        # Documents processed in parallel (2 measured faster than 3 — see below)
 CONCURRENT_EXTRACTIONS=3              # Entity extraction thread pool size
-VISION_MAX_CONCURRENT=3               # Concurrent vision API calls (system-wide)
+VISION_MAX_CONCURRENT=2               # Concurrent vision API calls (system-wide)
 PARALLEL_RELATIONSHIP_BATCHES=2       # Relationship analysis batches in parallel
 PROCESSING_THREAD_WORKERS=4           # Thread pool workers for CPU operations
 ```
@@ -372,7 +377,7 @@ Document Pipeline (controlled by BATCH_PROCESSING_CONCURRENCY):
 
 | Setting | Increase When | Decrease When |
 |---------|--------------|---------------|
-| `BATCH_PROCESSING_CONCURRENCY` | You have many documents to process and sufficient RAM/API quota | Limited RAM or hitting API rate limits |
+| `BATCH_PROCESSING_CONCURRENCY` | Rarely — 2 measured *faster* than 3 for multi-doc builds (more in-flight docs drop per-call decode throughput ~70 → ~23 tok/s and multiply timeouts) | Limited RAM or hitting API rate limits |
 | `CONCURRENT_EXTRACTIONS` | Entity extraction is the bottleneck | LLM API rate limits are being hit |
 | `VISION_MAX_CONCURRENT` | Image-heavy documents need faster processing | Vision API rate limits are being hit |
 | `PARALLEL_RELATIONSHIP_BATCHES` | Relationship analysis takes too long (**most impactful lever**) | LLM API costs need to be controlled |

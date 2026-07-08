@@ -189,7 +189,9 @@ services:
       - VISION_MODEL=${VISION_MODEL:-}
       - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
       - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
-      - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-3}
+      # Fallback matches the config.py default (2) — each in-flight image occupies
+      # multiple provider slots via its call chain; 3 caused 429 bursts.
+      - VISION_MAX_CONCURRENT=${VISION_MAX_CONCURRENT:-2}
       - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
       - GRAPH_EXTRACTION_API_BASE=${GRAPH_EXTRACTION_API_BASE:-}
       - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}

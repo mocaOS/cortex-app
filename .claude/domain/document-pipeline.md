@@ -75,7 +75,7 @@ Entities, chunks, and per-chunk relationships are stored in Neo4j after extracti
 Runs asynchronously after text processing completes:
 
 - Images extracted during Docling conversion are analyzed concurrently via vision model
-- Gated by a configurable semaphore — `VISION_MAX_CONCURRENT` (default 3, controls semaphore + thread pool sizing)
+- Gated by a configurable semaphore — `VISION_MAX_CONCURRENT` (default 2, controls semaphore + thread pool sizing)
 - Progress tracked per-document via `image_progress_current`/`image_progress_total`/`image_progress_message` properties
 - Image chunks created with type `image_analysis` and `chunk_index` 1000+
 - Graph extraction runs on image content if enabled. When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, each image's extracted entities are batch-embedded (one `generate_entity_embeddings_batch_async()` call per image) before `store_graph_extraction()`, so they flow through `store_entity_with_embedding()` and land in the same `entity_embedding` vector index that text entities populate. The image and text surfaces now share one dedup signal — see [`entities.md`](entities.md#fuzzy-resolution).

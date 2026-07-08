@@ -116,12 +116,12 @@ Both `*_MAX_CONTEXT` overrides are required — the conservative default (32768)
 
 Companion performance-tuning block (Venice-validated; pair with the stack above to maximize ingestion throughput):
 ```env
-BATCH_PROCESSING_CONCURRENCY=3    # docs in parallel (the default since 2026-07)
-CONCURRENT_EXTRACTIONS=4          # entity-extraction threads per doc (default 3) — biggest multiplier
-CONCURRENT_RELATIONS=4            # per-chunk relationship threads per doc (default 3)
-VISION_MAX_CONCURRENT=4           # system-wide vision semaphore (default 3)
+BATCH_PROCESSING_CONCURRENCY=2    # docs in parallel (default 2 — 3 drops per-call decode ~70→~23 tok/s)
+CONCURRENT_EXTRACTIONS=3          # entity-extraction threads per doc (default 3) — biggest multiplier
+CONCURRENT_RELATIONS=3            # per-chunk relationship threads per doc (default 3)
+VISION_MAX_CONCURRENT=2           # system-wide vision semaphore (default 2 — ~20 provider slots/key bind first)
 ```
-`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Safe on Venice / large vLLM; dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
+`BATCH_PROCESSING_CONCURRENCY` compounds with the two `CONCURRENT_*` knobs (per-doc pools); `VISION_MAX_CONCURRENT` is a global semaphore and stays flat. The pipeline staggers extraction / relationships / vision across each doc's lifecycle, so actual in-flight concurrency stays below the worst-case product. Resist raising `BATCH_PROCESSING_CONCURRENCY` — 2 measured faster than 3 on Venice (shared decode rate); dial `CONCURRENT_EXTRACTIONS` down first on smaller providers.
 
 **Migration:** the env var `RELATIONSHIP_MAX_OUTPUT_TOKENS` was previously the Phase 2 batch budget (16000). It now drives **per-chunk + candidate scan** instead, and the Phase 2 batch value lives in the new `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000`. Users who explicitly set `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` will see per-chunk extraction also get 16000 tokens (overkill but harmless — model finishes well below cap).
 

@@ -104,7 +104,7 @@ The backend is organized as a monolithic FastAPI application with specialized se
 |---------|------|---------------|
 | **Neo4j Service** | `neo4j_service.py` | All graph database operations — entity storage, search, community detection, deduplication, cleanup |
 | **Document Processor** | `document_processor.py` | Ingestion pipeline — Docling conversion, chunking, embedding, entity extraction, image analysis |
-| **Graph Extractor** | `graph_extractor.py` | LLM-based entity and relationship extraction with XML parsing |
+| **Graph Extractor** | `graph_extractor.py` | LLM-based entity and relationship extraction using compact `ENT\|`/`REL\|` line output (XML parsed as legacy fallback) |
 | **Researcher Agent** | `researcher_agent.py` | Agentic research pipeline — researcher loop with tool-calling, writer synthesis |
 | **Vision Analyzer** | `vision_analyzer.py` | Image extraction and analysis with vision model integration |
 | **Auth Service** | `auth_service.py` | Admin JWT authentication and API key validation |

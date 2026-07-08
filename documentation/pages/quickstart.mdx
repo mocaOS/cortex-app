@@ -58,20 +58,29 @@ OPENAI_API_BASE=https://api.venice.ai/api/v1
 OPENAI_MODEL=google-gemma-4-26b-a4b-it
 OPENAI_MAX_CONTEXT=256000
 
-# Extraction — drives relationship via inheritance (Qwen3.6 27B: 256K window)
+# Extraction — drives relationship via inheritance (Qwen3.6 27B)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b
-GRAPH_EXTRACTION_MAX_CONTEXT=256000
+# Deliberately SMALL: extraction is decode-bound (output scales with input) — full-window
+# batches can't finish inside the request timeout at real decode speeds and silently lose
+# entities. See Configuration → "Provider Notes: Venice".
+GRAPH_EXTRACTION_MAX_CONTEXT=24000
+EXTRACTION_MAX_OUTPUT_TOKENS=8000
+RELATIONSHIP_MAX_CONTEXT=256000     # relationship batching keeps a wide read window (bounded output per call)
 
 # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
 # built-in capabilities). Only api_base/api_key inherit from OPENAI_* when unset.
 VISION_MODEL=qwen3-6-27b
 
-# Embeddings — text embedding model (Qwen3-Embedding-8B: native 4096, MRL 32–4096)
-EMBEDDING_MODEL=text-embedding-qwen3-8b
-EMBEDDING_DIMENSION=4096            # Native dimension; Neo4j 5.26 (default) supports up to 4096-dim vector indexes
-# EMBEDDING_MAX_INPUT_TOKENS stays at default 8192 — Venice/OpenAI cap inputs at 8192 server-side.
-# Self-hosted vLLM users can lift to 32768 to use Qwen3-Embedding-8B's full native context.
+# Embeddings — recommended: OpenAI text-embedding-3-small (1536-dim)
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_API_BASE=https://api.openai.com/v1
+EMBEDDING_API_KEY=
+# EMBEDDING_MAX_INPUT_TOKENS defaults to 5400 — providers validate with their OWN
+# tokenizer (1.2–1.4× cl100k on punctuation-heavy text), so 8192-passing chunks get
+# 400-rejected upstream; 5400 stays safe on every 8192-cap provider.
+# Venice-only alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b + EMBEDDING_DIMENSION=4096.
 ```
 
 Or configure each tier independently:
@@ -102,8 +111,8 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # Context budgets — primary OPENAI_MAX_CONTEXT cascades to sub-tiers via the
 # fallback chain (0 = inherit). Override only when a sub-tier model has a
 # different window than the primary.
-GRAPH_EXTRACTION_MAX_CONTEXT=256000                # override only when extraction model has bigger window than primary
-RELATIONSHIP_MAX_CONTEXT=0                   # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → OPENAI_MAX_CONTEXT
+GRAPH_EXTRACTION_MAX_CONTEXT=24000           # keep SMALL (decode-bound; inherited values are clamped at 48000)
+RELATIONSHIP_MAX_CONTEXT=256000              # wide read window is safe (bounded output per call); 0 = inherit extraction → primary
 
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=
@@ -123,10 +132,11 @@ EMBEDDING_API_KEY=                           # defaults to OPENAI_API_KEY
 Controls how much work runs in parallel:
 
 ```bash
-BATCH_PROCESSING_CONCURRENCY=3               # documents processed in parallel
+BATCH_PROCESSING_CONCURRENCY=2               # documents processed in parallel (2 beats 3: concurrent
+                                             # docs share the provider's decode rate and multiply timeouts)
 CONCURRENT_EXTRACTIONS=3                     # entity extraction thread pool size
 CONCURRENT_RELATIONS=3                       # per-chunk relationship extractions per document
-VISION_MAX_CONCURRENT=3                      # concurrent vision API calls (system-wide)
+VISION_MAX_CONCURRENT=2                      # concurrent vision API calls (system-wide; ~20 provider slots/key bind first)
 PARALLEL_RELATIONSHIP_BATCHES=5              # relationship analysis batches in parallel (1 = sequential)
 ```
 

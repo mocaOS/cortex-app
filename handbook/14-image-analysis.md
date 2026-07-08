@@ -49,10 +49,10 @@ If `VISION_MODEL` is empty, the system uses Docling's built-in image description
 ### Concurrency Control
 
 ```env
-VISION_MAX_CONCURRENT=3   # Max concurrent vision API calls system-wide
+VISION_MAX_CONCURRENT=2   # Max concurrent vision API calls system-wide
 ```
 
-This controls a global asyncio Semaphore shared across all documents. Increase for faster throughput; decrease to respect API rate limits.
+This controls a global asyncio Semaphore shared across all documents. The default of 2 is deliberate: each in-flight image spawns a multi-call chain, and provider concurrent-request slots (~20 per key) are the binding limit. Increase only if your provider allows more concurrency; decrease to respect tighter rate limits.
 
 ### Small-Image Pre-Filter
 
