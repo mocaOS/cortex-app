@@ -181,6 +181,11 @@ services:
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
       - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      # Per-input embed token cap. Default matches config.py (5400) — a bare int,
+      # NOT an inherit-0, so the fallback MUST be 5400 (0 would break embedding).
+      # Set lower for Venice's own tokenizer (~1.2-1.4x cl100k) or higher for
+      # long-context embed models (e.g. text-embedding-qwen3-8b → 32768).
+      - EMBEDDING_MAX_INPUT_TOKENS=${EMBEDDING_MAX_INPUT_TOKENS:-5400}
       - VISION_MODEL=${VISION_MODEL:-}
       - VISION_MODEL_API_BASE=${VISION_MODEL_API_BASE:-}
       - VISION_MODEL_API_KEY=${VISION_MODEL_API_KEY:-}
@@ -190,6 +195,9 @@ services:
       - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
       - GRAPH_EXTRACTION_MAX_CONTEXT=${GRAPH_EXTRACTION_MAX_CONTEXT:-0}
       - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-0}
+      # Extraction output-token budget. :-0 preserves the config.py inherit chain
+      # (0 → OPENAI_MAX_OUTPUT_TOKENS, default 8000), matching the *_MAX_CONTEXT vars.
+      - EXTRACTION_MAX_OUTPUT_TOKENS=${EXTRACTION_MAX_OUTPUT_TOKENS:-0}
       # (RELATIONSHIP_ANALYSIS_BATCH_SIZE was removed here: the knob no longer
       # exists in config.py — the targeted-discovery Step 2 replaced the legacy
       # batch scan — so the var was silently ignored.)
