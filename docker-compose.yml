@@ -87,7 +87,11 @@ services:
     env_file:
       - .env
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # Overridable from .env for LAN/self-host setups where the browser runs on
+      # a different machine than the stack (e.g. http://192.168.x.x:8000).
+      # Compose gives `environment:` precedence over env_file, so without this
+      # ${...} passthrough a .env value would be silently ignored.
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - API_URL=http://backend:8000
       # Admin auth - these are read from .env file
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}

@@ -45,10 +45,17 @@ ss -tlnp | grep 3000
 **Symptom:** Frontend can't reach the backend API.
 
 **Solutions:**
-- Check `NEXT_PUBLIC_API_URL` is set correctly
+- Check `NEXT_PUBLIC_API_URL` is set correctly — it is the backend URL as seen
+  from the **browser**, not from inside Docker
   - Development: `http://localhost:8000`
+  - LAN self-host (dashboard opened from another machine): the host's reachable
+    address, e.g. `http://192.168.68.113:8000` — `localhost` would point at the
+    *viewer's* machine and fail with `ERR_CONNECTION_REFUSED`
   - Production: `https://api.yourdomain.com`
   - Coolify: Use `BACKEND_URL` or `SERVICE_FQDN_BACKEND_8000`
+- After changing it in `.env`, recreate the frontend container:
+  `docker compose up -d --force-recreate --no-deps frontend` (a plain `restart`
+  does not re-read `.env`)
 - Ensure the backend is running: `curl http://localhost:8000/health`
 - Check CORS configuration if frontend and backend are on different domains
 
