@@ -3,9 +3,15 @@
 Flags (never blocks) documents whose *content* carries prompt-injection
 attempts planted for a downstream AI assistant. Two layers:
 
-1. A free heuristic (regex) that always runs.
+1. A free heuristic (regex) that always runs. Its verdict is only final when
+   the LLM layer is off or unreachable — with the classifier enabled, a
+   heuristic hit merely ESCALATES: the classifier re-judges an excerpt around
+   the match and the document is flagged only on confirmation. The regexes are
+   tuned for short user queries and over-match on long prose, so they must not
+   flag whole documents on their own when a smarter layer is available.
 2. An optional LLM classifier (windowed) that runs when enabled — the extra
-   layer that catches phrasings the regex misses.
+   layer that catches phrasings the regex misses (and refutes the phrasings
+   the regex wrongly catches).
 
 Fail-open: any scanner error is swallowed and treated as "not flagged" so a
 scanner hiccup never fails ingestion (mirrors ``vision_analyzer``'s non-fatal
@@ -26,7 +32,7 @@ from app.services.llm_config import (
     get_extraction_llm_config,
     make_async_openai_client,
 )
-from app.services.prompt_security import scan_untrusted_content, wrap_untrusted
+from app.services.prompt_security import locate_untrusted_injection, wrap_untrusted
 from app.services.reasoning_config import ReasoningMode, safe_chat_completion
 
 logger = logging.getLogger(__name__)
@@ -55,7 +61,7 @@ _CLASSIFIER_SYSTEM = (
 class ScanResult:
     flagged: bool
     reason: Optional[str] = None
-    method: Optional[str] = None  # "heuristic" | "llm" | None
+    method: Optional[str] = None  # "heuristic" | "heuristic+llm" | "llm" | None
 
 
 def _windows(text: str) -> List[str]:
@@ -79,6 +85,20 @@ def _windows(text: str) -> List[str]:
         )
         return kept
     return parts
+
+
+def _excerpt(text: str, start: int, end: int) -> str:
+    """Window of text centered on a heuristic match, capped at WINDOW_CHARS.
+
+    Offsets may come from the normalized variant of the text and are treated as
+    approximate — the window is large enough that a few characters of drift
+    never lose the matched phrase.
+    """
+    if len(text) <= WINDOW_CHARS:
+        return text
+    center = (start + end) // 2
+    lo = max(0, min(center - WINDOW_CHARS // 2, len(text) - WINDOW_CHARS))
+    return text[lo : lo + WINDOW_CHARS]
 
 
 def _parse_json(text: str) -> Optional[dict]:
@@ -138,28 +158,49 @@ async def scan_document(text: str, *, llm_enabled: bool, settings) -> ScanResult
     if not text or not text.strip():
         return ScanResult(False)
 
-    # Layer 1 — free heuristic, always. A hit short-circuits so we never spend
-    # an LLM query on a document the regex already caught.
-    flagged, reason = scan_untrusted_content(text)
-    if flagged:
-        return ScanResult(True, reason, "heuristic")
+    # Layer 1 — free heuristic. Over whole documents these regexes over-match
+    # ordinary prose (a real document was once flagged because "Danube canal —
+    # the modest ..." hit the jailbreak pattern), so with the classifier
+    # available a hit only escalates: the LLM re-judges the matched region and
+    # decides. The heuristic verdict stands alone only when the LLM layer is
+    # off or unreachable.
+    hit = locate_untrusted_injection(text)
+    heuristic = ScanResult(True, hit[0], "heuristic") if hit else ScanResult(False)
 
     if not llm_enabled:
-        return ScanResult(False)
+        return heuristic
 
-    # Layer 2 — LLM classifier over windows; stop at the first positive.
-    # Uses the extraction tier (the ingestion-time model), mirroring graph
-    # extraction: same model config, reasoning mode, metering, and tracing.
+    # Layer 2 — LLM classifier: first confirm/refute a heuristic hit on an
+    # excerpt around the match, then sweep the windows; stop at the first
+    # positive. Uses the extraction tier (the ingestion-time model), mirroring
+    # graph extraction: same model config, reasoning mode, metering, tracing.
     try:
         cfg = get_extraction_llm_config()
         if not cfg.api_key:
             logger.debug("Injection scan: no extraction API key configured; skipping LLM layer")
-            return ScanResult(False)
+            return heuristic
         client = make_async_openai_client(api_key=cfg.api_key, base_url=cfg.base_url)
         # Force non-thinking to keep ingestion lean: this is a binary classifier
         # that needs no reasoning budget, and thinking would slow every ingested
         # document. OFF (+ no per-model overrides) guarantees it regardless of
         # the extraction reasoning config.
+        if hit:
+            reason, start, end = hit
+            confirm = await _llm_scan_window(
+                client,
+                cfg.model,
+                cfg.base_url,
+                _excerpt(text, start, end),
+                reasoning_mode=ReasoningMode.OFF,
+                overrides=None,
+            )
+            if confirm.flagged:
+                return ScanResult(True, confirm.reason, "heuristic+llm")
+            logger.info(
+                "Injection scan: heuristic hit (%s) not confirmed by the LLM "
+                "classifier — treated as a false positive.",
+                reason,
+            )
         for window in _windows(text):
             result = await _llm_scan_window(
                 client,
@@ -172,7 +213,9 @@ async def scan_document(text: str, *, llm_enabled: bool, settings) -> ScanResult
             if result.flagged:
                 return result
     except Exception as e:  # never let a scanner failure break ingestion
-        logger.warning("LLM injection scan failed (treating as not flagged): %s", e)
-        return ScanResult(False)
+        logger.warning(
+            "LLM injection scan failed (falling back to heuristic verdict): %s", e
+        )
+        return heuristic
 
     return ScanResult(False)

@@ -135,8 +135,16 @@ pre-chunk) the document is scanned once for planted prompt-injection instruction
 (`injection_scanner.scan_document`, hooked in a fully-guarded `try/except` so a
 scanner failure never fails ingestion). Two layers:
 
-- **Free heuristic** (`prompt_security.scan_untrusted_content`) — always runs;
-  a hit short-circuits (no LLM query spent).
+- **Free heuristic** (`prompt_security.locate_untrusted_injection`) — always
+  runs, but its verdict is only final when the LLM layer is off or unreachable.
+  With the classifier enabled, a heuristic hit **escalates instead of flags**:
+  the classifier re-judges a `WINDOW_CHARS` excerpt centered on the match and
+  the document is flagged only on confirmation (`method: "heuristic+llm"`);
+  a refuted hit is logged and the normal windowed sweep continues. Rationale:
+  the regexes are tuned for short user queries and over-match on long prose
+  (a real document was flagged because "Danube canal — the modest…" matched
+  the jailbreak pattern — since fixed with word boundaries, see
+  `INJECTION_PATTERNS` comments).
 - **LLM classifier** — runs only when the runtime toggle is on; scans the text
   in windows (`WINDOW_CHARS`/`MAX_WINDOWS`, head+tail when over the cap),
   short-circuits on the first positive. Uses the **extraction tier**

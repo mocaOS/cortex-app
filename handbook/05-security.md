@@ -311,7 +311,11 @@ Every ingested document (uploaded, web-crawled, or git-synced) is scanned once
 at ingestion for planted injection instructions (`injection_scanner.py`, hooked
 into the document pipeline):
 
-- A **free heuristic** (`scan_untrusted_content`) always runs.
+- A **free heuristic** (regex) always runs — but its verdict is only final when
+  the LLM classifier is off or unreachable. With the classifier enabled, a
+  regex hit merely *escalates*: the classifier re-judges the matched region and
+  the document is flagged only if it confirms. This keeps regexes tuned for
+  short chat inputs from false-flagging long prose documents.
 - An **LLM classifier** additionally scans the text (windowed, capped) when the
   runtime toggle is on — the classifier is prompted to distinguish content that
   *contains* an injection from content that merely *discusses* injection.

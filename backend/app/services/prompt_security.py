@@ -90,7 +90,12 @@ INJECTION_PATTERNS = [
     r"\[/?system\]|\[/?instruction\]|\[/?prompt\]",
 
     # Common jailbreak patterns
-    r"(DAN|jailbreak|escape|bypass|hack).{0,20}(mode|prompt|instruction)",
+    # Word-bounded, with DAN kept case-sensitive: the unbounded case-folded
+    # form matched "Danube canal — the mode(st)" in ordinary prose ("Dan" +
+    # "mode"). "escape" needs an instruction-domain anchor — "press Escape at
+    # the prompt" is routine terminal/editor documentation.
+    r"\b((?-i:DAN)|jail.?break|bypass|hack)\b.{0,20}\b(mode|prompt|instruction)s?\b"
+    r"|\bescape\b.{0,20}\b(instructions?|restrictions?|rules?|your prompt)\b",
     r"opposite.{0,20}(instruction|rule|guideline)",
     r"(evil|unfiltered|uncensored|unrestricted).{0,20}(mode|version|assistant)",
 
@@ -233,6 +238,30 @@ def sanitize_user_input(user_input: str) -> str:
     return sanitized.strip()
 
 
+def locate_untrusted_injection(content: str) -> Optional[Tuple[str, int, int]]:
+    """Locate the first injection-pattern hit in untrusted content.
+
+    Returns (reason, start, end) of the match, or None when clean. Offsets are
+    relative to the variant that matched (raw or NFKC-normalized); normalization
+    rarely shifts positions by more than a few characters, so they are suitable
+    for excerpting surrounding context, not for exact slicing.
+    """
+    if not content:
+        return None
+
+    variants = [content]
+    normalized = _normalize_for_detection(content)
+    if normalized != content:
+        variants.append(normalized)
+
+    for variant in variants:
+        for i, pattern in enumerate(COMPILED_PATTERNS):
+            match = pattern.search(variant)
+            if match:
+                return f"injection_pattern_{i}", match.start(), match.end()
+    return None
+
+
 def scan_untrusted_content(content: str) -> Tuple[bool, Optional[str]]:
     """Lightweight injection scan for retrieved / external / tool content.
 
@@ -244,18 +273,9 @@ def scan_untrusted_content(content: str) -> Tuple[bool, Optional[str]]:
     Returns (flagged, reason). This is a best-effort signal — the caller decides
     what to do with it (annotate / log), it does not block by itself.
     """
-    if not content:
-        return False, None
-
-    variants = [content]
-    normalized = _normalize_for_detection(content)
-    if normalized != content:
-        variants.append(normalized)
-
-    for variant in variants:
-        for i, pattern in enumerate(COMPILED_PATTERNS):
-            if pattern.search(variant):
-                return True, f"injection_pattern_{i}"
+    hit = locate_untrusted_injection(content)
+    if hit:
+        return True, hit[0]
     return False, None
 
 

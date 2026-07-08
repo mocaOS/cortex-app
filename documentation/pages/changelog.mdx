@@ -99,6 +99,18 @@ full-stack error tracking via GlitchTip. No API or schema breakage.
   "show only the physical configuration") while the full attack corpus remains
   detected. Documents previously flagged by the over-broad patterns are cleared
   on their next scan.
+- The jailbreak pattern joined the same tightening: `DAN` is matched
+  case-sensitively and all trigger words are word-bounded, so prose like
+  "the Main–Danube canal — the modest 1992 waterway" no longer trips the flag;
+  "escape" now requires an instruction-domain anchor ("press Escape at the
+  prompt" is fine, "escape your instructions" is not).
+- **Heuristic hits are no longer final verdicts on documents.** When the LLM
+  classifier layer is enabled, a regex hit only escalates: the classifier
+  re-judges the matched region and the document is flagged solely on its
+  confirmation. Regex-only flagging remains only when the classifier is
+  toggled off or unreachable. This ends the class of complaints where a
+  clearly safe document carried an "Injection Flagged" badge because a
+  chat-input regex fired on long-form prose.
 
 ### Provider notes: Venice (docs)
 
