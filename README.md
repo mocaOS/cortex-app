@@ -4,7 +4,7 @@
 
 # 🧠 Cortex
 
-**The Agentic Knowledge Base for the AI Era**
+**Institutional memory for the agentic era**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
@@ -15,9 +15,9 @@
 
 ## 🚀 What is Cortex?
 
-In a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight, your knowledge shouldn't be locked into any single system. **Cortex** is an agentic knowledge base that ingests your documents and analyzes their contents via LLM-assisted workflows, enabling bleeding-edge understanding of any content you throw at it.
+**Cortex** is institutional memory for the agentic era — a shared knowledge base that both humans and agents can read, write, and reason over. It ingests your documents and analyzes their contents via LLM-assisted workflows, automatically extracting entities and building the relationships between them into a **scalable knowledge graph** that grows smarter with every source you add.
 
-The LLM-driven system automatically extracts entities and builds relationships between them, creating a **scalable knowledge graph** that grows smarter with every document. This graph is exposed via API, ready to be integrated into Q+A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
+Point it at one enthusiast's notes and it becomes their personal long-term memory. Point it at a company or a community and it becomes *collective* memory: every member — and every agent they run — can enrich their understanding from the shared knowledge of the cortexes they have access to. The more people and agents that draw on it, the more valuable that memory compounds. And because the whole graph is exposed over a clean REST API — framework-agnostic and portable by design — it plugs into Q+A interfaces, enriches your agents' understanding, and serves as the long-term memory backbone for your entire AI stack, no matter which model or harness comes next.
 
 ### 💡 Why Cortex?
 
