@@ -56,6 +56,8 @@ def _isolate_env(tmp_path, monkeypatch):
         "upload_dir": settings.upload_dir,
         "custom_inputs_dir": settings.custom_inputs_dir,
         "openai_api_key": settings.openai_api_key,
+        "graph_extraction_api_key": settings.graph_extraction_api_key,
+        "relationship_extraction_api_key": settings.relationship_extraction_api_key,
         "vision_model": getattr(settings, "vision_model", ""),
         "admin_api_key": settings.admin_api_key,
         "enable_skills": settings.enable_skills,
@@ -70,6 +72,12 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.upload_dir = str(upload_dir)
     settings.custom_inputs_dir = str(custom_inputs_dir)
     settings.openai_api_key = ""
+    # Blank the tier keys too: a developer's .env otherwise leaks into
+    # get_extraction_llm_config()/get_relationship_llm_config(), and any
+    # code path that builds a tier client directly (e.g. the one-shot
+    # max_retries=0 clients) trips the LLM-construction guard.
+    settings.graph_extraction_api_key = ""
+    settings.relationship_extraction_api_key = ""
     if hasattr(settings, "vision_model"):
         settings.vision_model = ""
     settings.admin_api_key = "test-admin-key"

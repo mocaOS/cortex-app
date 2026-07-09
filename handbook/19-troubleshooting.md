@@ -112,7 +112,8 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 **How to confirm from the backend logs:**
 - The progress message now updates at the start of every batch call (`Finding entities: 120/741 chunks (batch 8/22)...`) — if the batch counter keeps ticking, the run is healthy, just slow. A growing denominator (`8/22` → `9/23`) means batches are being split and retried.
 - Each batch logs a telemetry line: `Entity extraction batch 8/22 (65 chunks): extracted 143 entities in 87.3s (in≈19234 tok, out=8000 tok, finish=length)`. `finish=length` means the output cap was hit.
-- A one-shot warning — `output budget looks too small for the input batch size` — is logged when overflows repeat. That's the config diagnosis: raise `EXTRACTION_MAX_OUTPUT_TOKENS` (recommended 12000, ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`) or lower `GRAPH_EXTRACTION_MAX_CONTEXT`.
+- A one-shot warning — `output budget looks too small for the input batch size` — is logged when overflows repeat. That's the config diagnosis: raise `EXTRACTION_MAX_OUTPUT_TOKENS` (default 12000 since 2026-07-09, ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`) or lower `GRAPH_EXTRACTION_MAX_CONTEXT`.
+- The mirror case: repeated `timed out — splitting and retrying halves` warnings with a one-shot `batches keep timing out` diagnosis mean the endpoint can't answer full-size batches inside `LLM_REQUEST_TIMEOUT_SECONDS`. The batch budget auto-shrinks for the rest of the process (and later documents), but fix the source: lower `GRAPH_EXTRACTION_MAX_CONTEXT`, reduce `BATCH_PROCESSING_CONCURRENCY`, or raise the timeout.
 - When extraction settles, a health summary is logged: `20 planned batches -> 34 LLM calls (8 truncation splits, ...)` — planned-vs-actual calls quantifies how much work the ratio mismatch cost. The same counters are stored on the document node as `extraction_stats` for post-hoc inspection.
 - A `model repetition loop suspected` warning means the model degenerated and flooded the batch with duplicate entities (they are collapsed by dedup); if it recurs on a specific document, reprocess it — a bigger output cap will not fix a looping model.
 
@@ -124,7 +125,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] Entities exist (run Step 1 first)
 - [ ] `RELATIONSHIP_MAX_CONTEXT` is left at 0 (inherit) — a full-window value (e.g. 256000) causes multi-minute prefills and timeouts on self-hosted GPUs; only widen it for legacy `llm_scan` mode on fast-prefill hosted endpoints
 - [ ] `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` is sufficient for Phase 2 batch (default: 16000)
-- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already comfortably covers the compact `ENT|`/`REL|` output format; only override if you've explicitly tightened the chain elsewhere and need to relax it.
+- [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS`, default 12000 since 2026-07-09). The inherited budget already comfortably covers the compact `ENT|`/`REL|` output format; only override if you've explicitly tightened the chain elsewhere and need to relax it.
 - [ ] In the default `targeted` mode with no embedding API key configured, candidates come from document co-mention only — pairs need at least `RELATIONSHIP_MIN_SHARED_DOCS` (default 2) shared documents, so very small or single-document libraries may yield few candidates
 - [ ] LLM API key has sufficient credits/quota
 - [ ] Check task status for error messages: `GET /api/tasks/{task_id}`

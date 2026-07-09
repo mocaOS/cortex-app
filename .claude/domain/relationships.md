@@ -19,7 +19,7 @@ During Phase A (document processing), after entity extraction and chunk linking,
 - Tracks original-to-canonical entity name mapping during entity storage and remaps relationship source/target to canonical names before storing, preventing silent storage failures when entity names were merged during fuzzy resolution
 - Stored with `extraction_method='per_chunk'`
 - Concurrency controlled by `CONCURRENT_RELATIONS` (default 3), separate from entity extraction concurrency
-- Uses tenacity retry with exponential backoff (4 attempts, 2-30s wait) for rate limit errors
+- Uses tenacity retry with exponential backoff (4 attempts, 2-30s wait) for rate-limit/transient errors — **timeouts are excluded** (2026-07-09): they fail fast to the caller/single-chunk fallback instead of re-sending the prompt into a saturated endpoint. Calls go through a `max_retries=0` one-shot client (`_oneshot_async_client`) so SDK retries can't stack under tenacity; transport timeout is env-driven (`LLM_REQUEST_TIMEOUT_SECONDS`, previously hardcoded 120s)
 - This provides high-confidence, evidence-grounded relationships before Phase B runs
 - Both single-chunk and batched user prompts include an explicit one-line `<relationship>` format example. Added 2026-07-03: without it, models frequently omitted `<description>` entirely — 99.5% of per-chunk relationships in a prod-scale graph had empty descriptions. With the example, description coverage is 100% in live A/Bs.
 

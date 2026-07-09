@@ -228,8 +228,8 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # Token budgets — primary defaults cascade to sub-tiers via the fallback chain
 # (set sub-tier to 0 = inherit). See "Budget Fallback Chain" further below.
 OPENAI_MAX_OUTPUT_TOKENS=8000                # primary output cap; sub-tiers inherit
-OPENAI_MAX_CONTEXT=256000                    # recommended for large-context primaries (code default 32768)
-EXTRACTION_MAX_OUTPUT_TOKENS=12000           # ≈ half of GRAPH_EXTRACTION_MAX_CONTEXT — see minimal stack note
+OPENAI_MAX_CONTEXT=256000                    # code default (large-context primaries; extraction inherit is clamped at 48000)
+EXTRACTION_MAX_OUTPUT_TOKENS=12000           # code default; ≈ half of GRAPH_EXTRACTION_MAX_CONTEXT — see minimal stack note
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000 # Phase 2 batch (standalone, NOT in chain)
 
 # Context budgets. Extraction stays SMALL on purpose (decode-bound — see the minimal
@@ -765,8 +765,8 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `3` |
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
-| `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `32768` |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Recommended: `12000` — size it to ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`; entity-dense docs overflow smaller caps, and each overflow split-retries (self-heals, but roughly doubles that batch's wall time) | No | `0` (=inherit) |
+| `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 (the value extraction inherits is clamped at 48000) | No | `256000` |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. Sized to ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`; entity-dense docs overflow smaller caps, and each overflow split-retries (self-heals, but roughly doubles that batch's wall time). Set `0` to inherit `OPENAI_MAX_OUTPUT_TOKENS` instead | No | `12000` |
 | `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `min(OPENAI_MAX_CONTEXT, 48000)` — the inherited value is clamped because extraction is decode-bound. Recommended: `24000` (see minimal stack). Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit, clamped 48k) |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Output budget for **per-chunk + candidate scan** (in chain). 0 = inherit. **Semantics changed** — see migration note | No | `0` (=inherit) |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | Output budget for **Phase 2 batch** relationship analysis. Standalone — NOT in inheritance chain | No | `16000` |

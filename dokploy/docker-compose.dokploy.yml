@@ -167,7 +167,7 @@ services:
       # Empty string on a model field = "inherit OPENAI_*" (config.py resolves
       # the chain). Add more lines below for any other config.py knob you want
       # a plan to drive.
-      - OPENAI_MAX_CONTEXT=${OPENAI_MAX_CONTEXT:-32768}
+      - OPENAI_MAX_CONTEXT=${OPENAI_MAX_CONTEXT:-256000}
       # Per-stage inference routing. cortex-app is OpenAI-compatible only: each
       # stage picks its provider via its own *_API_BASE + *_API_KEY, both falling
       # back to OPENAI_* when empty (config.py resolves the inherit chain). The
@@ -197,9 +197,11 @@ services:
       - GRAPH_EXTRACTION_API_KEY=${GRAPH_EXTRACTION_API_KEY:-}
       - GRAPH_EXTRACTION_MAX_CONTEXT=${GRAPH_EXTRACTION_MAX_CONTEXT:-0}
       - RELATIONSHIP_MAX_CONTEXT=${RELATIONSHIP_MAX_CONTEXT:-0}
-      # Extraction output-token budget. :-0 preserves the config.py inherit chain
-      # (0 → OPENAI_MAX_OUTPUT_TOKENS, default 8000), matching the *_MAX_CONTEXT vars.
-      - EXTRACTION_MAX_OUTPUT_TOKENS=${EXTRACTION_MAX_OUTPUT_TOKENS:-0}
+      # Extraction output-token budget. Fallback matches config.py's shipped
+      # default (12000 since 2026-07-09). NOT :-0 — an explicit 0 here would
+      # force the inherit chain (→ OPENAI_MAX_OUTPUT_TOKENS = 8000) and undo
+      # the new default for every tenant.
+      - EXTRACTION_MAX_OUTPUT_TOKENS=${EXTRACTION_MAX_OUTPUT_TOKENS:-12000}
       # (RELATIONSHIP_ANALYSIS_BATCH_SIZE was removed here: the knob no longer
       # exists in config.py — the targeted-discovery Step 2 replaced the legacy
       # batch scan — so the var was silently ignored.)

@@ -465,7 +465,7 @@ MAX_GRAPH_HOPS=2
 # Context + output budgets cascade from primary (OPENAI_MAX_*) when set to 0.
 # See "Budget Fallback Chain" in /pages/configuration for the full chain.
 # GRAPH_EXTRACTION_MAX_CONTEXT=0              # 0 = inherit min(OPENAI_MAX_CONTEXT, 48000); recommended explicit 24000
-# EXTRACTION_MAX_OUTPUT_TOKENS=0        # 0 = inherit OPENAI_MAX_OUTPUT_TOKENS (=8000); recommended explicit 12000 — ≈ half the extraction input budget (entity-dense docs overflow smaller caps)
+# EXTRACTION_MAX_OUTPUT_TOKENS=12000    # default 12000 — ≈ half the extraction input budget (entity-dense docs overflow smaller caps); 0 = inherit OPENAI_MAX_OUTPUT_TOKENS (=8000)
 
 # Entity resolution
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true

@@ -85,7 +85,12 @@ class Settings(BaseSettings):
     # don't truncate their <relationship> output. Models that finish much
     # earlier (Mistral, GPT-OSS) simply use less of the cap — no cost penalty.
     openai_max_output_tokens: int = Field(default=8000)
-    openai_max_context: int = Field(default=32768)
+    # 256k matches the recommended primary model (Gemma4 26B A4B), which is
+    # the retrieval agent's working context. Extraction does NOT get this:
+    # `extraction_max_context` clamps the inherited value at 48k (2026-07-09,
+    # decided with Rene — raised from 32768 where it silently under-used the
+    # chat model's window).
+    openai_max_context: int = Field(default=256000)
 
     # Transport limits for every LLM client built by the llm_config factories.
     # The OpenAI SDK's default timeout is 600s — one hung provider connection
@@ -342,8 +347,12 @@ class Settings(BaseSettings):
         ),
     )
     # Output-token budgets — chain: vision → relationship → extraction → primary.
+    # Extraction ships a real default instead of 0-inherit (2026-07-09, decided
+    # with Rene): extraction re-emits every entity so output scales with input,
+    # and the inherited 8000 truncate-split ~10x per entity-dense book while
+    # 12000 measured zero. Set 0 explicitly to restore inherit.
     extraction_max_output_tokens_raw: int = Field(
-        default=0,
+        default=12000,
         validation_alias=AliasChoices(
             "extraction_max_output_tokens_raw", "EXTRACTION_MAX_OUTPUT_TOKENS"
         ),

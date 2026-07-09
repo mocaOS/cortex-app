@@ -7,6 +7,52 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 9, 2026 (Extraction timeout overhaul: retry-storm fix, adaptive batch sizing & new defaults)
+
+The new run telemetry (below) paid off on its first field deployment: a 7-hour
+bulk-ingest log from a self-hosted instance showed ~40% of extraction batch
+calls "timing out at 361s" — which turned out to be **three 120s attempts**, the
+SDK silently re-sending the same ~17k-token prompt twice more into an endpoint
+that was already saturated. The extraction transport has been overhauled so
+retries can never stack against a struggling endpoint again.
+
+### Transport & retry fixes
+
+- **`LLM_REQUEST_TIMEOUT_SECONDS` now truly governs extraction** — the
+  extraction/relationship tier clients hardcoded a 120s timeout that shadowed
+  the documented env (default 360s). One attempt now gets the full window
+  instead of three attempts getting a third of it each.
+- **No SDK retries where splitting is the retry** — entity batch calls and
+  per-chunk relationship calls run with `max_retries=0`: a timeout goes
+  straight to the split-retry / single-chunk fallback instead of re-hammering
+  the endpoint. Rate limits (429) requeue the whole batch with bounded
+  exponential backoff; other transient errors still retry.
+- **Timeout-adaptive batch sizing** — a batch that exceeds the request timeout
+  halves as before, but the surviving size is now remembered per extraction
+  config: later documents start at a batch size the endpoint has proven it can
+  answer, instead of re-learning the split cascade per document (the field log
+  showed one document's 15 planned batches balloon to 77 calls / 4.8 hours).
+- **One-shot timeout diagnosis** — repeated timeout splits log a single warning
+  naming the three knobs that fix it (`GRAPH_EXTRACTION_MAX_CONTEXT`,
+  `BATCH_PROCESSING_CONCURRENCY`, `LLM_REQUEST_TIMEOUT_SECONDS`), mirroring the
+  output-budget diagnosis.
+- **Sharper degeneration detection** — the repetition-loop warning now requires
+  actual duplicate names; dense-but-unique output (index/bibliography passages,
+  >40 entities per chunk) is counted separately instead of crying wolf. The
+  batch progress counter no longer overruns its denominator after splits.
+
+### New defaults
+
+- `OPENAI_MAX_CONTEXT` default raised **32768 → 256000**, matching the
+  recommended primary (Gemma4 26B A4B) — it is the retrieval agent's working
+  context. Extraction is unaffected: the value it inherits stays clamped at
+  48000.
+- `EXTRACTION_MAX_OUTPUT_TOKENS` now ships a real default of **12000** (was
+  0 = inherit 8000), the value field-validated on July 8-9 (zero truncation
+  splits across a 7-hour bulk ingest). Set `0` explicitly to restore inherit.
+
+---
+
 ## July 9, 2026 (Extraction run telemetry & budget-ratio diagnosis)
 
 A field report of a "stuck" ingestion turned out to be healthy self-healing that

@@ -217,3 +217,161 @@ class TestExtractionTelemetry:
         assert any("repetition loop suspected" in r.message for r in caplog.records)
         # dedup still collapses the flood to one entity
         assert [e.name for e in entities] == ["Alice"]
+
+    async def test_dense_unique_batch_is_not_flagged_suspect(
+        self, extractor, monkeypatch, caplog
+    ):
+        # 45 UNIQUE entities from one chunk: entity-dense (>40/chunk) but 0%
+        # duplicates — a list/index passage, not model degeneration. Live
+        # 2026-07-09: this pattern produced 11 false "repetition loop" hits.
+        dense = "".join(ENTITY_XML.replace("Alice", f"Name{i}") for i in range(45))
+        _wire_llm(extractor, monkeypatch, [_resp(dense)])
+        run_stats: dict = {}
+        with caplog.at_level(logging.INFO, logger="app.services.graph_extractor"):
+            entities = await extractor.extract_entities_from_document_async(
+                chunks=[SMALL_CHUNKS[0]], max_tokens=32768, run_stats=run_stats
+            )
+        assert run_stats["suspect_batches"] == 0
+        assert run_stats["dense_batches"] == 1
+        assert not any(
+            "repetition loop suspected" in r.message for r in caplog.records
+        )
+        assert any("entity-dense output" in r.message for r in caplog.records)
+        assert len(entities) == 45
+
+
+class TestTimeoutHandling:
+    async def test_timeout_split_keeps_batch_numerator_within_denominator(
+        self, extractor, monkeypatch
+    ):
+        # A split burns one call and queues two half-calls, so the expected
+        # total grows by 2 — with +1 the display overran ("batch 53/43").
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                Exception("Request timed out."),  # [2 chunks] -> split
+                _resp(ENTITY_XML),
+                _resp(ENTITY_XML.replace("Alice", "Bob")),
+            ],
+        )
+        details: list = []
+
+        async def cb(done: int, total: int, detail: str = "") -> None:
+            if detail:
+                details.append(detail)
+
+        run_stats: dict = {}
+        await extractor.extract_entities_from_document_async(
+            chunks=SMALL_CHUNKS,
+            max_tokens=32768,
+            progress_callback=cb,
+            run_stats=run_stats,
+        )
+        assert details == ["batch 1/1", "batch 2/3", "batch 3/3"]
+        assert run_stats["timeout_splits"] == 1
+        assert run_stats["llm_calls"] == 3
+
+    async def test_timeout_diagnosis_fires_once(self, extractor, monkeypatch, caplog):
+        # Timeout cascade: [4] times out, then each [2] half times out before
+        # the singles pass — 3 timeout splits at >=25% of calls must produce
+        # exactly one endpoint-too-slow diagnosis.
+        chunks = ["Alice works at Acme."] * 4
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                Exception("Request timed out."),  # [4] -> split
+                Exception("Request timed out."),  # [2] -> split
+                _resp(ENTITY_XML),                # [1]
+                _resp(ENTITY_XML),                # [1]
+                Exception("Request timed out."),  # [2] -> split
+                _resp(ENTITY_XML),                # [1]
+                _resp(ENTITY_XML),                # [1]
+            ],
+        )
+        run_stats: dict = {}
+        with caplog.at_level(logging.WARNING, logger="app.services.graph_extractor"):
+            await extractor.extract_entities_from_document_async(
+                chunks=chunks, max_tokens=32768, run_stats=run_stats
+            )
+        diagnoses = [
+            r for r in caplog.records if "keep timing out" in r.message
+        ]
+        assert len(diagnoses) == 1
+        assert "GRAPH_EXTRACTION_MAX_CONTEXT" in diagnoses[0].message
+        assert run_stats["timeout_splits"] == 3
+
+    async def test_timeout_learns_budget_cap_for_next_document(
+        self, extractor, monkeypatch, caplog
+    ):
+        # Doc 1: one full-size batch times out and splits. Doc 2 on the same
+        # extractor must start with the learned smaller budget (more, smaller
+        # planned batches) instead of re-running the split cascade.
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                Exception("Request timed out."),  # [A, B] -> split
+                _resp(ENTITY_XML),
+                _resp(ENTITY_XML.replace("Alice", "Bob")),
+            ],
+        )
+        run1: dict = {}
+        await extractor.extract_entities_from_document_async(
+            chunks=[BIG_CHUNK_A, BIG_CHUNK_B], max_tokens=32768, run_stats=run1
+        )
+        assert run1["planned_batches"] == 1
+        assert extractor._learned_entity_budget  # cap recorded
+
+        extractor._async_safe_completion = AsyncMock(
+            side_effect=[_resp(ENTITY_XML), _resp(ENTITY_XML)]
+        )
+        run2: dict = {}
+        with caplog.at_level(logging.INFO, logger="app.services.graph_extractor"):
+            await extractor.extract_entities_from_document_async(
+                chunks=[BIG_CHUNK_A, BIG_CHUNK_B], max_tokens=32768, run_stats=run2
+            )
+        assert run2["planned_batches"] > run1["planned_batches"]
+        assert run2["timeout_splits"] == 0
+        assert any(
+            "batch input budget capped" in r.message for r in caplog.records
+        )
+
+    async def test_rate_limited_batch_is_requeued_whole_with_backoff(
+        self, extractor, monkeypatch
+    ):
+        # 429s must not split the batch (its size is fine) and must not be
+        # dropped — requeue the whole batch after a backoff sleep.
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                Exception("Error code: 429 - rate limit exceeded"),
+                _resp(ENTITY_XML),
+            ],
+        )
+        sleeps: list = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr(
+            "app.services.graph_extractor.asyncio.sleep", fake_sleep
+        )
+        run_stats: dict = {}
+        entities = await extractor.extract_entities_from_document_async(
+            chunks=SMALL_CHUNKS, max_tokens=32768, run_stats=run_stats
+        )
+        assert run_stats["rate_limit_retries"] == 1
+        assert run_stats["timeout_splits"] == 0
+        assert run_stats["errors"] == 0
+        assert run_stats["llm_calls"] == 2
+        assert sleeps == [5.0]
+        assert [e.name for e in entities] == ["Alice"]
+        # the retried call carries the SAME full batch, not a half
+        prompts = [
+            c.kwargs["messages"][1]["content"]
+            for c in extractor._async_safe_completion.await_args_list
+        ]
+        assert prompts[0] == prompts[1]

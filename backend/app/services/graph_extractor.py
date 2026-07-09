@@ -15,7 +15,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI, AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 from app.models import Entity, Relationship, ExtractionResult
@@ -33,6 +33,23 @@ from app.services.reasoning_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    """Request timeout from any layer (openai.APITimeoutError, httpx
+    TimeoutException, or a proxy's stringly-typed equivalent)."""
+    return (
+        "timed out" in str(exc).lower()
+        or "timeout" in type(exc).__name__.lower()
+    )
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """429 from any layer (SDK RateLimitError, gateway/proxy error envelopes)."""
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    msg = str(exc).lower()
+    return "rate limit" in msg or "error code: 429" in msg
 
 # Thread pool for running synchronous LLM calls - size matches concurrent_extractions setting
 # This is used as fallback; prefer async methods which use AsyncOpenAI directly
@@ -368,6 +385,12 @@ class GraphExtractor:
         self._last_config_hash: Optional[str] = None  # Track LLM config changes
         self._last_extraction_config_hash: Optional[str] = None
         self._last_relationship_config_hash: Optional[str] = None
+        # Timeout-split learning, keyed by extraction config hash: the batch
+        # input-token budget the endpoint has proven it can answer within the
+        # request timeout. Monotonically shrinks on timeout splits so later
+        # documents in the same process skip the split cascade; cleared on
+        # extraction config change (and naturally on restart).
+        self._learned_entity_budget: dict = {}
         self.entity_types = DEFAULT_ENTITY_TYPES
         self.relation_types = DEFAULT_RELATION_TYPES
 
@@ -400,6 +423,7 @@ class GraphExtractor:
             logger.info("Extraction LLM configuration changed, recreating extraction clients")
             self._extraction_client = None
             self._async_extraction_client = None
+            self._learned_entity_budget.clear()
         self._last_extraction_config_hash = current_hash
 
     def _get_relationship_config_hash(self) -> str:
@@ -425,11 +449,15 @@ class GraphExtractor:
         
         config = get_llm_config()
         if self._client is None and config.api_key:
+            # Transport limits (timeout/max_retries) intentionally NOT set
+            # here: the factory injects LLM_REQUEST_TIMEOUT_SECONDS /
+            # LLM_MAX_RETRIES. Hardcoding 120s here used to shadow the env
+            # knob — a slow local gateway then timed out at 120s and the SDK
+            # re-sent the same multi-k-token prompt twice, i.e. every "361s
+            # timeout" in the field was 3x120s attempts (2026-07-09 logs).
             self._client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=120.0,
-                max_retries=2,
             )
         return self._client
     
@@ -443,11 +471,10 @@ class GraphExtractor:
         
         config = get_llm_config()
         if self._async_client is None and config.api_key:
+            # Transport limits env-driven via the factory (see `client`).
             self._async_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=600.0,
-                max_retries=2,
             )
         return self._async_client
     
@@ -461,11 +488,10 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._extraction_client is None and config.api_key:
+            # Transport limits env-driven via the factory (see `client`).
             self._extraction_client = make_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=120.0,
-                max_retries=2,
             )
             logger.info(f"Extraction client initialized: {config.base_url} / {config.model}")
         return self._extraction_client
@@ -480,11 +506,10 @@ class GraphExtractor:
 
         config = get_extraction_llm_config()
         if self._async_extraction_client is None and config.api_key:
+            # Transport limits env-driven via the factory (see `client`).
             self._async_extraction_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=120.0,
-                max_retries=2,
             )
         return self._async_extraction_client
 
@@ -505,11 +530,10 @@ class GraphExtractor:
 
         config = get_relationship_llm_config()
         if self._async_relationship_client is None and config.api_key:
+            # Transport limits env-driven via the factory (see `client`).
             self._async_relationship_client = make_async_openai_client(
                 api_key=config.api_key,
                 base_url=config.base_url,
-                timeout=120.0,
-                max_retries=2,
             )
             logger.info(f"Relationship client initialized: {config.base_url} / {config.model}")
         return self._async_relationship_client
@@ -540,6 +564,26 @@ class GraphExtractor:
     def _relationship_reasoning_mode(self) -> ReasoningMode:
         """Reasoning mode applied to relationship-side LLM calls."""
         return ReasoningMode.parse(self.settings.relationship_reasoning_mode)
+
+    def _oneshot_async_client(self, config) -> Optional[AsyncOpenAI]:
+        """max_retries=0 twin of a tier client, for calls whose caller owns
+        the retry strategy (split-retry, single-chunk fallback, requeue).
+
+        On those paths an SDK retry re-sends a multi-thousand-token prompt
+        into an endpoint that just proved saturated — observed live
+        2026-07-09: every "361s batch timeout" was 3x120s attempts of the
+        same ~17k-token batch, tripling endpoint load before the app-level
+        split even ran. The factory caches per-kwargs, so this reuses one
+        client (with Langfuse wrapping + usage metering intact) per tier;
+        the request timeout stays env-driven (LLM_REQUEST_TIMEOUT_SECONDS).
+        """
+        if not getattr(config, "api_key", None):
+            return None
+        return make_async_openai_client(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            max_retries=0,
+        )
 
     async def _async_safe_completion(
         self,
@@ -2124,12 +2168,14 @@ Respond with ONLY the community name, nothing else."""
                 after each batch settles (empty detail). Chunks in a batch
                 that gets split-retried (truncation/timeout) are only counted
                 once the halves settle, so `done` is monotonic against a
-                stable total; the detail's batch denominator grows by one per
-                split.
+                stable total; the detail's batch denominator grows by two per
+                split (the burned call plus the two half-calls replacing one
+                planned call) and by one per rate-limit requeue.
             run_stats: Optional dict the caller owns; on return it is filled
                 with the run's health counters (planned_batches, llm_calls,
                 truncation_splits, timeout_splits, single_chunk_truncations,
-                empty_responses, errors, suspect_batches, prompt_tokens,
+                empty_responses, errors, suspect_batches, dense_batches,
+                rate_limit_retries, prompt_tokens,
                 completion_tokens). Passed as an out-param (not an instance
                 attribute) because one extractor instance serves concurrent
                 document runs.
@@ -2180,6 +2226,21 @@ Respond with ONLY the community name, nothing else."""
 
         if available_tokens < 200:
             available_tokens = 2000  # Fallback minimum
+
+        # Timeout-split learning: batches above this size have already
+        # proven to exceed the request timeout against this extraction
+        # config, so start there instead of re-paying the split cascade
+        # per document (observed live: after 7h of timeout splits a fresh
+        # document still opened with a full-size batch).
+        cfg_hash = self._get_extraction_config_hash()
+        learned_cap = self._learned_entity_budget.get(cfg_hash)
+        if learned_cap is not None and learned_cap < available_tokens:
+            logger.info(
+                f"Entity extraction: batch input budget capped at {learned_cap} "
+                f"tokens (learned from earlier timeout splits; extraction config "
+                f"change or restart resets it)"
+            )
+            available_tokens = learned_cap
 
         # Batch chunks by token budget
         batches: List[List[str]] = []
@@ -2240,11 +2301,21 @@ Respond with ONLY the community name, nothing else."""
             "empty_responses": 0,
             "errors": 0,
             "suspect_batches": 0,
+            "dense_batches": 0,
+            "rate_limit_retries": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
-        total_batches = len(batches)  # +1 per split: one batch becomes two halves
+        # Expected total calls. +2 per split: the failed call already consumed
+        # a batch number, and two half-calls replace the one planned call —
+        # +1 here made the numerator overrun the denominator ("batch 53/43").
+        total_batches = len(batches)
         ratio_diagnosed = False
+        timeout_diagnosed = False
+        # 429 requeues are bounded per run so a hard-down endpoint can't spin
+        # the loop forever; consecutive hits back off exponentially.
+        rate_limit_budget = 3 * max(1, len(batches)) + 6
+        consecutive_rate_limits = 0
         run_started = time.monotonic()
 
         async def _report_progress(detail: str = "") -> None:
@@ -2286,6 +2357,40 @@ Respond with ONLY the community name, nothing else."""
                 f"lower GRAPH_EXTRACTION_MAX_CONTEXT."
             )
 
+        def _maybe_diagnose_timeouts() -> None:
+            # One-shot mirror of the budget diagnosis for the other failure
+            # mode seen in the field: an endpoint (typically a saturated
+            # local gateway) that can't finish a full-size batch within the
+            # request timeout. Individually each timeout warning looks
+            # transient; together they mean the batch size is wrong for
+            # this endpoint's throughput.
+            nonlocal timeout_diagnosed
+            t = stats["timeout_splits"]
+            if timeout_diagnosed or t < 3 or t / max(1, batch_num) < 0.25:
+                return
+            timeout_diagnosed = True
+            logger.warning(
+                f"Entity extraction batches keep timing out: {t} of {batch_num} "
+                f"calls so far exceeded the "
+                f"{self.settings.llm_request_timeout_seconds}s request timeout "
+                f"(input budget {max_tokens}). The endpoint can't answer "
+                f"full-size batches in time — the batch budget auto-shrinks for "
+                f"this run and later documents, but to fix the source lower "
+                f"GRAPH_EXTRACTION_MAX_CONTEXT, reduce "
+                f"BATCH_PROCESSING_CONCURRENCY, or raise "
+                f"LLM_REQUEST_TIMEOUT_SECONDS."
+            )
+
+        # Batch calls go through a max_retries=0 client: the split/requeue
+        # logic below owns the retry strategy, and SDK retries would re-send
+        # the same large prompt into a struggling endpoint first (the mocked
+        # tier client stays the fallback so tests and keyless configs work).
+        batch_client = (
+            self._oneshot_async_client(get_extraction_llm_config())
+            or self._oneshot_async_client(get_llm_config())
+            or client
+        )
+
         while pending:
             batch = pending.popleft()
             batch_num += 1
@@ -2303,7 +2408,7 @@ Respond with ONLY the community name, nothing else."""
 
             try:
                 response = await self._async_safe_completion(
-                    client,
+                    batch_client,
                     model=model,
                     mode=self._extraction_reasoning_mode,
                     messages=[
@@ -2314,6 +2419,7 @@ Respond with ONLY the community name, nothing else."""
                     max_tokens=self.settings.extraction_max_output_tokens,
                 )
                 elapsed = time.monotonic() - call_started
+                consecutive_rate_limits = 0
                 prompt_toks, completion_toks = _usage_tokens(response)
                 if prompt_toks is None:
                     prompt_toks = prompt_overhead + count_tokens(batch_text)
@@ -2334,7 +2440,7 @@ Respond with ONLY the community name, nothing else."""
                 if finish_reason == "length":
                     if len(batch) > 1:
                         stats["truncation_splits"] += 1
-                        total_batches += 1
+                        total_batches += 2
                         mid = len(batch) // 2
                         pending.appendleft(batch[mid:])
                         pending.appendleft(batch[:mid])
@@ -2369,18 +2475,30 @@ Respond with ONLY the community name, nothing else."""
                 # entity list until it hits the output cap (observed live:
                 # 288 "entities" from one 5-sentence chunk). Dedup collapses
                 # exact repeats, but without this the batch reads as healthy.
+                # The loop verdict requires actual duplicate names — dense
+                # output with unique names is a list/index/bibliography
+                # passage, not degeneration (live 2026-07-09: every
+                # >40-per-chunk hit had 0% duplicates).
                 n_parsed = len(xml_entities)
                 if n_parsed >= 30:
                     unique_names = {
                         str(e.get("name", "")).lower() for e in xml_entities
                     }
                     dup_ratio = 1 - len(unique_names) / n_parsed
-                    if dup_ratio > 0.5 or n_parsed / len(batch) > 40:
+                    if dup_ratio > 0.5:
                         stats["suspect_batches"] += 1
                         logger.warning(
                             f"Entity extraction batch {batch_num}: {n_parsed} entities from "
                             f"{len(batch)} chunk(s), {dup_ratio:.0%} duplicate names — model "
                             f"repetition loop suspected; keeping output, dedup collapses repeats"
+                        )
+                    elif n_parsed / len(batch) > 40:
+                        stats["dense_batches"] += 1
+                        logger.info(
+                            f"Entity extraction batch {batch_num}: entity-dense output "
+                            f"({n_parsed} entities from {len(batch)} chunk(s), "
+                            f"{dup_ratio:.0%} duplicate names) — likely a list- or "
+                            f"index-heavy passage"
                         )
 
                 logger.info(
@@ -2395,16 +2513,36 @@ Respond with ONLY the community name, nothing else."""
 
             except Exception as e:
                 elapsed = time.monotonic() - call_started
+                # With the max_retries=0 batch client, 429s land here instead
+                # of being absorbed by the SDK: requeue the whole batch (its
+                # size is fine — the endpoint is momentarily saturated) with
+                # exponential backoff, bounded per run.
+                if (
+                    _is_rate_limit_error(e)
+                    and stats["rate_limit_retries"] < rate_limit_budget
+                ):
+                    stats["rate_limit_retries"] += 1
+                    consecutive_rate_limits += 1
+                    total_batches += 1  # the requeued batch is one more expected call
+                    delay = min(60.0, 5.0 * (2 ** (consecutive_rate_limits - 1)))
+                    logger.warning(
+                        f"Entity extraction batch {batch_num} ({len(batch)} chunks) "
+                        f"rate-limited — requeueing in {delay:.0f}s "
+                        f"({stats['rate_limit_retries']}/{rate_limit_budget} requeue budget)"
+                    )
+                    pending.append(batch)
+                    await asyncio.sleep(delay)
+                    continue
                 # A timeout on a multi-chunk batch usually means the prompt is
                 # too large for the provider to answer within the client
                 # timeout (observed: 256k-context batches against Venice
                 # qwen3 never completed, so whole batches of entities were
                 # silently lost). Split and retry the halves instead of
                 # dropping the batch.
-                is_timeout = "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower()
+                is_timeout = _is_timeout_error(e)
                 if is_timeout and len(batch) > 1:
                     stats["timeout_splits"] += 1
-                    total_batches += 1
+                    total_batches += 2
                     mid = len(batch) // 2
                     pending.appendleft(batch[mid:])
                     pending.appendleft(batch[:mid])
@@ -2412,6 +2550,14 @@ Respond with ONLY the community name, nothing else."""
                         f"Entity extraction batch {batch_num} ({len(batch)} chunks) "
                         f"timed out after {elapsed:.1f}s — splitting and retrying halves"
                     )
+                    # Learn for the rest of the process lifetime: later
+                    # documents start at a batch size the endpoint has
+                    # actually answered instead of re-running this cascade.
+                    new_cap = max(1500, count_tokens(batch_text) // 2)
+                    prev_cap = self._learned_entity_budget.get(cfg_hash)
+                    if prev_cap is None or new_cap < prev_cap:
+                        self._learned_entity_budget[cfg_hash] = new_cap
+                    _maybe_diagnose_timeouts()
                 else:
                     stats["errors"] += 1
                     logger.error(
@@ -2439,7 +2585,9 @@ Respond with ONLY the community name, nothing else."""
             f"{stats['timeout_splits']} timeout splits, "
             f"{stats['single_chunk_truncations']} single-chunk truncations, "
             f"{stats['empty_responses']} empty, {stats['errors']} errors, "
-            f"{stats['suspect_batches']} suspect), tokens in≈{stats['prompt_tokens']} "
+            f"{stats['rate_limit_retries']} rate-limit requeues, "
+            f"{stats['suspect_batches']} suspect, {stats['dense_batches']} dense), "
+            f"tokens in≈{stats['prompt_tokens']} "
             f"out≈{stats['completion_tokens']}, {run_elapsed:.0f}s"
         )
         if run_stats is not None:
@@ -2655,15 +2803,24 @@ Respond with ONLY the community name, nothing else."""
         if len(entities) < 2 or not chunk_text.strip():
             return []
 
-        # Use dedicated relationship model (falls back to extraction, then main)
+        # Use dedicated relationship model (falls back to extraction, then main).
+        # Calls go through a max_retries=0 client where possible: tenacity
+        # below owns retries, and a timeout must fail fast to the caller
+        # instead of the SDK re-sending the prompt (see _oneshot_async_client).
         if self.async_relationship_client:
-            client = self.async_relationship_client
+            client = (
+                self._oneshot_async_client(get_relationship_llm_config())
+                or self.async_relationship_client
+            )
             model = self.relationship_model_name
         elif self.async_extraction_client:
-            client = self.async_extraction_client
+            client = (
+                self._oneshot_async_client(get_extraction_llm_config())
+                or self.async_extraction_client
+            )
             model = self.extraction_model_name
         elif self.async_client:
-            client = self.async_client
+            client = self._oneshot_async_client(get_llm_config()) or self.async_client
             model = self.current_model
         else:
             return []
@@ -2689,10 +2846,12 @@ REL|Entity A|Entity B|USES|7|0.9|How they are related, per the source text.
 Extract relationships supported by the text above:"""
 
         try:
-            # Retry with exponential backoff for rate limit (429) errors.
-            # OpenAI SDK raises openai.RateLimitError for 429 responses.
+            # Retry with exponential backoff for rate limits and transient
+            # errors — but NOT timeouts: a timed-out per-chunk call against a
+            # saturated endpoint is deterministic waste (each retry re-sends
+            # the full prompt and blocks a slot for another timeout period).
             @retry(
-                retry=retry_if_exception_type(Exception),
+                retry=retry_if_exception(lambda e: not _is_timeout_error(e)),
                 stop=stop_after_attempt(4),
                 wait=wait_exponential(multiplier=2, min=2, max=30),
                 before_sleep=lambda rs: logger.debug(
@@ -2824,14 +2983,23 @@ Extract relationships supported by the text above:"""
             )
             return {only["key"]: rels}
 
+        # Same one-shot transport rationale as the single-chunk path: the
+        # per-chunk fallback below IS the timeout recovery, so the SDK must
+        # not re-send this multi-source prompt first.
         if self.async_relationship_client:
-            client = self.async_relationship_client
+            client = (
+                self._oneshot_async_client(get_relationship_llm_config())
+                or self.async_relationship_client
+            )
             model = self.relationship_model_name
         elif self.async_extraction_client:
-            client = self.async_extraction_client
+            client = (
+                self._oneshot_async_client(get_extraction_llm_config())
+                or self.async_extraction_client
+            )
             model = self.extraction_model_name
         elif self.async_client:
-            client = self.async_client
+            client = self._oneshot_async_client(get_llm_config()) or self.async_client
             model = self.current_model
         else:
             return {}
@@ -2874,8 +3042,10 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
             return out
 
         try:
+            # Timeouts skip the retries and fall straight through to the
+            # single-chunk fallback (see the single-chunk path's rationale).
             @retry(
-                retry=retry_if_exception_type(Exception),
+                retry=retry_if_exception(lambda e: not _is_timeout_error(e)),
                 stop=stop_after_attempt(4),
                 wait=wait_exponential(multiplier=2, min=2, max=30),
                 before_sleep=lambda rs: logger.debug(

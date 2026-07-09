@@ -54,7 +54,7 @@ OPENAI_MODEL_FAST_MODE=google-gemma-4-26b-a4b-it
 
 # Primary token budgets (floor of the fallback chain — see "Budget Fallback Chain" below)
 OPENAI_MAX_OUTPUT_TOKENS=8000   # Default output tokens for every LLM call
-OPENAI_MAX_CONTEXT=32768        # Default input context budget
+OPENAI_MAX_CONTEXT=256000       # Default input context budget — sized to the recommended primary's window
 ```
 
 ### Embedding Configuration
@@ -137,12 +137,13 @@ MAX_GRAPH_HOPS=2
 CONCURRENT_EXTRACTIONS=3
 
 # Max context window tokens for entity extraction batching
-# 0 = inherit OPENAI_MAX_CONTEXT. Set explicitly when extraction model has bigger window than primary.
+# 0 = inherit min(OPENAI_MAX_CONTEXT, 48000) — the inherited value is clamped because
+# extraction is decode-bound. Recommended explicit 24000.
 # GRAPH_EXTRACTION_MAX_CONTEXT=0
 
 # Output budget for entity-extraction LLM calls
-# 0 = inherit OPENAI_MAX_OUTPUT_TOKENS. Bump to 3500–4000 for Qwen3-family models.
-# EXTRACTION_MAX_OUTPUT_TOKENS=0
+# Default 12000 (≈ half the extraction input budget). Set 0 to inherit OPENAI_MAX_OUTPUT_TOKENS.
+# EXTRACTION_MAX_OUTPUT_TOKENS=12000
 ```
 
 ### Relationship Model
@@ -258,11 +259,12 @@ DEFAULT_REASONING_MODE=off
 
 ### Budget Fallback Chain
 
-Every LLM call has two budgets that matter: **output tokens** (how much the model may write) and **input context** (how much input the call may consume). All sub-tier knobs default to `0` (= inherit from the next tier up), letting you configure a multi-model stack with just two or three env vars.
+Every LLM call has two budgets that matter: **output tokens** (how much the model may write) and **input context** (how much input the call may consume). Sub-tier knobs default to `0` (= inherit from the next tier up) — except `EXTRACTION_MAX_OUTPUT_TOKENS`, which ships a real default of `12000` (set `0` explicitly to restore inherit). This lets you configure a multi-model stack with just two or three env vars.
 
 ```
 OUTPUT TOKENS:                          INPUT CONTEXT:
-  OPENAI_MAX_OUTPUT_TOKENS=8000           OPENAI_MAX_CONTEXT=32768
+  OPENAI_MAX_OUTPUT_TOKENS=8000           OPENAI_MAX_CONTEXT=256000
+  (EXTRACTION tier defaults to 12000)     (extraction inherit clamped at 48000)
        ↓                                       ↓
   EXTRACTION_MAX_OUTPUT_TOKENS            GRAPH_EXTRACTION_MAX_CONTEXT
        ↓                                       ↓
@@ -277,7 +279,7 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 
 ```bash
 OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
-OPENAI_MAX_CONTEXT=256000                 # unlock Gemma4 26B A4B full input window
+OPENAI_MAX_CONTEXT=256000                 # Gemma4 26B A4B full input window (= code default)
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=24000         # size to the provider's DECODE SPEED, not the model's window — see "Provider Notes: Venice" below
@@ -721,7 +723,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `OPENAI_API_KEY` | Yes | - | OpenAI API key |
 | `OPENAI_MODEL` | No | `google-gemma-4-26b-a4b-it` | Primary LLM for Q&A, research, chat |
 | `OPENAI_MAX_OUTPUT_TOKENS` | No | `8000` | Floor of the output-token budget chain |
-| `OPENAI_MAX_CONTEXT` | No | `32768` | Floor of the input-context budget chain |
+| `OPENAI_MAX_CONTEXT` | No | `256000` | Floor of the input-context budget chain (the value extraction inherits is clamped at 48000) |
 | `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |
 | `EMBEDDING_DIMENSION` | No | `1536` | Embedding dimensions |
 | `EMBEDDING_SEND_DIMENSIONS` | No | `true` | Send `dimensions` param to embedding API. Set `false` for fixed-dim models |
@@ -739,7 +741,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RELATIONSHIP_EXTRACTION_API_KEY` | No | `GRAPH_EXTRACTION_API_KEY` | API key for relationship model |
 | `CONCURRENT_RELATIONS` | No | `3` | Concurrent per-chunk relationship extractions per document |
 | `GRAPH_EXTRACTION_MAX_CONTEXT` | No | `0` (=inherit) | Input context for entity extraction batching. Inherits `min(OPENAI_MAX_CONTEXT, 48000)` — clamped because extraction is decode-bound; recommended explicit `24000`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for entity extraction. Inherits `OPENAI_MAX_OUTPUT_TOKENS`. Recommended explicit `12000` — ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT` |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `12000` | Output budget for entity extraction — ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`. Set `0` to inherit `OPENAI_MAX_OUTPUT_TOKENS` |
 | `RELATIONSHIP_MAX_CONTEXT` | No | `0` (=inherit) | Input context for Phase 2 batch (legacy `llm_scan` mode). Inherits `GRAPH_EXTRACTION_MAX_CONTEXT` → primary. Leave at 0 — wide values time out on self-hosted GPUs (prefill-bound) |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for **per-chunk + candidate scan** (was Phase 2 batch in old releases — see migration note). Inherits `EXTRACTION_MAX_OUTPUT_TOKENS` |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | No | `16000` | Output budget for **Phase 2 batch** (standalone, NOT in chain) |
