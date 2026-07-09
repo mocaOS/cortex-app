@@ -39,7 +39,9 @@ cp .env.example .env
 > # (it's a graph-density/cost dial, NOT a match-the-model's-window setting).
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 > GRAPH_EXTRACTION_MAX_CONTEXT=24000
-> RELATIONSHIP_MAX_CONTEXT=256000     # wide is safe here — relationship batch output is bounded
+> EXTRACTION_MAX_OUTPUT_TOKENS=12000  # ≈ half the input budget — entity-dense docs overflow 8000
+> # RELATIONSHIP_MAX_CONTEXT: leave unset (inherits 24000). Widening only helps legacy
+> # llm_scan mode on fast-prefill hosted endpoints — see Chapter 4.
 >
 > # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 > # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
@@ -324,7 +326,7 @@ Community names and summaries run on the extraction model (`GRAPH_EXTRACTION_MOD
 
 ### Context Window Configuration
 
-For the primary and relationship tiers, match the model's actual context window. Extraction is the exception — keep it deliberately small:
+Match the primary tier to the model's actual context window. The ingestion tiers are the exception — keep them deliberately small:
 
 ```env
 # Primary budgets — sub-tiers (extraction / relationship / vision) inherit
@@ -334,11 +336,12 @@ OPENAI_MAX_OUTPUT_TOKENS=8000          # Floor — all output budgets inherit
 
 # Per-tier overrides
 GRAPH_EXTRACTION_MAX_CONTEXT=24000     # Recommended. 0 = inherit min(OPENAI_MAX_CONTEXT, 48000) — inherited value is clamped at 48K
-RELATIONSHIP_MAX_CONTEXT=256000        # 0 = inherit GRAPH_EXTRACTION_MAX_CONTEXT → primary; wide is safe (batch output is bounded)
+EXTRACTION_MAX_OUTPUT_TOKENS=12000     # Recommended: ≈ half the extraction input budget
+# RELATIONSHIP_MAX_CONTEXT: leave unset (inherits the extraction budget) — see below
 RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000  # Phase 2 batch (standalone, NOT in chain)
 ```
 
-Setting these values higher than the model's actual context window will cause errors. But don't chase the model's full window for extraction: extraction is decode-bound — output scales with input (the model re-emits every entity/relation), so at real provider decode speeds (~70 tok/s) full-window batches can't finish inside the request window (timeouts, retries, silently lost entities). `GRAPH_EXTRACTION_MAX_CONTEXT=24000` keeps worst-case output inside `EXTRACTION_MAX_OUTPUT_TOKENS=8000` and completes reliably; treat it as a graph-density/cost dial (12000 ≈ denser graph at ~2× the calls). Relationship batches have bounded output (pairs-per-call cap + `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`), so `RELATIONSHIP_MAX_CONTEXT` can stay wide.
+Setting these values higher than the model's actual context window will cause errors. But don't chase the model's full window for extraction: extraction is decode-bound — output scales with input (the model re-emits every entity/relation), so at real provider decode speeds (~70 tok/s) full-window batches can't finish inside the request window (timeouts, retries, silently lost entities). Treat `GRAPH_EXTRACTION_MAX_CONTEXT=24000` as a graph-density/cost dial (12000 ≈ denser graph at ~2× the calls), and size `EXTRACTION_MAX_OUTPUT_TOKENS` to ≈ half of it — entity-dense documents overflow an 8000 cap on 24K batches (each overflow self-heals via split-retry but roughly doubles that batch's wall time; the backend logs a one-shot "output budget looks too small" warning when this happens repeatedly). `RELATIONSHIP_MAX_CONTEXT` should stay unset: its bounded per-call output does not bound *prefill* time, so a full-window value that works on fast hosted endpoints produces multi-minute prompt reads and timeouts on self-hosted GPUs — and the default `targeted` discovery mode doesn't consume it for verification calls anyway.
 
 Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled Phase 2 batch (default 16000). It now feeds per-chunk + candidate scan in the inheritance chain, and the Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`. A stale `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` setting is harmless (per-chunk just gets unused headroom) — rename when convenient.
 

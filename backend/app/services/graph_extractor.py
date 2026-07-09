@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Callable, Awaitable
 import json
 import re
+import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -2098,7 +2099,8 @@ Respond with ONLY the community name, nothing else."""
         chunks: List[str],
         document_summary: Optional[str] = None,
         max_tokens: int = 8192,
-        progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
+        progress_callback: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
+        run_stats: Optional[dict] = None,
     ) -> List[Entity]:
         """Extract entities from an entire document (batched by token budget).
 
@@ -2115,10 +2117,22 @@ Respond with ONLY the community name, nothing else."""
                 adds nothing there. Pass a string (possibly empty) to force
                 the legacy explicit-summary behavior.
             max_tokens: Approximate context window budget for the extraction model
-            progress_callback: Optional async callback(done_chunks, total_chunks)
-                fired after each batch settles. Chunks in a batch that gets
-                split-retried (truncation/timeout) are only counted once the
-                halves settle, so `done` is monotonic against a stable total.
+            progress_callback: Optional async callback(done_chunks,
+                total_chunks, detail) fired at the START of every batch call
+                (with a `"batch 3/21"` detail string, so long-running local
+                models show forward motion between completions) and again
+                after each batch settles (empty detail). Chunks in a batch
+                that gets split-retried (truncation/timeout) are only counted
+                once the halves settle, so `done` is monotonic against a
+                stable total; the detail's batch denominator grows by one per
+                split.
+            run_stats: Optional dict the caller owns; on return it is filled
+                with the run's health counters (planned_batches, llm_calls,
+                truncation_splits, timeout_splits, single_chunk_truncations,
+                empty_responses, errors, suspect_batches, prompt_tokens,
+                completion_tokens). Passed as an out-param (not an instance
+                attribute) because one extractor instance serves concurrent
+                document runs.
 
         Returns:
             Deduplicated list of Entity objects
@@ -2214,14 +2228,63 @@ Respond with ONLY the community name, nothing else."""
         # count, so total_units stays stable while done_units climbs.
         total_units = sum(len(b) for b in batches)
         done_units = 0
+        # Health telemetry: planned batches vs actual LLM calls makes retry
+        # churn (truncation/timeout splits) measurable per run instead of
+        # inferable from scattered per-batch warnings.
+        stats = {
+            "planned_batches": len(batches),
+            "llm_calls": 0,
+            "truncation_splits": 0,
+            "timeout_splits": 0,
+            "single_chunk_truncations": 0,
+            "empty_responses": 0,
+            "errors": 0,
+            "suspect_batches": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+        total_batches = len(batches)  # +1 per split: one batch becomes two halves
+        ratio_diagnosed = False
+        run_started = time.monotonic()
 
-        async def _report_progress() -> None:
+        async def _report_progress(detail: str = "") -> None:
             if progress_callback is None:
                 return
             try:
-                await progress_callback(done_units, total_units)
+                await progress_callback(done_units, total_units, detail)
             except Exception as cb_exc:  # noqa: BLE001 — progress must not fail extraction
                 logger.debug(f"Entity extraction progress callback failed: {cb_exc}")
+
+        def _usage_tokens(response) -> tuple:
+            # Provider usage when reported; guarded by isinstance because
+            # proxies (and test mocks) return non-int attributes.
+            usage = getattr(response, "usage", None)
+            pt = getattr(usage, "prompt_tokens", None)
+            ct = getattr(usage, "completion_tokens", None)
+            return (
+                pt if isinstance(pt, int) else None,
+                ct if isinstance(ct, int) else None,
+            )
+
+        def _maybe_diagnose_ratio() -> None:
+            # One-shot self-diagnosis: repeated output-cap overflows mean the
+            # input:output budget ratio is off — every overflow roughly
+            # doubles that batch's work. Say so once with the actual knobs
+            # instead of leaving operators to infer it from N identical
+            # per-batch warnings. Rate-gated so occasional self-healing
+            # splits on entity-dense stretches don't trip it.
+            nonlocal ratio_diagnosed
+            overflows = stats["truncation_splits"] + stats["single_chunk_truncations"]
+            if ratio_diagnosed or overflows < 3 or overflows / max(1, batch_num) < 0.25:
+                return
+            ratio_diagnosed = True
+            logger.warning(
+                f"Entity extraction output budget looks too small for the input batch "
+                f"size: {overflows} of {batch_num} calls so far hit the "
+                f"{self.settings.extraction_max_output_tokens}-token output cap "
+                f"(input budget {max_tokens}). Raise EXTRACTION_MAX_OUTPUT_TOKENS or "
+                f"lower GRAPH_EXTRACTION_MAX_CONTEXT."
+            )
 
         while pending:
             batch = pending.popleft()
@@ -2232,6 +2295,11 @@ Respond with ONLY the community name, nothing else."""
                 document_summary=document_summary or "No summary available.",
                 text=batch_text,
             )
+            # Batch-start progress: a 24k-token batch on a slow local model
+            # runs for minutes — without this the UI freezes on the previous
+            # batch's completion message and reads as a hang.
+            await _report_progress(f"batch {batch_num}/{total_batches}")
+            call_started = time.monotonic()
 
             try:
                 response = await self._async_safe_completion(
@@ -2245,9 +2313,17 @@ Respond with ONLY the community name, nothing else."""
                     temperature=0.1,
                     max_tokens=self.settings.extraction_max_output_tokens,
                 )
+                elapsed = time.monotonic() - call_started
+                prompt_toks, completion_toks = _usage_tokens(response)
+                if prompt_toks is None:
+                    prompt_toks = prompt_overhead + count_tokens(batch_text)
+                stats["prompt_tokens"] += prompt_toks
+                if completion_toks is not None:
+                    stats["completion_tokens"] += completion_toks
 
                 content = self._extract_response_content(response)
                 if not content:
+                    stats["empty_responses"] += 1
                     logger.warning(f"Entity extraction batch {batch_num}: empty response")
                     done_units += len(batch)
                     await _report_progress()
@@ -2257,20 +2333,26 @@ Respond with ONLY the community name, nothing else."""
                 finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
                 if finish_reason == "length":
                     if len(batch) > 1:
+                        stats["truncation_splits"] += 1
+                        total_batches += 1
                         mid = len(batch) // 2
                         pending.appendleft(batch[mid:])
                         pending.appendleft(batch[:mid])
                         logger.warning(
                             f"Entity extraction batch {batch_num}: output truncated at "
-                            f"{self.settings.extraction_max_output_tokens} tokens — "
-                            f"splitting {len(batch)}-chunk batch and retrying halves"
+                            f"{self.settings.extraction_max_output_tokens} tokens after "
+                            f"{elapsed:.1f}s ({len(batch)} chunks, in≈{prompt_toks} tok) — "
+                            f"splitting and retrying halves"
                         )
+                        _maybe_diagnose_ratio()
                         continue
+                    stats["single_chunk_truncations"] += 1
                     logger.warning(
                         f"Entity extraction batch {batch_num}: single-chunk output truncated at "
                         f"{self.settings.extraction_max_output_tokens} tokens — tail entities "
                         f"lost; raise EXTRACTION_MAX_OUTPUT_TOKENS"
                     )
+                    _maybe_diagnose_ratio()
 
                 xml_entities = self._parse_entities_output(content)
                 for e in xml_entities:
@@ -2283,14 +2365,36 @@ Respond with ONLY the community name, nothing else."""
                     except Exception as ex:
                         logger.warning(f"Failed to parse entity {e}: {ex}")
 
+                # Degeneration guard: a repetition-looping model inflates the
+                # entity list until it hits the output cap (observed live:
+                # 288 "entities" from one 5-sentence chunk). Dedup collapses
+                # exact repeats, but without this the batch reads as healthy.
+                n_parsed = len(xml_entities)
+                if n_parsed >= 30:
+                    unique_names = {
+                        str(e.get("name", "")).lower() for e in xml_entities
+                    }
+                    dup_ratio = 1 - len(unique_names) / n_parsed
+                    if dup_ratio > 0.5 or n_parsed / len(batch) > 40:
+                        stats["suspect_batches"] += 1
+                        logger.warning(
+                            f"Entity extraction batch {batch_num}: {n_parsed} entities from "
+                            f"{len(batch)} chunk(s), {dup_ratio:.0%} duplicate names — model "
+                            f"repetition loop suspected; keeping output, dedup collapses repeats"
+                        )
+
                 logger.info(
-                    f"Entity extraction batch {batch_num} ({len(batch)} chunks): "
-                    f"extracted {len(xml_entities)} entities"
+                    f"Entity extraction batch {batch_num}/{total_batches} "
+                    f"({len(batch)} chunks): extracted {len(xml_entities)} entities "
+                    f"in {elapsed:.1f}s (in≈{prompt_toks} tok, "
+                    f"out={completion_toks if completion_toks is not None else '?'} tok, "
+                    f"finish={finish_reason})"
                 )
                 done_units += len(batch)
                 await _report_progress()
 
             except Exception as e:
+                elapsed = time.monotonic() - call_started
                 # A timeout on a multi-chunk batch usually means the prompt is
                 # too large for the provider to answer within the client
                 # timeout (observed: 256k-context batches against Venice
@@ -2299,15 +2403,21 @@ Respond with ONLY the community name, nothing else."""
                 # dropping the batch.
                 is_timeout = "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower()
                 if is_timeout and len(batch) > 1:
+                    stats["timeout_splits"] += 1
+                    total_batches += 1
                     mid = len(batch) // 2
                     pending.appendleft(batch[mid:])
                     pending.appendleft(batch[:mid])
                     logger.warning(
                         f"Entity extraction batch {batch_num} ({len(batch)} chunks) "
-                        f"timed out — splitting and retrying halves"
+                        f"timed out after {elapsed:.1f}s — splitting and retrying halves"
                     )
                 else:
-                    logger.error(f"Error in entity extraction batch {batch_num}: {e}")
+                    stats["errors"] += 1
+                    logger.error(
+                        f"Error in entity extraction batch {batch_num} "
+                        f"after {elapsed:.1f}s: {e}"
+                    )
                     done_units += len(batch)
                     await _report_progress()
 
@@ -2319,7 +2429,21 @@ Respond with ONLY the community name, nothing else."""
                 seen[key] = entity
 
         deduplicated = list(seen.values())
-        logger.info(f"Entity extraction complete: {len(all_entities)} raw -> {len(deduplicated)} deduplicated")
+        stats["llm_calls"] = batch_num
+        run_elapsed = time.monotonic() - run_started
+        logger.info(
+            f"Entity extraction complete: {len(all_entities)} raw -> "
+            f"{len(deduplicated)} deduplicated | health: {stats['planned_batches']} "
+            f"planned batches -> {batch_num} LLM calls "
+            f"({stats['truncation_splits']} truncation splits, "
+            f"{stats['timeout_splits']} timeout splits, "
+            f"{stats['single_chunk_truncations']} single-chunk truncations, "
+            f"{stats['empty_responses']} empty, {stats['errors']} errors, "
+            f"{stats['suspect_batches']} suspect), tokens in≈{stats['prompt_tokens']} "
+            f"out≈{stats['completion_tokens']}, {run_elapsed:.0f}s"
+        )
+        if run_stats is not None:
+            run_stats.update(stats)
         return deduplicated
 
     # =========================================================================

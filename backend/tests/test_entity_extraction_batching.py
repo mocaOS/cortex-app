@@ -1,9 +1,12 @@
 """Tests for document-level entity extraction batching:
-auto-summary mode (summary LLM call only for multi-batch documents) and
-the output-truncation split-retry guard (finish_reason == "length")."""
+auto-summary mode (summary LLM call only for multi-batch documents),
+the output-truncation split-retry guard (finish_reason == "length"),
+and the run-health telemetry (run_stats counters, batch-start progress,
+one-shot ratio diagnosis, repetition-loop detector)."""
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -127,4 +130,90 @@ class TestTruncationSplitRetry:
             chunks=[SMALL_CHUNKS[0]], max_tokens=32768
         )
         assert extractor._async_safe_completion.await_count == 1
+        assert [e.name for e in entities] == ["Alice"]
+
+
+class TestExtractionTelemetry:
+    async def test_run_stats_counts_calls_and_splits(self, extractor, monkeypatch):
+        second_entity = ENTITY_XML.replace("Alice", "Bob")
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                _resp(ENTITY_XML, finish_reason="length"),  # split
+                _resp(ENTITY_XML),
+                _resp(second_entity),
+            ],
+        )
+        run_stats: dict = {}
+        await extractor.extract_entities_from_document_async(
+            chunks=SMALL_CHUNKS, max_tokens=32768, run_stats=run_stats
+        )
+        assert run_stats["planned_batches"] == 1
+        assert run_stats["llm_calls"] == 3
+        assert run_stats["truncation_splits"] == 1
+        assert run_stats["timeout_splits"] == 0
+        assert run_stats["single_chunk_truncations"] == 0
+        assert run_stats["errors"] == 0
+
+    async def test_progress_fires_at_batch_start_with_detail(
+        self, extractor, monkeypatch
+    ):
+        _wire_llm(extractor, monkeypatch, [_resp(ENTITY_XML)])
+        calls: list = []
+
+        async def cb(done: int, total: int, detail: str = "") -> None:
+            calls.append((done, total, detail))
+
+        await extractor.extract_entities_from_document_async(
+            chunks=SMALL_CHUNKS, max_tokens=32768, progress_callback=cb
+        )
+        # batch start (detail set, nothing done yet) then settle (no detail)
+        assert calls[0] == (0, 2, "batch 1/1")
+        assert calls[-1] == (2, 2, "")
+
+    async def test_ratio_diagnosis_fires_once(self, extractor, monkeypatch, caplog):
+        # 4 chunks, 1 planned batch. Overflow cascade: full batch truncates,
+        # first half truncates, its single chunks pass, second half truncates,
+        # then one single-chunk truncation — 4 overflows total, but the
+        # budget-ratio diagnosis must be logged exactly once.
+        chunks = ["Alice works at Acme."] * 4
+        _wire_llm(
+            extractor,
+            monkeypatch,
+            [
+                _resp(ENTITY_XML, finish_reason="length"),  # [4] -> split
+                _resp(ENTITY_XML, finish_reason="length"),  # [2] -> split
+                _resp(ENTITY_XML),                          # [1]
+                _resp(ENTITY_XML),                          # [1]
+                _resp(ENTITY_XML, finish_reason="length"),  # [2] -> split
+                _resp(ENTITY_XML, finish_reason="length"),  # [1] single-chunk
+                _resp(ENTITY_XML),                          # [1]
+            ],
+        )
+        run_stats: dict = {}
+        with caplog.at_level(logging.WARNING, logger="app.services.graph_extractor"):
+            await extractor.extract_entities_from_document_async(
+                chunks=chunks, max_tokens=32768, run_stats=run_stats
+            )
+        diagnoses = [
+            r for r in caplog.records if "output budget looks too small" in r.message
+        ]
+        assert len(diagnoses) == 1
+        assert run_stats["truncation_splits"] == 3
+        assert run_stats["single_chunk_truncations"] == 1
+
+    async def test_repetition_loop_detector_flags_duplicate_flood(
+        self, extractor, monkeypatch, caplog
+    ):
+        flood = ENTITY_XML * 35  # 35 identical entities from a 2-chunk batch
+        _wire_llm(extractor, monkeypatch, [_resp(flood)])
+        run_stats: dict = {}
+        with caplog.at_level(logging.WARNING, logger="app.services.graph_extractor"):
+            entities = await extractor.extract_entities_from_document_async(
+                chunks=SMALL_CHUNKS, max_tokens=32768, run_stats=run_stats
+            )
+        assert run_stats["suspect_batches"] == 1
+        assert any("repetition loop suspected" in r.message for r in caplog.records)
+        # dedup still collapses the flood to one entity
         assert [e.name for e in entities] == ["Alice"]

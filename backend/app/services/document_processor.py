@@ -2046,9 +2046,12 @@ class DocumentProcessor:
                 # contains the full document text.
                 chunk_contents = [c.content for c in embedded_chunks if c.content]
 
-                async def _entity_progress(done: int, total: int) -> None:
+                async def _entity_progress(done: int, total: int, detail: str = "") -> None:
                     # Entity extraction owns the 40→68% band of the pipeline.
+                    # `detail` carries batch-start info ("batch 3/21") so the
+                    # message keeps moving during multi-minute LLM calls.
                     pct = 40 + int(28 * done / max(1, total))
+                    suffix = f" ({detail})" if detail else ""
                     await loop.run_in_executor(
                         _get_processing_executor(),
                         functools.partial(
@@ -2056,15 +2059,28 @@ class DocumentProcessor:
                             doc_id,
                             pct,
                             100,
-                            f"Finding entities: {done}/{total} chunks...",
+                            f"Finding entities: {done}/{total} chunks{suffix}...",
                         ),
                     )
 
+                extraction_run_stats: dict = {}
                 entities = await self.graph_extractor.extract_entities_from_document_async(
                     chunks=chunk_contents,
                     max_tokens=self.settings.extraction_max_context,
                     progress_callback=_entity_progress,
+                    run_stats=extraction_run_stats,
                 )
+                if extraction_run_stats:
+                    # Persisted for post-hoc tuning/monitoring only — nothing
+                    # in the frontend reads it.
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.set_document_extraction_stats,
+                            doc_id,
+                            json.dumps(extraction_run_stats),
+                        ),
+                    )
 
                 # Decide dedup strategy up-front so we can pre-batch embeddings
                 # for the whole document (one HTTP call) instead of one per entity.

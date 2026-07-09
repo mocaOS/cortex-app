@@ -103,13 +103,26 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` isn't oversized (recommended 24000) — extraction output scales with input, so batches sized to the model's full window time out at real decode speeds and silently lose entities
 - [ ] Check backend logs for LLM API error responses
 
+### Extraction Looks Stuck / Progress Frozen
+
+**Symptom:** A document sits at the same "Finding entities" percentage for many minutes; from the outside the whole system appears hung.
+
+**What's usually happening:** nothing is hung — a single extraction batch on a slow local model runs for minutes, and when the model's output overflows `EXTRACTION_MAX_OUTPUT_TOKENS`, the batch automatically splits and retries its halves. That retry churn roughly doubles the batch's wall time while the completed-chunks count stands still.
+
+**How to confirm from the backend logs:**
+- The progress message now updates at the start of every batch call (`Finding entities: 120/741 chunks (batch 8/22)...`) — if the batch counter keeps ticking, the run is healthy, just slow. A growing denominator (`8/22` → `9/23`) means batches are being split and retried.
+- Each batch logs a telemetry line: `Entity extraction batch 8/22 (65 chunks): extracted 143 entities in 87.3s (in≈19234 tok, out=8000 tok, finish=length)`. `finish=length` means the output cap was hit.
+- A one-shot warning — `output budget looks too small for the input batch size` — is logged when overflows repeat. That's the config diagnosis: raise `EXTRACTION_MAX_OUTPUT_TOKENS` (recommended 12000, ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`) or lower `GRAPH_EXTRACTION_MAX_CONTEXT`.
+- When extraction settles, a health summary is logged: `20 planned batches -> 34 LLM calls (8 truncation splits, ...)` — planned-vs-actual calls quantifies how much work the ratio mismatch cost. The same counters are stored on the document node as `extraction_stats` for post-hoc inspection.
+- A `model repetition loop suspected` warning means the model degenerated and flooded the batch with duplicate entities (they are collapsed by dedup); if it recurs on a specific document, reprocess it — a bigger output cap will not fix a looping model.
+
 ### Relationship Analysis Fails
 
 **Symptom:** Relationship analysis task fails or produces 0 relationships.
 
 **Checklist:**
 - [ ] Entities exist (run Step 1 first)
-- [ ] `RELATIONSHIP_MAX_CONTEXT` matches the model's context window (or leave 0 to inherit from `GRAPH_EXTRACTION_MAX_CONTEXT` / `OPENAI_MAX_CONTEXT`)
+- [ ] `RELATIONSHIP_MAX_CONTEXT` is left at 0 (inherit) — a full-window value (e.g. 256000) causes multi-minute prefills and timeouts on self-hosted GPUs; only widen it for legacy `llm_scan` mode on fast-prefill hosted endpoints
 - [ ] `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` is sufficient for Phase 2 batch (default: 16000)
 - [ ] `RELATIONSHIP_MAX_OUTPUT_TOKENS` is sufficient for per-chunk + candidate scan (0 = inherit `EXTRACTION_MAX_OUTPUT_TOKENS` → primary, default 8000). The inherited 8000 already comfortably covers the compact `ENT|`/`REL|` output format; only override if you've explicitly tightened the chain elsewhere and need to relax it.
 - [ ] In the default `targeted` mode with no embedding API key configured, candidates come from document co-mention only — pairs need at least `RELATIONSHIP_MIN_SHARED_DOCS` (default 2) shared documents, so very small or single-document libraries may yield few candidates
@@ -207,7 +220,7 @@ With the default `RELATIONSHIP_DISCOVERY_MODE=targeted`, Step 2 finishes in minu
 1. **Check `RELATIONSHIP_DISCOVERY_MODE`** — if it is set to `llm_scan` (the legacy full-batch scan), switch to `targeted` (or unset it to get the default). This is the single biggest speedup on large graphs.
 2. **Increase `PARALLEL_RELATIONSHIP_BATCHES`** — Parallel verification calls (targeted) or batches (legacy). Default is 2; try 4-8 if your LLM API can handle it.
 3. **Use a faster model** — Smaller models process calls faster.
-4. **Increase `RELATIONSHIP_MAX_CONTEXT`** (legacy `llm_scan` mode) — Larger batches mean fewer total batches.
+4. **Increase `RELATIONSHIP_MAX_CONTEXT`** (legacy `llm_scan` mode, fast-prefill hosted endpoints only) — Larger batches mean fewer total batches. On self-hosted GPUs this backfires: wide prompts prefill for minutes and time out.
 
 ### Slow Search/Q&A
 

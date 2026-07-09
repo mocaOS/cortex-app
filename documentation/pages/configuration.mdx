@@ -281,8 +281,12 @@ OPENAI_MAX_CONTEXT=256000                 # unlock Gemma4 26B A4B full input win
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=24000         # size to the provider's DECODE SPEED, not the model's window — see "Provider Notes: Venice" below
-EXTRACTION_MAX_OUTPUT_TOKENS=8000          # extraction output cap (explicit; 0 would inherit the same 8000)
-RELATIONSHIP_MAX_CONTEXT=256000            # relationship batching keeps a wide READ window — its output is bounded per call (pairs-per-call cap), unlike extraction
+EXTRACTION_MAX_OUTPUT_TOKENS=12000         # ≈ half the input budget — entity-dense docs overflow smaller caps (each overflow split-retries: self-healing but ~2× that batch's wall time)
+# RELATIONSHIP_MAX_CONTEXT: leave unset (inherits the extraction budget). Bounded per-call
+# output does NOT bound prefill time — wide values (256000) work on fast hosted endpoints
+# but prefill for minutes and time out on self-hosted GPUs. Only legacy llm_scan mode
+# consumes this budget; the default targeted mode sizes its calls with
+# RELATIONSHIP_PAIR_CONTEXT_TOKENS.
 
 VISION_MODEL=qwen3-6-27b              # image analysis — set explicitly (model name does NOT inherit; empty disables vision → Docling fallback). api_base/api_key inherit from OPENAI_*.
 
@@ -299,7 +303,7 @@ EMBEDDING_MAX_INPUT_TOKENS=5400            # default; kept well under the 8192 p
 # indexes). Self-hosted vLLM users running Qwen3-Embedding-8B can lift the input cap to 32768.
 ```
 
-The extraction `*_MAX_CONTEXT` override matters because batch sizing determines how many output tokens each extraction call must generate — and on hosted providers, generation speed (tok/s), not the model's input window, is what bounds a call. A model with a 256K window served at ~70 tok/s cannot answer a fully-packed prompt inside a request timeout. Cortex clamps the *inherited* extraction context at 48000 for this reason (an explicitly set `GRAPH_EXTRACTION_MAX_CONTEXT` is always honored as-is). The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 5400; oversized inputs are token-accurately sub-split client-side (tiktoken, zero content loss) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections, and chunks a provider still rejects are re-embedded individually with automatic halving.
+The extraction `*_MAX_CONTEXT` override matters because batch sizing determines how many output tokens each extraction call must generate — and on hosted providers, generation speed (tok/s), not the model's input window, is what bounds a call. A model with a 256K window served at ~70 tok/s cannot answer a fully-packed prompt inside a request timeout. Cortex clamps the *inherited* extraction context at 48000 for this reason (an explicitly set `GRAPH_EXTRACTION_MAX_CONTEXT` is always honored as-is). Pair the input budget with an output cap of ≈ half its size: extraction re-emits every entity, so entity-dense documents overflow smaller caps (measured July 2026: ~10 overflow split-retries per book at 24000/8000; zero at 24000/12000). Overflows self-heal — the batch splits and retries — but each roughly doubles that batch's wall time, and the backend logs a one-shot "output budget looks too small" warning when they repeat. On very slow decode endpoints, lower `GRAPH_EXTRACTION_MAX_CONTEXT` instead of raising the output cap past what the decode rate delivers inside a request timeout. The embedding model uses the primary `OPENAI_API_BASE` + `OPENAI_API_KEY` unless overridden via `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY`. `EMBEDDING_SEND_DIMENSIONS=true` (default) works because Qwen3-Embedding-8B supports MRL — the API honors the dimensions parameter to truncate to any value between 32 and 4096. `EMBEDDING_MAX_INPUT_TOKENS` defaults to 5400; oversized inputs are token-accurately sub-split client-side (tiktoken, zero content loss) to avoid HTTP 400 *"Input text exceeds the maximum token limit"* rejections, and chunks a provider still rejects are re-embedded individually with automatic halving.
 
 **Concurrency defaults.** The shipped defaults (`BATCH_PROCESSING_CONCURRENCY=2`, `CONCURRENT_EXTRACTIONS=3`, `CONCURRENT_RELATIONS=3`, `VISION_MAX_CONCURRENT=2`) are production-validated. Resist raising `BATCH_PROCESSING_CONCURRENCY`: on providers with limited serving throughput, *lower* build concurrency finishes multi-document builds faster — concurrent long extraction calls share the provider's decode rate and can push each other past request timeouts (see "Provider Notes: Venice").
 
@@ -308,9 +312,10 @@ The two `CONCURRENT_*` knobs are *per-document* limits, so they compound with `B
 **Override examples:**
 
 ```bash
-# Constrain extraction-tier output independently (inherited 8000 default covers
-# Qwen3-family verbose XML by default; only override to tighten or expand this tier)
-EXTRACTION_MAX_OUTPUT_TOKENS=2000
+# Adjust extraction-tier output independently — keep it ≈ half of
+# GRAPH_EXTRACTION_MAX_CONTEXT (undersizing causes overflow split-retries on
+# entity-dense documents)
+EXTRACTION_MAX_OUTPUT_TOKENS=12000
 
 # Big-context model for relationship analysis — raise the input context
 OPENAI_MAX_CONTEXT=131072
@@ -329,7 +334,9 @@ Measured tuning guidance for running the ingestion stack against `api.venice.ai`
 
 ```bash
 GRAPH_EXTRACTION_MAX_CONTEXT=24000   # right-sized to serving speed (see below)
-EXTRACTION_MAX_OUTPUT_TOKENS=8000    # ≈ what the decode rate delivers inside a request timeout
+EXTRACTION_MAX_OUTPUT_TOKENS=12000   # ≈ half the input budget; if timeout-splits appear in the
+                                     # logs instead of truncate-splits, lower the input budget —
+                                     # the decode rate, not the cap, is then the binding limit
 EMBEDDING_MAX_INPUT_TOKENS=5400      # safe under Venice's own token validator
 VISION_MAX_CONCURRENT=2              # each in-flight image chains up to 4 API calls
 BATCH_PROCESSING_CONCURRENCY=2       # fewer concurrent builds finish FASTER (shared decode rate)
@@ -732,8 +739,8 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RELATIONSHIP_EXTRACTION_API_KEY` | No | `GRAPH_EXTRACTION_API_KEY` | API key for relationship model |
 | `CONCURRENT_RELATIONS` | No | `3` | Concurrent per-chunk relationship extractions per document |
 | `GRAPH_EXTRACTION_MAX_CONTEXT` | No | `0` (=inherit) | Input context for entity extraction batching. Inherits `min(OPENAI_MAX_CONTEXT, 48000)` — clamped because extraction is decode-bound; recommended explicit `24000`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for entity extraction. Inherits `OPENAI_MAX_OUTPUT_TOKENS` |
-| `RELATIONSHIP_MAX_CONTEXT` | No | `0` (=inherit) | Input context for Phase 2 batch. Inherits `GRAPH_EXTRACTION_MAX_CONTEXT` → primary |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for entity extraction. Inherits `OPENAI_MAX_OUTPUT_TOKENS`. Recommended explicit `12000` — ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT` |
+| `RELATIONSHIP_MAX_CONTEXT` | No | `0` (=inherit) | Input context for Phase 2 batch (legacy `llm_scan` mode). Inherits `GRAPH_EXTRACTION_MAX_CONTEXT` → primary. Leave at 0 — wide values time out on self-hosted GPUs (prefill-bound) |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for **per-chunk + candidate scan** (was Phase 2 batch in old releases — see migration note). Inherits `EXTRACTION_MAX_OUTPUT_TOKENS` |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | No | `16000` | Output budget for **Phase 2 batch** (standalone, NOT in chain) |
 | `VISION_MAX_OUTPUT_TOKENS` | No | `0` (=inherit) | Output budget for image analysis. Inherits `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary |

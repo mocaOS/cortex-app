@@ -56,7 +56,7 @@ Cross-document relationship discovery settings.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `RELATIONSHIP_MAX_CONTEXT` | Max INPUT context window tokens for relationship batching (default: `65536`) | No |
+| `RELATIONSHIP_MAX_CONTEXT` | Max input context for legacy `llm_scan` Phase 2 batching (default: `0` = inherit `GRAPH_EXTRACTION_MAX_CONTEXT`). Leave at 0 — only widen on fast-prefill hosted endpoints | No |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max OUTPUT tokens for relationship LLM responses (default: `8000`) | No |
 
 ### Admin Authentication

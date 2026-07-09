@@ -7,6 +7,51 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 9, 2026 (Extraction run telemetry & budget-ratio diagnosis)
+
+A field report of a "stuck" ingestion turned out to be healthy self-healing that
+was invisible from the outside: extraction batches whose output overflowed
+`EXTRACTION_MAX_OUTPUT_TOKENS` were silently split and retried, roughly doubling
+their wall time while the progress display stood still. Extraction now explains
+itself while it runs.
+
+### Extraction observability
+
+- **Batch-start progress** — the document progress message updates at the start
+  of every extraction call (`Finding entities: 120/741 chunks (batch 8/22)...`),
+  not only on completion, so multi-minute calls on slow local models no longer
+  read as a hang. The batch denominator grows as batches split, making retry
+  churn visible as forward motion.
+- **Per-batch telemetry** — each extraction call logs chunks, input/output token
+  usage (provider-reported when available), duration, and finish reason, so the
+  input:output ratio can be tuned from real numbers instead of guesswork.
+- **One-shot budget diagnosis** — repeated output-cap overflows log a single
+  actionable warning naming both knobs (`EXTRACTION_MAX_OUTPUT_TOKENS`,
+  `GRAPH_EXTRACTION_MAX_CONTEXT`) instead of N identical per-batch warnings.
+- **Run health summary** — when extraction settles, one log line reports planned
+  batches vs actual LLM calls, split/truncation/error counts, and token totals;
+  the same counters are persisted on the document (`extraction_stats`) for
+  post-hoc inspection.
+- **Repetition-loop detection** — a batch returning an implausible flood of
+  duplicate entities (observed: 288 "entities" from one 5-sentence chunk) is
+  flagged as a suspected model degeneration loop; duplicates are collapsed by
+  the existing dedup.
+
+### Recommended budget change
+
+- `EXTRACTION_MAX_OUTPUT_TOKENS` recommendation raised from 8000 to **12000**
+  (≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT=24000`): entity-dense documents
+  overflow the smaller cap ~10× per book, and each overflow doubles that batch's
+  wall time. On slow-decode endpoints where 12000 can't finish inside the
+  request window, lower `GRAPH_EXTRACTION_MAX_CONTEXT` instead.
+- `RELATIONSHIP_MAX_CONTEXT` guidance corrected across all docs: leave it unset
+  (inherit). Its bounded per-call output does **not** bound prefill time — wide
+  values (256000) only work on fast-prefill hosted endpoints and time out on
+  self-hosted GPUs; the default `targeted` discovery mode doesn't consume it for
+  verification calls anyway.
+
+---
+
 ## July 8, 2026 (Ingestion reliability overhaul, compact extraction format & error tracking)
 
 A deep reliability pass over the entire document-ingestion pipeline, driven by

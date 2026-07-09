@@ -64,8 +64,9 @@ GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 # batches can't finish inside the request timeout at real decode speeds and silently lose
 # entities. See Configuration → "Provider Notes: Venice".
 GRAPH_EXTRACTION_MAX_CONTEXT=24000
-EXTRACTION_MAX_OUTPUT_TOKENS=8000
-RELATIONSHIP_MAX_CONTEXT=256000     # relationship batching keeps a wide read window (bounded output per call)
+EXTRACTION_MAX_OUTPUT_TOKENS=12000  # ≈ half the input budget — entity-dense docs overflow smaller caps
+# RELATIONSHIP_MAX_CONTEXT: leave unset (inherits 24000). Wide values only help legacy
+# llm_scan mode on fast-prefill hosted endpoints — on self-hosted GPUs they time out.
 
 # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
@@ -112,7 +113,8 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # fallback chain (0 = inherit). Override only when a sub-tier model has a
 # different window than the primary.
 GRAPH_EXTRACTION_MAX_CONTEXT=24000           # keep SMALL (decode-bound; inherited values are clamped at 48000)
-RELATIONSHIP_MAX_CONTEXT=256000              # wide read window is safe (bounded output per call); 0 = inherit extraction → primary
+EXTRACTION_MAX_OUTPUT_TOKENS=12000           # ≈ half the extraction input budget
+# RELATIONSHIP_MAX_CONTEXT=0                 # leave 0 = inherit — see Configuration for when widening is safe
 
 # ── Vision (image analysis during document ingestion) ────────────
 VISION_MODEL=

@@ -163,14 +163,22 @@ GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 # Deliberately SMALL — extraction is decode-bound: output scales with input (the model
 # re-emits every entity/relation), so batches sized to the model's context window can't
 # finish inside the request timeout at real decode speeds (~70 tok/s) — they retry and
-# silently lose entities. 24000 keeps worst-case output inside the 8000-token cap and
-# completes reliably. It's a graph-density/cost dial (12000 ≈ denser graph, ~2× calls),
-# NOT a "match the model window" setting.
+# silently lose entities. It's a graph-density/cost dial (12000 ≈ denser graph,
+# ~2× calls), NOT a "match the model window" setting.
 GRAPH_EXTRACTION_MAX_CONTEXT=24000
-EXTRACTION_MAX_OUTPUT_TOKENS=8000
-# Relationship batching may keep a wide read window: its output is bounded per call
-# (pairs-per-call cap), unlike extraction where output scales with input.
-RELATIONSHIP_MAX_CONTEXT=256000
+# Output cap sized to the input batch — rule of thumb: ≈ half the input budget.
+# Entity-dense books overflow an 8000 cap on 24000-token batches (measured 2026-07-08:
+# ~10 overflow-splits per book, each roughly doubling that batch's wall time; 12000 →
+# zero overflows). Overflows self-heal (split + retry) but look like a hang from the
+# outside. If the logs warn "output budget looks too small", raise this or lower
+# GRAPH_EXTRACTION_MAX_CONTEXT.
+EXTRACTION_MAX_OUTPUT_TOKENS=12000
+# RELATIONSHIP_MAX_CONTEXT: leave UNSET (inherits GRAPH_EXTRACTION_MAX_CONTEXT).
+# "Wide is safe because output is bounded" only holds when prefill is fast (hosted
+# Venice/OpenRouter). On self-hosted GPUs a 256k-token Phase-2 prompt spends minutes
+# in prefill and times out. The default targeted discovery mode doesn't read this
+# budget for its verification calls anyway — a wide value only helps legacy
+# llm_scan mode on fast hosted endpoints (set 256000 there if you use it).
 
 # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
 # inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
@@ -221,14 +229,13 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # (set sub-tier to 0 = inherit). See "Budget Fallback Chain" further below.
 OPENAI_MAX_OUTPUT_TOKENS=8000                # primary output cap; sub-tiers inherit
 OPENAI_MAX_CONTEXT=256000                    # recommended for large-context primaries (code default 32768)
-EXTRACTION_MAX_OUTPUT_TOKENS=8000            # extraction output cap (0 = inherit OPENAI_MAX_OUTPUT_TOKENS)
+EXTRACTION_MAX_OUTPUT_TOKENS=12000           # ≈ half of GRAPH_EXTRACTION_MAX_CONTEXT — see minimal stack note
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000 # Phase 2 batch (standalone, NOT in chain)
 
 # Context budgets. Extraction stays SMALL on purpose (decode-bound — see the minimal
-# stack above; inherited values are clamped at 48000 anyway). Relationship batching may
-# stay wide (bounded output per call).
+# stack above; inherited values are clamped at 48000 anyway). Leave RELATIONSHIP_MAX_CONTEXT
+# unset (inherits extraction's) unless you run legacy llm_scan mode on a fast hosted endpoint.
 GRAPH_EXTRACTION_MAX_CONTEXT=24000
-RELATIONSHIP_MAX_CONTEXT=256000
 
 # Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
 # off | minimal | auto | low | medium | high. No-op for pure instruct models.
@@ -759,11 +766,11 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
 | `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `32768` |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Recommended: `8000` | No | `0` (=inherit) |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction. 0 = inherit `OPENAI_MAX_OUTPUT_TOKENS`. Recommended: `12000` — size it to ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`; entity-dense docs overflow smaller caps, and each overflow split-retries (self-heals, but roughly doubles that batch's wall time) | No | `0` (=inherit) |
 | `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `min(OPENAI_MAX_CONTEXT, 48000)` — the inherited value is clamped because extraction is decode-bound. Recommended: `24000` (see minimal stack). Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit, clamped 48k) |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Output budget for **per-chunk + candidate scan** (in chain). 0 = inherit. **Semantics changed** — see migration note | No | `0` (=inherit) |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | Output budget for **Phase 2 batch** relationship analysis. Standalone — NOT in inheritance chain | No | `16000` |
-| `RELATIONSHIP_MAX_CONTEXT` | Input context for Phase 2 batch. 0 = inherit `GRAPH_EXTRACTION_MAX_CONTEXT` → primary | No | `0` (=inherit) |
+| `RELATIONSHIP_MAX_CONTEXT` | Input context for Phase 2 batch (legacy `llm_scan` mode; the default `targeted` mode uses `RELATIONSHIP_PAIR_CONTEXT_TOKENS` instead). Recommended: leave `0` (=inherit). Only set wide (e.g. `256000`) on fast-prefill hosted endpoints — on self-hosted GPUs a full-window prompt spends minutes in prefill and times out | No | `0` (=inherit) |
 | `VISION_MAX_OUTPUT_TOKENS` | Output budget for image analysis. 0 = inherit `RELATIONSHIP_MAX_OUTPUT_TOKENS` → extraction → primary | No | `0` (=inherit) |
 | `CHUNK_SIZE` | Words per chunk (if word mode) | No | `500` |
 | `CHUNK_OVERLAP` | Overlap between chunks | No | `50` |

@@ -552,6 +552,24 @@ class Neo4jService:
             )
 
     @retry_on_transient
+    def set_document_extraction_stats(self, doc_id: str, stats_json: str) -> None:
+        """Persist the entity-extraction health counters for a Document run.
+
+        JSON string (planned batches vs LLM calls, truncation/timeout splits,
+        token totals) written once when extraction settles. For post-hoc
+        tuning and monitoring — the frontend does not read it.
+        """
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.extraction_stats = $stats
+                """,
+                id=doc_id,
+                stats=stats_json,
+            )
+
+    @retry_on_transient
     def update_document_progress(
         self,
         doc_id: str,

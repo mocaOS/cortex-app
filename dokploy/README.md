@@ -69,7 +69,7 @@ Cross-document relationship discovery settings.
 | `RELATIONSHIP_EXTRACTION_MODEL` | Dedicated model for relationship extraction | No |
 | `RELATIONSHIP_EXTRACTION_API_BASE` | API endpoint for relationship model | No |
 | `RELATIONSHIP_EXTRACTION_API_KEY` | API key for relationship model | No |
-| `RELATIONSHIP_MAX_CONTEXT` | Max context window tokens for relationship analysis (default: `65536`) | No |
+| `RELATIONSHIP_MAX_CONTEXT` | Max input context for legacy `llm_scan` Phase 2 batching (default: `0` = inherit `GRAPH_EXTRACTION_MAX_CONTEXT`). Leave at 0 — only widen on fast-prefill hosted endpoints | No |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Max output tokens for relationship responses (default: `16000`) | No |
 
 ### Shared Model Service — cortex-helper (Optional)
