@@ -557,19 +557,29 @@ async def _convert_document_subprocess(
                 _run_worker(), timeout=settings.docling_conversion_timeout
             )
         except asyncio.TimeoutError:
-            # Kill the hung worker so it can't linger holding the conversion
-            # semaphore (and memory). Raising here lands the document in FAILED
-            # with an actionable message instead of stuck in 'processing'.
-            proc.kill()
-            try:
-                await proc.wait()
-            except Exception:
-                pass
+            # Land the document in FAILED with an actionable message instead of
+            # stuck in 'processing'. The finally below kills the hung worker.
             raise RuntimeError(
                 f"Docling conversion timed out after "
                 f"{settings.docling_conversion_timeout}s for "
                 f"{Path(file_path).name} (file may be too large or malformed)"
             )
+        finally:
+            # Guarantee the worker subprocess never outlives this coroutine.
+            # On a timeout OR task cancellation (user Abort / doc delete),
+            # wait_for unwinds and — without this — the docling subprocess keeps
+            # converting detached, pegging CPU/RAM as an orphan (observed live:
+            # aborted runs left 2-3 workers at ~3 cores each). returncode is None
+            # only while it is still running.
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.shield(proc.wait())
+                except Exception:  # noqa: BLE001 — best-effort reap
+                    pass
 
         if proc.returncode != 0:
             raise RuntimeError(

@@ -742,6 +742,17 @@ class ApiClient {
     return this.request(`/api/tasks${query ? `?${query}` : ""}`);
   }
 
+  // Abort an in-flight Generate/Regenerate Graph run: stops Step-1 processing,
+  // cancels the Step-2/3 chain, and clears pipeline task records. Non-destructive
+  // (documents/entities kept) — the graph can be rebuilt afterward.
+  async abortGraphGeneration(): Promise<{
+    documents_cancelled: number;
+    chain_tasks_cancelled: number;
+    tasks_removed: string[];
+  }> {
+    return this.request("/api/graph/generation/abort", { method: "POST" });
+  }
+
   async getTaskResult<T = Record<string, unknown>>(taskId: string): Promise<T | null> {
     const url = `${API_BASE}/api/tasks/${taskId}/result`;
     const apiKey = getAdminApiKey();

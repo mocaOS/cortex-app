@@ -20,6 +20,7 @@ import {
   Network,
   ArrowRight,
   ExternalLink,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IngestionStepper } from "@/components/documents/IngestionStepper";
@@ -61,6 +62,7 @@ export default function ExtractAnalyzePage() {
   // Regeneration flow state — persisted to sessionStorage to survive hot-reloads
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenerateStep, setRegenerateStep] = useState(0);
+  const [abortingGeneration, setAbortingGeneration] = useState(false);
 
   // Poll error resilience: retry on transient errors instead of aborting immediately
   const pollErrorCount = useRef(0);
@@ -238,6 +240,28 @@ export default function ExtractAnalyzePage() {
 
   // Backwards-compat alias used by polling functions on failure paths.
   const abortRegeneration = finishRegeneration;
+
+  // User-initiated abort: stop the backend pipeline (Step-1 processing + the
+  // Step-2/3 chain) and reset the UI to idle so the Generate/Regenerate button
+  // is usable again. Non-destructive — documents/entities are kept.
+  const handleAbortGeneration = async () => {
+    if (!confirm("Abort graph generation? This stops the running pipeline. Your documents are kept — you can rebuild the graph afterward.")) return;
+    setAbortingGeneration(true);
+    try {
+      await api.abortGraphGeneration();
+    } catch (e) {
+      console.error("Failed to abort graph generation:", e);
+    } finally {
+      // Clear the per-step running flags immediately so the idle CTA returns
+      // without waiting for the next poll; abortRegeneration() clears the regen
+      // flow state (sessionStorage + isRegenerating) and refetches.
+      setIsExtractingEntities(false);
+      setAnalyzingRelationships(false);
+      setDetectingCommunities(false);
+      setAbortingGeneration(false);
+      abortRegeneration();
+    }
+  };
 
   const pollEntityTask = useCallback(async (taskId: string) => {
     activePollRef.current = { taskId, step: 1 };
@@ -727,24 +751,41 @@ export default function ExtractAnalyzePage() {
 
   return (
     <div className="py-6">
-      {/* Generate Graph — primary action for empty instances */}
-      {entityCount === 0 && !isRegenerating && (
-        <div className="mb-6 flex justify-end">
+      {/* Top CTA: Generate/Regenerate when idle; Abort while a pipeline run is
+          active. Keyed off the actual running flags (not just the frontend regen
+          state), so a lingering backend task can always be stopped from here. */}
+      <div className="mb-6 flex justify-end">
+        {(isRegenerating || isExtractingEntities || analyzingRelationships || detectingCommunities) ? (
+          <button
+            onClick={handleAbortGeneration}
+            disabled={abortingGeneration}
+            title="Stop the running graph generation. Documents are kept; you can rebuild afterward."
+            className={cn(
+              "inline-flex items-center gap-2.5 px-6 py-3 rounded-lg text-base font-semibold transition-all border",
+              abortingGeneration
+                ? "border-red-500/30 text-red-400/60 cursor-not-allowed opacity-60"
+                : "border-red-500/40 text-red-400 hover:bg-red-500/10"
+            )}
+          >
+            <X className="w-5 h-5" />
+            {abortingGeneration ? "Aborting…" : "Abort Generation"}
+          </button>
+        ) : (
           <button
             onClick={handleRegenerateGraph}
-            disabled={isExtractingEntities || analyzingRelationships || detectingCommunities || docCount === 0}
+            disabled={docCount === 0}
             className={cn(
               "inline-flex items-center gap-2.5 px-6 py-3 rounded-lg text-base font-semibold transition-all",
-              isExtractingEntities || analyzingRelationships || detectingCommunities || docCount === 0
+              docCount === 0
                 ? "bg-accent/50 text-accent-foreground cursor-not-allowed opacity-50"
                 : "bg-accent text-accent-foreground hover:bg-accent/90"
             )}
           >
             <RefreshCw className="w-5 h-5" />
-            Generate Graph
+            {entityCount === 0 ? "Generate Graph" : "Regenerate Graph"}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Generation/Regeneration progress banner */}
       {isRegenerating && (

@@ -1506,6 +1506,97 @@ async def cancel_task(task_id: str, auth: AuthResult = Depends(require_manage_pe
     return {"message": f"Task {task_id} removed"}
 
 
+@app.post("/api/graph/generation/abort")
+async def abort_graph_generation(auth: AuthResult = Depends(require_manage_permission)):
+    """
+    Abort an in-flight Generate/Regenerate Graph run.
+
+    Unlike ``DELETE /api/tasks/{id}`` (which only drops a task record and leaves
+    the work running), this actually STOPS the pipeline:
+      1. cancels Step-1 per-document processing via the document processor's
+         cancellation flags (``_check_cancellation`` raises at the next checkpoint),
+      2. cancels the backend-orchestrated Step-2/3 chain tasks so they neither
+         spawn nor continue,
+      3. clears the in-flight pipeline task records so the UI returns to an idle,
+         re-runnable state.
+
+    Non-destructive: documents, chunks, entities, relationships, communities and
+    API keys are all left untouched — the user can rebuild the graph afterward.
+    """
+    processor = get_document_processor()
+
+    # 1. Stop Step-1 per-document processing (flags + asyncio task cancel + wait).
+    docs_cancelled = await processor.cancel_all_processing()
+
+    # 2. Cancel the backend chain (the Step 1→2→3 spawns plus any running
+    #    relationship_analysis / community_detection coroutine live here).
+    chain_cancelled = 0
+    for t in list(_chain_tasks):
+        if not t.done():
+            t.cancel()
+            chain_cancelled += 1
+
+    # 3. Drop the in-flight pipeline task records so the frontend clears.
+    pipeline_types = {
+        "batch_processing", "reprocess_batch",
+        "relationship_analysis", "community_detection",
+    }
+    inflight = {TaskStatus.PENDING, TaskStatus.RUNNING}
+    removed = []
+    for tid, task in list(_task_store.items()):
+        if task.task_type in pipeline_types and task.status in inflight:
+            removed.append(tid)
+            _task_store.pop(tid, None)
+            _task_dirty.discard(tid)
+            _task_last_touch.pop(tid, None)
+            try:
+                await asyncio.to_thread(get_neo4j_service().delete_task_record, tid)
+            except Exception as e:
+                logger.warning(f"abort: could not delete task record {tid}: {e}")
+
+    # 4. Backstop: SIGKILL any docling_worker subprocess that outlived
+    #    cancellation. Cancellation propagation isn't instantaneous and some
+    #    paths (e.g. a converter mid-subprocess) can lag; abort means "stop
+    #    everything", so killing every converter is correct and guarantees the
+    #    CPU/RAM is freed immediately rather than after the next checkpoint.
+    import glob as _glob
+    import signal as _signal
+    workers_killed = 0
+    for _pth in _glob.glob("/proc/[0-9]*"):
+        try:
+            with open(f"{_pth}/cmdline", "rb") as _fh:
+                if b"docling_worker" in _fh.read():
+                    os.kill(int(_pth.rsplit("/", 1)[-1]), _signal.SIGKILL)
+                    workers_killed += 1
+        except (OSError, ValueError):
+            pass
+
+    # 5. Reset docs stranded mid-pipeline ('processing'/'extracting') back to
+    #    'pending' so the UI stops showing phantom "N processing" after an abort
+    #    and the operator can cleanly re-run. Safe here: we just cancelled/killed
+    #    all processing, so nothing is legitimately in flight.
+    try:
+        docs_reset = await asyncio.to_thread(
+            get_neo4j_service().reset_orphaned_processing_documents
+        )
+    except Exception as e:
+        logger.warning(f"abort: could not reset stranded documents: {e}")
+        docs_reset = []
+
+    logger.info(
+        f"Graph generation aborted: {docs_cancelled} document task(s) cancelled, "
+        f"{chain_cancelled} chain task(s) cancelled, {len(removed)} pipeline record(s) removed, "
+        f"{workers_killed} docling worker(s) killed, {len(docs_reset)} document(s) reset to pending"
+    )
+    return {
+        "documents_cancelled": docs_cancelled,
+        "chain_tasks_cancelled": chain_cancelled,
+        "tasks_removed": removed,
+        "docling_workers_killed": workers_killed,
+        "documents_reset": len(docs_reset),
+    }
+
+
 @app.post("/api/tasks/cleanup")
 async def cleanup_tasks(
     max_age_hours: int = Query(default=24, ge=1, le=168),
@@ -2698,13 +2789,18 @@ async def reprocess_documents(
             task.message = f"Queued {queued_count} documents for reprocessing..."
             task.progress_total = queued_count
             
-            # Schedule the background task (with optional chain to Step 2/3)
+            # Run the batch as a tracked chain task (NOT a fire-and-forget
+            # FastAPI BackgroundTask) so it has a cancellable asyncio handle —
+            # the graph-generation abort endpoint cancels _chain_tasks, and a
+            # BackgroundTask would keep running headless (spawning docling
+            # workers) with nothing able to stop it.
             parsed_chain = _parse_chain(chain)
-            background_tasks.add_task(
-                _run_batch_processing_task,
-                task.task_id,
-                actual_concurrency,
-                parsed_chain,
+            _spawn_chain_task(
+                _run_batch_processing_task(
+                    task.task_id,
+                    actual_concurrency,
+                    parsed_chain,
+                )
             )
 
             return {

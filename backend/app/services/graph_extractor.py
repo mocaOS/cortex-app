@@ -242,10 +242,10 @@ Given text and a document summary for context, identify ALL important entities.
 - If an entity doesn't clearly fit, classify it as Concept.
 - Extract every named entity and important concept. Be exhaustive.
 - Use consistent, canonical naming (e.g. always "Neo4j", not "neo4j" or "Neo4J").
-- Write rich, standalone descriptions that include the entity's role and context.
+- Keep each description SHORT: one concise phrase or clause, MAX 12 words — just enough to identify the entity. Do NOT write full sentences, roles, history, or background; a later enrichment step expands descriptions. Terse descriptions keep output compact so entity-dense sections (indexes, glossaries, reference lists) don't overflow the output budget.
 
 Output Format: one entity per line, exactly:
-ENT|Entity Name|EntityType|Comprehensive description here.
+ENT|Entity Name|EntityType|short description, max 12 words
 
 No other text, no explanations, no XML, no markdown."""
 
@@ -260,8 +260,9 @@ Document Summary (for context):
 Text:
 {text}
 
-Example Output:
-ENT|Stable Diffusion|Technology|Stable Diffusion is a latent diffusion model for text-to-image generation released by Stability AI.
+Example Output (note the short descriptions):
+ENT|Stable Diffusion|Technology|latent text-to-image diffusion model by Stability AI
+ENT|Stability AI|Organization|company behind Stable Diffusion
 
 Now extract all entities:"""
 

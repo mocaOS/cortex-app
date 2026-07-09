@@ -7,6 +7,26 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 9, 2026 (Abort Graph Generation + entity-extraction truncation tuning)
+
+Two changes from an extended live extraction-tuning session.
+
+### Abort Graph Generation
+
+- **New "Abort Generation" control on the Knowledge Graph (`/extract`) page.** A running generation can now be stopped from the UI — previously, once a pipeline was running there was no clean way to halt it.
+- The abort **actually stops the work**: it cancels the reprocess batch and the Step-2/3 chain, **kills in-flight document conversions** (a docling worker subprocess previously survived cancellation and kept converting, pinning CPU/RAM), and **resets stranded documents** from `processing`/`extracting` back to `pending` so the on-page counts reflect reality.
+- The button appears whenever any pipeline task is running (so a lingering backend task is always stoppable); when idle, the primary action reads **Generate Graph** (no entities yet) or **Regenerate Graph** (entities exist).
+
+### Entity-extraction truncation tuning
+
+Entity-dense documents (indexes, bibliographies, reference lists) were overflowing the extraction output cap — truncating and split-retrying on **~25%** of batches at the old settings, and occasionally dropping tail entities.
+
+- **Terse entity descriptions.** The entity-extraction prompt now requests a short (~12-word) description instead of a comprehensive one; the existing enrichment step restores depth. This bounds output-per-entity so extraction output no longer scales unbounded with entity density.
+- **New recommended defaults: `GRAPH_EXTRACTION_MAX_CONTEXT` / `EXTRACTION_MAX_OUTPUT_TOKENS` = `16000` / `16000`** (docs & templates; code defaults unchanged). The output cap is a generous ceiling matched to the context, not a ½-of-input ratio.
+- **Result:** zero truncated batches and zero dropped entities across a full validation run including dense documents (dense-batch output peaked ~13.4k under the 16k cap), versus ~25% truncation before. Optimal values are gateway-dependent — slower self-hosted gateways favor a smaller context to avoid request timeouts; `24000` roughly halves the batch count but reintroduces self-healing split-retries on the densest batches (a throughput-mode alternative, not the clean default).
+
+---
+
 ## July 9, 2026 (Extraction timeout overhaul: retry-storm fix, adaptive batch sizing & new defaults)
 
 The new run telemetry (below) paid off on its first field deployment: a 7-hour

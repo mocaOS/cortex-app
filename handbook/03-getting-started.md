@@ -35,12 +35,12 @@ cp .env.example .env
 > OPENAI_MAX_CONTEXT=256000
 >
 > # Extraction — deliberately small context: extraction output scales with input, so
-> # full-window batches can't decode inside the request window. 24000 completes reliably
+> # full-window batches can't decode inside the request window. 16000 completes reliably
 > # (it's a graph-density/cost dial, NOT a match-the-model's-window setting).
 > GRAPH_EXTRACTION_MODEL=qwen3-6-27b
-> GRAPH_EXTRACTION_MAX_CONTEXT=24000
-> EXTRACTION_MAX_OUTPUT_TOKENS=12000  # ≈ half the input budget — entity-dense docs overflow 8000
-> # RELATIONSHIP_MAX_CONTEXT: leave unset (inherits 24000). Widening only helps legacy
+> GRAPH_EXTRACTION_MAX_CONTEXT=16000
+> EXTRACTION_MAX_OUTPUT_TOKENS=16000  # generous ceiling matched to context; terse prompt keeps dense docs under it
+> # RELATIONSHIP_MAX_CONTEXT: leave unset (inherits 16000). Widening only helps legacy
 > # llm_scan mode on fast-prefill hosted endpoints — see Chapter 4.
 >
 > # Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
@@ -335,13 +335,13 @@ OPENAI_MAX_CONTEXT=256000              # Floor — all input context budgets inh
 OPENAI_MAX_OUTPUT_TOKENS=8000          # Floor — all output budgets inherit
 
 # Per-tier overrides
-GRAPH_EXTRACTION_MAX_CONTEXT=24000     # Recommended. 0 = inherit min(OPENAI_MAX_CONTEXT, 48000) — inherited value is clamped at 48K
-EXTRACTION_MAX_OUTPUT_TOKENS=12000     # Recommended: ≈ half the extraction input budget
+GRAPH_EXTRACTION_MAX_CONTEXT=16000     # Recommended. 0 = inherit min(OPENAI_MAX_CONTEXT, 48000) — inherited value is clamped at 48K
+EXTRACTION_MAX_OUTPUT_TOKENS=16000     # Recommended: generous ceiling matched to the context (terse prompt bounds per-entity output)
 # RELATIONSHIP_MAX_CONTEXT: leave unset (inherits the extraction budget) — see below
 RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000  # Phase 2 batch (standalone, NOT in chain)
 ```
 
-Setting these values higher than the model's actual context window will cause errors. But don't chase the model's full window for extraction: extraction is decode-bound — output scales with input (the model re-emits every entity/relation), so at real provider decode speeds (~70 tok/s) full-window batches can't finish inside the request window (timeouts, retries, silently lost entities). Treat `GRAPH_EXTRACTION_MAX_CONTEXT=24000` as a graph-density/cost dial (12000 ≈ denser graph at ~2× the calls), and size `EXTRACTION_MAX_OUTPUT_TOKENS` to ≈ half of it — entity-dense documents overflow an 8000 cap on 24K batches (each overflow self-heals via split-retry but roughly doubles that batch's wall time; the backend logs a one-shot "output budget looks too small" warning when this happens repeatedly). `RELATIONSHIP_MAX_CONTEXT` should stay unset: its bounded per-call output does not bound *prefill* time, so a full-window value that works on fast hosted endpoints produces multi-minute prompt reads and timeouts on self-hosted GPUs — and the default `targeted` discovery mode doesn't consume it for verification calls anyway.
+Setting these values higher than the model's actual context window will cause errors. But don't chase the model's full window for extraction: extraction is decode-bound — output scales with input (the model re-emits every entity/relation), so at real provider decode speeds (~70 tok/s) full-window batches can't finish inside the request window (timeouts, retries, silently lost entities). Treat `GRAPH_EXTRACTION_MAX_CONTEXT=16000` as a graph-density/cost dial, and set `EXTRACTION_MAX_OUTPUT_TOKENS=16000` as a generous ceiling matched to it — the terse-description extraction prompt bounds output-per-entity so entity-dense documents stay under the cap (validated zero-truncation; the backend logs a one-shot "output budget looks too small" warning if overflows repeat). `RELATIONSHIP_MAX_CONTEXT` should stay unset: its bounded per-call output does not bound *prefill* time, so a full-window value that works on fast hosted endpoints produces multi-minute prompt reads and timeouts on self-hosted GPUs — and the default `targeted` discovery mode doesn't consume it for verification calls anyway.
 
 Migration note: in earlier releases `RELATIONSHIP_MAX_OUTPUT_TOKENS` controlled Phase 2 batch (default 16000). It now feeds per-chunk + candidate scan in the inheritance chain, and the Phase 2 batch budget moved to `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS`. A stale `RELATIONSHIP_MAX_OUTPUT_TOKENS=16000` setting is harmless (per-chunk just gets unused headroom) — rename when convenient.
 

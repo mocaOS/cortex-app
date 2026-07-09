@@ -100,7 +100,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 - [ ] `ENABLE_GRAPH_EXTRACTION=true`
 - [ ] `OPENAI_API_KEY` (or extraction key) is valid
 - [ ] `GRAPH_EXTRACTION_API_BASE` points to the correct endpoint
-- [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` isn't oversized (recommended 24000) — extraction output scales with input, so batches sized to the model's full window time out at real decode speeds and silently lose entities
+- [ ] `GRAPH_EXTRACTION_MAX_CONTEXT` isn't oversized (recommended 16000) — extraction output scales with input, so batches sized to the model's full window time out at real decode speeds and silently lose entities
 - [ ] Check backend logs for LLM API error responses
 
 ### Extraction Looks Stuck / Progress Frozen
@@ -112,7 +112,7 @@ curl -H "X-API-Key: <admin-key>" -F "file=@export.zip" \
 **How to confirm from the backend logs:**
 - The progress message now updates at the start of every batch call (`Finding entities: 120/741 chunks (batch 8/22)...`) — if the batch counter keeps ticking, the run is healthy, just slow. A growing denominator (`8/22` → `9/23`) means batches are being split and retried.
 - Each batch logs a telemetry line: `Entity extraction batch 8/22 (65 chunks): extracted 143 entities in 87.3s (in≈19234 tok, out=8000 tok, finish=length)`. `finish=length` means the output cap was hit.
-- A one-shot warning — `output budget looks too small for the input batch size` — is logged when overflows repeat. That's the config diagnosis: raise `EXTRACTION_MAX_OUTPUT_TOKENS` (default 12000 since 2026-07-09, ≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT`) or lower `GRAPH_EXTRACTION_MAX_CONTEXT`.
+- A one-shot warning — `output budget looks too small for the input batch size` — is logged when overflows repeat. That's the config diagnosis: raise `EXTRACTION_MAX_OUTPUT_TOKENS` (recommended 16000, a ceiling matched to `GRAPH_EXTRACTION_MAX_CONTEXT`) or lower `GRAPH_EXTRACTION_MAX_CONTEXT`. Persistent overflow on entity-dense docs usually means the extraction prompt's terse-description instruction isn't being honored — the model is emitting long descriptions.
 - The mirror case: repeated `timed out — splitting and retrying halves` warnings with a one-shot `batches keep timing out` diagnosis mean the endpoint can't answer full-size batches inside `LLM_REQUEST_TIMEOUT_SECONDS`. The batch budget auto-shrinks for the rest of the process (and later documents), but fix the source: lower `GRAPH_EXTRACTION_MAX_CONTEXT`, reduce `BATCH_PROCESSING_CONCURRENCY`, or raise the timeout.
 - When extraction settles, a health summary is logged: `20 planned batches -> 34 LLM calls (8 truncation splits, ...)` — planned-vs-actual calls quantifies how much work the ratio mismatch cost. The same counters are stored on the document node as `extraction_stats` for post-hoc inspection.
 - A `model repetition loop suspected` warning means the model degenerated and flooded the batch with duplicate entities (they are collapsed by dedup); if it recurs on a specific document, reprocess it — a bigger output cap will not fix a looping model.
