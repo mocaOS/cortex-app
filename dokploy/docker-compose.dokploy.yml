@@ -159,6 +159,22 @@ services:
       - HELPER_SERVICE_TOKEN=${HELPER_SERVICE_TOKEN:-}
       - HELPER_STRICT_REMOTE=${HELPER_STRICT_REMOTE:-false}
       - INSTANCE_ID=${INSTANCE_ID:-}
+      # --- Web Import ("MDHarvest powered by Crawl4ai") ---
+      # Injected per-tenant by meta-cortex (control-plane CRAWL4AI_* config).
+      # The feature is OFF unless BOTH ENABLE_WEB_CRAWL and CRAWL_SERVICE_URL
+      # are set (endpoints 404, UI hidden via /api/features). The token is
+      # effectively mandatory for crawl4ai >= 0.9.0 and must match the shared
+      # crawl4ai's CRAWL4AI_API_TOKEN. MUST be declared here or Dokploy never
+      # interpolates the injected values (see the helper block note above).
+      - ENABLE_WEB_CRAWL=${ENABLE_WEB_CRAWL:-false}
+      - CRAWL_SERVICE_URL=${CRAWL_SERVICE_URL:-}
+      - CRAWL_SERVICE_TOKEN=${CRAWL_SERVICE_TOKEN:-}
+      # Crawl tuning knobs (declared so a plan/operator can drive them; every
+      # :- default equals backend/app/config.py's built-in default).
+      # CRAWL_MAX_URLS_PER_JOB is the plan-limit lever (0 = unlimited).
+      - CRAWL_CONTENT_FILTER=${CRAWL_CONTENT_FILTER:-fit}
+      - CRAWL_CONCURRENCY=${CRAWL_CONCURRENCY:-5}
+      - CRAWL_MAX_URLS_PER_JOB=${CRAWL_MAX_URLS_PER_JOB:-100}
       # --- Per-plan overrides (model tiers, processing, resource limits) ---
       # Forwarded from the subscription-plan env so plan tiers actually differ.
       # Dokploy only interpolates DECLARED vars, so each knob a plan controls
