@@ -39,10 +39,14 @@ ADMIN_PASSWORD=your-pass
 ADMIN_API_KEY=custom-api-keyyy
 SERVICE_PASSWORD_NEO4J=another-pass
 SESSION_SECRET=secret
+ENCRYPTION_KEY=
 
 # Your LLM provider key
 OPENAI_API_KEY=your-venice-api-key
 ```
+
+> **Set `ENCRYPTION_KEY` for real deployments** — it encrypts user-supplied secrets at rest (git connector tokens, secret-typed skill config). Left empty, those are stored in plaintext (Cortex logs a startup warning); setting a key later auto-encrypts existing secrets on the next boot. Generate one with:
+> `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
 #### LLM Configuration
 

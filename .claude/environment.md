@@ -99,23 +99,23 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 **Input context chain:** `RELATIONSHIP_MAX_CONTEXT` → `GRAPH_EXTRACTION_MAX_CONTEXT=16000` → `OPENAI_MAX_CONTEXT=256000` (extraction ships a real 16000 default; explicit-0 inherit is clamped at 48000; `EXTRACTION_MAX_OUTPUT_TOKENS` ships 16000 instead of 0-inherit)
 **Standalone:** `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000` (Phase 2 batch only — not in chain)
 
-Recommended minimal config when running a 3-tier stack:
+Recommended minimal config when running a 3-tier stack (= what `.env.recommended` ships):
 ```env
 OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
 OPENAI_MAX_CONTEXT=256000                # Gemma4 26B A4B full input window (= code default since 2026-07-09)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
-GRAPH_EXTRACTION_MAX_CONTEXT=16000       # batch-size dial; validated zero-truncation with the terse prompt (gateway-dependent)
-EXTRACTION_MAX_OUTPUT_TOKENS=16000       # generous ceiling matched to the context (not a ½-ratio)
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
-EMBEDDING_MODEL=text-embedding-qwen3-8b  # text embedding (native 4096, MRL 32–4096)
-EMBEDDING_DIMENSION=4096                 # native; Neo4j 5.26 (default) supports 4096-dim vector indexes
+EMBEDDING_MODEL=text-embedding-3-small   # 1536-dim; model + dimension are the code defaults
+# Extraction budgets (GRAPH_EXTRACTION_MAX_CONTEXT / EXTRACTION_MAX_OUTPUT_TOKENS)
+# ship tuned 16000/16000 defaults since 2026-07-10 — no need to set them.
 # Output budgets cascade automatically. EMBEDDING_MAX_INPUT_TOKENS default (5400)
 # stays under gateway-side token validators (Venice counts with its own tokenizer).
 # Self-hosted vLLM users can lift to 32768.
+# Venice-only higher-dim alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b +
+# EMBEDDING_DIMENSION=4096 (native; Neo4j 5.26 supports 4096-dim vector indexes).
 ```
-Both `*_MAX_CONTEXT` overrides are required — the conservative default (32768) doesn't match either model's actual input window.
 
-Companion performance-tuning block (Venice-validated; pair with the stack above to maximize ingestion throughput):
+Concurrency reference (all values ARE the shipped defaults — production-measured; listed so nobody "optimizes" them upward):
 ```env
 BATCH_PROCESSING_CONCURRENCY=2    # docs in parallel (default 2 — 3 drops per-call decode ~70→~23 tok/s)
 CONCURRENT_EXTRACTIONS=3          # entity-extraction threads per doc (default 3) — biggest multiplier
