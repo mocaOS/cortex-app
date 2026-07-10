@@ -153,7 +153,7 @@ The legacy name `EXTRACTION_MAX_CONTEXT` is honored as a deprecated alias for on
 |----------|---------|-------------|
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name. |
 | `EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension. Must match the model's output dimension. |
-| `EMBEDDING_SEND_DIMENSIONS` | `true` | Send `dimensions` parameter to the embedding API. Set `false` for models with fixed output dimensions (e.g., `qwen3-vl-embedding-2b`). |
+| `EMBEDDING_SEND_DIMENSIONS` | `true` | Send `dimensions` parameter to the embedding API. Models with fixed output dimensions — e.g. `Qwen/Qwen3-VL-2B-Instruct` — reject the parameter and need this set to `false`. |
 | `USE_OPENAI_EMBEDDINGS` | `true` | Controls embedding *transport*, not provider. `true` = call `EMBEDDING_MODEL` via the OpenAI-compatible HTTP endpoint (works for OpenAI, OpenRouter, vLLM, any `/v1/embeddings` server). `false` = ignore `EMBEDDING_MODEL` entirely and run `sentence-transformers/all-MiniLM-L6-v2` locally inside the container. Keep `true` for Qwen3-Embedding-8B and any remote embedding model. |
 | `EMBEDDING_MAX_INPUT_TOKENS` | `5400` | Per-input token cap before sending to the embeddings endpoint. Sits under the nominal 8192 because providers validate with their own tokenizer (can count 1.2–1.4× higher than the client's cl100k on punctuation-heavy text); oversized inputs are truncated client-side to avoid HTTP 400 rejections. |
 | `EMBEDDING_API_BASE` | Same as `OPENAI_API_BASE` | Optional separate endpoint for embeddings. |

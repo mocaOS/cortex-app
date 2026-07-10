@@ -19,70 +19,60 @@ Before you begin, make sure you have:
 
 ```bash
 git clone https://github.com/mocaOS/cortex-app.git
-cd library
+cd cortex-app
 ```
 
 ### Step 2: Configure Environment
 
-Copy the example environment file:
+The lowest-friction start is the recommended config that ships with the repo:
 
 ```bash
-cp .env.example .env
+cp .env.recommended .env
 ```
 
-Open `.env` in your editor and set the required values:
+`.env.recommended` is the bench-validated starting point. Fill in the secrets block at the top and your LLM API key — that's it. Everything else (extraction budgets, concurrency, chunking) runs on production-tuned code defaults:
 
 ```bash
-# Required: Neo4j password
-NEO4J_PASSWORD=your-secure-password-here
+# Secrets — generate strong values for production: openssl rand -base64 32
+ADMIN_EMAIL=admin@email.com
+ADMIN_PASSWORD=your-pass
+ADMIN_API_KEY=custom-api-keyyy
+SERVICE_PASSWORD_NEO4J=another-pass
+SESSION_SECRET=secret
 
-# Required: Admin credentials for the frontend
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=your-admin-password
-ADMIN_API_KEY=cortex_admin_your-secure-key-here
-SESSION_SECRET=a-random-string-at-least-32-characters-long
+# Your LLM provider key
+OPENAI_API_KEY=your-venice-api-key
 ```
-
-> **Tip:** Generate a secure session secret with: `openssl rand -base64 32`
 
 #### LLM Configuration
 
-Cortex uses LLMs for Q&A, entity extraction, relationship extraction, image understanding, and embeddings. Each capability can point to a different model or provider (any OpenAI-compatible API), giving you 5 independently configurable model slots.
+Cortex speaks the OpenAI protocol everywhere, so **any model from any OpenAI-compatible API works** — Venice, OpenRouter, OpenAI, or self-hosted vLLM/Ollama. Five model slots (primary, extraction, relationship, vision, embeddings) are independently configurable, and every slot inherits the primary's API base + key unless overridden.
 
-**Recommended Minimal Stack** — bench-validated 2-model setup. Fill in two API values and you're done; relationship + vision inherit from the extraction model, output budgets cascade automatically.
+The recommended stack, pre-filled in `.env.recommended`:
+
+- **Primary agent — Gemma4 26B A4B** (`google-gemma-4-26b-a4b-it`): fast MoE with a 256K window; drives Q&A, research, and chat.
+- **Knowledge-graph generation — Qwen3.6 27B** (`qwen3-6-27b`): entity/relationship extraction and image analysis from a single endpoint.
+- **Embeddings — `text-embedding-3-small`** (1536-dim; the code default).
 
 ```bash
-# Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
-OPENAI_API_KEY=
+# Primary — agentic Q&A / research / chat
+OPENAI_API_KEY=your-venice-api-key
 OPENAI_API_BASE=https://api.venice.ai/api/v1
 OPENAI_MODEL=google-gemma-4-26b-a4b-it
 OPENAI_MAX_CONTEXT=256000
 
-# Extraction — drives relationship via inheritance (Qwen3.6 27B)
-GRAPH_EXTRACTION_MODEL=qwen3-6-27b
-# Deliberately SMALL: extraction is decode-bound (output scales with input) — full-window
-# batches can't finish inside the request timeout at real decode speeds and silently lose
-# entities. See Configuration → "Provider Notes: Venice".
-GRAPH_EXTRACTION_MAX_CONTEXT=24000
-EXTRACTION_MAX_OUTPUT_TOKENS=12000  # ≈ half the input budget — entity-dense docs overflow smaller caps
-# RELATIONSHIP_MAX_CONTEXT: leave unset (inherits 24000). Wide values only help legacy
-# llm_scan mode on fast-prefill hosted endpoints — on self-hosted GPUs they time out.
+# Embeddings
+EMBEDDING_MODEL=text-embedding-3-small
 
-# Vision — image analysis. VISION_MODEL must be set explicitly (the model name does NOT
-# inherit) — leave it empty and vision analysis is disabled (falls back to Docling's
-# built-in capabilities). Only api_base/api_key inherit from OPENAI_* when unset.
+# Vision — image analysis during ingestion (must be set explicitly;
+# leave empty to fall back to Docling's built-in captioning)
 VISION_MODEL=qwen3-6-27b
 
-# Embeddings — recommended: OpenAI text-embedding-3-small (1536-dim)
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-EMBEDDING_API_BASE=https://api.openai.com/v1
-EMBEDDING_API_KEY=
-# EMBEDDING_MAX_INPUT_TOKENS defaults to 5400 — providers validate with their OWN
-# tokenizer (1.2–1.4× cl100k on punctuation-heavy text), so 8192-passing chunks get
-# 400-rejected upstream; 5400 stays safe on every 8192-cap provider.
-# Venice-only alternative: EMBEDDING_MODEL=text-embedding-qwen3-8b + EMBEDDING_DIMENSION=4096.
+# Knowledge-graph generation — drives relationship analysis via inheritance
+GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 ```
+
+To point a tier at a different provider, uncomment its `*_API_BASE` / `*_API_KEY` pair in `.env.recommended`. You do **not** need to set context windows for the extraction or vision models — ingestion runs on its own fine-tuned budgets (16000/16000 by default, sized to provider decode speed rather than the model window). Only `OPENAI_MAX_CONTEXT` should match your primary model's window.
 
 Or configure each tier independently:
 
@@ -109,11 +99,12 @@ RELATIONSHIP_EXTRACTION_MODEL=               # defaults to GRAPH_EXTRACTION_MODE
 RELATIONSHIP_EXTRACTION_API_BASE=            # defaults to GRAPH_EXTRACTION_API_BASE
 RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_KEY
 
-# Context budgets — primary OPENAI_MAX_CONTEXT cascades to sub-tiers via the
-# fallback chain (0 = inherit). Override only when a sub-tier model has a
-# different window than the primary.
-GRAPH_EXTRACTION_MAX_CONTEXT=24000           # keep SMALL (decode-bound; inherited values are clamped at 48000)
-EXTRACTION_MAX_OUTPUT_TOKENS=12000           # ≈ half the extraction input budget
+# Context budgets — the extraction budgets ship production-tuned defaults
+# (GRAPH_EXTRACTION_MAX_CONTEXT=16000, EXTRACTION_MAX_OUTPUT_TOKENS=16000);
+# only set them to deviate. OPENAI_MAX_CONTEXT cascades to the remaining
+# sub-tiers via the fallback chain (0 = inherit).
+# GRAPH_EXTRACTION_MAX_CONTEXT=16000         # batch-size / graph-density dial, NOT the model window
+# EXTRACTION_MAX_OUTPUT_TOKENS=16000         # generous ceiling matched to the context
 # RELATIONSHIP_MAX_CONTEXT=0                 # leave 0 = inherit — see Configuration for when widening is safe
 
 # ── Vision (image analysis during document ingestion) ────────────
