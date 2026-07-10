@@ -3353,17 +3353,105 @@ class DocumentProcessor:
         )
         return result
 
+    async def resume_image_analysis(self, doc: dict) -> bool:
+        """Resume image analysis for a completed document whose futures died.
+
+        Image analysis runs as in-process fire-and-forget futures after the
+        text pipeline finishes, so a restart kills them while the document
+        stays 'completed' with image_progress_current < total — and the
+        serialized images only ever lived in the dead process's memory. This
+        re-extracts them via Docling re-conversion (local CPU work, no LLM
+        cost) and analyzes ONLY the images whose chunk isn't stored yet
+        (image chunk ids are deterministic: {doc_id}_image_{idx}), so paid
+        vision/extraction work is never redone and text chunks / entities /
+        relations are untouched.
+
+        `doc` is a record from get_documents_with_incomplete_image_analysis.
+        Returns True when analysis ran, False when the document was
+        reconciled-complete instead (no file / no vision model / no images —
+        counters are closed so the document stops reading as in-flight
+        forever). Conversion errors propagate to the caller (the document
+        keeps its stuck counters and is retried on the next startup).
+        """
+        doc_id = doc["id"]
+        filename = doc.get("filename") or doc_id
+        file_path = doc.get("file_path") or ""
+        claimed_total = doc.get("image_progress_total") or 0
+        claimed_current = doc.get("image_progress_current") or 0
+
+        async def _reconcile(msg: str) -> None:
+            await asyncio.to_thread(
+                self.neo4j.update_image_progress,
+                doc_id, claimed_total, claimed_total, msg,
+            )
+
+        if not file_path or not os.path.exists(file_path):
+            logger.warning(
+                f"Document {doc_id} ({filename}): cannot resume image analysis "
+                f"— source file missing; closing counters at {claimed_current}/{claimed_total}"
+            )
+            await _reconcile(
+                f"Image analysis incomplete — source file unavailable, "
+                f"{claimed_total - claimed_current} image(s) skipped"
+            )
+            return False
+        if Path(file_path).suffix.lower() not in self.DOCLING_EXTENSIONS:
+            await _reconcile("Image analysis reconciled — file type has no extractable images")
+            return False
+        if not self.vision_analyzer.is_vision_model_available:
+            logger.warning(
+                f"Document {doc_id} ({filename}): cannot resume image analysis "
+                f"— no vision model configured; closing counters"
+            )
+            await _reconcile("Image analysis incomplete — no vision model configured")
+            return False
+
+        await asyncio.to_thread(
+            self.neo4j.update_image_progress,
+            doc_id, claimed_current, claimed_total,
+            "Re-extracting images to resume analysis...",
+        )
+        conversion_result = await _convert_document_subprocess(file_path, True)
+        serialized_images = conversion_result.get("images") or []
+        if not serialized_images:
+            await _reconcile("Image analysis reconciled — re-conversion found no images")
+            return False
+
+        existing = await asyncio.to_thread(
+            self.neo4j.get_existing_image_chunk_indices, doc_id
+        )
+        if len(serialized_images) != claimed_total:
+            logger.warning(
+                f"Document {doc_id} ({filename}): re-conversion found "
+                f"{len(serialized_images)} images but progress claimed "
+                f"{claimed_total} — resuming against the fresh set"
+            )
+        done = len({i for i in existing if 0 <= i < len(serialized_images)})
+        logger.info(
+            f"Document {doc_id} ({filename}): resuming image analysis — "
+            f"{done}/{len(serialized_images)} already stored, "
+            f"{len(serialized_images) - done} to analyze"
+        )
+        await self._analyze_images_background_from_serialized(
+            doc_id, serialized_images, True, skip_indices=existing
+        )
+        return True
+
     async def _analyze_images_background_from_serialized(
         self,
         doc_id: str,
         serialized_images: list,
         force_vision_model: bool,
+        skip_indices: Optional[set] = None,
     ):
         """Analyze images received from the subprocess converter.
 
         Images arrive as dicts with base64-encoded PNG data. We reconstruct
         ExtractedImage objects and feed them through the vision analyzer.
         Images are processed concurrently, gated by the global vision semaphore.
+
+        `skip_indices` (resume path): images whose chunk already exists — they
+        count as stored in the progress baseline but are not re-analyzed.
         """
         import base64
         import io
@@ -3375,9 +3463,11 @@ class DocumentProcessor:
         img_executor = _get_image_executor()
         total = len(serialized_images)
         semaphore = _get_vision_semaphore()
+        skip = {i for i in (skip_indices or set()) if 0 <= i < total}
 
-        # Thread-safe progress tracking for concurrent image tasks
-        progress = {"stored": 0, "processed": 0}
+        # Thread-safe progress tracking for concurrent image tasks —
+        # already-stored images (resume path) start counted as done.
+        progress = {"stored": len(skip), "processed": len(skip)}
         progress_lock = asyncio.Lock()
         # Collect entity names from image extractions for cross-linking to text chunks
         image_entity_names: list[str] = []
@@ -3388,7 +3478,8 @@ class DocumentProcessor:
         entity_embedding_cache: dict = {}
 
         logger.info(
-            f"Document {doc_id}: starting background analysis of {total} images "
+            f"Document {doc_id}: starting background analysis of {total - len(skip)}"
+            f"/{total} images "
             f"(extraction tier={self.graph_extractor.extraction_model_name})"
         )
 
@@ -3398,8 +3489,12 @@ class DocumentProcessor:
                 img_executor,
                 functools.partial(
                     self.neo4j.update_image_progress,
-                    doc_id, 0, total,
-                    f"Analyzing {total} image{'s' if total != 1 else ''}...",
+                    doc_id, len(skip), total,
+                    (
+                        f"Resuming image analysis ({len(skip)}/{total} already analyzed)..."
+                        if skip
+                        else f"Analyzing {total} image{'s' if total != 1 else ''}..."
+                    ),
                 ),
             )
         except Exception:
@@ -3600,6 +3695,7 @@ class DocumentProcessor:
         tasks = [
             process_single_image(idx, img_data)
             for idx, img_data in enumerate(serialized_images)
+            if idx not in skip
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
 

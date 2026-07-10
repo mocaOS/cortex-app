@@ -419,6 +419,76 @@ async def lifespan(app: FastAPI):
 
         _spawn_chain_task(_auto_resume_after_restart())
 
+    # Resume image analysis killed by the previous shutdown. Image analysis
+    # runs as fire-and-forget futures AFTER a document completes, so the
+    # orphan-reset above never sees these: the document sits at 'completed'
+    # with image_progress_current < total forever, Step 1 reads as stuck,
+    # and no LLM traffic flows. Re-extract images via Docling re-conversion
+    # (CPU only) and analyze ONLY the ones whose chunk isn't stored yet —
+    # already-paid vision/extraction work is never redone.
+    if settings.auto_resume_image_analysis:
+        try:
+            stuck_image_docs = neo4j.get_documents_with_incomplete_image_analysis()
+        except Exception as e:
+            stuck_image_docs = []
+            logger.warning(f"Could not scan for incomplete image analysis: {e}")
+        if stuck_image_docs:
+
+            async def _resume_image_analysis_after_restart():
+                await asyncio.sleep(10)  # let startup (and text auto-resume) settle
+                try:
+                    if await _quota_exceeded():
+                        logger.info(
+                            "Image-analysis resume skipped: monthly usage "
+                            "limit reached; documents keep their partial "
+                            "image progress"
+                        )
+                        return
+                    task = create_task("image_analysis_resume")
+                    total_missing = sum(
+                        (d.get("image_progress_total") or 0)
+                        - (d.get("image_progress_current") or 0)
+                        for d in stuck_image_docs
+                    )
+                    logger.warning(
+                        "Resuming image analysis for %d document(s) with "
+                        "~%d unanalyzed image(s) left behind by the previous "
+                        "shutdown", len(stuck_image_docs), total_missing,
+                    )
+                    processor = get_document_processor()
+                    resumed = failed = 0
+                    for i, doc in enumerate(stuck_image_docs):
+                        update_task_progress(
+                            task.task_id, i, len(stuck_image_docs),
+                            f"Resuming image analysis: {doc.get('filename') or doc['id']} "
+                            f"({i + 1}/{len(stuck_image_docs)})...",
+                        )
+                        try:
+                            if await processor.resume_image_analysis(doc):
+                                resumed += 1
+                        except Exception as e:
+                            failed += 1
+                            logger.error(
+                                "Image-analysis resume failed for document "
+                                "%s (%s): %s — will retry on next startup",
+                                doc["id"], doc.get("filename"), e,
+                            )
+                    complete_task(task.task_id, {
+                        "documents_scanned": len(stuck_image_docs),
+                        "documents_resumed": resumed,
+                        "documents_failed": failed,
+                    })
+                    logger.info(
+                        "Image-analysis resume finished: %d resumed, %d "
+                        "failed, %d reconciled",
+                        resumed, failed,
+                        len(stuck_image_docs) - resumed - failed,
+                    )
+                except Exception as e:
+                    logger.warning(f"Startup image-analysis resume failed: {e}")
+
+            _spawn_chain_task(_resume_image_analysis_after_restart())
+
     # One-time, idempotent backfill of the degraded-document signals
     # (Chunk.has_embedding + Document.entity_count for data that predates
     # them). Runs as a non-blocking background task — on a large knowledge

@@ -100,6 +100,31 @@ flight. A `WARNING` log line lists the reset ids. Separately,
 docling subprocess is killed and the document marked `failed` instead of pinning
 the status at `processing`.
 
+### Startup resume of killed image analysis
+
+The orphan-reset above never catches interrupted **image** analysis: it runs as
+fire-and-forget futures *after* the text pipeline finishes, so the document is
+already `completed` when a restart kills them — the counters freeze at
+`image_progress_current < total`, Step 1 on `/extract` reads "finishing image
+analysis" forever, and no LLM traffic flows (live incident 2026-07-10: 34 docs
+stuck at 8/2023 images). Since 2026-07-10 the lifespan startup also calls
+`Neo4jService.get_documents_with_incomplete_image_analysis()` and, when
+`AUTO_RESUME_IMAGE_ANALYSIS=true` (default), resumes them sequentially under an
+`image_analysis_resume` task (quota-guarded, 10s after boot):
+
+- `DocumentProcessor.resume_image_analysis(doc)` re-extracts images via Docling
+  re-conversion (`_convert_document_subprocess` — CPU only, no LLM cost; the
+  serialized images only ever lived in the dead process's memory).
+- Already-analyzed images are skipped via
+  `get_existing_image_chunk_indices()` — image chunk ids are deterministic
+  (`{doc_id}_image_{idx}`), so paid vision/extraction work is never redone and
+  text chunks/entities/relations are untouched.
+- Irrecoverable docs (source file missing / no vision model / re-conversion
+  finds no images) get their counters **force-closed** with an explanatory
+  `image_progress_message` so they stop reading as in-flight; conversion
+  errors leave the counters stuck for retry on the next startup.
+- Tests: `backend/tests/test_image_analysis_resume.py`.
+
 ### Degraded-document signals
 
 A document can "complete" while being useless for retrieval (e.g. extraction

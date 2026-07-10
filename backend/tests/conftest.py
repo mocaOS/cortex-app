@@ -237,6 +237,10 @@ def mock_neo4j(monkeypatch):
     fake.fail_interrupted_task_records.return_value = 0
     fake.prune_task_records.return_value = 0
     fake.delete_task_record.return_value = None
+    # Startup reconcilers scan these — default to nothing stuck
+    fake.reset_orphaned_processing_documents.return_value = []
+    fake.get_documents_with_incomplete_image_analysis.return_value = []
+    fake.get_existing_image_chunk_indices.return_value = set()
 
     def _set_document_count(n: int) -> None:
         current = dict(fake.get_stats.return_value)

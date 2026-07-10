@@ -388,6 +388,16 @@ class Settings(BaseSettings):
     auto_resume_pending_on_startup: bool = Field(
         default=True
     )  # When the startup orphan-reset finds documents stranded mid-processing by the previous shutdown, automatically restart batch processing (quota-guarded). Only triggers on reset documents — bulk uploads parked with start_processing=false stay parked. Set false to require a manual "Generate Graph" after every redeploy.
+    auto_resume_image_analysis: bool = Field(
+        default=True
+    )  # Image analysis runs as in-process fire-and-forget futures AFTER a
+    # document's text pipeline completes — a restart kills them while the
+    # document stays 'completed' with image_progress_current < total, and
+    # nothing would ever relaunch them. On startup, detect such documents,
+    # re-extract their images (local Docling re-conversion — CPU only, no
+    # LLM cost), skip images whose chunk ({doc_id}_image_{idx}) already
+    # exists, and analyze only the missing ones. Quota-guarded. Set false
+    # to leave stuck documents alone (manual reprocess required).
 
     # Relationship Analysis (Phase B - cross-document relationship discovery)
     parallel_relationship_batches: int = Field(

@@ -61,6 +61,28 @@ production-validated configuration without setting a single tuning knob.
   removed everywhere, `EMBEDDING_SEND_DIMENSIONS` docs now name fixed-dimension
   models (e.g. `Qwen/Qwen3-VL-2B-Instruct`) that require `false`.
 
+### Self-healing image analysis on restart
+
+A restart used to strand image analysis permanently: it runs as in-process
+background futures *after* a document's text pipeline completes, so the
+document was already `completed` when the futures died — the counters froze
+at `current < total`, Step 1 showed "finishing image analysis" forever, and
+the startup recovery (which only matches in-flight statuses) never saw it.
+Observed in the field: 34 documents stuck at 8/2023 images with zero LLM
+traffic.
+
+- **On boot, Cortex now detects completed documents with unfinished image
+  analysis and resumes them automatically** (`AUTO_RESUME_IMAGE_ANALYSIS`,
+  default `true`; quota-guarded, visible as an `image_analysis_resume` task).
+- **Already-paid work is never redone**: images are re-extracted via local
+  Docling re-conversion (CPU only — no LLM cost), and only images whose
+  analysis chunk isn't stored yet are sent to the vision model. Text chunks,
+  entities, and relationships are untouched.
+- Irrecoverable documents (source file deleted, vision model no longer
+  configured, re-conversion finds no images) get their counters closed with
+  an explanatory message instead of reading as in-flight forever; conversion
+  failures leave them queued for retry on the next startup.
+
 ### Abort Graph Generation
 
 - **New "Abort Generation" control on the Knowledge Graph (`/extract`) page.**

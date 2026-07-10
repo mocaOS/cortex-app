@@ -615,6 +615,56 @@ class Neo4jService:
             )
 
     @retry_on_transient
+    def get_documents_with_incomplete_image_analysis(self) -> list[dict]:
+        """Documents whose text pipeline completed but image analysis didn't.
+
+        Image analysis runs as in-process fire-and-forget futures after the
+        text pipeline finishes, so the document is already 'completed' while
+        images are still being analyzed. A restart kills those futures and the
+        counters freeze at current < total — the startup orphan-reset skips
+        these (it only matches transient statuses), so they need their own
+        reconciler. Consumed by the startup image-analysis resume in main.py.
+        """
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE d.processing_status = 'completed'
+                  AND coalesce(d.image_progress_total, 0) > 0
+                  AND coalesce(d.image_progress_current, 0) < d.image_progress_total
+                RETURN d.id AS id,
+                       d.filename AS filename,
+                       coalesce(d.file_path, '') AS file_path,
+                       coalesce(d.file_type, '') AS file_type,
+                       coalesce(d.image_progress_current, 0) AS image_progress_current,
+                       d.image_progress_total AS image_progress_total
+                ORDER BY d.image_progress_total ASC
+            """)
+            return [dict(record) for record in result]
+
+    @retry_on_transient
+    def get_existing_image_chunk_indices(self, doc_id: str) -> set:
+        """Indices of image chunks already stored for a document.
+
+        Image chunks use the deterministic id `{doc_id}_image_{idx}` (see
+        document_processor._analyze_images_background_from_serialized), so the
+        set of already-analyzed images survives restarts in the graph itself.
+        Lets the image-analysis resume skip work that was already paid for.
+        """
+        prefix = f"{doc_id}_image_"
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.id STARTS WITH $prefix
+                RETURN c.id AS id
+            """, id=doc_id, prefix=prefix)
+            indices = set()
+            for record in result:
+                suffix = record["id"][len(prefix):]
+                if suffix.isdigit():
+                    indices.add(int(suffix))
+            return indices
+
+    @retry_on_transient
     def reset_orphaned_processing_documents(self) -> list[str]:
         """Reset documents stranded mid-pipeline back to 'pending'.
 
