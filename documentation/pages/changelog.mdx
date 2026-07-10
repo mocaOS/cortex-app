@@ -7,114 +7,105 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
-## July 9, 2026 (Abort Graph Generation + entity-extraction truncation tuning)
+## July 10, 2026 (Extraction tuning lands as defaults, zero-config onboarding & abort control)
 
-Two changes from an extended live extraction-tuning session.
+Two days of live extraction-tuning (July 9-10) distilled into shipped defaults
+plus a new low-friction onboarding path — a fresh install now runs the
+production-validated configuration without setting a single tuning knob.
+
+### Tuned defaults — the validated values now ship in code
+
+- **`GRAPH_EXTRACTION_MAX_CONTEXT` / `EXTRACTION_MAX_OUTPUT_TOKENS` now default
+  to `16000` / `16000`** (were 0-inherit-clamped-at-48k and 12000). The pairing
+  is production-validated: zero truncated batches, zero dropped entities across
+  multi-day live runs including entity-dense documents (indexes,
+  bibliographies — dense-batch output peaked ~13.4k under the 16k cap, versus
+  ~25% truncation at the old settings). Explicit values are still honored
+  unclamped; set `0` explicitly to restore the inherit chain.
+- **`OPENAI_MAX_CONTEXT` defaults to `256000`** (was 32768), matching the
+  recommended primary (Gemma4 26B A4B) — it's the retrieval agent's working
+  context and deliberately does **not** flow into extraction.
+- **`EMBEDDING_MODEL` defaults to `text-embedding-3-small`** (bare id, was the
+  LiteLLM-style `openai/text-embedding-3-small`) — the string is sent verbatim
+  to the embeddings API, so the bare id is correct for direct OpenAI and
+  Venice-class gateways alike.
+- Extraction is decode-bound — output scales with input, so the context budget
+  is a batch-size / graph-density dial sized to provider decode speed, **not**
+  the model's window. The **terse-description extraction prompt** (short
+  ~12-word entity descriptions; enrichment restores depth) is what bounds
+  output-per-entity and makes the matched 16k/16k ceiling hold on dense docs.
+- Default-config deployments are flagged for a graph refresh after upgrading
+  (the extraction fingerprint changes — intended, the new defaults are the
+  tested values). Deployments that pin these vars in their env see no change.
+
+### Zero-config onboarding: `.env.recommended`
+
+- **`.env.recommended` rewritten as the recommended starting point**:
+  `cp .env.recommended .env`, fill the secrets block + one API key, done.
+  Secrets first, then the bench-validated model stack — **Gemma4 26B A4B**
+  (`google-gemma-4-26b-a4b-it`) as the primary agent model, **Qwen3.6 27B**
+  (`qwen3-6-27b`) for knowledge-graph generation and vision,
+  `text-embedding-3-small`/1536 embeddings — with commented
+  `*_API_BASE`/`*_API_KEY` escape hatches per tier (any model from any
+  OpenAI-compatible API works) and explanatory notes at the bottom.
+- **`ENCRYPTION_KEY` joins the standard secrets block** — it encrypts git
+  connector PATs and secret-typed skill config at rest (empty = plaintext with
+  a startup warning; setting it later auto-encrypts on the next boot).
+  Generation + rotation guidance included.
+- The docs **Quickstart**, the **setup skill** (including the autonomous
+  agent-install flow, which now generates an `ENCRYPTION_KEY` automatically),
+  and the **hermes `cortex.sh setup`** helper all lead with this path and write
+  the same stack — one consistent story across every install door.
+- Docs accuracy sweep: `.env.example` audited programmatically against
+  `config.py` (every stated default verified), stale 24000/12000 budget advice
+  removed everywhere, `EMBEDDING_SEND_DIMENSIONS` docs now name fixed-dimension
+  models (e.g. `Qwen/Qwen3-VL-2B-Instruct`) that require `false`.
 
 ### Abort Graph Generation
 
-- **New "Abort Generation" control on the Knowledge Graph (`/extract`) page.** A running generation can now be stopped from the UI — previously, once a pipeline was running there was no clean way to halt it.
-- The abort **actually stops the work**: it cancels the reprocess batch and the Step-2/3 chain, **kills in-flight document conversions** (a docling worker subprocess previously survived cancellation and kept converting, pinning CPU/RAM), and **resets stranded documents** from `processing`/`extracting` back to `pending` so the on-page counts reflect reality.
-- The button appears whenever any pipeline task is running (so a lingering backend task is always stoppable); when idle, the primary action reads **Generate Graph** (no entities yet) or **Regenerate Graph** (entities exist).
+- **New "Abort Generation" control on the Knowledge Graph (`/extract`) page.**
+  A running generation can now be stopped from the UI — and the abort
+  **actually stops the work**: it cancels the reprocess batch and the
+  Step-2/3 chain, kills in-flight document conversions (a docling worker
+  subprocess previously survived cancellation and kept pinning CPU/RAM), and
+  resets stranded documents back to `pending` so on-page counts reflect
+  reality.
+- The button appears whenever any pipeline task is running; when idle, the
+  primary action reads **Generate Graph** (no entities yet) or **Regenerate
+  Graph** (entities exist).
 
-### Entity-extraction truncation tuning
+### Extraction transport overhaul — no more retry storms
 
-Entity-dense documents (indexes, bibliographies, reference lists) were overflowing the extraction output cap — truncating and split-retrying on **~25%** of batches at the old settings, and occasionally dropping tail entities.
+Run telemetry from a 7-hour field ingest showed ~40% of extraction calls
+"timing out at 361s" — actually **three 120s SDK attempts** silently
+re-sending the same prompt into a saturated endpoint.
 
-- **Terse entity descriptions.** The entity-extraction prompt now requests a short (~12-word) description instead of a comprehensive one; the existing enrichment step restores depth. This bounds output-per-entity so extraction output no longer scales unbounded with entity density.
-- **New recommended defaults: `GRAPH_EXTRACTION_MAX_CONTEXT` / `EXTRACTION_MAX_OUTPUT_TOKENS` = `16000` / `16000`** (docs & templates; code defaults unchanged). The output cap is a generous ceiling matched to the context, not a ½-of-input ratio.
-- **Result:** zero truncated batches and zero dropped entities across a full validation run including dense documents (dense-batch output peaked ~13.4k under the 16k cap), versus ~25% truncation before. Optimal values are gateway-dependent — slower self-hosted gateways favor a smaller context to avoid request timeouts; `24000` roughly halves the batch count but reintroduces self-healing split-retries on the densest batches (a throughput-mode alternative, not the clean default).
-
----
-
-## July 9, 2026 (Extraction timeout overhaul: retry-storm fix, adaptive batch sizing & new defaults)
-
-The new run telemetry (below) paid off on its first field deployment: a 7-hour
-bulk-ingest log from a self-hosted instance showed ~40% of extraction batch
-calls "timing out at 361s" — which turned out to be **three 120s attempts**, the
-SDK silently re-sending the same ~17k-token prompt twice more into an endpoint
-that was already saturated. The extraction transport has been overhauled so
-retries can never stack against a struggling endpoint again.
-
-### Transport & retry fixes
-
-- **`LLM_REQUEST_TIMEOUT_SECONDS` now truly governs extraction** — the
-  extraction/relationship tier clients hardcoded a 120s timeout that shadowed
-  the documented env (default 360s). One attempt now gets the full window
-  instead of three attempts getting a third of it each.
-- **No SDK retries where splitting is the retry** — entity batch calls and
-  per-chunk relationship calls run with `max_retries=0`: a timeout goes
-  straight to the split-retry / single-chunk fallback instead of re-hammering
-  the endpoint. Rate limits (429) requeue the whole batch with bounded
-  exponential backoff; other transient errors still retry.
-- **Timeout-adaptive batch sizing** — a batch that exceeds the request timeout
-  halves as before, but the surviving size is now remembered per extraction
-  config: later documents start at a batch size the endpoint has proven it can
-  answer, instead of re-learning the split cascade per document (the field log
-  showed one document's 15 planned batches balloon to 77 calls / 4.8 hours).
-- **One-shot timeout diagnosis** — repeated timeout splits log a single warning
-  naming the three knobs that fix it (`GRAPH_EXTRACTION_MAX_CONTEXT`,
-  `BATCH_PROCESSING_CONCURRENCY`, `LLM_REQUEST_TIMEOUT_SECONDS`), mirroring the
-  output-budget diagnosis.
-- **Sharper degeneration detection** — the repetition-loop warning now requires
-  actual duplicate names; dense-but-unique output (index/bibliography passages,
-  >40 entities per chunk) is counted separately instead of crying wolf. The
-  batch progress counter no longer overruns its denominator after splits.
-
-### New defaults
-
-- `OPENAI_MAX_CONTEXT` default raised **32768 → 256000**, matching the
-  recommended primary (Gemma4 26B A4B) — it is the retrieval agent's working
-  context. Extraction is unaffected: the value it inherits stays clamped at
-  48000.
-- `EXTRACTION_MAX_OUTPUT_TOKENS` now ships a real default of **12000** (was
-  0 = inherit 8000), the value field-validated on July 8-9 (zero truncation
-  splits across a 7-hour bulk ingest). Set `0` explicitly to restore inherit.
-
----
-
-## July 9, 2026 (Extraction run telemetry & budget-ratio diagnosis)
-
-A field report of a "stuck" ingestion turned out to be healthy self-healing that
-was invisible from the outside: extraction batches whose output overflowed
-`EXTRACTION_MAX_OUTPUT_TOKENS` were silently split and retried, roughly doubling
-their wall time while the progress display stood still. Extraction now explains
-itself while it runs.
+- **`LLM_REQUEST_TIMEOUT_SECONDS` now truly governs extraction** — tier
+  clients no longer hardcode 120s; one attempt gets the full window.
+- **No SDK retries where splitting is the retry** — entity batch and per-chunk
+  relationship calls run one-shot (`max_retries=0`); timeouts go straight to
+  split-retry, 429s requeue with bounded exponential backoff.
+- **Timeout-adaptive batch sizing** — a proven-surviving batch size is
+  remembered per extraction config, so later documents skip the split cascade
+  (the field log showed 15 planned batches ballooning to 77 calls / 4.8 hours).
 
 ### Extraction observability
 
-- **Batch-start progress** — the document progress message updates at the start
-  of every extraction call (`Finding entities: 120/741 chunks (batch 8/22)...`),
-  not only on completion, so multi-minute calls on slow local models no longer
-  read as a hang. The batch denominator grows as batches split, making retry
-  churn visible as forward motion.
-- **Per-batch telemetry** — each extraction call logs chunks, input/output token
-  usage (provider-reported when available), duration, and finish reason, so the
-  input:output ratio can be tuned from real numbers instead of guesswork.
-- **One-shot budget diagnosis** — repeated output-cap overflows log a single
-  actionable warning naming both knobs (`EXTRACTION_MAX_OUTPUT_TOKENS`,
-  `GRAPH_EXTRACTION_MAX_CONTEXT`) instead of N identical per-batch warnings.
-- **Run health summary** — when extraction settles, one log line reports planned
-  batches vs actual LLM calls, split/truncation/error counts, and token totals;
-  the same counters are persisted on the document (`extraction_stats`) for
-  post-hoc inspection.
-- **Repetition-loop detection** — a batch returning an implausible flood of
-  duplicate entities (observed: 288 "entities" from one 5-sentence chunk) is
-  flagged as a suspected model degeneration loop; duplicates are collapsed by
-  the existing dedup.
+- **Batch-start progress** (`Finding entities: 120/741 chunks (batch 8/22)…`)
+  so multi-minute calls no longer read as a hang; the denominator grows as
+  batches split, making retry churn visible as forward motion.
+- **Per-batch telemetry** (tokens, duration, finish reason), **one-shot
+  budget/timeout diagnoses** naming the exact knobs to turn, a **run health
+  summary** persisted on the document (`extraction_stats`), and
+  **repetition-loop detection** for model degeneration floods (observed: 288
+  "entities" from one 5-sentence chunk).
 
-### Recommended budget change
+### Branding
 
-- `EXTRACTION_MAX_OUTPUT_TOKENS` recommendation raised from 8000 to **12000**
-  (≈ half of `GRAPH_EXTRACTION_MAX_CONTEXT=24000`): entity-dense documents
-  overflow the smaller cap ~10× per book, and each overflow doubles that batch's
-  wall time. On slow-decode endpoints where 12000 can't finish inside the
-  request window, lower `GRAPH_EXTRACTION_MAX_CONTEXT` instead.
-- `RELATIONSHIP_MAX_CONTEXT` guidance corrected across all docs: leave it unset
-  (inherit). Its bounded per-call output does **not** bound prefill time — wide
-  values (256000) only work on fast-prefill hosted endpoints and time out on
-  self-hosted GPUs; the default `targeted` discovery mode doesn't consume it for
-  verification calls anyway.
+- Footer now reads **"Built by MOCA"** with the [Museum of Crypto
+  Art](https://museumofcryptoart.com/) logo and
+  [Twitter](https://twitter.com/MuseumofCrypto/) link; the README carries the
+  same links with a theme-aware logo.
 
 ---
 

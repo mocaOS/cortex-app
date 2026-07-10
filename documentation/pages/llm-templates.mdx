@@ -1,0 +1,114 @@
+---
+title: LLM Deployment Templates
+description: Copy-paste model stacks for Venice, OpenRouter, and self-hosted GPUs
+---
+
+Cortex works with **any model from any OpenAI-compatible API**. These templates give you a tested model stack per provider — start from `.env.recommended` (see the [Quickstart](/quickstart)), swap in the block for your provider, fill in your key. Everything not listed runs on production-tuned code defaults; the [Configuration Reference](/configuration) has every knob.
+
+Two model roles matter when adapting a template:
+
+- **Primary agent** (`OPENAI_MODEL`) — agentic retrieval from the graph, Q&A, research, chat. Snappiness matters most here; **Gemma4 26B A4B** (a fast MoE) is the bench-validated pick.
+- **Knowledge-graph generation** (`GRAPH_EXTRACTION_MODEL`, usually also `VISION_MODEL`) — entity/relationship extraction and image analysis during ingestion. The more complex structured task; **Qwen3.6 27B** is the recommended pick.
+
+You do **not** need to set context windows for the extraction or vision models — ingestion runs on its own fine-tuned budgets (16000/16000 by default). Only `OPENAI_MAX_CONTEXT` should match your primary model's window.
+
+## Venice
+
+Model catalog: [docs.venice.ai/models/overview](https://docs.venice.ai/models/overview)
+
+```bash
+OPENAI_API_KEY=your-venice-api-key
+OPENAI_API_BASE=https://api.venice.ai/api/v1
+OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MAX_CONTEXT=256000
+
+EMBEDDING_MODEL=text-embedding-3-small
+
+VISION_MODEL=qwen3-6-27b
+
+GRAPH_EXTRACTION_MODEL=qwen3-6-27b
+```
+
+This is exactly the stack `.env.recommended` ships — Venice serves chat, vision, and embeddings from one key, making it the smoothest single-provider setup. **Don't touch the ingestion concurrency defaults on Venice** — everything is tuned to stay inside the rate limits of an API key.
+
+**If Gemma4 26B feels slow on Venice**, the next best move is switching the primary to `minimax-m3-preview` — a bit more expensive and slower per token, but it can deliver higher answer quality. The trade-off is snappiness, and it's a no-brainer whenever Gemma4 is running slower anyway. A budget alternative is `qwen3-5-35b-a3b`: faster and cheaper, though whether the quality satisfies depends on the data in your Cortex. When you swap the primary, set `OPENAI_MAX_CONTEXT` to the new model's input window (see the Venice model overview).
+
+## OpenRouter
+
+Routing guide: [provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) · Models: [gemma-4-26b-a4b-it](https://openrouter.ai/google/gemma-4-26b-a4b-it) · [qwen3.6-27b](https://openrouter.ai/qwen/qwen3.6-27b)
+
+```bash
+OPENAI_API_KEY=your-openrouter-key
+OPENAI_API_BASE=https://openrouter.ai/api/v1
+OPENAI_MODEL=google/gemma-4-26b-a4b-it:nitro
+OPENAI_MAX_CONTEXT=256000
+
+# OpenRouter serves chat but not embeddings — give embeddings their own provider
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_API_BASE=https://api.openai.com/v1
+EMBEDDING_API_KEY=your-openai-key
+
+VISION_MODEL=qwen/qwen3.6-27b
+
+GRAPH_EXTRACTION_MODEL=qwen/qwen3.6-27b
+```
+
+We recommend the **`:nitro`** routing suffix for the primary — it prioritizes the fastest providers, which is what agentic retrieval lives on — and **balanced (default) routing** for the Qwen3.6 27B model used in the knowledge-graph building process, where ingestion throughput comes from Cortex's own batching rather than per-call latency. You can tune routing further per model with the provider-selection suffixes (e.g. `:floor` for cheapest) if your priorities differ. Unlike Venice, you're also free to experiment with the ingestion concurrency knobs here — see the tuning note under [Self-Hosting](#self-hosting).
+
+## Self-Hosting
+
+Model weights:
+
+- [AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4](https://huggingface.co/AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4)
+- [AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP](https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP)
+- [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
+
+```bash
+OPENAI_API_KEY=your-endpoint-token
+OPENAI_API_BASE=http://your-gpu-host:8001/v1
+OPENAI_MODEL=AEON-7/Gemma-4-26B-A4B-it-Uncensored-NVFP4
+OPENAI_MAX_CONTEXT=256000
+
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_DIMENSION=1024
+# EMBEDDING_MAX_INPUT_TOKENS=32768   # lift the input cap — no gateway tokenizer in the way
+
+VISION_MODEL=AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP
+
+GRAPH_EXTRACTION_MODEL=AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP
+```
+
+Rename the model tags to whatever your endpoints actually serve. The role split stays the same: the Gemma4 MoE handles agentic retrieval from the graph as the primary, while Qwen3.6 27B takes on the more complex knowledge-graph building task (and, being multimodal in this build, vision too).
+
+**Single device:** a DGX Spark can host the entire Cortex stack — both LLMs quantized in NVFP4 with the Qwen3 embeddings served alongside them.
+
+**Split ingestion onto a second rig:** if you have an additional box with 2× 3090/4090 — fairly common in the local-AI community — serve [kasimat/Qwen3.6-27B-AEON-Ultimate-Uncensored-FP8-MTP](https://huggingface.co/kasimat/Qwen3.6-27B-AEON-Ultimate-Uncensored-FP8-MTP) there and point the extraction tier at it. This offloads the ingestion workload and gives the primary retrieval GPU room to breathe:
+
+```bash
+GRAPH_EXTRACTION_API_BASE=http://your-second-rig:8001/v1
+GRAPH_EXTRACTION_API_KEY=your-second-rig-token
+VISION_MODEL_API_BASE=http://your-second-rig:8001/v1
+VISION_MODEL_API_KEY=your-second-rig-token
+```
+
+We recommend bundling all your GPU endpoints through a [LiteLLM router](https://docs.litellm.ai/) and connecting them to Cortex via a single endpoint + auth — not necessary, just nice to have.
+
+**Concurrency tuning:** unlike hosted providers, your hardware sets the rate limits — so you're free to tune the ingestion concurrency to what your GPUs actually sustain. The following values are tested on a LattePanda Sigma as the Cortex host with an RTX PRO 4500 Blackwell (32 GB) connected via OCuLink hosting the Gemma4 MoE, and Qwen3.6 27B running in FP8 across 2× 4090s on a separate cluster:
+
+```bash
+BATCH_PROCESSING_CONCURRENCY=6
+CONCURRENT_EXTRACTIONS=8
+PARALLEL_RELATIONSHIP_BATCHES=5
+CONCURRENT_RELATIONS=8
+VISION_MAX_CONCURRENT=5
+```
+
+Start from the defaults and raise gradually while watching decode throughput — the knobs compound (`BATCH_PROCESSING_CONCURRENCY` multiplies the per-document `CONCURRENT_*` pools), and past the saturation point more concurrency makes builds slower, not faster.
+
+**Embeddings:** use whatever you're already hosting — we had great results with the Qwen3 embedding lineup. If you're already serving [Qwen/Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) multimodal embeddings, those work too — set `EMBEDDING_SEND_DIMENSIONS=false` (fixed output dimension; the model rejects the `dimensions` parameter) and match `EMBEDDING_DIMENSION` to the model. Changing the embedding dimension triggers a re-embed of existing documents.
+
+## Next Steps
+
+- [Quickstart](/quickstart) — get the stack running with `.env.recommended`
+- [Configuration Reference](/configuration) — all environment variables
+- [Deployment Guide](/guides/deployment) — production deployment with Coolify

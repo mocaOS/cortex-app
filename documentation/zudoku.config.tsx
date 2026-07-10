@@ -81,6 +81,7 @@ const config: ZudokuConfig = {
           items: [
             "/introduction",
             "/quickstart",
+            "/llm-templates",
             "/configuration",
           ],
         },

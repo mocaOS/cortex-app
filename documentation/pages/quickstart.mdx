@@ -78,6 +78,8 @@ GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 
 To point a tier at a different provider, uncomment its `*_API_BASE` / `*_API_KEY` pair in `.env.recommended`. You do **not** need to set context windows for the extraction or vision models — ingestion runs on its own fine-tuned budgets (16000/16000 by default, sized to provider decode speed rather than the model window). Only `OPENAI_MAX_CONTEXT` should match your primary model's window.
 
+Running on **OpenRouter** or **your own GPUs** instead of Venice? The [LLM Deployment Templates](/llm-templates) page has a tested stack per provider, including fallback model recommendations.
+
 Or configure each tier independently:
 
 ```bash
