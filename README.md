@@ -169,7 +169,8 @@ GRAPH_EXTRACTION_MAX_CONTEXT=16000
 # Output cap is a generous CEILING matched to the context. Entity-dense books are kept
 # under it by the TERSE-description extraction prompt (bounds output-per-entity;
 # enrichment restores depth). 16000/16000 is validated: zero truncation, zero dropped
-# entities across dense docs. If the logs warn "output budget looks too small", raise
+# entities across dense docs — and is the code default since 2026-07-10, so both lines
+# here are optional. If the logs warn "output budget looks too small", raise
 # this or lower GRAPH_EXTRACTION_MAX_CONTEXT.
 EXTRACTION_MAX_OUTPUT_TOKENS=16000
 # RELATIONSHIP_MAX_CONTEXT: leave UNSET (inherits GRAPH_EXTRACTION_MAX_CONTEXT).
@@ -227,14 +228,15 @@ RELATIONSHIP_EXTRACTION_API_KEY=             # defaults to GRAPH_EXTRACTION_API_
 # Token budgets — primary defaults cascade to sub-tiers via the fallback chain
 # (set sub-tier to 0 = inherit). See "Budget Fallback Chain" further below.
 OPENAI_MAX_OUTPUT_TOKENS=8000                # primary output cap; sub-tiers inherit
-OPENAI_MAX_CONTEXT=256000                    # code default (large-context primaries; extraction inherit is clamped at 48000)
-EXTRACTION_MAX_OUTPUT_TOKENS=16000           # generous ceiling matched to the context — see minimal stack note
+OPENAI_MAX_CONTEXT=256000                    # code default (large-context primaries; extraction has its own 16000 default)
+EXTRACTION_MAX_OUTPUT_TOKENS=16000           # code default — generous ceiling matched to the context, see minimal stack note
 # RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS=16000 # Phase 2 batch (standalone, NOT in chain)
 
 # Context budgets. Extraction is a batch-size/graph-density dial (see the minimal stack
-# above; inherited values are clamped at 48000). Leave RELATIONSHIP_MAX_CONTEXT unset
-# (inherits extraction's) unless you run legacy llm_scan mode on a fast hosted endpoint.
-GRAPH_EXTRACTION_MAX_CONTEXT=16000
+# above; an explicit 0 inherits OPENAI_MAX_CONTEXT clamped at 48000). Leave
+# RELATIONSHIP_MAX_CONTEXT unset (inherits extraction's) unless you run legacy
+# llm_scan mode on a fast hosted endpoint.
+GRAPH_EXTRACTION_MAX_CONTEXT=16000           # code default
 
 # Reasoning Control (lets you use reasoning models for ingestion with thinking OFF)
 # off | minimal | auto | low | medium | high. No-op for pure instruct models.
@@ -741,7 +743,7 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `UPLOAD_DIR` | Directory for uploaded files | No | `./uploads` |
 | `CUSTOM_INPUTS_DIR` | Directory for custom input files | No | `./custom_inputs` |
 | `MAX_FILE_SIZE_MB` | Maximum upload file size in MB | No | `50` |
-| `EMBEDDING_MODEL` | Embedding model name | No | `openai/text-embedding-3-small` |
+| `EMBEDDING_MODEL` | Embedding model name | No | `text-embedding-3-small` |
 | `EMBEDDING_DIMENSION` | Embedding vector dimension | No | `1536` |
 | `EMBEDDING_SEND_DIMENSIONS` | Send `dimensions` param to embedding API. Set `false` for models with fixed output dim (e.g. qwen3-vl-embedding-2b) | No | `true` |
 | `EMBEDDING_MAX_INPUT_TOKENS` | Per-chunk input cap for embedding calls, counted client-side with cl100k. Kept well under the common 8192 provider cap because providers validate with their own tokenizer (can count 1.2–1.4× higher on punctuation-heavy text) | No | `5400` |
@@ -764,9 +766,9 @@ Coolify is a self-hostable Heroku/Netlify alternative. See the [Coolify deployme
 | `CONCURRENT_EXTRACTIONS` | Chunks to process concurrently for entity extraction | No | `3` |
 | `CONCURRENT_RELATIONS` | Chunks to process concurrently for relationship extraction | No | `3` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | Floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0 | No | `8000` |
-| `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 (the value extraction inherits is clamped at 48000) | No | `256000` |
-| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction — a generous CEILING matched to the context, not a ½-ratio. The terse-description extraction prompt bounds output-per-entity so dense docs stay under it; recommended `16000`. Set `0` to inherit `OPENAI_MAX_OUTPUT_TOKENS` instead | No | `16000` |
-| `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. 0 = inherit `min(OPENAI_MAX_CONTEXT, 48000)`. Recommended: `16000` (validated zero-truncation with the terse prompt; gateway-dependent — slower gateways favor smaller). Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `0` (=inherit, clamped 48k) |
+| `OPENAI_MAX_CONTEXT` | Floor of the input-context budget chain. `GRAPH_EXTRACTION_MAX_CONTEXT` (explicit 0 only; the inherited value is clamped at 48000) and `RELATIONSHIP_MAX_CONTEXT` inherit when 0 | No | `256000` |
+| `EXTRACTION_MAX_OUTPUT_TOKENS` | Output budget for entity extraction — a generous CEILING matched to the context, not a ½-ratio. The terse-description extraction prompt bounds output-per-entity so dense docs stay under it; the default is production-validated. Set `0` to inherit `OPENAI_MAX_OUTPUT_TOKENS` instead | No | `16000` |
+| `GRAPH_EXTRACTION_MAX_CONTEXT` | Input context for entity-extraction batching. The default is validated zero-truncation with the terse prompt; gateway-dependent — slower gateways favor smaller. Set `0` to inherit `min(OPENAI_MAX_CONTEXT, 48000)`. Renamed from `EXTRACTION_MAX_CONTEXT` (deprecated alias still honored — startup WARN if used) | No | `16000` |
 | `RELATIONSHIP_MAX_OUTPUT_TOKENS` | Output budget for **per-chunk + candidate scan** (in chain). 0 = inherit. **Semantics changed** — see migration note | No | `0` (=inherit) |
 | `RELATIONSHIP_BATCH_MAX_OUTPUT_TOKENS` | Output budget for **Phase 2 batch** relationship analysis. Standalone — NOT in inheritance chain | No | `16000` |
 | `RELATIONSHIP_MAX_CONTEXT` | Input context for Phase 2 batch (legacy `llm_scan` mode; the default `targeted` mode uses `RELATIONSHIP_PAIR_CONTEXT_TOKENS` instead). Recommended: leave `0` (=inherit). Only set wide (e.g. `256000`) on fast-prefill hosted endpoints — on self-hosted GPUs a full-window prompt spends minutes in prefill and times out | No | `0` (=inherit) |
@@ -971,7 +973,7 @@ chunk_size: int = 500        # Words per chunk
 chunk_overlap: int = 50      # Overlap between chunks
 
 # Embedding model
-embedding_model: str = "openai/text-embedding-3-small"
+embedding_model: str = "text-embedding-3-small"
 embedding_dimension: int = 1536
 
 # File limits
@@ -1222,4 +1224,11 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ---
 
-Built with ❤️ using Neo4j + Haystack
+<a href="https://museumofcryptoart.com/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/moca_logo_white.svg" />
+    <img src="frontend/public/brand/moca_logo_black.svg" alt="MOCA — Museum of Crypto Art" height="37" />
+  </picture>
+</a>
+
+Built by [MOCA](https://museumofcryptoart.com/) · Follow us on [Twitter](https://twitter.com/MuseumofCrypto/)

@@ -65,8 +65,8 @@ def _fresh_settings(**field_overrides) -> Settings:
 
 
 # ---------------------------------------------------------------------------
-# Shipped defaults (all-zero raw fields except EXTRACTION_MAX_OUTPUT_TOKENS,
-# which carries a real 12000 default since 2026-07-09)
+# Shipped defaults (all-zero raw fields except the two extraction budgets,
+# which carry real 16000 defaults since 2026-07-10)
 # ---------------------------------------------------------------------------
 
 def test_defaults_resolve_to_shipped_values():
@@ -74,18 +74,26 @@ def test_defaults_resolve_to_shipped_values():
     assert s.openai_max_output_tokens == 8000
     # Primary context sized to the recommended large-context primary (2026-07-09).
     assert s.openai_max_context == 256000
-    # Extraction ships a real 12000 default (not 0-inherit); the rest of the
+    # Extraction ships real 16000 defaults (not 0-inherit) for both context and
+    # output — production-validated 16000/16000 pairing; the rest of the
     # output chain inherits it downward.
-    assert s.extraction_max_output_tokens == 12000
-    assert s.relationship_max_output_tokens == 12000
-    assert s.vision_max_output_tokens == 12000
-    # The 256000 primary context is clamped to 48000 as it flows into the
-    # extraction tier (and on down to relationship) — a chat window must not
-    # leak into decode-bound extraction batch sizing.
-    assert s.extraction_max_context == 48000
-    assert s.relationship_max_context == 48000
+    assert s.extraction_max_output_tokens == 16000
+    assert s.relationship_max_output_tokens == 16000
+    assert s.vision_max_output_tokens == 16000
+    assert s.extraction_max_context == 16000
+    assert s.relationship_max_context == 16000
     # Phase 2 batch is standalone — keeps its own 16000 default
     assert s.relationship_batch_max_output_tokens == 16000
+
+
+def test_explicit_zero_extraction_context_inherits_clamped():
+    # Setting GRAPH_EXTRACTION_MAX_CONTEXT=0 opts back into inherit: the
+    # 256000 primary context is clamped to 48000 as it flows into the
+    # extraction tier (and on down to relationship) — a chat window must not
+    # leak into decode-bound extraction batch sizing.
+    s = _fresh_settings(graph_extraction_max_context_raw=0)
+    assert s.extraction_max_context == 48000
+    assert s.relationship_max_context == 48000
 
 
 # ---------------------------------------------------------------------------
@@ -93,13 +101,15 @@ def test_defaults_resolve_to_shipped_values():
 # ---------------------------------------------------------------------------
 
 def test_primary_bump_cascades_through_chain():
-    # Extraction ships a real 12000 output default since 2026-07-09, so a bare
-    # primary bump no longer reaches the output chain — zero the extraction raw
-    # field to opt back into inherit and observe the cascade mechanism itself.
+    # Extraction ships a real output default since 2026-07-09 (16000 since
+    # 2026-07-10), so a bare primary bump no longer reaches the output chain —
+    # zero the extraction raw field to opt back into inherit and observe the
+    # cascade mechanism itself.
     s = _fresh_settings(
         openai_max_output_tokens=4000,
         openai_max_context=128000,
         extraction_max_output_tokens_raw=0,
+        graph_extraction_max_context_raw=0,
     )
     assert s.extraction_max_output_tokens == 4000
     assert s.relationship_max_output_tokens == 4000
@@ -190,8 +200,8 @@ def test_phase2_batch_explicit_override():
     s = _fresh_settings(relationship_batch_max_output_tokens=24000)
     assert s.relationship_batch_max_output_tokens == 24000
     # Chain still operates independently — relationship inherits extraction's
-    # shipped 12000 default, unaffected by the standalone Phase 2 override.
-    assert s.relationship_max_output_tokens == 12000
+    # shipped 16000 default, unaffected by the standalone Phase 2 override.
+    assert s.relationship_max_output_tokens == 16000
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +210,11 @@ def test_phase2_batch_explicit_override():
 
 def test_context_chain_default():
     s = _fresh_settings()
-    # 256000 primary context inherited down and clamped to 48000 at extraction.
-    assert s.extraction_max_context == 48000
-    assert s.relationship_max_context == 48000
+    # Extraction ships a real 16000 context default (2026-07-10); relationship
+    # inherits it. The 48000 inherit clamp only applies on explicit 0 — see
+    # test_explicit_zero_extraction_context_inherits_clamped.
+    assert s.extraction_max_context == 16000
+    assert s.relationship_max_context == 16000
 
 
 def test_context_chain_extraction_override():
@@ -341,9 +353,9 @@ def test_recommended_minimal_setup_inherits_everything(monkeypatch):
     # Relationship + vision inherit the extraction model (string fallback)
     assert s.rel_extraction_model == "qwen/qwen3-7-27b"
 
-    # Output budgets fall through the chain from extraction's shipped 12000
-    # default (2026-07-09); relationship + vision inherit it.
-    assert s.extraction_max_output_tokens == 12000
-    assert s.relationship_max_output_tokens == 12000
-    assert s.vision_max_output_tokens == 12000
+    # Output budgets fall through the chain from extraction's shipped 16000
+    # default (2026-07-10); relationship + vision inherit it.
+    assert s.extraction_max_output_tokens == 16000
+    assert s.relationship_max_output_tokens == 16000
+    assert s.vision_max_output_tokens == 16000
     assert s.relationship_batch_max_output_tokens == 16000

@@ -200,7 +200,7 @@ class Settings(BaseSettings):
     # instance-wide. Aligns quota consumption with inference cost. 0 = unlimited
 
     # Embedding Configuration
-    embedding_model: str = Field(default="openai/text-embedding-3-small")
+    embedding_model: str = Field(default="text-embedding-3-small")
     embedding_dimension: int = Field(
         default=1536
     )  # text-embedding-3-small native dimension
@@ -326,14 +326,19 @@ class Settings(BaseSettings):
     )  # Number of chunks to process concurrently for graph extraction
 
     # Extraction Context Window Configuration
-    # Raw fields default to 0 (=inherit). Resolved values exposed via the
-    # @property accessors at the bottom of the class.
+    # Resolved values exposed via the @property accessors at the bottom of the
+    # class; 0 = inherit from the next tier up.
+    # Ships a real default of 16000 (2026-07-10, decided with Rene): validated
+    # zero-truncation / zero-entity-loss with the terse-description prompt in
+    # multi-day live runs, and sized so slow gateways (~70 tok/s) finish inside
+    # the request window. Set 0 explicitly to restore inherit
+    # (min(OPENAI_MAX_CONTEXT, 48000)).
     # Renamed from EXTRACTION_MAX_CONTEXT → GRAPH_EXTRACTION_MAX_CONTEXT to
     # match the `GRAPH_EXTRACTION_MODEL` env-var prefix convention. The legacy
     # name is honored as a deprecated alias for one release; a startup-time
     # WARN nudges users to migrate (see _warn_deprecated_env_aliases below).
     graph_extraction_max_context_raw: int = Field(
-        default=0,
+        default=16000,
         validation_alias=AliasChoices(
             "graph_extraction_max_context_raw",
             "GRAPH_EXTRACTION_MAX_CONTEXT",
@@ -349,10 +354,12 @@ class Settings(BaseSettings):
     # Output-token budgets — chain: vision → relationship → extraction → primary.
     # Extraction ships a real default instead of 0-inherit (2026-07-09, decided
     # with Rene): extraction re-emits every entity so output scales with input,
-    # and the inherited 8000 truncate-split ~10x per entity-dense book while
-    # 12000 measured zero. Set 0 explicitly to restore inherit.
+    # and the inherited 8000 truncate-split ~10x per entity-dense book.
+    # Raised 12000 → 16000 (2026-07-10): a generous CEILING matched to the
+    # 16000 input default, validated zero-truncation in multi-day live runs.
+    # Set 0 explicitly to restore inherit.
     extraction_max_output_tokens_raw: int = Field(
-        default=12000,
+        default=16000,
         validation_alias=AliasChoices(
             "extraction_max_output_tokens_raw", "EXTRACTION_MAX_OUTPUT_TOKENS"
         ),
@@ -974,12 +981,13 @@ class Settings(BaseSettings):
         """Resolved input context budget for entity extraction.
 
         Reads `GRAPH_EXTRACTION_MAX_CONTEXT` (or the deprecated
-        `EXTRACTION_MAX_CONTEXT` alias) and falls back to `OPENAI_MAX_CONTEXT` —
-        but the INHERITED value is clamped: a chat model's context (e.g.
-        256000) leaking into extraction packs prompts no extraction tier
-        actually answers within a request timeout (measured 2026-07-08:
-        every 200k-token batch timed out; entities silently lost before the
-        split-retry existed). An explicitly set env value is honored as-is.
+        `EXTRACTION_MAX_CONTEXT` alias), which ships a real default of 16000.
+        An explicit `0` falls back to `OPENAI_MAX_CONTEXT` — but the INHERITED
+        value is clamped: a chat model's context (e.g. 256000) leaking into
+        extraction packs prompts no extraction tier actually answers within a
+        request timeout (measured 2026-07-08: every 200k-token batch timed
+        out; entities silently lost before the split-retry existed). An
+        explicitly set positive env value is honored as-is.
         """
         if self.graph_extraction_max_context_raw > 0:
             return self.graph_extraction_max_context_raw

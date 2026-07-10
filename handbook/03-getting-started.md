@@ -301,7 +301,7 @@ VISION_MODEL_API_BASE=https://api.openai.com/v1
 VISION_MODEL_API_KEY=sk-your-key
 
 # ── Embeddings ─────────────────────────────────────────────────
-EMBEDDING_MODEL=openai/text-embedding-3-small
+EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSION=1536
 EMBEDDING_SEND_DIMENSIONS=true         # Set false for models with fixed output dim
 EMBEDDING_API_BASE=https://api.openai.com/v1

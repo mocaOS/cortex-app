@@ -1025,7 +1025,7 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `ALLOWED_EXTENSIONS`: List of allowed extensions (default: `[".pdf", ".txt", ".md", ".docx", ".xlsx"]`)
 
 #### Embedding Configuration
-- `EMBEDDING_MODEL`: Embedding model (default: `openai/text-embedding-3-small`)
+- `EMBEDDING_MODEL`: Embedding model (default: `text-embedding-3-small`)
 - `EMBEDDING_DIMENSION`: Embedding dimension (default: `1536`)
 - `USE_OPENAI_EMBEDDINGS`: Use OpenAI embeddings (default: `True`)
 
