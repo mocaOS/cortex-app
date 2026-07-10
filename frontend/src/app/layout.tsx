@@ -21,17 +21,17 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
   ),
   title: "Cortex",
-  description: "AI-powered knowledge base with Neo4j + Haystack",
+  description: "Institutional Memory for the Agentic Era",
   openGraph: {
     title: "Cortex",
-    description: "AI-powered knowledge base with Neo4j + Haystack",
+    description: "Institutional Memory for the Agentic Era",
     siteName: "Cortex",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Cortex",
-    description: "AI-powered knowledge base with Neo4j + Haystack",
+    description: "Institutional Memory for the Agentic Era",
   },
 };
 
