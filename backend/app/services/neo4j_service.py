@@ -7181,12 +7181,14 @@ class Neo4jService:
             record = result.single()
             return dict(record["t"]) if record else None
 
-    def fail_interrupted_task_records(self) -> int:
+    def fail_interrupted_task_records(self) -> list[dict]:
         """Mark persisted pending/running tasks as failed (startup reconcile).
 
         Tasks run as in-process coroutines — anything not terminal at startup
         can never make progress again. Failing the record turns the UI's
-        eternal poll into an actionable error.
+        eternal poll into an actionable error. Returns the interrupted records
+        (task_id, task_type, context_json, started_at) so startup can
+        auto-resume interrupted pipeline steps with their persisted context.
         """
         with self.driver.session() as session:
             result = session.run("""
@@ -7196,10 +7198,10 @@ class Neo4jService:
                     t.error = 'Interrupted by server restart',
                     t.message = 'Failed: interrupted by server restart',
                     t.completed_at = $now
-                RETURN count(t) as cnt
+                RETURN t.task_id AS task_id, t.task_type AS task_type,
+                       t.context_json AS context_json, t.started_at AS started_at
             """, now=datetime.utcnow().isoformat())
-            record = result.single()
-            return record["cnt"] if record else 0
+            return [dict(r) for r in result]
 
     def delete_task_record(self, task_id: str) -> None:
         with self.driver.session() as session:

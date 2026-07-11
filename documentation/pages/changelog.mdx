@@ -7,6 +7,25 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 11, 2026 (Generate Graph chain survives restarts)
+
+- **Fixed: a server restart or redeploy mid-run no longer strands the Generate
+  Graph pipeline after Step 1.** The 3-step chain (extraction → relationship
+  analysis → community detection) is orchestrated in-process, so a restart used
+  to lose the remaining chain — the startup auto-resume restarted Step 1
+  without it and the pipeline visibly stopped once Step 1 finished. Every
+  pipeline task now persists its resume parameters (remaining chain,
+  concurrency, scope) alongside its task record; on boot, Cortex resumes the
+  interrupted step **with** its chain — Step 1 continues into Steps 2 and 3, an
+  interrupted Step 2 or 3 restarts directly.
+- Also covered: a run killed between queueing and its first document (documents
+  sat at `pending` forever with nothing to resume them) and the case where an
+  upload was mid-processing while a Step 2/3 task was interrupted (Step 1
+  resumes first, then the interrupted step). All resume paths remain
+  quota-guarded behind `AUTO_RESUME_PENDING_ON_STARTUP`.
+
+---
+
 ## July 10, 2026 (Extraction tuning lands as defaults, zero-config onboarding & abort control)
 
 Two days of live extraction-tuning (July 9-10) distilled into shipped defaults

@@ -446,7 +446,7 @@ Hardening & operations:
 | `MAX_REQUEST_BODY_MB` / `MAX_IMPORT_BODY_MB` | `32` / `2048` | Request-body ceilings (413 on excess); upload routes use `MAX_FILE_SIZE_MB` + slack. |
 | `MIN_FREE_DISK_MB` | `500` | Refuse uploads/imports with 507 when the disk would drop below this floor; disk gauges in `/metrics` + `/api/stats`. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `360` / `2` | Transport limits for every LLM call (0 timeout = SDK default). |
-| `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | Resume documents stranded mid-processing by a restart (quota-guarded). |
+| `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | Resume a pipeline run killed by a restart (quota-guarded) — stranded documents, a queued batch that never started, or an interrupted Step 2/3; the Generate Graph chain is persisted, so a resumed Step 1 still continues into Steps 2 and 3. |
 | `AUTO_RESUME_IMAGE_ANALYSIS` | `true` | Resume image analysis killed by a restart. A restart leaves completed documents with unfinished image analysis stuck forever (the counters freeze at `current < total`); on boot Cortex re-extracts their images via local Docling re-conversion (no LLM cost) and analyzes **only** the images not yet stored — already-analyzed images are never re-paid for. Set `false` to require a manual reprocess instead. |
 | `ENABLE_AUDIT_LOG` / `AUDIT_LOG_PATH` | `false` / `./logs/audit.log` | Append-only JSONL audit trail (metadata only, never content). |
 | `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Time budget for deep research (0 = unlimited). |

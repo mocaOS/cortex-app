@@ -77,6 +77,8 @@ The `chain` query parameter (also accepted on `/api/documents/process-pending` a
 
 **Why this matters:** the full flow survives navigation away from the Knowledge Graph page, page reloads, and even closing the browser. The user can return at any time and the page re-attaches to whichever pipeline task is currently running. Plain single-step buttons ("Extract Entities", "Analyze Relationships", "Detect Communities") never auto-chain; only the Generate Graph flow sets the chain string.
 
+The chain also survives **server restarts and redeploys**: every pipeline task persists its resume parameters (including the remaining chain) alongside its task record, and on startup Cortex resumes the interrupted step — Step 1 picks its pending documents back up and still continues into Steps 2 and 3, while an interrupted Step 2 or 3 restarts directly (quota-guarded, disable with `AUTO_RESUME_PENDING_ON_STARTUP=false`).
+
 ## Entity Types
 
 Cortex extracts various entity types:

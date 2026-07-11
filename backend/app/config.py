@@ -387,7 +387,7 @@ class Settings(BaseSettings):
     )  # Thread pool workers for CPU-intensive operations
     auto_resume_pending_on_startup: bool = Field(
         default=True
-    )  # When the startup orphan-reset finds documents stranded mid-processing by the previous shutdown, automatically restart batch processing (quota-guarded). Only triggers on reset documents — bulk uploads parked with start_processing=false stay parked. Set false to require a manual "Generate Graph" after every redeploy.
+    )  # When the previous shutdown killed a pipeline run (documents stranded mid-processing, a queued batch that never started, or Step 2/3 of a Generate Graph chain), automatically resume the interrupted step with its persisted chain (quota-guarded). Bulk uploads parked with start_processing=false stay parked — they have no pipeline task record. Set false to require a manual "Generate Graph" after every redeploy.
     auto_resume_image_analysis: bool = Field(
         default=True
     )  # Image analysis runs as in-process fire-and-forget futures AFTER a

@@ -361,12 +361,13 @@ async def lifespan(app: FastAPI):
     # Reconcile persisted task records from the previous process: anything
     # still pending/running can never resume (tasks are in-process coroutines)
     # — mark failed so pollers get a real answer instead of an eternal 404/202.
+    interrupted_records: list[dict] = []
     try:
-        interrupted = await asyncio.to_thread(neo4j.fail_interrupted_task_records)
-        if interrupted:
+        interrupted_records = await asyncio.to_thread(neo4j.fail_interrupted_task_records)
+        if interrupted_records:
             logger.warning(
                 "Marked %d persisted task record(s) from the previous run as "
-                "failed (interrupted by restart)", interrupted,
+                "failed (interrupted by restart)", len(interrupted_records),
             )
     except Exception as e:
         logger.warning(f"Could not reconcile persisted task records: {e}")
@@ -387,12 +388,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not reconcile orphaned processing documents: {e}")
 
-    # Auto-resume processing when the reset above found stranded documents —
-    # otherwise every fleet redeploy silently parks customers' in-flight
-    # uploads until someone manually clicks "Generate Graph". Deliberately
-    # keyed on reset_ids (not on any pending doc existing): documents bulk-
-    # uploaded with start_processing=false stay parked, as intended.
-    if reset_ids and settings.auto_resume_pending_on_startup:
+    # Auto-resume the graph pipeline when the previous process died mid-run —
+    # otherwise every fleet redeploy silently parks customers' in-flight work
+    # until someone manually clicks "Generate Graph". Two independent signals:
+    #   1. reset_ids — documents stranded mid-processing (Step 1 was running),
+    #   2. an interrupted pipeline task record — covers runs killed between
+    #      queueing and the first document (docs sit at 'pending', so the
+    #      orphan-reset sees nothing) and Steps 2/3, which aren't per-document.
+    # The interrupted record carries the persisted resume_context, so a
+    # Generate Graph run resumes INTO its remaining chain (Steps 2/3) instead
+    # of stopping after Step 1. Documents bulk-uploaded with
+    # start_processing=false stay parked, as intended: no processing was
+    # started for them, so no pipeline task record exists.
+    pipeline_resume = _pick_interrupted_pipeline_step(interrupted_records)
+    if settings.auto_resume_pending_on_startup and (reset_ids or pipeline_resume):
 
         async def _auto_resume_after_restart():
             await asyncio.sleep(5)  # let startup settle before heavy work
@@ -400,20 +409,81 @@ async def lifespan(app: FastAPI):
                 if await _quota_exceeded():
                     logger.info(
                         "Auto-resume skipped: monthly usage limit reached; "
-                        "documents remain 'pending'"
+                        "interrupted pipeline work stays parked"
                     )
                     return
-                task = create_task("batch_processing")
-                task.message = (
-                    f"Auto-resuming {len(reset_ids)} document(s) interrupted by restart..."
-                )
-                logger.info(
-                    "Auto-resuming batch processing for %d document(s) "
-                    "interrupted by the previous shutdown", len(reset_ids),
-                )
-                await _run_batch_processing_task(
-                    task.task_id, settings.batch_processing_concurrency
-                )
+                step_type = pipeline_resume["task_type"] if pipeline_resume else "batch_processing"
+                ctx = pipeline_resume["context"] if pipeline_resume else {}
+                is_batch_step = step_type in ("batch_processing", "reprocess_batch")
+                batch_ctx = ctx if is_batch_step else {}
+
+                # Step 1 first: docs stranded mid-processing (reset_ids) or a
+                # killed batch run. Runs even when the newest interrupted task
+                # was Step 2/3 — an upload may have been processing alongside.
+                # In that case the interrupted step is folded INTO the batch
+                # chain (instead of run separately afterwards) so it's persisted
+                # with the batch task and survives a second kill mid-resume.
+                ran_chain: list = []
+                if reset_ids or is_batch_step:
+                    chain = batch_ctx.get("chain") or None
+                    if step_type == "relationship_analysis":
+                        chain = ["relationship_analysis", *(ctx.get("chain") or [])]
+                    elif step_type == "community_detection":
+                        chain = ["community_detection"]
+                    concurrency = batch_ctx.get("concurrency") or settings.batch_processing_concurrency
+                    pending = await asyncio.to_thread(
+                        get_document_processor().get_pending_documents
+                    )
+                    if pending or reset_ids or chain:
+                        task = create_task("batch_processing", resume_context={
+                            "concurrency": concurrency, "chain": chain,
+                        })
+                        task.message = (
+                            f"Auto-resuming processing of {len(pending)} document(s) "
+                            "interrupted by restart..."
+                        )
+                        logger.info(
+                            "Auto-resuming batch processing for %d pending document(s) "
+                            "interrupted by the previous shutdown (chain=%s)",
+                            len(pending), chain,
+                        )
+                        await _run_batch_processing_task(task.task_id, concurrency, chain)
+                        ran_chain = chain or []
+                    else:
+                        logger.info(
+                            "Auto-resume: no pending documents and no remaining "
+                            "pipeline chain — nothing to do"
+                        )
+
+                # A killed Step 2/3 with its own record — run it directly
+                # (with its full persisted scope) unless it was folded into
+                # the batch chain above.
+                if step_type == "relationship_analysis" and "relationship_analysis" not in ran_chain:
+                    task = create_task("relationship_analysis", resume_context=ctx)
+                    task.message = "Auto-resuming deep relationship analysis interrupted by restart..."
+                    logger.info(
+                        "Auto-resuming relationship analysis interrupted by the "
+                        "previous shutdown (chain=%s)", ctx.get("chain"),
+                    )
+                    await _run_relationship_analysis_task(
+                        task.task_id,
+                        collection_id=ctx.get("collection_id"),
+                        scope=ctx.get("scope") or "full",
+                        rebuild=bool(ctx.get("rebuild")),
+                        chain=ctx.get("chain") or None,
+                    )
+                elif step_type == "community_detection" and "community_detection" not in ran_chain:
+                    task = create_task("community_detection", resume_context=ctx)
+                    task.message = "Auto-resuming community detection interrupted by restart..."
+                    logger.info(
+                        "Auto-resuming community detection interrupted by the "
+                        "previous shutdown"
+                    )
+                    await _run_community_detection_task(
+                        task.task_id,
+                        min_size=ctx.get("min_size") or settings.min_community_size,
+                        collection_id=ctx.get("collection_id"),
+                    )
             except Exception as e:
                 logger.warning(f"Startup auto-resume failed: {e}")
 
@@ -1125,6 +1195,12 @@ def _serialize_task(task: TaskProgress) -> dict:
                 result_json = json.dumps({"truncated": True})
         except (TypeError, ValueError):
             result_json = json.dumps({"unserializable": True})
+    context_json = None
+    if task.resume_context:
+        try:
+            context_json = json.dumps(task.resume_context, default=str)
+        except (TypeError, ValueError):
+            context_json = None
     return {
         "task_id": task.task_id,
         "task_type": task.task_type,
@@ -1137,6 +1213,7 @@ def _serialize_task(task: TaskProgress) -> dict:
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         "error": task.error,
         "result_json": result_json,
+        "context_json": context_json,
     }
 
 
@@ -1148,6 +1225,12 @@ def _deserialize_task_record(record: dict) -> TaskProgress:
             result = json.loads(record["result_json"])
         except (TypeError, ValueError):
             result = None
+    resume_context = None
+    if record.get("context_json"):
+        try:
+            resume_context = json.loads(record["context_json"])
+        except (TypeError, ValueError):
+            resume_context = None
 
     def _parse_dt(value):
         try:
@@ -1167,6 +1250,7 @@ def _deserialize_task_record(record: dict) -> TaskProgress:
         completed_at=_parse_dt(record.get("completed_at")),
         error=record.get("error"),
         result=result,
+        resume_context=resume_context,
     )
 
 
@@ -1278,14 +1362,22 @@ async def track_ask_activity():
         _active_query_count = max(0, _active_query_count - 1)
 
 
-def create_task(task_type: str) -> TaskProgress:
-    """Create a new task and return its progress tracker."""
+def create_task(task_type: str, resume_context: Optional[dict] = None) -> TaskProgress:
+    """Create a new task and return its progress tracker.
+
+    `resume_context` holds the parameters needed to restart this step if the
+    process dies mid-run (pipeline `chain`, concurrency, scope/rebuild, ...).
+    It is persisted with the task record and consumed by the startup
+    auto-resume — without it, a restart during a Generate Graph run would
+    silently drop the remaining Steps 2/3.
+    """
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     task = TaskProgress(
         task_id=task_id,
         task_type=task_type,
         status=TaskStatus.PENDING,
-        started_at=datetime.utcnow()
+        started_at=datetime.utcnow(),
+        resume_context=resume_context,
     )
     _task_store[task_id] = task
     _task_dirty.add(task_id)
@@ -1412,6 +1504,32 @@ def _spawn_chain_task(coro) -> asyncio.Task:
     _chain_tasks.add(task)
     task.add_done_callback(_chain_tasks.discard)
     return task
+
+
+_RESUMABLE_PIPELINE_TASK_TYPES = {
+    "batch_processing", "reprocess_batch",
+    "relationship_analysis", "community_detection",
+}
+
+
+def _pick_interrupted_pipeline_step(records: List[dict]) -> Optional[dict]:
+    """From the previous process's interrupted task records, pick the pipeline
+    step to auto-resume (the most recently started one) and decode its
+    persisted resume context (chain, concurrency, scope, ...)."""
+    candidates = [
+        r for r in records or []
+        if r.get("task_type") in _RESUMABLE_PIPELINE_TASK_TYPES
+    ]
+    if not candidates:
+        return None
+    newest = max(candidates, key=lambda r: r.get("started_at") or "")
+    context: dict = {}
+    if newest.get("context_json"):
+        try:
+            context = json.loads(newest["context_json"]) or {}
+        except (TypeError, ValueError):
+            context = {}
+    return {"task_type": newest["task_type"], "context": context}
 
 
 async def _wait_for_image_analysis_complete(
@@ -2855,16 +2973,18 @@ async def reprocess_documents(
             actual_concurrency = concurrency if concurrency is not None else settings.batch_processing_concurrency
             
             # Create a task and start it in the background
-            task = create_task("reprocess_batch")
+            parsed_chain = _parse_chain(chain)
+            task = create_task("reprocess_batch", resume_context={
+                "concurrency": actual_concurrency, "chain": parsed_chain,
+            })
             task.message = f"Queued {queued_count} documents for reprocessing..."
             task.progress_total = queued_count
-            
+
             # Run the batch as a tracked chain task (NOT a fire-and-forget
             # FastAPI BackgroundTask) so it has a cancellable asyncio handle —
             # the graph-generation abort endpoint cancels _chain_tasks, and a
             # BackgroundTask would keep running headless (spawning docling
             # workers) with nothing able to stop it.
-            parsed_chain = _parse_chain(chain)
             _spawn_chain_task(
                 _run_batch_processing_task(
                     task.task_id,
@@ -2971,7 +3091,10 @@ async def _run_batch_processing_task(
         # Chain: spawn relationship analysis as the next step's own task.
         if chain and chain[0] == "relationship_analysis":
             remaining_chain = chain[1:]
-            rel_task = create_task("relationship_analysis")
+            rel_task = create_task("relationship_analysis", resume_context={
+                "collection_id": None, "scope": "full", "rebuild": True,
+                "chain": remaining_chain or None,
+            })
             rel_task.message = "Starting deep relationship analysis..."
             _spawn_chain_task(_run_relationship_analysis_task(
                 rel_task.task_id,
@@ -3027,12 +3150,14 @@ async def process_pending_documents(
             }
         
         # Create a task and start it in the background
-        task = create_task("batch_processing")
+        parsed_chain = _parse_chain(chain)
+        task = create_task("batch_processing", resume_context={
+            "concurrency": actual_concurrency, "chain": parsed_chain,
+        })
         task.message = f"Queued {len(pending)} documents for processing..."
         task.progress_total = len(pending)
-        
+
         # Schedule the background task (with optional chain to Step 2/3)
-        parsed_chain = _parse_chain(chain)
         background_tasks.add_task(
             _run_batch_processing_task,
             task.task_id,
@@ -4424,7 +4549,10 @@ async def _run_relationship_analysis_task(
         # Chain: spawn community detection as the next step's own task.
         if chain and chain[0] == "community_detection":
             settings = get_settings()
-            com_task = create_task("community_detection")
+            com_task = create_task("community_detection", resume_context={
+                "min_size": settings.min_community_size,
+                "collection_id": collection_id,
+            })
             com_task.message = "Starting community detection..."
             _spawn_chain_task(_run_community_detection_task(
                 com_task.task_id,
@@ -4475,10 +4603,12 @@ async def analyze_relationships(
         if collection_id:
             validate_collection_access(auth, collection_id, "analyze relationships in")
 
-        task = create_task("relationship_analysis")
-        task.message = "Starting relationship analysis..." if not rebuild else "Starting full rebuild..."
-
         parsed_chain = _parse_chain(chain)
+        task = create_task("relationship_analysis", resume_context={
+            "collection_id": collection_id, "scope": scope, "rebuild": rebuild,
+            "chain": parsed_chain,
+        })
+        task.message = "Starting relationship analysis..." if not rebuild else "Starting full rebuild..."
         background_tasks.add_task(
             _run_relationship_analysis_task,
             task.task_id,
@@ -4694,7 +4824,9 @@ async def detect_communities(
             validate_collection_access(auth, collection_id, "detect communities in")
         
         # Create a task and start it in the background
-        task = create_task("community_detection")
+        task = create_task("community_detection", resume_context={
+            "min_size": min_size, "collection_id": collection_id,
+        })
         task.message = "Initializing community detection..."
         
         # Schedule the background task

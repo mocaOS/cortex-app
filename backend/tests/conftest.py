@@ -234,7 +234,7 @@ def mock_neo4j(monkeypatch):
     # Task-record persistence (write-through shadow of the in-memory store)
     fake.get_task_record.return_value = None
     fake.upsert_task_records.return_value = 0
-    fake.fail_interrupted_task_records.return_value = 0
+    fake.fail_interrupted_task_records.return_value = []
     fake.prune_task_records.return_value = 0
     fake.delete_task_record.return_value = None
     # Startup reconcilers scan these — default to nothing stuck

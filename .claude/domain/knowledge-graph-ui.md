@@ -45,6 +45,10 @@ Why this design:
 
 Chain spawning uses `asyncio.create_task()` with a module-level strong-ref set (`_chain_tasks`) so the follow-up survives the parent task returning. Helpers: `_parse_chain()`, `_spawn_chain_task()`, `_wait_for_image_analysis_complete()` in `backend/app/main.py`.
 
+### Chain survives server restarts (2026-07-11)
+
+The chain lives in coroutine memory, so a restart mid-run (redeploy, dev `--reload`) used to kill it — the startup auto-resume restarted Step 1 *without* the chain and the pipeline visibly stopped after Step 1 (the original symptom: "Generate Graph runs Step 1 then stops"). Now every pipeline task persists a `resume_context` on its TaskRecord (`TaskProgress.resume_context` → `context_json`): batch tasks store `{concurrency, chain}`, relationship tasks `{collection_id, scope, rebuild, chain}`, community tasks `{min_size, collection_id}`. At boot, `fail_interrupted_task_records()` returns the interrupted records, `_pick_interrupted_pipeline_step()` selects the newest pipeline step among them, and `_auto_resume_after_restart` resumes **that step with its chain** — Step 1 (also covering runs killed between queueing and the first document, where docs sit at `pending` and the orphan-reset sees nothing), Step 2, or Step 3. If docs were stranded mid-processing while a Step 2/3 task was interrupted (concurrent upload), Step 1 resumes first, then the interrupted step. Gated by `AUTO_RESUME_PENDING_ON_STARTUP` + monthly quota. Tests: `backend/tests/test_pipeline_chain_resume.py`.
+
 ## Flow Persistence & Resume
 
 The frontend persists only `regenerateActive=true` + `regenerateStep` (highest step seen) in `sessionStorage`. A **chain observer** useEffect polls `listTasks("running", task_type)` every 3 s for each pipeline task type:

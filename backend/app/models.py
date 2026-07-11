@@ -544,6 +544,7 @@ class TaskProgress(BaseModel):
     completed_at: Optional[datetime] = Field(default=None, description="When the task completed")
     error: Optional[str] = Field(default=None, description="Error message if failed")
     result: Optional[dict] = Field(default=None, description="Task result when completed")
+    resume_context: Optional[dict] = Field(default=None, description="Parameters needed to restart this step after a server restart (e.g. remaining pipeline chain)")
     
     class Config:
         json_schema_extra = {
