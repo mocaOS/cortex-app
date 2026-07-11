@@ -4,6 +4,7 @@ import os
 import io
 import json
 import logging
+import re
 import shutil
 import zipfile
 from datetime import datetime
@@ -616,12 +617,28 @@ class LibraryTransferService:
                 if skills:
                     skills_dir = Path(self.settings.skills_dir)
                     skills_dir.mkdir(parents=True, exist_ok=True)
+                    skills_root = skills_dir.resolve()
                     # Restore skill files from ZIP
                     for skill in skills:
                         skill_id = skill.get("skill_id", "")
                         if not skill_id:
                             continue
-                        target_dir = skills_dir / skill_id
+                        # Security: skill_id comes from an untrusted imported
+                        # archive. Only accept a plain slug so it can't traverse
+                        # out of skills_dir (absolute path / ".." → arbitrary file
+                        # write). Legit exports already store sanitized ids, so a
+                        # well-formed archive is never rejected.
+                        if skill_id in (".", "..") or not re.fullmatch(r"[A-Za-z0-9._-]+", skill_id):
+                            logger.warning(
+                                "Skipping skill with unsafe skill_id during import: %r", skill_id
+                            )
+                            continue
+                        target_dir = (skills_dir / skill_id).resolve()
+                        if target_dir != skills_root and skills_root not in target_dir.parents:
+                            logger.warning(
+                                "Skipping skill whose target escapes skills_dir: %r", skill_id
+                            )
+                            continue
                         target_dir.mkdir(parents=True, exist_ok=True)
                         prefix = f"skills/{skill_id}/"
                         for entry_name in zf.namelist():

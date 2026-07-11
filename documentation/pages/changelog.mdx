@@ -7,6 +7,46 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 11, 2026 (Security hardening pass)
+
+A round of defense-in-depth tightenings across configuration defaults, outbound
+requests, and access scoping. Correctly-configured deployments are unaffected;
+the changes mainly raise the floor for the default and misconfigured cases. No
+API changes.
+
+- **Production hardening is now the default on the deploy paths.** The
+  `docker-compose.prod.yml`, coolify, and dokploy compose files set
+  `ENVIRONMENT=${ENVIRONMENT:-production}` (still overridable), so a standard
+  deploy runs with secret enforcement, response-error sanitization, and API
+  docs disabled without an extra step.
+- **Stronger secret hygiene at startup.** `.env.recommended` now ships clearly
+  marked placeholders (generate real values with `openssl rand -hex 32`) rather
+  than sample values, and startup — both the backend validator and the Next.js
+  frontend — refuses known-placeholder or too-short signing secrets in
+  production. Empty admin credentials still fail closed as before.
+- **Outbound-request safety (SSRF guard).** A shared guard
+  (`services/ssrf_guard.py`) validates the target of requests influenced by
+  user or agent input — the skill `http_request` tool, Web Import, and the git
+  connector — resolving the host and blocking loopback/link-local/metadata
+  addresses (and, for the agent tool, private ranges by default), re-checked on
+  each redirect hop. Per-host allowlists and `SKILL_HTTP_ALLOW_PRIVATE` /
+  `WEB_IMPORT_ALLOW_PRIVATE` cover legitimate internal targets; self-hosted git
+  on a private network keeps working.
+- **Tighter collection scoping.** Restricted API keys are now checked against a
+  document's source collection (not just the target) when moving or adding
+  documents, so a key stays within its granted collections. No effect on
+  admin/unrestricted keys.
+- **Safer library import.** Imported-archive skill identifiers are validated
+  before any files are written, keeping restored content inside the skills
+  directory.
+- **Rate-limit and frontend hardening.** The opt-in rate limiter now keys only
+  on trusted identity with an always-applied per-IP bucket; the login redirect
+  is restricted to same-site paths; and the frontend sends baseline security
+  headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`,
+  `Permissions-Policy`).
+
+---
+
 ## July 11, 2026 (Generate Graph chain survives restarts)
 
 - **Fixed: a server restart or redeploy mid-run no longer strands the Generate

@@ -40,6 +40,9 @@ services:
     env_file:
       - .env
     environment:
+      # Production hardening (secret enforcement, error sanitization, docs off).
+      # Overridable: set ENVIRONMENT=development in .env to opt out.
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - NEO4J_URI=bolt://neo4j:7687
       - UPLOAD_DIR=/app/uploads
       - CUSTOM_INPUTS_DIR=/app/custom_inputs

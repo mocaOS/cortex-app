@@ -841,14 +841,28 @@ async def enforce_rate_limit(request: Request) -> None:
         return
     from app.services.rate_limiter import get_rate_limiter, rate_limit_key
 
-    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
+    # Only X-API-Key is a trusted identity here; the backend never authenticates
+    # via Authorization, so bucketing on it would let a caller mint unlimited
+    # fresh buckets by rotating that header. Always enforce a per-IP bucket, and
+    # additionally a per-key bucket when a key is present — a rotated/forged key
+    # header can therefore never escape the per-IP cap.
+    api_key = request.headers.get("X-API-Key")
     client_ip = request.client.host if request.client else None
-    allowed, retry_after = get_rate_limiter().check(
-        rate_limit_key(api_key, client_ip),
-        qpm,
-        getattr(settings, "rate_limit_burst", 10),
-    )
-    if not allowed:
+    limiter = get_rate_limiter()
+    burst = getattr(settings, "rate_limit_burst", 10)
+
+    bucket_keys = [rate_limit_key(None, client_ip)]
+    if api_key:
+        bucket_keys.append(rate_limit_key(api_key, client_ip))
+
+    retry_after = 0.0
+    denied = False
+    for bucket_key in bucket_keys:
+        allowed, ra = limiter.check(bucket_key, qpm, burst)
+        if not allowed:
+            denied = True
+            retry_after = max(retry_after, ra)
+    if denied:
         metrics.RATE_LIMITED.labels(route=request.url.path).inc()
         raise HTTPException(
             status_code=429,
@@ -4415,8 +4429,26 @@ async def add_document_to_collection(collection_id: str, document_id: str, auth:
     try:
         # Validate access to the target collection
         validate_collection_access(auth, collection_id, "add documents to")
-        
+
         neo4j = get_neo4j_service()
+
+        # Security: also verify the caller can access the document's source
+        # collection (see move_documents_to_collection). No-op for
+        # admin/unrestricted keys.
+        allowed = auth.get_collection_filter()
+        if allowed is not None:
+            allowed_set = set(allowed)
+            sources = await asyncio.to_thread(
+                neo4j.get_documents_file_paths, [document_id]
+            )
+            for src in sources:
+                if src.get("collection_id") not in allowed_set:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="API key does not have permission to add a document "
+                        f"from source collection: {src.get('collection_id')}",
+                    )
+
         success = await asyncio.to_thread(neo4j.add_document_to_collection, document_id, collection_id)
         if not success:
             raise HTTPException(status_code=404, detail="Collection or document not found")
@@ -4434,15 +4466,31 @@ async def move_documents_to_collection(request: MoveDocumentsRequest, auth: Auth
     try:
         # Validate access to the target collection
         validate_collection_access(auth, request.target_collection_id, "move documents to")
-        
-        # If restricted, also need to verify we can access the source documents' collections
-        # For simplicity, we validate target access here. Source access is implicitly granted
-        # if they can see the documents in the first place (list filtering).
-        
+
         neo4j = get_neo4j_service()
+
+        # Security: also verify the caller can access each document's *source*
+        # collection, so a restricted key cannot pull documents out of a
+        # collection it isn't scoped to (and then read them once they land in an
+        # accessible collection). No-op for admin/unrestricted keys, whose
+        # get_collection_filter() is None — legitimate moves are unaffected.
+        allowed = auth.get_collection_filter()
+        if allowed is not None:
+            allowed_set = set(allowed)
+            sources = await asyncio.to_thread(
+                neo4j.get_documents_file_paths, request.document_ids
+            )
+            for src in sources:
+                if src.get("collection_id") not in allowed_set:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="API key does not have permission to move documents "
+                        f"from source collection: {src.get('collection_id')}",
+                    )
+
         result = await asyncio.to_thread(
             neo4j.move_documents_to_collection,
-            request.document_ids, 
+            request.document_ids,
             request.target_collection_id,
         )
         moved = result["moved_count"]
@@ -5582,6 +5630,17 @@ async def web_import(
         parsed = urlparse(u)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise HTTPException(status_code=400, detail=f"Invalid URL: {raw}")
+        # SSRF guard: block loopback/link-local/metadata (and private ranges
+        # unless WEB_IMPORT_ALLOW_PRIVATE) before handing the URL to crawl4ai.
+        from app.services import ssrf_guard
+        try:
+            await asyncio.to_thread(
+                ssrf_guard.validate_url,
+                u,
+                allow_private=settings.web_import_allow_private,
+            )
+        except ssrf_guard.SSRFError as e:
+            raise HTTPException(status_code=400, detail=f"URL not allowed: {raw} ({e})")
         if u not in seen:
             seen.add(u)
             urls.append(u)
@@ -5633,6 +5692,17 @@ async def web_import_discover(
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Invalid URL")
+
+    # SSRF guard (see /api/web-import).
+    from app.services import ssrf_guard
+    try:
+        await asyncio.to_thread(
+            ssrf_guard.validate_url,
+            url,
+            allow_private=get_settings().web_import_allow_private,
+        )
+    except ssrf_guard.SSRFError as e:
+        raise HTTPException(status_code=400, detail=f"URL not allowed ({e})")
 
     try:
         result = await crawl_client.discover_links(url)

@@ -131,9 +131,19 @@ class GitProvider(ABC):
     ) -> httpx.Response:
         """Issue an authenticated request to `api_root + path`. Raises GitProviderError."""
         url = path if path.startswith("http") else f"{self.api_root}{path}"
+        # SSRF guard: base_url is caller-supplied for self-hosted GitLab/Gitea.
+        # Block loopback/link-local/metadata (and re-validate redirect hops so a
+        # public base_url can't 3xx-bounce to an internal target). Private ranges
+        # stay allowed — self-hosted git on an internal IP is legitimate — as are
+        # hosts the operator already trusts via GIT_HTTP_INSECURE_HOSTS.
+        from app.services.ssrf_guard import async_request_hook, SSRFError
+        _ssrf_hook = async_request_hook(allow_private=True, allowlist=self._insecure_hosts)
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout, verify=self._verify_tls, follow_redirects=True
+                timeout=self._timeout,
+                verify=self._verify_tls,
+                follow_redirects=True,
+                event_hooks={"request": [_ssrf_hook]},
             ) as client:
                 resp = await client.request(
                     method, url, headers=self._auth_headers(), json=json, params=params
@@ -144,6 +154,8 @@ class GitProvider(ABC):
                                 f"{resp.status_code}: {resp.text[:300]}")
                 )
             return resp
+        except SSRFError as e:
+            raise GitProviderError(f"{self.vendor} request blocked: {e}") from e
         except httpx.HTTPError as e:
             raise GitProviderError(self._scrub(f"{self.vendor} request failed: {e}")) from e
 

@@ -21,6 +21,27 @@ const nextConfig = {
       },
     ];
   },
+  // Baseline security headers. Deliberately no Content-Security-Policy here —
+  // the app relies on inline styles (e.g. the accent-color <style> in layout),
+  // so a CSP needs its own tested pass with a nonce/hash before it can ship
+  // without breaking rendering.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          // Clickjacking: the admin UI must not be framed cross-origin.
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 // Error tracking (GlitchTip via the Sentry protocol). The wrapper is inert

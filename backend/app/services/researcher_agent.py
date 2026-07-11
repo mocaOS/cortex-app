@@ -1196,11 +1196,29 @@ async def _run_researcher_loop(
                 # None means the call succeeded.
                 _req_error_label = None
                 _http_timeout = getattr(settings, "skill_http_timeout", 15)
+
+                # SSRF guard: the URL is LLM-chosen (steerable via prompt
+                # injection in ingested content), so validate the target — and
+                # every redirect hop — before connecting. Hosts an operator has
+                # explicitly allowlisted (or marked TLS-insecure, i.e. already
+                # trusted) bypass the check; private targets are blocked unless
+                # SKILL_HTTP_ALLOW_PRIVATE is set.
+                from app.services.ssrf_guard import async_request_hook, SSRFError
+                _ssrf_allowlist = _insecure_hosts | {
+                    h.strip().lower()
+                    for h in (getattr(settings, "skill_http_allowed_hosts", "") or "").split(",")
+                    if h.strip()
+                }
+                _ssrf_hook = async_request_hook(
+                    allow_private=getattr(settings, "skill_http_allow_private", False),
+                    allowlist=_ssrf_allowlist,
+                )
                 try:
                     async with httpx.AsyncClient(
                         timeout=_http_timeout,
                         follow_redirects=True,
                         verify=_verify_tls,
+                        event_hooks={"request": [_ssrf_hook]},
                     ) as http_client:
                         resp = await http_client.request(
                             method,
@@ -1210,6 +1228,10 @@ async def _run_researcher_loop(
                         )
                         resp.raise_for_status()
                         response_text = _truncate_response(resp.text)
+                except SSRFError as e:
+                    response_text = f"Error: request blocked ({e})"
+                    _req_error_label = f"API call blocked (SSRF guard): {method} {url}"
+                    logger.warning(f"http_request blocked by SSRF guard: {method} {url} → {e}")
                 except httpx.TimeoutException:
                     response_text = (
                         f"Error: HTTP request timed out ({_http_timeout}s)"

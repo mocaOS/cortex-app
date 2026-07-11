@@ -697,6 +697,22 @@ class Settings(BaseSettings):
     )  # Comma-separated hostnames for which skill http_request skips TLS
     # verification (opt-in, for self-signed certs on self-hosted skill APIs).
     # Empty = verify all hosts (secure default). Scoped per-host, never global.
+    skill_http_allow_private: bool = Field(
+        default=False
+    )  # SSRF policy for the agent http_request tool. False (default) blocks
+    # requests that resolve to private/loopback/link-local/metadata addresses —
+    # the tool's URL is LLM-chosen and steerable via prompt injection, so it must
+    # not reach cloud metadata (169.254.169.254) or internal services. Set True
+    # only if skills legitimately call APIs on private IPs.
+    skill_http_allowed_hosts: str = Field(
+        default=""
+    )  # Comma-separated hostnames exempt from the http_request SSRF check
+    # (explicit opt-in for a specific self-hosted skill API on an internal host).
+    web_import_allow_private: bool = Field(
+        default=True
+    )  # SSRF policy for Web Import URLs. Loopback/link-local/metadata are always
+    # blocked; private ranges are allowed by default so intranet crawls keep
+    # working. Set False to also block RFC1918/ULA targets.
     max_skill_tools: int = Field(
         default=10
     )  # Max total skill-provided tools injected into researcher agent
@@ -1089,19 +1105,53 @@ class Settings(BaseSettings):
         if not self.is_production:
             return self
 
+        # Known-weak / placeholder values shipped by the example env files and
+        # earlier releases. A production instance must never run with any of
+        # these — they are publicly known, so they are equivalent to no secret.
+        weak_values = {
+            "", "secret", "password123", "your-pass", "another-pass",
+            "custom-api-keyyy", "your-secure-admin-password",
+            "cortex_admin_your-secure-api-key-here",
+            "your-session-secret-key-at-least-32-characters-long",
+            "default-secret-key-min-32-characters-long",
+        }
+
+        def _is_placeholder(value: str) -> bool:
+            return value in weak_values or value.startswith("CHANGE_ME")
+
         problems: list[str] = []
 
-        if self.neo4j_password in ("", "password123"):
+        if self.neo4j_password in ("", "password123", "another-pass") or (
+            self.neo4j_password and _is_placeholder(self.neo4j_password)
+        ):
             problems.append(
                 "NEO4J_PASSWORD must be set to a strong, non-default value"
             )
 
         # session_secret signs admin JWTs; it is only needed when admin login
         # is enabled, which is the case whenever an admin password is set.
-        if self.admin_password and len(self.session_secret) < 32:
+        if self.admin_password:
+            if len(self.session_secret) < 32:
+                problems.append(
+                    "SESSION_SECRET must be at least 32 characters when "
+                    "ADMIN_PASSWORD is set"
+                )
+            elif _is_placeholder(self.session_secret):
+                problems.append(
+                    "SESSION_SECRET is a known placeholder value; generate a "
+                    "fresh secret (e.g. `openssl rand -hex 32`)"
+                )
+            if _is_placeholder(self.admin_password):
+                problems.append(
+                    "ADMIN_PASSWORD is a known placeholder value; set a strong password"
+                )
+
+        # admin_api_key is the god-mode credential; empty disables it (fail
+        # closed), but a known placeholder value must never ship.
+        if self.admin_api_key and _is_placeholder(self.admin_api_key):
             problems.append(
-                "SESSION_SECRET must be at least 32 characters when "
-                "ADMIN_PASSWORD is set"
+                "ADMIN_API_KEY is a known placeholder value; generate a fresh "
+                "key (e.g. `openssl rand -hex 32`)"
             )
 
         if problems:

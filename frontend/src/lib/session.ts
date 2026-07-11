@@ -10,8 +10,46 @@ export interface SessionPayload {
   expiresAt: Date;
 }
 
-// Get the secret key from environment, encode it for jose
-const secretKey = process.env.SESSION_SECRET || "default-secret-key-min-32-characters-long";
+// Get the secret key from environment, encode it for jose.
+//
+// SESSION_SECRET signs the admin session JWT — if it is guessable, anyone can
+// forge an admin session. In production we refuse to start on a missing, too
+// short, or known-placeholder secret (fail-safe). Development keeps a
+// convenient fallback but warns. A correctly-configured deployment (a strong
+// 32+ char secret) is unaffected.
+const DEV_FALLBACK_SECRET = "default-secret-key-min-32-characters-long";
+const KNOWN_WEAK_SECRETS = new Set([
+  DEV_FALLBACK_SECRET,
+  "secret",
+  "your-session-secret-key-at-least-32-characters-long",
+]);
+
+function resolveSessionSecret(): string {
+  const configured = process.env.SESSION_SECRET;
+  const insecure =
+    !configured ||
+    configured.length < 32 ||
+    KNOWN_WEAK_SECRETS.has(configured) ||
+    configured.startsWith("CHANGE_ME");
+
+  if (insecure) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "SESSION_SECRET is missing, shorter than 32 characters, or a known " +
+          "placeholder. Set a strong SESSION_SECRET (e.g. `openssl rand -hex 32`) " +
+          "before starting Cortex in production."
+      );
+    }
+    console.warn(
+      "[cortex] SESSION_SECRET is unset or weak — using an insecure development " +
+        "fallback. Set a strong SESSION_SECRET before deploying to production."
+    );
+    return configured || DEV_FALLBACK_SECRET;
+  }
+  return configured;
+}
+
+const secretKey = resolveSessionSecret();
 const encodedKey = new TextEncoder().encode(secretKey);
 
 /**

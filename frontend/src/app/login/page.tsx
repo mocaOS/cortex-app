@@ -8,9 +8,19 @@ import { motion } from "framer-motion";
 import Image from "next/image";
 import { Lock, LogIn, Loader2 } from "lucide-react";
 
+// Only allow same-origin, absolute-path redirects. Anything else (absolute URL,
+// protocol-relative "//evil.com", or a non-"/" value) falls back to "/" so the
+// post-login redirect can't be used for open-redirect phishing.
+function safeRedirectTarget(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
+    return "/";
+  }
+  return raw;
+}
+
 function LoginForm() {
   const searchParams = useSearchParams();
-  const from = searchParams.get("from") || "/";
+  const from = safeRedirectTarget(searchParams.get("from"));
   const router = useRouter();
 
   const [state, formAction, isPending] = useActionState<
