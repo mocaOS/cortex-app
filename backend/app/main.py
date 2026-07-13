@@ -3,6 +3,7 @@
 import os
 import logging
 import asyncio
+import threading
 import time
 import uuid
 import shutil
@@ -4205,6 +4206,8 @@ async def merge_entities(request: MergeEntitiesRequest, auth: AuthResult = Depen
         result = await asyncio.to_thread(
             neo4j.merge_entities, request.canonical, request.merge, merged_description
         )
+        # The graph topology changed — cached duplicate-scan results are stale.
+        invalidate_dedup_cache()
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -4241,26 +4244,121 @@ async def get_merge_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Duplicate-entity scan: single-flight job + result cache.
+#
+# The scan is CPU-heavy and can outlast the edge proxy read timeout on large
+# graphs. One scan runs at a time — identical requests join it instead of
+# stacking additional scans — and slow scans surface as 202 + progress for
+# the client to poll while the scan continues in the background.
+# ---------------------------------------------------------------------------
+
+class _DedupScanJob:
+    def __init__(self, key: tuple):
+        self.key = key
+        self.cancel_event = threading.Event()
+        self.progress = 0.0
+        self.task: Optional[asyncio.Task] = None
+
+    def update_progress(self, done: int, total: int):
+        self.progress = done / total if total else 1.0
+
+
+_dedup_scan_job: Optional[_DedupScanJob] = None
+_dedup_scan_cache: Dict[tuple, dict] = {}
+
+
+def invalidate_dedup_cache():
+    _dedup_scan_cache.clear()
+
+
+async def _run_dedup_scan(job: _DedupScanJob, threshold: float, limit: int, collection_filter):
+    global _dedup_scan_job
+    try:
+        neo4j = get_neo4j_service()
+        groups = await asyncio.to_thread(
+            neo4j.suggest_duplicate_entities, threshold, limit, collection_filter,
+            job.cancel_event, job.update_progress,
+        )
+        _dedup_scan_cache[job.key] = {"groups": groups, "completed_at": time.time()}
+        return groups
+    finally:
+        if _dedup_scan_job is job:
+            _dedup_scan_job = None
+
+
 @app.get("/api/entities/duplicates")
 async def suggest_duplicates(
     threshold: float = Query(default=0.75, ge=0.5, le=1.0),
     limit: int = Query(default=100, ge=1, le=500),
+    refresh: bool = Query(default=False),
     auth: AuthResult = Depends(require_read_permission)
 ):
     """Suggest duplicate entity groups for user review.
-    
+
+    Single-flight: one scan runs at a time and identical requests join it.
+    If the scan outlasts DEDUP_SCAN_WAIT_SECONDS the response is
+    202 {"status": "running", "progress": ...} — poll the same URL (without
+    refresh=true) until it returns status "complete". Completed results are
+    cached for DEDUP_SCAN_CACHE_TTL_SECONDS; entity merges invalidate the
+    cache, refresh=true forces a rescan.
+
     For restricted API keys, results are scoped to accessible collections.
     """
+    global _dedup_scan_job
+    settings = get_settings()
+    collection_filter = auth.get_collection_filter()
+    key = (
+        round(threshold, 4),
+        limit,
+        tuple(sorted(collection_filter)) if collection_filter is not None else None,
+    )
+
     try:
-        neo4j = get_neo4j_service()
-        collection_filter = auth.get_collection_filter()
-        groups = await asyncio.wait_for(
-            asyncio.to_thread(neo4j.suggest_duplicate_entities, threshold, limit, collection_filter),
-            timeout=300,  # 5 minute timeout for large graphs
-        )
-        return {"groups": groups, "total_groups": len(groups)}
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Duplicate scan timed out — try a higher similarity threshold to reduce comparisons")
+        if refresh:
+            _dedup_scan_cache.pop(key, None)
+        else:
+            cached = _dedup_scan_cache.get(key)
+            if cached and time.time() - cached["completed_at"] < settings.dedup_scan_cache_ttl_seconds:
+                return {
+                    "status": "complete",
+                    "groups": cached["groups"],
+                    "total_groups": len(cached["groups"]),
+                    "cached": True,
+                }
+
+        job = _dedup_scan_job
+        if job is not None and job.key != key:
+            # A scan with different parameters is running. Never cancel it —
+            # two clients polling with different thresholds would livelock
+            # cancelling each other's scans. Tell this client to poll again;
+            # its scan starts once the running one finishes.
+            return JSONResponse(
+                status_code=202,
+                content={"status": "running", "progress": round(job.progress, 3)},
+            )
+        if job is None:
+            job = _DedupScanJob(key)
+            job.task = asyncio.create_task(_run_dedup_scan(job, threshold, limit, collection_filter))
+            # Retrieve the exception if every waiter timed out before the
+            # scan failed (avoids "Task exception was never retrieved").
+            job.task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
+            _dedup_scan_job = job
+
+        try:
+            groups = await asyncio.wait_for(
+                asyncio.shield(job.task), timeout=settings.dedup_scan_wait_seconds
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                status_code=202,
+                content={"status": "running", "progress": round(job.progress, 3)},
+            )
+        return {"status": "complete", "groups": groups, "total_groups": len(groups)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error suggesting duplicates: {e}")
         raise HTTPException(status_code=500, detail=str(e))

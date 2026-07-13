@@ -1260,13 +1260,36 @@ class ApiClient {
 
   /**
    * Suggest duplicate entity groups for review.
+   *
+   * Resolves only when the scan is complete: large graphs answer
+   * 202 {status: "running"} while the scan continues server-side, and this
+   * polls (without refresh, joining the same scan) until it finishes.
    */
-  async suggestDuplicates(threshold = 0.75, limit = 100): Promise<DuplicateSuggestionsResponse> {
+  async suggestDuplicates(
+    threshold = 0.75,
+    limit = 100,
+    opts: { refresh?: boolean; onProgress?: (progress: number) => void } = {}
+  ): Promise<DuplicateSuggestionsResponse> {
     const params = new URLSearchParams({
       threshold: String(threshold),
       limit: String(limit),
     });
-    return this.request<DuplicateSuggestionsResponse>(`/api/entities/duplicates?${params}`);
+    const pollUrl = `/api/entities/duplicates?${params}`;
+    if (opts.refresh) params.set("refresh", "true");
+
+    let response = await this.request<DuplicateSuggestionsResponse>(
+      `/api/entities/duplicates?${params}`
+    );
+    const deadline = Date.now() + 15 * 60 * 1000;
+    while (response.status === "running") {
+      if (Date.now() > deadline) {
+        throw new Error("Duplicate scan did not finish in time");
+      }
+      opts.onProgress?.(response.progress ?? 0);
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      response = await this.request<DuplicateSuggestionsResponse>(pollUrl);
+    }
+    return response;
   }
 
   /**

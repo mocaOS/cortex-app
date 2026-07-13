@@ -118,9 +118,11 @@ After merging entities:
 
 ## Performance
 
-The dedup scan uses rapidfuzz's `cdist` for batch C-level similarity computation. To avoid saturating the system:
+The dedup scan uses rapidfuzz's `cdist` for batch C-level similarity computation, processed in memory-bounded row blocks (~128 MB per score block) over the upper triangle only — peak memory stays flat no matter how many entities the graph holds. To avoid saturating the system:
 - **CPU usage**: Limited to half of available CPU cores (respects Docker cgroup limits via `sched_getaffinity`)
-- **Timeout**: 5-minute server-side timeout with a 504 response and suggestion to raise the threshold if exceeded
+- **Single-flight**: One scan runs at a time; identical requests join the running scan instead of stacking additional ones
+- **Long scans**: If a scan outlasts `DEDUP_SCAN_WAIT_SECONDS` (default 25s, kept below typical proxy read timeouts) the endpoint answers `202 {"status": "running", "progress": ...}` and the client polls the same URL until it returns `"status": "complete"` — the web UI does this automatically and shows scan progress
+- **Caching**: Completed results are cached server-side for `DEDUP_SCAN_CACHE_TTL_SECONDS` (default 600s) per parameter set; entity merges invalidate the cache, and `refresh=true` forces a rescan
 - **Person entity optimization**: Same-word-count pairs are suppressed via vectorized numpy masking before the sparse Python loop, keeping the O(n²) portion minimal
 
 ## Configuration
@@ -128,6 +130,8 @@ The dedup scan uses rapidfuzz's `cdist` for batch C-level similarity computation
 ```env
 ENABLE_SEMANTIC_ENTITY_RESOLUTION=true   # Automatic during extraction (85% threshold)
 ENTITY_SIMILARITY_THRESHOLD=0.85          # Extraction-time dedup threshold
+DEDUP_SCAN_WAIT_SECONDS=25                # Inline wait before answering 202 + progress
+DEDUP_SCAN_CACHE_TTL_SECONDS=600          # Server-side cache for completed scan results
 ```
 
 The post-extraction dedup scan threshold is controlled per-request via the `threshold` query parameter (default: 0.75).

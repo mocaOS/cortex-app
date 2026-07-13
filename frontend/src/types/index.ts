@@ -596,6 +596,13 @@ export interface DuplicateGroup {
 }
 
 export interface DuplicateSuggestionsResponse {
+  /** "complete" carries groups; "running" (HTTP 202) bodies omit them —
+   *  api.suggestDuplicates polls internally and only resolves when complete. */
+  status?: "complete" | "running";
+  /** Scan progress 0..1, present while status is "running". */
+  progress?: number;
+  /** True when served from the server-side scan cache. */
+  cached?: boolean;
   groups: DuplicateGroup[];
   total_groups: number;
 }

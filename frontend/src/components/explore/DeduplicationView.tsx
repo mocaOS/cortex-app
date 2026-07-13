@@ -327,6 +327,8 @@ export default function DeduplicationView() {
   const focusEntity = searchParams.get("entity");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [loading, setLoading] = useState(false);
+  // 0..1 while a slow server-side scan reports progress, null otherwise
+  const [scanProgress, setScanProgress] = useState<number | null>(null);
   const [scanned, setScanned] = useState(false);
   const [threshold, setThreshold] = useState(0.85);
   const [mergingKey, setMergingKey] = useState<string | null>(null);
@@ -417,7 +419,9 @@ export default function DeduplicationView() {
       setError(null);
       try {
         // Use a lower threshold to find more potential matches
-        const response = await api.suggestDuplicates(0.75);
+        const response = await api.suggestDuplicates(0.75, 100, {
+          onProgress: setScanProgress,
+        });
         const filtered = response.groups.filter((g) => !dismissedKeys.has(getGroupKey(g)));
 
         // Find groups containing the focused entity
@@ -461,6 +465,7 @@ export default function DeduplicationView() {
         setError(err instanceof Error ? err.message : "Failed to scan for duplicates");
       } finally {
         setLoading(false);
+        setScanProgress(null);
       }
     };
 
@@ -489,7 +494,10 @@ export default function DeduplicationView() {
     setCanonicalOverrides({});
     setAddedEntities({});
     try {
-      const response = await api.suggestDuplicates(threshold);
+      const response = await api.suggestDuplicates(threshold, 100, {
+        refresh: true,
+        onProgress: setScanProgress,
+      });
       // Filter out dismissed groups
       const filtered = response.groups.filter((g) => !dismissedKeys.has(getGroupKey(g)));
       setGroups(filtered);
@@ -498,6 +506,7 @@ export default function DeduplicationView() {
       setError(err instanceof Error ? err.message : "Failed to scan for duplicates");
     } finally {
       setLoading(false);
+      setScanProgress(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threshold, dismissedKeys]);
@@ -665,7 +674,13 @@ export default function DeduplicationView() {
           ) : (
             <Search className="w-4 h-4" />
           )}
-          {scanned ? "Re-scan" : "Scan for Duplicates"}
+          {loading
+            ? scanProgress !== null
+              ? `Scanning… ${Math.round(scanProgress * 100)}%`
+              : "Scanning…"
+            : scanned
+              ? "Re-scan"
+              : "Scan for Duplicates"}
         </button>
 
         {scanned && (

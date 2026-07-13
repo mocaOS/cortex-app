@@ -324,6 +324,8 @@ curl "http://localhost:8000/api/entities/duplicates?threshold=0.85&limit=50" \
 
 The `threshold` parameter (0.5 to 1.0) controls how similar entity names must be to be considered duplicates. Lower values return more candidates but may include false positives.
 
+On large graphs the scan can take a while: one scan runs at a time (identical requests join it), and if it outlasts the inline wait window the endpoint answers `202 {"status": "running", "progress": 0.42}` — poll the same URL until it returns `"status": "complete"`. Completed results are cached server-side (entity merges invalidate the cache); pass `refresh=true` to force a fresh scan. The web interface handles this polling automatically and shows scan progress.
+
 ### Merge Entities
 
 Once you have identified true duplicates, merge them into a single canonical entity:

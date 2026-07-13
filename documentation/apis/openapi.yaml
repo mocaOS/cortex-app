@@ -813,6 +813,11 @@ paths:
         Returns groups of entities that are potential duplicates based on name similarity.
         Uses fuzzy string matching to identify entities that likely refer to the same thing
         but were not caught by automatic resolution during extraction.
+        One scan runs at a time (single-flight); identical requests join the running scan.
+        On large graphs the scan may outlast the inline wait window, in which case the
+        response is 202 with a progress fraction — poll the same URL (without refresh)
+        until it returns status "complete". Completed results are cached server-side;
+        entity merges invalidate the cache.
       parameters:
         - name: threshold
           in: query
@@ -828,13 +833,32 @@ paths:
             type: integer
             default: 50
           description: Maximum number of duplicate groups to return
+        - name: refresh
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Bypass the cached result and force a fresh scan
       responses:
         '200':
-          description: Duplicate candidates retrieved
+          description: Duplicate candidates retrieved (status "complete")
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DuplicateCandidates'
+        '202':
+          description: Scan still running — poll the same URL until status is "complete"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [running]
+                  progress:
+                    type: number
+                    description: Scan progress fraction (0 to 1)
 
   /api/entities/merge:
     post:
@@ -3243,6 +3267,13 @@ components:
     DuplicateCandidates:
       type: object
       properties:
+        status:
+          type: string
+          enum: [complete]
+          description: Always "complete" on a 200 response
+        cached:
+          type: boolean
+          description: True when served from the server-side scan cache
         groups:
           type: array
           items:

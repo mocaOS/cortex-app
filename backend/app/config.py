@@ -786,6 +786,18 @@ class Settings(BaseSettings):
     #   Big win on 10k+ entity graphs. Default ON since 2026-07-03; set false
     #   to restore full-scan Levenshtein (recall can differ on extreme typo
     #   variants the fulltext analyzer misses).
+    dedup_scan_wait_seconds: int = Field(
+        default=25
+    )  # How long GET /api/entities/duplicates waits inline for the duplicate
+    #   scan before returning 202 {status: running, progress} for the client
+    #   to poll. Keep just BELOW the edge proxy read timeout (~30s Traefik
+    #   default) so slow scans surface as pollable progress instead of a
+    #   proxy-severed socket. The scan itself continues in the background.
+    dedup_scan_cache_ttl_seconds: int = Field(
+        default=600
+    )  # How long a completed duplicate-scan result is served from cache for
+    #   identical parameters. Entity merges invalidate the cache immediately;
+    #   pass refresh=true to force a rescan.
     enable_batched_kg_writes: bool = Field(
         default=True
     )  # Store entities/links/relationships via UNWIND batches (a handful of

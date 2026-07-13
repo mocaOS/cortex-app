@@ -98,7 +98,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/api/entities/duplicates` | Read | Scan for duplicates. Query: `threshold` (0.5-1.0, default 0.75), `limit` |
+| `GET` | `/api/entities/duplicates` | Read | Scan for duplicates (single-flight; long scans answer `202 {status, progress}` — poll same URL until `complete`). Query: `threshold` (0.5-1.0, default 0.75), `limit`, `refresh` (bypass cached result) |
 | `POST` | `/api/entities/merge` | Manage | Merge entities. Body: `{canonical, merge: []}` |
 | `GET` | `/api/entities/merge-history` | Read | Merge audit trail. Query: `limit` |
 

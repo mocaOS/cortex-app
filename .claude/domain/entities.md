@@ -30,9 +30,12 @@ Entity extraction runs in two surfaces — per-document text extraction (Phase A
 For Person entities, `partial_ratio` is only allowed when the shorter name is a strict word-level prefix of the longer name (e.g., "Colborn" ↔ "Colborn Bell" allowed, "David Young" ↔ "David Hockney" blocked).
 
 ### Performance
+- **Memory-bounded row blocks**: all cdist passes run in row blocks capped at `_DEDUP_BLOCK_BUDGET_BYTES` (128 MB) over the upper triangle only — peak memory stays flat at any entity count (a full n×n float32 matrix OOMed 4 GiB containers at ~20k entities)
 - Same-word-count pairs suppressed via vectorized numpy masking; remaining sparse pairs checked individually
 - CPU limited to half of available cores (`sched_getaffinity` for Docker cgroup awareness)
-- 5-minute server-side timeout on the endpoint
+- Deterministic output: candidate/canonical sorts tie-break on entity name
+- Accepts `cancel_event` (raises `DedupScanCancelled` between blocks) and `progress_cb(done, total)` for the endpoint's job layer
+- Tests: `backend/tests/test_dedup_scan.py` (grouping semantics, block-boundary parity, determinism, cancellation, progress)
 
 ### Clustering
 Uses star clustering (not BFS) to prevent transitive chain explosions. **Single-word Person names excluded as star centers** to prevent hub groups (e.g., "Andrea" pulling all "Andrea X" into one group). Person-type entities sorted with priority.
@@ -50,8 +53,8 @@ Uses star clustering (not BFS) to prevent transitive chain explosions. **Single-
 `MergeHistory` nodes store merge audit trail (entity snapshots, stats). `SystemMeta` tracks `last_entity_merge_at` (also exposed in `GraphStatsResponse`).
 
 ### Endpoints
-- `GET /api/entities/duplicates` (5-min timeout, 504 on expiry)
-- `POST /api/entities/merge`
+- `GET /api/entities/duplicates` — single-flight scan job: one scan runs at a time, identical requests join it. Waits `DEDUP_SCAN_WAIT_SECONDS` (default 25s, below the ~30s Traefik read timeout) then answers `202 {status: running, progress}`; clients poll the same URL (frontend `api.suggestDuplicates` polls internally). Completed results cached `DEDUP_SCAN_CACHE_TTL_SECONDS` (600s) per (threshold, limit, collection-scope); merges invalidate, `refresh=true` forces rescan. A scan with different params supersedes the running one via its cancel_event.
+- `POST /api/entities/merge` (invalidates the dedup scan cache)
 - `GET /api/entities/merge-history`
 
 ### Frontend (Deduplicate Page)

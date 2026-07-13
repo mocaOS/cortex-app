@@ -7,31 +7,68 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
-## July 13, 2026 (Ingestion injection scan is now experimental & opt-in)
+## July 13, 2026 (Entity deduplication rebuilt for production-scale graphs)
+
+The duplicate-entity scan behind **Manage → Deduplicate** was the least
+reliable surface on large graphs: requests timed out at the proxy while the
+server kept computing, every retry stacked another CPU-heavy scan on top, and
+on graphs beyond roughly 20k entities the scan could exhaust the container's
+memory and crash outright. The scan has been rebuilt end to end.
+
+### Memory-bounded, faster matching
+
+- The similarity computation no longer materializes full n×n score matrices
+  (4 GB at 32k entities — an instant out-of-memory in a standard 4 GiB
+  container). Matching now runs in fixed-size row blocks (~128 MB peak) over
+  the upper triangle only, so **peak memory stays flat no matter how many
+  entities the graph holds** and redundant pair comparisons are halved. A
+  40k-entity graph scans in ~35 seconds well within a 4 GiB container.
+- Scan results are now fully deterministic: repeated scans over an unchanged
+  graph return identical groups and canonical suggestions.
+- Grouping semantics are unchanged (typo matching, word reordering,
+  Person-aware name-prefix gating, star clustering) and locked by a new
+  parity test suite.
+
+### No more proxy timeouts: single-flight scan with progress
+
+- One scan runs at a time; identical requests **join the running scan**
+  instead of stacking new ones — a stampede of retries can no longer saturate
+  the CPU.
+- If a scan outlasts `DEDUP_SCAN_WAIT_SECONDS` (default 25s, deliberately
+  below typical proxy read timeouts), `GET /api/entities/duplicates` answers
+  `202 {"status": "running", "progress": 0.42}` and the client polls the same
+  URL until it returns `"status": "complete"`. The web UI does this
+  automatically and shows live progress on the scan button.
+- Completed results are **cached server-side** for
+  `DEDUP_SCAN_CACHE_TTL_SECONDS` (default 600s) per parameter set — reopening
+  the page is instant. Entity merges invalidate the cache; `refresh=true`
+  forces a fresh scan.
+
+### Ingestion injection scan is now experimental & opt-in
 
 The ingestion-time prompt-injection scan is reclassified as **experimental**
-and is now **disabled by default**. On a default instance the feature is
-completely absent: no scan runs at ingestion (not even the free heuristic),
-the toggle no longer appears under Admin → System Configuration → Features &
-Security, and the "Injection Flagged" document filter is only offered when at
-least one document is actually flagged.
+and **disabled by default**. On a default instance the feature is completely
+absent: no scan runs at ingestion (not even the free heuristic), the toggle no
+longer appears under Admin → System Configuration → Features & Security, and
+the "Injection Flagged" document filter is only offered when at least one
+document is actually flagged.
 
 - **New env var** `ENABLE_INGESTION_INJECTION_SCAN` (default `false`) — the
   master flag that activates the feature. Once set, behavior is unchanged from
   before: heuristic + optional LLM classifier, flag-only (never blocks), with
   the classifier admin-toggleable at runtime via the existing
-  `INGESTION_INJECTION_SCAN` default.
-- With the master flag off, `PATCH /api/admin/config` rejects the
-  `ingestion_injection_scan` field with 400, and `GET /api/admin/config`
-  reports `enable_ingestion_injection_scan: false` plus an effective
-  `ingestion_injection_scan: false`.
+  `INGESTION_INJECTION_SCAN` default. With the master flag off,
+  `PATCH /api/admin/config` rejects the `ingestion_injection_scan` field
+  with 400.
 - Query-time defenses (regex detection, Prompt Guard, output filtering, and
   untrusted-content fencing of retrieved chunks) are unaffected and remain on
   by default.
 
 ---
 
-## July 11, 2026 (Security hardening pass)
+## July 11, 2026 (Security hardening pass & restart-proof Generate Graph chain)
+
+### Security hardening pass
 
 A round of defense-in-depth tightenings across configuration defaults, outbound
 requests, and access scoping. Correctly-configured deployments are unaffected;
@@ -69,9 +106,7 @@ API changes.
   headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`,
   `Permissions-Policy`).
 
----
-
-## July 11, 2026 (Generate Graph chain survives restarts)
+### Generate Graph chain survives restarts
 
 - **Fixed: a server restart or redeploy mid-run no longer strands the Generate
   Graph pipeline after Step 1.** The 3-step chain (extraction → relationship

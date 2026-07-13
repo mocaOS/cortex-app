@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 # @retry_on_transient below.
 _TRANSIENT_ERRORS = (ServiceUnavailable, SessionExpired, TransientError)
 
+# Duplicate-scan score blocks are capped at this many bytes so peak memory stays
+# flat regardless of entity count (a full n×n float32 matrix at 32k entities is
+# 4 GB — an instant OOM inside the default container limits).
+_DEDUP_BLOCK_BUDGET_BYTES = 128 * 1024 * 1024
+
+
+class DedupScanCancelled(Exception):
+    """Raised inside suggest_duplicate_entities when its cancel_event is set."""
+
 
 def retry_on_transient(fn):
     """Retry an idempotent Neo4jService method on transient driver errors.
@@ -3260,13 +3269,17 @@ class Neo4jService:
         self,
         threshold: float = 0.75,
         limit: int = 100,
-        allowed_collection_ids: Optional[List[str]] = None
+        allowed_collection_ids: Optional[List[str]] = None,
+        cancel_event=None,
+        progress_cb=None,
     ) -> List[dict]:
         """
         Find candidate duplicate entities using multiple similarity strategies.
 
-        Uses rapidfuzz's cdist for batch C-level comparison (handles 7000+ entities
-        efficiently vs the O(n²) Python loop).
+        Similarity is computed with rapidfuzz cdist in row blocks capped at
+        _DEDUP_BLOCK_BUDGET_BYTES, over the upper triangle only — peak memory
+        stays flat no matter how many entities exist (a full n×n matrix OOMs
+        small containers at ~20k entities).
 
         Strategies:
         - ratio: catches typos ("Colborn" vs "Colbornne")
@@ -3280,6 +3293,10 @@ class Neo4jService:
         Uses star clustering instead of BFS to prevent transitive chain explosions:
         each group is centered on one canonical entity, and only entities directly
         similar to it are included.
+
+        cancel_event (threading.Event) is checked between blocks and raises
+        DedupScanCancelled when set; progress_cb(done_blocks, total_blocks) is
+        called from the worker thread after each block.
 
         Returns grouped candidates with suggested canonical (most connected entity).
         """
@@ -3346,88 +3363,127 @@ class Neo4jService:
             available = os.cpu_count() or 2
         half_cores = max(1, available // 2)
 
-        # Batch compute similarity matrices in C (much faster than Python pairwise loop)
-        best_matrix = cdist(names_lower, names_lower, scorer=fuzz.ratio,
-                            score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
-        token_sort_matrix = cdist(names_lower, names_lower, scorer=fuzz.token_sort_ratio,
-                                  score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
-        np.maximum(best_matrix, token_sort_matrix, out=best_matrix)
-        del token_sort_matrix
+        # Row-block size that keeps a single score block under the memory budget.
+        block_rows = max(256, min(8192, _DEDUP_BLOCK_BUDGET_BYTES // max(1, n * 4)))
 
-        # partial_ratio: only within same-type groups with length ratio gating
+        def _row_blocks(total_rows):
+            for r0 in range(0, total_rows, block_rows):
+                yield r0, min(r0 + block_rows, total_rows)
+
         type_groups = {}
         for idx, t in enumerate(types):
             if t:
                 type_groups.setdefault(t, []).append(idx)
 
+        def _count_blocks(total_rows):
+            return (max(0, total_rows) + block_rows - 1) // block_rows
+
+        total_blocks = _count_blocks(n - 1) + sum(
+            _count_blocks(len(indices) - 1)
+            for indices in type_groups.values() if len(indices) >= 2
+        )
+        done_blocks = 0
+
+        def _tick():
+            nonlocal done_blocks
+            done_blocks += 1
+            if progress_cb:
+                progress_cb(done_blocks, total_blocks)
+
+        def _check_cancelled():
+            if cancel_event is not None and cancel_event.is_set():
+                raise DedupScanCancelled()
+
+        # Sparse upper-triangle pair scores: (i, j) with i < j -> best 0-100 score
+        pair_scores = {}
+
+        def _record(i, j, score):
+            if j < i:
+                i, j = j, i
+            key = (i, j)
+            if score > pair_scores.get(key, 0.0):
+                pair_scores[key] = score
+
+        # Main pass: ratio + token_sort_ratio over the upper triangle in row
+        # blocks. Each block compares rows [r0:r1) against columns > r0 only.
+        for r0, r1 in _row_blocks(n - 1):
+            _check_cancelled()
+            queries = names_lower[r0:r1]
+            choices = names_lower[r0 + 1:]
+            scores = cdist(queries, choices, scorer=fuzz.ratio,
+                           score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
+            token_sort = cdist(queries, choices, scorer=fuzz.token_sort_ratio,
+                               score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
+            np.maximum(scores, token_sort, out=scores)
+            del token_sort
+            for bi, cj in zip(*np.nonzero(scores)):
+                i = r0 + int(bi)
+                j = r0 + 1 + int(cj)
+                if j > i:
+                    _record(i, j, float(scores[bi, cj]))
+            del scores
+            _tick()
+
+        # partial_ratio: only within same-type groups with length ratio gating
         for entity_type, indices in type_groups.items():
             if len(indices) < 2:
                 continue
 
             group_names = [names_lower[i] for i in indices]
-            partial_scores = cdist(group_names, group_names, scorer=fuzz.partial_ratio,
-                                   score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
-
-            # Length ratio gating
+            group_lens = np.array([len(x) for x in group_names], dtype=np.float32)
             min_len_ratio = 0.35 if entity_type == 'Person' else 0.5
-            group_lens = np.array([len(names_lower[i]) for i in indices], dtype=np.float32)
-            len_min = np.minimum.outer(group_lens, group_lens)
-            len_max = np.maximum.outer(group_lens, group_lens)
-            len_ratios = np.divide(len_min, len_max, out=np.zeros_like(len_min), where=len_max > 0)
-            partial_scores[len_ratios < min_len_ratio] = 0
-
-            # For Person entities: only allow partial_ratio when the shorter
-            # name is a word-level prefix of the longer name.
-            # This keeps "Colborn" ↔ "Colborn Bell" (legitimate short→full name)
-            # while blocking "Andy" ↔ "Andreas Gysin" or "David Young" ↔ "David Hockney"
-            # (shared first name, different people).
-            if entity_type == 'Person':
-                # Build a mask: only keep partial_ratio for pairs where
-                # the shorter name is a strict word-prefix of the longer.
-                # Vectorized: suppress when both have same word count (covers
-                # most false positives), then only check the remaining sparse
-                # pairs with different word counts.
-                group_norm = [names_lower[i].replace('-', ' ').split() for i in indices]
+            is_person = entity_type == 'Person'
+            if is_person:
+                group_norm = [x.replace('-', ' ').split() for x in group_names]
                 word_counts = np.array([len(w) for w in group_norm], dtype=np.int32)
 
-                # Same word count → never a prefix → suppress partial_ratio
-                wc_eq = np.equal.outer(word_counts, word_counts)
-                partial_scores[wc_eq] = 0
+            m = len(indices)
+            for r0, r1 in _row_blocks(m - 1):
+                _check_cancelled()
+                queries = group_names[r0:r1]
+                choices = group_names[r0 + 1:]
+                partial = cdist(queries, choices, scorer=fuzz.partial_ratio,
+                                score_cutoff=score_cutoff, dtype=np.float32, workers=half_cores)
 
-                # For remaining nonzero pairs (different word counts), check
-                # if shorter name's words match the start of longer name's words.
-                # This is sparse — most pairs are already zeroed above.
-                gi_arr, gj_arr = np.where(np.triu(partial_scores, k=1) > 0)
-                for idx in range(len(gi_arr)):
-                    gi, gj = int(gi_arr[idx]), int(gj_arr[idx])
-                    words_a, words_b = group_norm[gi], group_norm[gj]
-                    short_w, long_w = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
-                    is_prefix = True
-                    for k, sw in enumerate(short_w):
-                        if k < len(long_w) and fuzz.ratio(sw, long_w[k]) >= 80:
+                # Length ratio gating
+                len_min = np.minimum.outer(group_lens[r0:r1], group_lens[r0 + 1:])
+                len_max = np.maximum.outer(group_lens[r0:r1], group_lens[r0 + 1:])
+                len_ratios = np.divide(len_min, len_max, out=np.zeros_like(len_min), where=len_max > 0)
+                partial[len_ratios < min_len_ratio] = 0
+
+                if is_person:
+                    # Same word count → never a prefix → suppress partial_ratio
+                    partial[np.equal.outer(word_counts[r0:r1], word_counts[r0 + 1:])] = 0
+
+                for bi, cj in zip(*np.nonzero(partial)):
+                    gi = r0 + int(bi)
+                    gj = r0 + 1 + int(cj)
+                    if gj <= gi:
+                        continue
+                    if is_person:
+                        # Only allow partial_ratio when the shorter name is a
+                        # word-level prefix of the longer name. This keeps
+                        # "Colborn" ↔ "Colborn Bell" (legitimate short→full name)
+                        # while blocking "Andy" ↔ "Andreas Gysin" or
+                        # "David Young" ↔ "David Hockney" (shared first name,
+                        # different people).
+                        words_a, words_b = group_norm[gi], group_norm[gj]
+                        short_w, long_w = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
+                        is_prefix = all(
+                            k < len(long_w) and fuzz.ratio(sw, long_w[k]) >= 80
+                            for k, sw in enumerate(short_w)
+                        )
+                        if not is_prefix:
                             continue
-                        is_prefix = False
-                        break
-                    if not is_prefix:
-                        partial_scores[gi, gj] = 0
-                        partial_scores[gj, gi] = 0
-
-            # Merge improvements into best_matrix via numpy indexing
-            idx_arr = np.array(indices)
-            current = best_matrix[np.ix_(idx_arr, idx_arr)]
-            best_matrix[np.ix_(idx_arr, idx_arr)] = np.maximum(current, partial_scores)
-
-        # Extract matching pairs from upper triangle
-        upper = np.triu(best_matrix, k=1)
-        del best_matrix
-        rows, cols = np.where(upper > 0)
+                    _record(indices[gi], indices[gj], float(partial[bi, cj]))
+                del partial
+                _tick()
 
         name_lens = [len(nl) for nl in names_lower]
         direct_matches = {}
 
-        for idx in range(len(rows)):
-            i, j = int(rows[idx]), int(cols[idx])
-            score = float(upper[i, j]) / 100.0
+        for (i, j), score100 in pair_scores.items():
+            score = score100 / 100.0
 
             len_a, len_b = name_lens[i], name_lens[j]
 
@@ -3446,8 +3502,6 @@ class Neo4jService:
                 direct_matches.setdefault(a_name, []).append((b_name, score))
                 direct_matches.setdefault(b_name, []).append((a_name, score))
 
-        del upper
-
         if not direct_matches:
             return []
 
@@ -3458,15 +3512,16 @@ class Neo4jService:
         groups = []
 
         # Sort candidates: entities with the most direct matches first,
-        # then by connectivity (relationships + mentions) as tiebreaker
+        # then by connectivity (relationships + mentions), then name so
+        # ties break deterministically instead of by pair-insertion order
         candidates = sorted(
             direct_matches.keys(),
             key=lambda name: (
-                len(direct_matches[name]),
-                entity_info[name]['relationship_count'],
-                entity_info[name]['mention_count'],
+                -len(direct_matches[name]),
+                -entity_info[name]['relationship_count'],
+                -entity_info[name]['mention_count'],
+                name,
             ),
-            reverse=True,
         )
 
         # Identify single-word Person names — these must not be star centers
@@ -3503,8 +3558,7 @@ class Neo4jService:
 
             # Pick the most connected entity as the actual canonical
             group_entities.sort(
-                key=lambda e: (e['relationship_count'], e['mention_count']),
-                reverse=True,
+                key=lambda e: (-e['relationship_count'], -e['mention_count'], e['name']),
             )
             canonical = group_entities[0]['name']
 

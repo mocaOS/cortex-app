@@ -200,6 +200,8 @@ All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 ret
 
 - `ENABLE_GRAPH_EXTRACTION`, `ENABLE_COMMUNITY_DETECTION`, `ENABLE_AGENTIC_RAG` — feature flags
 - `ENABLE_SEMANTIC_ENTITY_RESOLUTION` (default: true) — use embedding-based vector similarity for entity dedup during storage (catches semantic matches like "Museum of Crypto Art" / "MOCA" that Levenshtein misses; falls back to Levenshtein)
+- `DEDUP_SCAN_WAIT_SECONDS` (default: 25) — how long `GET /api/entities/duplicates` waits inline before answering `202 {status: running, progress}` for the client to poll (the scan continues server-side, single-flight). Keep just **below** the edge proxy read timeout (~30s Traefik default), same rule as `ASK_DEADLINE_SECONDS`.
+- `DEDUP_SCAN_CACHE_TTL_SECONDS` (default: 600) — server-side cache lifetime for completed duplicate-scan results per (threshold, limit, collection-scope). Entity merges invalidate immediately; `refresh=true` forces a rescan.
 - `ENABLE_AGENT_RESEARCH` (default: true), `ENABLE_AGENT_CHAT` (default: true) — agent-based research pipeline flags
 - `ENABLE_BATCHED_QUERY_EXTRACTION` (default: true) — in `_execute_knowledge_search`, collapse a `knowledge_search`'s up-to-3 queries into ONE batched entity-extraction LLM call + ONE batched embedding call (instead of one each per query). Off → legacy per-query path (still extraction-tier). Query-side entity extraction always runs on the extraction tier (`GRAPH_EXTRACTION_MODEL` + minimized reasoning), not the primary model.
 - `PROMPT_SECURITY` (default: true) — master flag for prompt-injection defenses (input detection, output filtering, untrusted-content delimiting).
