@@ -61,6 +61,7 @@ def _isolate_env(tmp_path, monkeypatch):
         "vision_model": getattr(settings, "vision_model", ""),
         "admin_api_key": settings.admin_api_key,
         "enable_skills": settings.enable_skills,
+        "enable_ingestion_injection_scan": settings.enable_ingestion_injection_scan,
         "track_admin_api_key_usage": settings.track_admin_api_key_usage,
         "api_key_cache_ttl_seconds": settings.api_key_cache_ttl_seconds,
     }
@@ -82,6 +83,9 @@ def _isolate_env(tmp_path, monkeypatch):
         settings.vision_model = ""
     settings.admin_api_key = "test-admin-key"
     settings.enable_skills = False
+    # Experimental feature — pin to the shipped default (off) so tests opt in
+    # explicitly.
+    settings.enable_ingestion_injection_scan = False
     settings.track_admin_api_key_usage = False
     settings.api_key_cache_ttl_seconds = 30
 

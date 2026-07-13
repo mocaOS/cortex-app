@@ -877,11 +877,17 @@ class Settings(BaseSettings):
         default=True
     )  # Enable prompt injection detection and protection
 
-    # Ingestion-time prompt-injection scan: flag (never block) documents whose
-    # content carries injection attempts planted for a downstream AI assistant.
-    # The free heuristic always runs; this flag is the DEFAULT for the extra LLM
-    # classifier and is admin-overridable at runtime (SystemMeta key
-    # "ingestion_injection_scan"). Disable to save queries.
+    # EXPERIMENTAL — Ingestion-time prompt-injection scan: flag (never block)
+    # documents whose content carries injection attempts planted for a
+    # downstream AI assistant. Off by default and completely absent when off:
+    # no scan runs (not even the free heuristic) and the admin UI hides the
+    # toggle. Set ENABLE_INGESTION_INJECTION_SCAN=true to activate the feature.
+    enable_ingestion_injection_scan: bool = Field(default=False)
+
+    # DEFAULT for the scan's extra LLM classifier layer once the feature is
+    # enabled; admin-overridable at runtime (SystemMeta key
+    # "ingestion_injection_scan"). Disable to save queries (heuristic-only).
+    # Inert while ENABLE_INGESTION_INJECTION_SCAN is false.
     ingestion_injection_scan: bool = Field(default=True)
 
     # Query-time prompt-guard gate: run the user's question through the shared

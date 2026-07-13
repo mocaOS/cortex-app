@@ -758,6 +758,9 @@ export interface SystemConfig {
 
   // Security
   prompt_security: boolean;
+  // Experimental master flag (ENABLE_INGESTION_INJECTION_SCAN); false = the
+  // ingestion scan feature is absent and its toggle is hidden.
+  enable_ingestion_injection_scan: boolean;
   ingestion_injection_scan: boolean;
   prompt_guard: boolean;
 

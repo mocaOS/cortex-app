@@ -1781,33 +1781,36 @@ class DocumentProcessor:
             self._check_cancellation(doc_id)
 
             # =================================================================
-            # Prompt-injection scan (flag-only; never blocks ingestion)
+            # Prompt-injection scan (EXPERIMENTAL; flag-only; never blocks)
             # =================================================================
-            # Free heuristic always runs; the LLM classifier runs only when the
+            # Gated behind ENABLE_INGESTION_INJECTION_SCAN (default off) — when
+            # off nothing runs, not even the free heuristic. When on, the
+            # heuristic always runs and the LLM classifier runs only when the
             # runtime toggle is on (env default overridable via SystemMeta).
             # Fully guarded so a scanner failure never fails ingestion.
-            try:
-                _llm_scan_enabled = await asyncio.to_thread(
-                    self.neo4j.get_runtime_setting,
-                    "ingestion_injection_scan",
-                    self.settings.ingestion_injection_scan,
-                )
-                _scan = await scan_document(
-                    md_text, llm_enabled=_llm_scan_enabled, settings=self.settings
-                )
-                await asyncio.to_thread(
-                    self.neo4j.set_document_injection_flag,
-                    doc_id, _scan.flagged, _scan.reason or "",
-                )
-                if _scan.flagged:
-                    logger.warning(
-                        "Ingestion injection scan flagged document %s via %s: %s",
-                        doc_id, _scan.method, _scan.reason,
+            if self.settings.enable_ingestion_injection_scan:
+                try:
+                    _llm_scan_enabled = await asyncio.to_thread(
+                        self.neo4j.get_runtime_setting,
+                        "ingestion_injection_scan",
+                        self.settings.ingestion_injection_scan,
                     )
-            except Exception as _scan_err:
-                logger.warning(
-                    "Injection scan skipped for document %s: %s", doc_id, _scan_err
-                )
+                    _scan = await scan_document(
+                        md_text, llm_enabled=_llm_scan_enabled, settings=self.settings
+                    )
+                    await asyncio.to_thread(
+                        self.neo4j.set_document_injection_flag,
+                        doc_id, _scan.flagged, _scan.reason or "",
+                    )
+                    if _scan.flagged:
+                        logger.warning(
+                            "Ingestion injection scan flagged document %s via %s: %s",
+                            doc_id, _scan.method, _scan.reason,
+                        )
+                except Exception as _scan_err:
+                    logger.warning(
+                        "Injection scan skipped for document %s: %s", doc_id, _scan_err
+                    )
 
             # =================================================================
             # Image Extraction and Analysis (runs in background)

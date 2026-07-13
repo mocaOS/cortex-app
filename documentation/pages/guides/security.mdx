@@ -26,7 +26,7 @@ flowchart TD
     E --> F["🧹 Streaming output filter"]
     F --> G["✅ Safe response"]
 
-    I["📄 Ingested document"] --> S["🚩 Ingestion-time scan<br/>(flag, never block)"]
+    I["📄 Ingested document"] --> S["🚩 Ingestion-time scan<br/>(experimental, opt-in;<br/>flag, never block)"]
     S --> W["🔒 Fenced as untrusted<br/>at query time"]
     W --> E
 `} />
@@ -47,9 +47,12 @@ The defenses fall into five layers:
    results are wrapped in data-boundary markers and the model is instructed to
    treat everything inside as data, not instructions (defense against
    *second-order* injection carried by your own documents).
-5. **Ingestion-time scan** — every ingested document is scanned once for planted
-   injection instructions and **flagged (never blocked)**, surfaced as an
-   "Injection Flagged" badge in the document list.
+5. **Ingestion-time scan** (*experimental, off by default*) — when enabled via
+   `ENABLE_INGESTION_INJECTION_SCAN=true`, every ingested document is scanned
+   once for planted injection instructions and **flagged (never blocked)**,
+   surfaced as an "Injection Flagged" badge in the document list. When the flag
+   is off (the default), the feature is completely absent — no scan runs and no
+   related setting appears in the admin UI.
 
 ### Prompt Guard (query-time classifier)
 
@@ -82,8 +85,9 @@ PROMPT_GUARD_LOCAL=false     # no helper? load the classifier in-process (dev / 
 PROMPT_GUARD=true            # runtime-toggle default (admin-overridable)
 PROMPT_GUARD_THRESHOLD=0.5   # injection-class probability cutoff (lower = stricter)
 
-# Ingestion-time document scan (flag, never block); admin-toggleable at runtime
-INGESTION_INJECTION_SCAN=true
+# EXPERIMENTAL: ingestion-time document scan (flag, never block). Off and hidden by default.
+ENABLE_INGESTION_INJECTION_SCAN=false
+INGESTION_INJECTION_SCAN=true   # LLM-classifier default once enabled; admin-toggleable at runtime
 ```
 
 ### What It Protects Against
@@ -93,8 +97,8 @@ INGESTION_INJECTION_SCAN=true
 - **System prompt extraction** - Trying to reveal system prompts
 - **Role manipulation** - Pretending to be a different entity
 - **Second-order (indirect) injection** - Instructions planted inside ingested
-  documents or fetched web/tool content (mitigated by fencing + the ingestion
-  scan, not eliminated)
+  documents or fetched web/tool content (mitigated by fencing — plus the
+  experimental ingestion scan where enabled — not eliminated)
 
 ### Safe Refusal
 
@@ -196,7 +200,8 @@ Validation includes:
 - File size limits (enforced mid-stream — oversized uploads are rejected
   before they are ever fully buffered)
 - Allowed file types (PDF, TXT, MD, DOCX)
-- Ingestion-time prompt-injection scan (content is flagged, never blocked)
+- Ingestion-time prompt-injection scan (experimental, opt-in via
+  `ENABLE_INGESTION_INJECTION_SCAN=true`; content is flagged, never blocked)
 
 ### Query Limits
 

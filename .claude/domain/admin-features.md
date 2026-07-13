@@ -22,9 +22,12 @@ effect without a restart.
   `ConfigItem`) in the Features & Security section (`app/admin/page.tsx`,
   `api.updateRuntimeSettings`); optimistic update, reverts on error.
 - **Settings**:
-  - `ingestion_injection_scan` — toggles the ingestion-time prompt-injection
-    scan's LLM classifier (see [`document-pipeline.md`](document-pipeline.md)).
-    Applies to subsequent ingestions.
+  - `ingestion_injection_scan` — toggles the **experimental** ingestion-time
+    prompt-injection scan's LLM classifier (see
+    [`document-pipeline.md`](document-pipeline.md)). Applies to subsequent
+    ingestions. Only available when `ENABLE_INGESTION_INJECTION_SCAN=true`
+    (default false): otherwise the toggle is hidden in the UI and the PATCH
+    rejects the field with 400.
   - `prompt_guard` — toggles the query-time prompt-guard classifier gate (see
     [`../../handbook/05-security.md`](../../handbook/05-security.md)). Only takes
     effect when a guard backend is configured — `PROMPT_GUARD_SERVICE_URL` (shared

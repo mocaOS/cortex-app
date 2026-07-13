@@ -1021,7 +1021,7 @@ class RuntimeSettingsUpdate(BaseModel):
     restart). All fields optional — only provided fields are updated."""
     ingestion_injection_scan: Optional[bool] = Field(
         default=None,
-        description="Enable/disable the LLM prompt-injection scan on ingested documents",
+        description="Enable/disable the LLM prompt-injection scan on ingested documents (experimental — rejected unless ENABLE_INGESTION_INJECTION_SCAN=true)",
     )
     prompt_guard: Optional[bool] = Field(
         default=None,
@@ -1124,7 +1124,8 @@ class SystemConfigResponse(BaseModel):
     
     # Security
     prompt_security: bool = Field(..., description="Whether prompt security is enabled")
-    ingestion_injection_scan: bool = Field(default=True, description="Whether ingested documents are scanned for prompt-injection (effective value: env default overlaid with the runtime admin override)")
+    enable_ingestion_injection_scan: bool = Field(default=False, description="Whether the experimental ingestion-time prompt-injection scan feature is available at all (ENABLE_INGESTION_INJECTION_SCAN). False = feature fully absent: no scan runs and the admin toggle is hidden")
+    ingestion_injection_scan: bool = Field(default=False, description="Whether ingested documents are scanned with the LLM classifier (effective value: env default overlaid with the runtime admin override). Always false while the experimental feature flag is off")
     prompt_guard: bool = Field(default=True, description="Whether the query-time prompt-guard classifier gate is enabled (effective value: env default overlaid with the runtime admin override). Only active when a prompt-guard service URL is configured.")
 
     # Privacy — LLM observability content handling. Lets an admin verify the

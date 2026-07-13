@@ -1,4 +1,8 @@
-"""Ingestion-time prompt-injection scanning.
+"""Ingestion-time prompt-injection scanning (EXPERIMENTAL).
+
+The whole feature is gated behind ENABLE_INGESTION_INJECTION_SCAN (default
+off) — the pipeline only calls into this module when that flag is set; on a
+default instance nothing here runs.
 
 Flags (never blocks) documents whose *content* carries prompt-injection
 attempts planted for a downstream AI assistant. Two layers:

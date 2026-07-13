@@ -772,13 +772,16 @@ export default function AdminPage() {
                     <ConfigItem label="Stream Reasoning Steps" value={config.stream_reasoning_steps} type="boolean" />
                     <ConfigItem label="Show Retrieval Stats" value={config.show_retrieval_stats} type="boolean" />
                     <ConfigItem label="Prompt Security" value={config.prompt_security} type="boolean" />
-                    <ConfigToggle
-                      label="Ingestion Injection Scan"
-                      value={config.ingestion_injection_scan}
-                      pending={scanToggling}
-                      onToggle={handleToggleInjectionScan}
-                      tooltip="Scans each newly ingested document for planted prompt-injection instructions and flags (never blocks) matches. A free heuristic always runs; when enabled, an additional LLM classifier scans the text (~1 processing query per document). Disable to save queries."
-                    />
+                    {/* Experimental — only rendered when ENABLE_INGESTION_INJECTION_SCAN is set */}
+                    {config.enable_ingestion_injection_scan && (
+                      <ConfigToggle
+                        label="Ingestion Injection Scan (Experimental)"
+                        value={config.ingestion_injection_scan}
+                        pending={scanToggling}
+                        onToggle={handleToggleInjectionScan}
+                        tooltip="Experimental. Scans each newly ingested document for planted prompt-injection instructions and flags (never blocks) matches. A free heuristic always runs; when enabled, an additional LLM classifier scans the text (~1 processing query per document). Disable to save queries."
+                      />
+                    )}
                     <ConfigToggle
                       label="Prompt Guard"
                       value={config.prompt_guard}

@@ -1414,7 +1414,9 @@ paths:
         Update admin-editable runtime settings. Overrides are persisted (over the
         env defaults) and take effect immediately for new work without a restart.
         Only provided fields are changed. Returns the full, updated system
-        configuration. Admin-only.
+        configuration. Admin-only. The experimental ingestion_injection_scan
+        field is rejected with 400 unless ENABLE_INGESTION_INJECTION_SCAN=true
+        is set on the instance.
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -3478,7 +3480,7 @@ components:
         ingestion_injection_scan:
           type: boolean
           nullable: true
-          description: Enable/disable the LLM prompt-injection scan on ingested documents
+          description: Enable/disable the LLM prompt-injection scan on ingested documents (experimental — rejected with 400 unless the instance sets ENABLE_INGESTION_INJECTION_SCAN=true)
         prompt_guard:
           type: boolean
           nullable: true

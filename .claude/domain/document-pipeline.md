@@ -156,7 +156,14 @@ query (`get_document_fingerprint`) also returns both signals. Otherwise a
 degraded doc's reprocess would be no-op'd as "Content unchanged".
 Tests: `backend/tests/test_degraded_documents.py`.
 
-### Ingestion prompt-injection scan
+### Ingestion prompt-injection scan (EXPERIMENTAL, off by default)
+
+The whole feature is gated behind `ENABLE_INGESTION_INJECTION_SCAN`
+(default **false**). While off, the feature is completely absent: the scan
+block in `_process_document` is skipped (not even the free heuristic runs),
+the admin toggle is hidden (`enable_ingestion_injection_scan=false` in
+`SystemConfigResponse`), and `PATCH /api/admin/config` rejects the runtime
+toggle with 400. Everything below applies only when the flag is set.
 
 After the full text is available in `_process_document` (post-convert,
 pre-chunk) the document is scanned once for planted prompt-injection instructions
@@ -185,18 +192,23 @@ scanner failure never fails ingestion). Two layers:
   content that *contains* an injection from content that *discusses* it.
 
 Result is **flag-only** (never blocks): `set_document_injection_flag` persists
-`Document.injection_flagged`/`injection_reason` (always written, so a clean
-reprocess clears a stale flag). `get_all_documents`/`get_document` return both,
-surfaced as an "Injection Flagged" badge/filter in the document UI.
+`Document.injection_flagged`/`injection_reason` (always written while the
+feature is on, so a clean reprocess clears a stale flag; with the feature off
+existing flags are left untouched). `get_all_documents`/`get_document` return
+both, surfaced as an "Injection Flagged" badge/filter in the document UI —
+the filter option only renders when at least one document is flagged, so a
+default (disabled) instance never shows it.
 
 **Runtime toggle** (first runtime-editable setting): effective value =
 `INGESTION_INJECTION_SCAN` env default overlaid with the `SystemMeta`
-override read via `neo4j.get_runtime_setting("ingestion_injection_scan", ...)`.
-Admin flips it through `PATCH /api/admin/config` (Admin → Features & Security);
-takes effect for subsequent ingestions without a restart. Off = heuristic only
-(zero queries). Tests: `backend/tests/test_injection_scanner.py`,
-`test_runtime_settings.py`. See `.claude/domain/admin-features.md` (runtime
-settings) and `handbook/05-security.md`.
+override read via `neo4j.get_runtime_setting("ingestion_injection_scan", ...)`;
+forced to false while `ENABLE_INGESTION_INJECTION_SCAN` is off. Admin flips it
+through `PATCH /api/admin/config` (Admin → Features & Security — the toggle
+only renders when the experimental flag is on); takes effect for subsequent
+ingestions without a restart. Off = heuristic only (zero queries). Tests:
+`backend/tests/test_injection_scanner.py`, `test_runtime_settings.py`. See
+`.claude/domain/admin-features.md` (runtime settings) and
+`handbook/05-security.md`.
 
 ### Step 1 Gate on Image Analysis
 

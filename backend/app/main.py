@@ -5170,11 +5170,16 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
     settings = get_settings()
 
     # Effective value = env default overlaid with the runtime admin override.
-    ingestion_injection_scan = await asyncio.to_thread(
-        get_neo4j_service().get_runtime_setting,
-        "ingestion_injection_scan",
-        settings.ingestion_injection_scan,
-    )
+    # The ingestion scan is experimental: while its master flag is off the
+    # effective value is simply false (no SystemMeta read — feature is absent).
+    if settings.enable_ingestion_injection_scan:
+        ingestion_injection_scan = await asyncio.to_thread(
+            get_neo4j_service().get_runtime_setting,
+            "ingestion_injection_scan",
+            settings.ingestion_injection_scan,
+        )
+    else:
+        ingestion_injection_scan = False
     prompt_guard = await asyncio.to_thread(
         get_neo4j_service().get_runtime_setting,
         "prompt_guard",
@@ -5274,6 +5279,7 @@ async def get_system_config(auth: AuthResult = Depends(require_admin)):
         
         # Security
         prompt_security=settings.prompt_security,
+        enable_ingestion_injection_scan=settings.enable_ingestion_injection_scan,
         ingestion_injection_scan=ingestion_injection_scan,
         prompt_guard=prompt_guard,
 
@@ -5308,6 +5314,15 @@ async def update_runtime_settings(
     """
     neo4j = get_neo4j_service()
     if update.ingestion_injection_scan is not None:
+        if not get_settings().enable_ingestion_injection_scan:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The ingestion injection scan is an experimental feature and is "
+                    "disabled on this instance. Set ENABLE_INGESTION_INJECTION_SCAN=true "
+                    "to activate it."
+                ),
+            )
         await asyncio.to_thread(
             neo4j.set_runtime_setting,
             "ingestion_injection_scan",

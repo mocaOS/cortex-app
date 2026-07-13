@@ -305,11 +305,14 @@ tool/skill API responses. Two low-cost layers reduce this:
 These are best-effort and intentionally cheap (no extra LLM calls, no added
 latency).
 
-### Ingestion-time scan (flag, don't block)
+### Ingestion-time scan (experimental, flag, don't block)
 
-Every ingested document (uploaded, web-crawled, or git-synced) is scanned once
-at ingestion for planted injection instructions (`injection_scanner.py`, hooked
-into the document pipeline):
+**Experimental — disabled and completely absent by default.** The scan only
+exists on instances that opt in with `ENABLE_INGESTION_INJECTION_SCAN=true`;
+otherwise no scan runs (not even the heuristic) and no related setting appears
+in the admin UI. When enabled, every ingested document (uploaded, web-crawled,
+or git-synced) is scanned once at ingestion for planted injection instructions
+(`injection_scanner.py`, hooked into the document pipeline):
 
 - A **free heuristic** (regex) always runs — but its verdict is only final when
   the LLM classifier is off or unreachable. With the classifier enabled, a
@@ -322,13 +325,13 @@ into the document pipeline):
 
 Detected documents are **flagged, never blocked** — they are still ingested and
 answerable, and remain fenced at query time. The flag surfaces as an "Injection
-Flagged" badge/filter in the document list. The scan is **on by default** and
-**admin-toggleable at runtime** (Admin → System Configuration → Features &
-Security). Toggling it off keeps the free heuristic but skips the LLM classifier
-to save queries (each clean document otherwise costs ~1 processing completion).
-The toggle is the first runtime-editable setting: it persists as a `SystemMeta`
-override that overlays the `INGESTION_INJECTION_SCAN` env default and takes
-effect without a restart.
+Flagged" badge/filter in the document list. On instances with the experimental
+feature enabled, the LLM classifier is **admin-toggleable at runtime** (Admin →
+System Configuration → Features & Security). Toggling it off keeps the free
+heuristic but skips the LLM classifier to save queries (each clean document
+otherwise costs ~1 processing completion). The toggle is the first
+runtime-editable setting: it persists as a `SystemMeta` override that overlays
+the `INGESTION_INJECTION_SCAN` env default and takes effect without a restart.
 
 The dedicated guard model (Prompt Guard, item 5 above) is **shipped** — served
 from cortex-helper so it costs zero per-instance RAM. Still deferred (real cost,

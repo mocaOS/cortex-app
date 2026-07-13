@@ -656,8 +656,10 @@ With `ENVIRONMENT=production`, startup refuses to boot if `NEO4J_PASSWORD` is em
 # Master switch for the regex detection + output-filtering + fencing layers
 PROMPT_SECURITY=true
 
-# Ingestion-time document injection scan (flag, never block); admin-toggleable at runtime
-INGESTION_INJECTION_SCAN=true
+# EXPERIMENTAL: ingestion-time document injection scan (flag, never block).
+# Disabled and completely hidden by default — opt in explicitly:
+ENABLE_INGESTION_INJECTION_SCAN=false
+INGESTION_INJECTION_SCAN=true      # LLM-classifier default once enabled; admin-toggleable at runtime
 
 # Query-time Prompt Guard classifier (shared cortex-helper /classify). Inert unless a URL is set.
 PROMPT_GUARD_SERVICE_URL=          # e.g. http://cortex-helper:3030 (empty = disabled)
@@ -793,7 +795,8 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `PROMPT_SECURITY` | No | `true` | Master switch for prompt-injection detection, output filtering, and untrusted-content fencing |
 | `PROMPT_GUARD` | No | `true` | Runtime-toggle default for the query-time Prompt Guard classifier (active when `PROMPT_GUARD_SERVICE_URL` set **or** `PROMPT_GUARD_LOCAL=true`; admin-overridable) |
 | `PROMPT_GUARD_LOCAL` | No | `false` | Load the Prompt Guard classifier in-process when no service URL is set (dev / self-host; needs torch, adds resident RAM). Ignored when the service URL is set |
-| `INGESTION_INJECTION_SCAN` | No | `true` | Runtime-toggle default for the ingestion-time document injection scan's LLM classifier |
+| `ENABLE_INGESTION_INJECTION_SCAN` | No | `false` | **Experimental.** Master flag for the ingestion-time document injection scan. When off (default) the feature is completely absent: no scan runs and the admin toggle is hidden |
+| `INGESTION_INJECTION_SCAN` | No | `true` | Runtime-toggle default for the scan's LLM classifier; only meaningful when `ENABLE_INGESTION_INJECTION_SCAN=true` |
 | `VISION_MODEL` | No | - | Vision model for image analysis |
 | `VISION_MODEL_API_BASE` | No | `OPENAI_API_BASE` | Vision model API endpoint |
 | `VISION_MODEL_API_KEY` | No | `OPENAI_API_KEY` | Vision model API key |

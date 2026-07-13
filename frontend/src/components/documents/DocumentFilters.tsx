@@ -146,7 +146,11 @@ export function DocumentFilters({
     { value: "pending", label: "Pending", count: statusCounts.pending, icon: Clock },
     { value: "failed", label: "Failed", count: statusCounts.failed, icon: XCircle },
     { value: "degraded", label: "Degraded", count: statusCounts.degraded, icon: AlertTriangle },
-    { value: "flagged", label: "Injection Flagged", count: statusCounts.flagged, icon: ShieldAlert },
+    // Only offered when the experimental ingestion injection scan has actually
+    // flagged something — with the feature off (the default) it never appears.
+    ...(statusCounts.flagged > 0
+      ? [{ value: "flagged", label: "Injection Flagged", count: statusCounts.flagged, icon: ShieldAlert }]
+      : []),
   ];
 
   const sourceKeys = Object.keys(sourceCounts).sort();
