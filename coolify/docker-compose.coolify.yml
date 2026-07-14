@@ -36,9 +36,6 @@ services:
       # server-side (byte-exact, no client round-trip) into the import dir,
       # which is bound to the shared backups volume below.
       - NEO4J_apoc_export_file_enabled=true
-    # Hard ceiling so one tenant's graph blowing up self-OOMs in its cgroup
-    # instead of letting the kernel OOM-killer pick another stack's container.
-    mem_limit: ${CORTEX_NEO4J_MEM_LIMIT:-4g}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -113,12 +110,6 @@ services:
       neo4j:
         condition: service_healthy
     restart: unless-stopped
-    # Hard memory ceiling so a runaway (e.g. a large export/import) self-OOMs in
-    # its cgroup and restarts, instead of exhausting the host and letting the
-    # kernel OOM-killer take Neo4j down with it (the original incident). Set
-    # BACKEND_MEM_LIMIT in Coolify env to match this host — keep it above ~2G
-    # steady-state and below (host RAM − Neo4j ~3G − frontend − OS headroom).
-    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     # Give uvicorn's graceful shutdown (in-flight requests, SSE streams) time to
     # drain before docker sends SIGKILL.
     stop_grace_period: 35s
@@ -189,7 +180,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-    mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
 
   backup:
     # Nightly online backup of the instance's data: server-side APOC logical
@@ -208,7 +198,6 @@ services:
         # Must match the neo4j image above (cypher-shell version)
         - NEO4J_IMAGE=neo4j:5.26-community
     restart: unless-stopped
-    mem_limit: 512m
     environment:
       - NEO4J_ADDRESS=neo4j://neo4j:7687
       - NEO4J_USER=neo4j
