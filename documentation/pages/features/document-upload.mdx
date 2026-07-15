@@ -9,13 +9,19 @@ Cortex supports various document formats and provides flexible upload options fo
 
 ## Supported Formats
 
-| Format | Extension | Notes |
-|--------|-----------|-------|
-| PDF | `.pdf` | Text extraction with layout preservation |
-| EPUB | `.epub` | E-books parsed natively — much faster than the same book as PDF; prefer uploading the EPUB when you have both. Kindle formats (`.mobi`, `.azw`) are not supported — convert them to EPUB first (e.g. with Calibre) |
-| Plain Text | `.txt` | Direct text ingestion |
-| Markdown | `.md` | Preserves formatting, headers, code blocks |
-| Word | `.docx` | Text and basic formatting extracted |
+| Format | Extension | Speed | Notes |
+|--------|-----------|-------|-------|
+| PDF | `.pdf` | ~1 s/page | Per-page ML layout analysis — fine for papers/reports, minutes for books; scanned PDFs slower still (OCR) |
+| EPUB | `.epub` | Seconds | E-books parsed natively — much faster than the same book as PDF; prefer uploading the EPUB when you have both. Kindle formats (`.mobi`, `.azw`) are not supported — convert them to EPUB first (e.g. with Calibre) |
+| Plain Text | `.txt` | Instant | Direct text ingestion |
+| Markdown | `.md` | Instant | Preserves formatting, headers, code blocks |
+| Word | `.docx` | Seconds | Parsed natively — upload the `.docx`, not an "Export as PDF" of it |
+
+**Rule of thumb: upload the source format, not a rendering of it.** Only PDFs
+and standalone images go through per-page ML analysis; every other format is
+parsed directly from its markup in seconds regardless of length. Books → EPUB,
+Office documents → the office file itself, web content → Web Import or
+HTML/Markdown. Reserve PDF for content that only exists as PDF.
 
 ## Upload Methods
 

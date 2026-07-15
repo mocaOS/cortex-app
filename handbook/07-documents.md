@@ -24,13 +24,41 @@ The Library supports 30+ file formats via the Docling conversion engine:
 
 Maximum file size: 50 MB by default (configurable via `MAX_FILE_SIZE_MB`). Files exceeding the limit are rejected immediately — the upload is stopped mid-transfer rather than fully received first. An upload with no filename is rejected with a clear error.
 
-> **📚 Importing books? Use EPUB, not PDF.** A PDF is analyzed page by page with
-> ML layout models (~1 second per page on CPU) — a 400-page book takes several
-> minutes and can hit the conversion timeout. The same book as EPUB is parsed
-> natively from its markup in **under a second**, with cleaner structure
-> (real headings and chapters instead of reconstructed layout). If you have both
-> formats, always upload the EPUB. Kindle formats (`.mobi`, `.azw`) are not
-> supported — convert them to EPUB first (e.g. with [Calibre](https://calibre-ebook.com/)).
+## Choosing the Right Format
+
+**Upload the source format, not a rendering of it.** PDF is a *print* format:
+when Cortex ingests one, it must reconstruct the document's structure page by
+page with ML layout models — structure the original file already had natively.
+Only PDFs and standalone images take this expensive path; every other supported
+format is parsed directly from its markup in seconds, **regardless of length**:
+
+| Cost tier | Formats | What to expect |
+|-----------|---------|----------------|
+| Instant | `.md`, `.txt`, code files | Ingested as-is — no conversion at all |
+| Fast (native parsing) | `.epub`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.tex` | Seconds per document, independent of page count |
+| Expensive (per-page ML) | `.pdf` | ~1 second per page on CPU — fine for papers and reports, minutes for books |
+| Most expensive | Scanned PDFs, standalone images | OCR / vision-model analysis on top |
+
+Practical rules:
+
+- **📚 Books** — upload the **EPUB, never the PDF rendering**: under a second vs
+  several minutes for a 400-page book, with cleaner structure (real chapter
+  headings instead of reconstructed layout). Kindle formats (`.mobi`, `.azw`)
+  are not supported — convert them to EPUB first (e.g. with
+  [Calibre](https://calibre-ebook.com/)).
+- **📄 Office documents** — upload the `.docx` / `.pptx` / `.xlsx` itself, **not
+  an "Export as PDF"** of it. The PDF export turns a seconds-fast native parse
+  into minutes of layout analysis and loses semantic structure.
+- **🌐 Web content** — use **Web Import** (paste the URL) or save the page as
+  HTML/Markdown. Never print a web page to PDF for upload.
+- **📝 Notes & knowledge** — Markdown is ideal: instant ingestion and the only
+  format with an in-app viewer.
+- **PDF is for content that only exists as PDF** — papers, invoices, legacy
+  scans, layout-critical documents. Expect ~1 s/page of processing; scanned
+  (image-only) PDFs take substantially longer due to OCR.
+- **🖼️ Images** are analyzed with the vision model — great for diagrams and
+  charts, but each image is an LLM call; don't ingest a long scan as a folder
+  of PNGs.
 
 ## Uploading Documents
 
