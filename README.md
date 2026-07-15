@@ -47,7 +47,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 ## Features
 
 ### Core Features
-- **📁 Document Upload**: Broad format support via Docling — PDF, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — with source tracking for API integrations
+- **📁 Document Upload**: Broad format support via Docling — PDF, EPUB, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
@@ -194,6 +194,7 @@ All formats are converted through **Docling** (locally or via the shared `cortex
 | Type | Extensions |
 |------|-----------|
 | PDF | `.pdf` |
+| E-books | `.epub` |
 | Office | `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt` |
 | Web / markup | `.html`, `.htm`, `.xml` |
 | Text | `.txt`, `.md`, `.mdx`, `.markdown`, `.rst`, `.tex`, `.latex` |

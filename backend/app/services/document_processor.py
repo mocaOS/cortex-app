@@ -439,6 +439,15 @@ async def _convert_document_subprocess(
     if settings.docling_service_url:
         try:
             _t0 = time.monotonic()
+            # The helper is a single HTTP call — no per-page progress lines to
+            # relay. Still flip the message here, or the document shows the
+            # pre-conversion "Waiting for a conversion slot..." for the entire
+            # (potentially minutes-long) remote conversion.
+            if on_progress:
+                try:
+                    await on_progress("Converting document...", 0.0)
+                except Exception:  # noqa: BLE001 — progress must never fail conversion
+                    pass
             result = await _convert_via_service(file_path, use_vision)
             CONVERSION_SECONDS.labels(path="remote").observe(time.monotonic() - _t0)
             return result
@@ -1348,6 +1357,9 @@ class DocumentProcessor:
         ".latex",
         # XML schemas (USPTO, JATS, XBRL)
         ".xml",
+        # E-books — docling parses the XHTML natively (no per-page layout ML),
+        # so a full book converts in seconds vs minutes for its PDF rendering.
+        ".epub",
     }
 
     # Code + lightweight-markup files ingested as-is (no Docling conversion).

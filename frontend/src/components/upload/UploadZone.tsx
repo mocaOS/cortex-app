@@ -4,23 +4,7 @@ import { useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const ALLOWED_TYPES = [
-  // Office documents
-  ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-  // Web pages
-  ".html", ".htm",
-  // Text files
-  ".txt", ".md", ".mdx", ".markdown", ".rst",
-  // Images (OCR)
-  ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
-  // Audio (ASR)
-  ".wav", ".mp3", ".webvtt", ".vtt",
-  // LaTeX
-  ".tex", ".latex",
-  // XML schemas
-  ".xml",
-];
+import { ALLOWED_UPLOAD_TYPES as ALLOWED_TYPES } from "@/lib/allowed-upload-types";
 
 interface UploadZoneProps {
   isDragging: boolean;

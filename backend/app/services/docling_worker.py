@@ -24,9 +24,16 @@ import gc
 import io
 import json
 import logging
+import mimetypes
 import os
 import sys
 from pathlib import Path
+
+# Python 3.11's built-in mimetypes table has no .epub entry, and slim
+# containers ship no /etc/mime.types to supply it. Docling's EPUB backend
+# validates its hardcoded "application/epub+zip" DocumentOrigin against that
+# table and fails the whole conversion without this registration.
+mimetypes.add_type("application/epub+zip", ".epub")
 
 logging.basicConfig(
     level=logging.INFO,

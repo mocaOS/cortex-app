@@ -9,6 +9,7 @@ The Library supports 30+ file formats via the Docling conversion engine:
 | Category | Extensions | Notes |
 |----------|-----------|-------|
 | **PDF** | `.pdf` | Full text extraction, table recognition (TableFormer), image extraction |
+| **EPUB** | `.epub` | E-books, parsed natively — the preferred format for books (see below) |
 | **Word** | `.docx` | Structure preservation, image extraction |
 | **PowerPoint** | `.pptx` | Slide text and embedded images |
 | **Excel** | `.xlsx` | Tabular data conversion |
@@ -22,6 +23,14 @@ The Library supports 30+ file formats via the Docling conversion engine:
 | **Audio** | `.wav`, `.mp3`, `.webvtt` | Transcription |
 
 Maximum file size: 50 MB by default (configurable via `MAX_FILE_SIZE_MB`). Files exceeding the limit are rejected immediately — the upload is stopped mid-transfer rather than fully received first. An upload with no filename is rejected with a clear error.
+
+> **📚 Importing books? Use EPUB, not PDF.** A PDF is analyzed page by page with
+> ML layout models (~1 second per page on CPU) — a 400-page book takes several
+> minutes and can hit the conversion timeout. The same book as EPUB is parsed
+> natively from its markup in **under a second**, with cleaner structure
+> (real headings and chapters instead of reconstructed layout). If you have both
+> formats, always upload the EPUB. Kindle formats (`.mobi`, `.azw`) are not
+> supported — convert them to EPUB first (e.g. with [Calibre](https://calibre-ebook.com/)).
 
 ## Uploading Documents
 

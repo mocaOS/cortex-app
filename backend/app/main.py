@@ -2023,6 +2023,14 @@ async def upload_file(
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in settings.allowed_extensions:
+        # Kindle formats come up often enough to deserve a pointer to the
+        # supported e-book route (the unpacker libraries are GPL — not shipped).
+        if file_ext in {".mobi", ".azw", ".azw3"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type {file_ext} is not supported. Convert the e-book "
+                       f"to EPUB first (e.g. with Calibre) — .epub is supported natively."
+            )
         raise HTTPException(
             status_code=400,
             detail=f"File type {file_ext} not supported. Allowed: {settings.allowed_extensions}"

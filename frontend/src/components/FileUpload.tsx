@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { FolderOpen } from "lucide-react";
 import { api } from "@/lib/api";
+import { ALLOWED_UPLOAD_TYPES as ALLOWED_TYPES } from "@/lib/allowed-upload-types";
 import CollectionSelector from "./CollectionSelector";
 import { UploadZone, UploadProgress } from "./upload";
 
@@ -22,23 +23,6 @@ interface UploadingFile {
   progressTotal?: number;
   progressMessage?: string;
 }
-
-const ALLOWED_TYPES = [
-  // Office documents
-  ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-  // Web pages
-  ".html", ".htm",
-  // Text files
-  ".txt", ".md", ".mdx", ".markdown", ".rst",
-  // Images (OCR)
-  ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
-  // Audio (ASR)
-  ".wav", ".mp3", ".webvtt", ".vtt",
-  // LaTeX
-  ".tex", ".latex",
-  // XML schemas
-  ".xml",
-];
 
 export default function FileUpload({ onUpload }: FileUploadProps) {
   const router = useRouter();

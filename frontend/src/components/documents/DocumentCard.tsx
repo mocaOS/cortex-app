@@ -18,6 +18,7 @@ import {
   PenLine,
   Eye,
   Download,
+  BookOpen,
   X,
   AlertTriangle,
   ShieldAlert,
@@ -107,6 +108,7 @@ const isInjectionFlagged = (doc: Document): boolean => doc.injection_flagged ===
 const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
   if (isCustomInput) return PenLine;
   if (fileType.includes("pdf")) return FileText;
+  if (fileType.includes("epub")) return BookOpen;
   if (fileType.includes("spreadsheet") || fileType.includes("excel") || fileType.includes("csv"))
     return FileSpreadsheet;
   if (fileType.includes("image")) return FileImage;
@@ -499,7 +501,7 @@ export function DocumentCard({
                     type="file"
                     className="hidden"
                     onChange={handleFileSelect}
-                    accept=".pdf,.doc,.docx,.txt,.md,.mdx,.csv,.xlsx,.xls"
+                    accept=".pdf,.doc,.docx,.txt,.md,.mdx,.csv,.xlsx,.xls,.epub"
                   />
                   <button
                     onClick={() => fileInputRef.current?.click()}

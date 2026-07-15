@@ -11,7 +11,7 @@ Full pipeline from upload to graph storage. See [`.claude/domain/relationships.m
 
 ## Docling Conversion
 
-Documents are converted via Docling (PDF, DOCX, PPTX, etc.). The `docling_worker.py` runs as a separate process for CPU-bound ML inference, OCR, and table structure recognition with memory optimizations for large documents. Images are extracted during this phase for later vision analysis.
+Documents are converted via Docling (PDF, EPUB, DOCX, PPTX, etc. — EPUB parses natively as XHTML with no per-page layout ML, so prefer it over a PDF rendering of the same book). The `docling_worker.py` runs as a separate process for CPU-bound ML inference, OCR, and table structure recognition with memory optimizations for large documents. Images are extracted during this phase for later vision analysis.
 
 **Conversion routing** (`_convert_document_subprocess`): when `DOCLING_SERVICE_URL` is set, the file is POSTed to the shared `cortex-helper` `/convert` service (warm converter, ~0.04 s vs ~4.5 s for a cold subprocess that reloads OCR/layout models every call), with automatic fallback to the local subprocess if the service is unreachable. Otherwise it spawns the `docling_worker.py` subprocess. The in-process `DocumentProcessor` converter (`_build_docling_converter` / `_get_converter`) is **lazy** — docling is NOT imported at module scope (that would pull torch + docling-ibm-models ~244 MB into every backend at startup); it builds on first call, which the live subprocess/service path never triggers. See [`environment.md`](../environment.md#shared-model-services-cortex-helper).
 

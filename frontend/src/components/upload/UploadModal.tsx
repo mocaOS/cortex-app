@@ -5,16 +5,7 @@ import { X, FolderOpen } from "lucide-react";
 import CollectionSelector from "../CollectionSelector";
 import UploadZone from "./UploadZone";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-
-const ALLOWED_TYPES = [
-  ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-  ".html", ".htm",
-  ".txt", ".md", ".mdx", ".markdown", ".rst",
-  ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp",
-  ".wav", ".mp3", ".webvtt", ".vtt",
-  ".tex", ".latex",
-  ".xml",
-];
+import { ALLOWED_UPLOAD_TYPES as ALLOWED_TYPES } from "@/lib/allowed-upload-types";
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -25,6 +16,7 @@ interface UploadModalProps {
 export default function UploadModal({ isOpen, onClose, onFilesSelected }: UploadModalProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<string | undefined>(undefined);
+  const [rejectedMessage, setRejectedMessage] = useState<string | null>(null);
 
   useBodyScrollLock(isOpen);
 
@@ -33,6 +25,7 @@ export default function UploadModal({ isOpen, onClose, onFilesSelected }: Upload
       if (e.key === "Escape") onClose();
     };
     if (isOpen) {
+      setRejectedMessage(null);
       document.addEventListener("keydown", handleKeyDown);
       return () => document.removeEventListener("keydown", handleKeyDown);
     }
@@ -45,8 +38,24 @@ export default function UploadModal({ isOpen, onClose, onFilesSelected }: Upload
       return ALLOWED_TYPES.includes(ext);
     });
 
-    if (validFiles.length === 0) return;
+    if (validFiles.length === 0) {
+      // Silently returning here made an all-filtered selection look like the
+      // dialog was broken — say why nothing happened.
+      const names = fileArray.slice(0, 3).map((f) => f.name).join(", ");
+      const hasKindle = fileArray.some((f) =>
+        /\.(mobi|azw3?)$/i.test(f.name)
+      );
+      setRejectedMessage(
+        `Unsupported file type${fileArray.length > 1 ? "s" : ""}: ${names}` +
+          (fileArray.length > 3 ? ` (+${fileArray.length - 3} more)` : "") +
+          (hasKindle
+            ? " — convert Kindle e-books to EPUB first (e.g. with Calibre); .epub uploads are supported."
+            : "")
+      );
+      return;
+    }
 
+    setRejectedMessage(null);
     onFilesSelected(validFiles, selectedCollection);
     onClose();
   }, [selectedCollection, onFilesSelected, onClose]);
@@ -123,6 +132,12 @@ export default function UploadModal({ isOpen, onClose, onFilesSelected }: Upload
             onDrop={handleDrop}
             onFileSelect={handleFileSelect}
           />
+
+          {rejectedMessage && (
+            <p className="text-sm text-destructive" role="alert">
+              {rejectedMessage}
+            </p>
+          )}
         </div>
       </div>
     </div>

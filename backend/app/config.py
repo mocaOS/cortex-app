@@ -180,6 +180,7 @@ class Settings(BaseSettings):
             ".tex",
             ".latex",  # LaTeX
             ".xml",  # XML schemas (USPTO, JATS, XBRL)
+            ".epub",  # E-books (parsed natively by docling — no per-page layout ML)
         ]
     )
 
