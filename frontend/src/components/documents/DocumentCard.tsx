@@ -17,6 +17,7 @@ import {
   Play,
   PenLine,
   Eye,
+  Download,
   X,
   AlertTriangle,
   ShieldAlert,
@@ -213,6 +214,8 @@ export function DocumentCard({
   const [showMarkdownViewer, setShowMarkdownViewer] = useState(false);
   const [markdownContent, setMarkdownContent] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
+  const [isFetchingFile, setIsFetchingFile] = useState(false);
+  const fetchingFileRef = useRef(false);
 
   useBodyScrollLock(showMarkdownViewer);
 
@@ -245,15 +248,28 @@ export function DocumentCard({
         setLoadingContent(false);
       }
     } else {
-      // window.open can't send the X-API-Key header — fetch as an
-      // authenticated blob and open the object URL instead.
+      // Non-markdown files (PDF, DOCX, …) don't render reliably from a blob
+      // tab — download them so the user's system opens them with the
+      // default application. window.open can't send the X-API-Key header,
+      // so fetch as an authenticated blob first.
+      if (fetchingFileRef.current) return;
+      fetchingFileRef.current = true;
+      setIsFetchingFile(true);
       try {
         const blob = await api.getDocumentFileBlob(doc.id);
         const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = doc.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
       } catch {
-        /* viewer button stays usable; nothing to show on failure */
+        /* button stays usable; nothing to show on failure */
+      } finally {
+        fetchingFileRef.current = false;
+        setIsFetchingFile(false);
       }
     }
   }, [doc.id, doc.filename, doc.file_path]);
@@ -426,14 +442,21 @@ export function DocumentCard({
 
         {/* Actions */}
         <div className="flex items-center gap-1">
-          {/* View button */}
+          {/* View (markdown) / download (everything else) button */}
           {doc.file_path && (
             <button
               onClick={handleView}
-              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              title="View document"
+              disabled={isFetchingFile}
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              title={isMarkdownFile(doc.filename) ? "View document" : "Download document"}
             >
-              <Eye className="w-4 h-4" />
+              {isFetchingFile ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : isMarkdownFile(doc.filename) ? (
+                <Eye className="w-4 h-4" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
             </button>
           )}
 
