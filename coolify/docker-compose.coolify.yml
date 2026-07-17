@@ -98,6 +98,12 @@ services:
       # --- Admin authentication ---
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
+      # --- x402 Payments (optional) — the only x402 env var; everything else
+      # (wallet, facilitator, network, asset) is runtime config in the admin UI.
+      - X402_ENABLED=${X402_ENABLED:-false}
+      # Encrypts stored secrets at rest (git PATs, skill secrets, x402
+      # facilitator auth headers). Empty = plaintext + startup warning.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs

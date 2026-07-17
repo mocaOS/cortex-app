@@ -357,9 +357,13 @@ function CreateKeyModal({
   const [creating, setCreating] = useState(false);
   const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
 
-  // Monetized keys require the x402 feature to be enabled AND the payment
-  // config to be verified (the server enforces this with a 400 otherwise).
-  const monetizedAvailable = !!x402Config?.enabled && !!x402Config?.verified;
+  // With X402_ENABLED=false the modal shows NO trace of x402 (no key-type
+  // chooser at all) — users who don't know x402 shouldn't meet it. When the
+  // flag is on but the config is unverified, the option renders disabled
+  // with a pointer to the x402 Payments section (the server enforces the
+  // same rule with a 400).
+  const x402Enabled = !!x402Config?.enabled;
+  const monetizedAvailable = x402Enabled && !!x402Config?.verified;
   const isMonetized = keyType === "monetized";
   const priceValid = PRICE_RE.test(price.trim()) && parseFloat(price.trim()) > 0;
   
@@ -459,7 +463,8 @@ function CreateKeyModal({
             />
           </div>
 
-          {/* Key Type */}
+          {/* Key Type — only on x402-enabled instances */}
+          {x402Enabled && (
           <div>
             <label className="block text-sm font-medium text-foreground mb-3">
               Key Type
@@ -510,6 +515,7 @@ function CreateKeyModal({
               </label>
             </div>
           </div>
+          )}
 
           {/* Permissions (member keys) / forced read-only + price (monetized) */}
           {isMonetized ? (
