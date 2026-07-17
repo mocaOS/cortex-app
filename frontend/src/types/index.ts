@@ -452,6 +452,7 @@ export interface APIKeyListItem {
   allowed_collection_names?: string[] | null;
   /** x402 price per query in human units (e.g. "0.05"); null for regular keys */
   price_per_query?: string | null;
+  research_multiplier?: string | null;
 }
 
 export interface CreateAPIKeyRequest {
@@ -461,6 +462,7 @@ export interface CreateAPIKeyRequest {
   allowed_collections?: string[];
   /** x402 price per query (human units, e.g. "0.05"). Read-only keys only; requires verified x402 config. */
   price_per_query?: string;
+  research_multiplier?: string;
 }
 
 export interface CreateAPIKeyResponse {
@@ -473,6 +475,7 @@ export interface CreateAPIKeyResponse {
   collection_scope: CollectionScope;
   allowed_collections: string[];
   price_per_query?: string | null;
+  research_multiplier?: string | null;
 }
 
 export interface UpdateAPIKeyRequest {
@@ -483,6 +486,7 @@ export interface UpdateAPIKeyRequest {
   allowed_collections?: string[];
   /** x402 price per query. "" clears the price; omitted = unchanged. */
   price_per_query?: string;
+  research_multiplier?: string;
 }
 
 // =============================================================================

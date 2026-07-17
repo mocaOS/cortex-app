@@ -627,6 +627,15 @@ class CreateAPIKeyRequest(BaseModel):
             "x402 configuration."
         ),
     )
+    research_multiplier: Optional[str] = Field(
+        default=None,
+        description=(
+            "Price multiplier for deep-research (agentic) queries on a "
+            "monetized key: an agentic request costs price_per_query × this. "
+            "Defaults to '10' when a price is set; '0' forbids deep research "
+            "on this key entirely; '1' charges the flat rate."
+        ),
+    )
     
     class Config:
         json_schema_extra = {
@@ -650,6 +659,7 @@ class CreateAPIKeyResponse(BaseModel):
     collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
     allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
     price_per_query: Optional[str] = Field(default=None, description="x402 price per retrieval query (None = free key)")
+    research_multiplier: Optional[str] = Field(default=None, description="Deep-research price multiplier ('0' = research forbidden)")
 
     class Config:
         json_schema_extra = {
@@ -680,6 +690,7 @@ class APIKeyListItem(BaseModel):
     allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
     allowed_collection_names: Optional[List[str]] = Field(default=None, description="Collection names for display")
     price_per_query: Optional[str] = Field(default=None, description="x402 price per retrieval query (None = free key)")
+    research_multiplier: Optional[str] = Field(default=None, description="Deep-research price multiplier ('0' = research forbidden)")
 
 
 class UpdateAPIKeyRequest(BaseModel):
@@ -695,6 +706,13 @@ class UpdateAPIKeyRequest(BaseModel):
             "New x402 price per retrieval query in human units (e.g. '0.05'). "
             "Empty string clears the price (reverts to a free member key); "
             "None leaves it unchanged."
+        ),
+    )
+    research_multiplier: Optional[str] = Field(
+        default=None,
+        description=(
+            "New deep-research price multiplier ('0' forbids research, "
+            "'1' = flat rate). None leaves it unchanged."
         ),
     )
 

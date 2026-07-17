@@ -5860,7 +5860,8 @@ class Neo4jService:
         created_by: str = "admin",
         collection_scope: str = "all",
         allowed_collections: Optional[List[str]] = None,
-        price_per_query: Optional[str] = None
+        price_per_query: Optional[str] = None,
+        research_multiplier: Optional[str] = None
     ) -> Optional[dict]:
         """Create a new API key in the database.
 
@@ -5874,6 +5875,7 @@ class Neo4jService:
             collection_scope: 'all' for unrestricted, 'restricted' for collection-specific
             allowed_collections: List of collection IDs when scope is 'restricted'
             price_per_query: x402 price in human asset units (None = free key)
+            research_multiplier: deep-research price multiplier ('0' = forbidden)
         """
         allowed_collections = allowed_collections or []
 
@@ -5890,7 +5892,8 @@ class Neo4jService:
                     created_at: datetime(),
                     created_by: $created_by,
                     collection_scope: $collection_scope,
-                    price_per_query: $price_per_query
+                    price_per_query: $price_per_query,
+                    research_multiplier: $research_multiplier
                 })
                 WITH k
                 // Create HAS_ACCESS_TO relationships for restricted keys
@@ -5914,6 +5917,7 @@ class Neo4jService:
                        k.created_by as created_by,
                        k.collection_scope as collection_scope,
                        k.price_per_query as price_per_query,
+                       k.research_multiplier as research_multiplier,
                        collect(DISTINCT c.id) as allowed_collections,
                        collect(DISTINCT c.name) as allowed_collection_names
             """,
@@ -5925,7 +5929,8 @@ class Neo4jService:
                 created_by=created_by,
                 collection_scope=collection_scope,
                 allowed_collections=allowed_collections,
-                price_per_query=price_per_query
+                price_per_query=price_per_query,
+                research_multiplier=research_multiplier
             )
             
             record = result.single()
@@ -6014,6 +6019,7 @@ class Neo4jService:
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
                        k.price_per_query as price_per_query,
+                       k.research_multiplier as research_multiplier,
                        collect(DISTINCT c.id) as allowed_collections,
                        collect(DISTINCT c.name) as allowed_collection_names
             """, id=key_id)
@@ -6047,6 +6053,7 @@ class Neo4jService:
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
                        k.price_per_query as price_per_query,
+                       k.research_multiplier as research_multiplier,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names
             """, prefix=key_prefix)
@@ -6077,6 +6084,7 @@ class Neo4jService:
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
                        k.price_per_query as price_per_query,
+                       k.research_multiplier as research_multiplier,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names
                 ORDER BY k.created_at DESC
@@ -6100,7 +6108,8 @@ class Neo4jService:
         collection_scope: Optional[str] = None,
         allowed_collections: Optional[List[str]] = None,
         price_per_query: Optional[str] = None,
-        clear_price: bool = False
+        clear_price: bool = False,
+        research_multiplier: Optional[str] = None
     ) -> Optional[dict]:
         """Update an API key's properties.
 
@@ -6113,6 +6122,7 @@ class Neo4jService:
             allowed_collections: New list of allowed collection IDs (optional)
             price_per_query: New x402 price in human asset units (optional)
             clear_price: Remove the x402 price (key reverts to free)
+            research_multiplier: New deep-research multiplier (optional)
         """
         with self.driver.session() as session:
             # Build dynamic SET clause
@@ -6133,9 +6143,13 @@ class Neo4jService:
                 params["collection_scope"] = collection_scope
             if clear_price:
                 set_clauses.append("k.price_per_query = null")
+                set_clauses.append("k.research_multiplier = null")
             elif price_per_query is not None:
                 set_clauses.append("k.price_per_query = $price_per_query")
                 params["price_per_query"] = price_per_query
+            if not clear_price and research_multiplier is not None:
+                set_clauses.append("k.research_multiplier = $research_multiplier")
+                params["research_multiplier"] = research_multiplier
             
             # Handle collection relationships update
             if allowed_collections is not None:
@@ -6630,6 +6644,7 @@ class Neo4jService:
                        k.created_by as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
                        k.price_per_query as price_per_query,
+                       k.research_multiplier as research_multiplier,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names,
                        COALESCE(k.total_requests, 0) as total_requests,
@@ -6674,6 +6689,7 @@ class Neo4jService:
                     "created_by": record["created_by"],
                     "collection_scope": record["collection_scope"],
                     "price_per_query": record["price_per_query"],
+                    "research_multiplier": record["research_multiplier"],
                     "allowed_collections": allowed_collections,
                     "allowed_collection_names": allowed_collection_names,
                     "stats": {

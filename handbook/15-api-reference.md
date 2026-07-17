@@ -160,7 +160,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | `GET` | `/api/admin/api-keys/{id}/usage-history` | Admin | Daily usage history. Query: `days` (1-365) |
 | `GET` | `/api/admin/stats/overview` | Admin | Aggregated stats across all keys |
 
-Create/update also accept `price_per_query` (decimal string, e.g. `"0.05"`) to make a **monetized public key** ([x402 Payments](17-administration.md#x402-payments-monetization)): requires `X402_ENABLED` + a verified x402 config, read-only permissions (422 when combined with `manage`), and restricts the key to the retrieval endpoints. On update, `""` clears the price.
+Create/update also accept `price_per_query` (decimal string, e.g. `"0.05"`) to make a **monetized public key** ([x402 Payments](17-administration.md#x402-payments-monetization)): requires `X402_ENABLED` + a verified x402 config, read-only permissions (422 when combined with `manage`), and restricts the key to the retrieval endpoints. On update, `""` clears the price. Priced keys additionally accept `research_multiplier` (default `"10"`): deep-research (agentic) queries are billed at `price × multiplier`, quoted in the 402 challenge; `"0"` forbids deep research on the key (403).
 
 ## Admin — x402 Payments
 

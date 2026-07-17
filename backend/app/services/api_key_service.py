@@ -70,7 +70,8 @@ class APIKeyService:
         created_by: str = "admin",
         collection_scope: CollectionScope = CollectionScope.ALL,
         allowed_collections: Optional[List[str]] = None,
-        price_per_query: Optional[str] = None
+        price_per_query: Optional[str] = None,
+        research_multiplier: Optional[str] = None
     ) -> Optional[CreateAPIKeyResponse]:
         """
         Create a new API key with the specified permissions.
@@ -117,7 +118,8 @@ class APIKeyService:
             created_by=created_by,
             collection_scope=collection_scope.value,
             allowed_collections=allowed_collections or [],
-            price_per_query=price_per_query
+            price_per_query=price_per_query,
+            research_multiplier=research_multiplier if price_per_query else None
         )
 
         if not result:
@@ -133,7 +135,8 @@ class APIKeyService:
             created_at=_convert_neo4j_datetime(result.get("created_at")) or datetime.utcnow(),
             collection_scope=collection_scope,
             allowed_collections=result.get("allowed_collections", []),
-            price_per_query=result.get("price_per_query")
+            price_per_query=result.get("price_per_query"),
+            research_multiplier=result.get("research_multiplier")
         )
     
     def list_api_keys(self) -> List[APIKeyListItem]:
@@ -169,7 +172,8 @@ class APIKeyService:
                 collection_scope=collection_scope,
                 allowed_collections=key_data.get("allowed_collections", []),
                 allowed_collection_names=key_data.get("allowed_collection_names"),
-                price_per_query=key_data.get("price_per_query")
+                price_per_query=key_data.get("price_per_query"),
+                research_multiplier=key_data.get("research_multiplier")
             ))
         
         return result
@@ -208,7 +212,8 @@ class APIKeyService:
             collection_scope=collection_scope,
             allowed_collections=key_data.get("allowed_collections", []),
             allowed_collection_names=key_data.get("allowed_collection_names"),
-            price_per_query=key_data.get("price_per_query")
+            price_per_query=key_data.get("price_per_query"),
+            research_multiplier=key_data.get("research_multiplier")
         )
     
     def update_api_key(
@@ -249,7 +254,8 @@ class APIKeyService:
             collection_scope=collection_scope_str,
             allowed_collections=request.allowed_collections,
             price_per_query=new_price,
-            clear_price=clear_price
+            clear_price=clear_price,
+            research_multiplier=request.research_multiplier
         )
 
         # Revocation/permission changes must take effect immediately, not
@@ -281,7 +287,8 @@ class APIKeyService:
             collection_scope=collection_scope,
             allowed_collections=result.get("allowed_collections", []),
             allowed_collection_names=result.get("allowed_collection_names"),
-            price_per_query=result.get("price_per_query")
+            price_per_query=result.get("price_per_query"),
+            research_multiplier=result.get("research_multiplier")
         )
     
     def delete_api_key(self, key_id: str) -> bool:

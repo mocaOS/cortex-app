@@ -6318,6 +6318,14 @@ def _validate_monetized_key_price(price_raw: str, permissions: List[APIKeyPermis
         raise HTTPException(status_code=422, detail=str(e))
 
 
+def _validate_research_multiplier(raw: str) -> str:
+    """422 wrapper around the multiplier validator ('0' = research forbidden)."""
+    try:
+        return x402_service.validate_multiplier(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 @app.post("/api/admin/api-keys", response_model=CreateAPIKeyResponse)
 async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depends(require_admin)):
     """
@@ -6353,9 +6361,22 @@ async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depend
                     )
 
         price_per_query = None
+        research_multiplier = None
         if request.price_per_query:
             price_per_query = _validate_monetized_key_price(
                 request.price_per_query, request.permissions
+            )
+            # Stored explicitly (default 10) so the owner always sees the
+            # research rate they charge; '0' = deep research forbidden.
+            research_multiplier = _validate_research_multiplier(
+                request.research_multiplier
+                if request.research_multiplier is not None
+                else x402_service.DEFAULT_RESEARCH_MULTIPLIER
+            )
+        elif request.research_multiplier is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="research_multiplier only applies to monetized keys (set price_per_query)"
             )
 
         api_key_service = get_api_key_service()
@@ -6365,7 +6386,8 @@ async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depend
             created_by="admin",
             collection_scope=request.collection_scope,
             allowed_collections=request.allowed_collections,
-            price_per_query=price_per_query
+            price_per_query=price_per_query,
+            research_multiplier=research_multiplier
         )
         
         if not result:
@@ -6479,6 +6501,15 @@ async def update_api_key(
                         "read-only: clear the price before granting 'manage'"
                     )
                 )
+            if request.research_multiplier is not None:
+                request.research_multiplier = _validate_research_multiplier(
+                    request.research_multiplier
+                )
+        elif request.research_multiplier is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="research_multiplier only applies to monetized keys"
+            )
 
         result = api_key_service.update_api_key(key_id, request)
 

@@ -87,7 +87,8 @@ export function ApiKeyManager() {
     permissions: APIKeyPermission[],
     collectionScope: CollectionScope,
     allowedCollections: string[],
-    pricePerQuery?: string
+    pricePerQuery?: string,
+    researchMultiplier?: string
   ) => {
     try {
       const result = await api.createApiKey({
@@ -96,6 +97,7 @@ export function ApiKeyManager() {
         collection_scope: collectionScope,
         allowed_collections: collectionScope === "restricted" ? allowedCollections : undefined,
         price_per_query: pricePerQuery,
+        research_multiplier: researchMultiplier,
       });
       setNewKeyResult(result);
       setShowCreateModal(false);
@@ -345,7 +347,7 @@ function CreateKeyModal({
   x402Config,
 }: {
   onClose: () => void;
-  onCreate: (name: string, permissions: APIKeyPermission[], collectionScope: CollectionScope, allowedCollections: string[], pricePerQuery?: string) => void;
+  onCreate: (name: string, permissions: APIKeyPermission[], collectionScope: CollectionScope, allowedCollections: string[], pricePerQuery?: string, researchMultiplier?: string) => void;
   preselectedCollectionId?: string;
   x402Config?: X402ConfigResponse | null;
 }) {
@@ -354,6 +356,8 @@ function CreateKeyModal({
   const [readOnly, setReadOnly] = useState(true);
   const [manage, setManage] = useState(false);
   const [price, setPrice] = useState("");
+  // Deep-research (agentic) queries cost price × this; 0 disables research.
+  const [multiplier, setMultiplier] = useState("10");
   const [creating, setCreating] = useState(false);
   const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
 
@@ -366,6 +370,12 @@ function CreateKeyModal({
   const monetizedAvailable = x402Enabled && !!x402Config?.verified;
   const isMonetized = keyType === "monetized";
   const priceValid = PRICE_RE.test(price.trim()) && parseFloat(price.trim()) > 0;
+  const multiplierValid =
+    PRICE_RE.test(multiplier.trim()) && parseFloat(multiplier.trim()) >= 0 && parseFloat(multiplier.trim()) <= 1000;
+  const researchPrice =
+    priceValid && multiplierValid
+      ? Number((parseFloat(price.trim()) * parseFloat(multiplier.trim())).toPrecision(12))
+      : null;
   
   // Collection scope state
   const [collectionScope, setCollectionScope] = useState<CollectionScope>(
@@ -397,7 +407,7 @@ function CreateKeyModal({
   const handleCreate = async () => {
     if (!name.trim()) return;
     if (collectionScope === "restricted" && selectedCollections.length === 0) return;
-    if (isMonetized && !priceValid) return;
+    if (isMonetized && (!priceValid || !multiplierValid)) return;
 
     // Monetized public keys are always read-only (server rejects manage).
     const permissions: APIKeyPermission[] = [];
@@ -414,7 +424,8 @@ function CreateKeyModal({
       permissions,
       collectionScope,
       selectedCollections,
-      isMonetized ? price.trim() : undefined
+      isMonetized ? price.trim() : undefined,
+      isMonetized ? multiplier.trim() : undefined
     );
     setCreating(false);
   };
@@ -547,6 +558,46 @@ function CreateKeyModal({
                 {price.trim() !== "" && !priceValid && (
                   <p className="text-xs text-destructive mt-1">
                     Enter a positive decimal amount, e.g. 0.05
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Deep research multiplier
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={multiplier}
+                    onChange={(e) => setMultiplier(e.target.value)}
+                    placeholder="10"
+                    className="w-full px-4 py-2.5 pr-20 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">
+                    × price
+                  </span>
+                </div>
+                {!multiplierValid && multiplier.trim() !== "" && (
+                  <p className="text-xs text-destructive mt-1">
+                    Enter a multiplier between 0 and 1000 (0 disables deep research)
+                  </p>
+                )}
+                {/* Live pricing preview — the owner sees exactly what they charge */}
+                {priceValid && multiplierValid && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Quick queries:{" "}
+                    <span className="text-foreground font-mono">
+                      {price.trim()} {x402Config?.asset_name || ""}
+                    </span>
+                    {" · "}Deep research:{" "}
+                    {researchPrice === 0 ? (
+                      <span className="text-amber-400">disabled on this key</span>
+                    ) : (
+                      <span className="text-foreground font-mono">
+                        {researchPrice} {x402Config?.asset_name || ""}
+                      </span>
+                    )}
+                    <span> per query</span>
                   </p>
                 )}
               </div>

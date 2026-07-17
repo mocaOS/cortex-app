@@ -301,6 +301,33 @@ export function ApiKeyCard({
                       — read-only, paid per query to the configured wallet
                     </span>
                   </div>
+                  <div className="text-sm text-foreground mt-1">
+                    {(() => {
+                      // Keys minted before the multiplier existed read as the default (10).
+                      const factor = parseFloat(apiKey.research_multiplier ?? "10");
+                      if (factor === 0) {
+                        return (
+                          <span className="text-muted-foreground">
+                            Deep research: <span className="text-amber-400">disabled</span> on this key
+                          </span>
+                        );
+                      }
+                      const research = Number(
+                        (parseFloat(apiKey.price_per_query || "0") * factor).toPrecision(12)
+                      );
+                      return (
+                        <>
+                          <span className="font-mono">
+                            {research}
+                            {x402AssetName ? ` ${x402AssetName}` : ""}/query
+                          </span>
+                          <span className="text-muted-foreground">
+                            {" "}— deep research ({factor}× rate)
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
               )}
 

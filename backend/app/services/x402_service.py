@@ -138,6 +138,36 @@ def format_atomic(amount: int, decimals: int) -> str:
     return format(quantum.normalize(), "f")
 
 
+# Deep-research (agentic) queries consume an order of magnitude more inference
+# than a standard ask, so monetized keys carry a price multiplier for them.
+# Keys minted before the field existed read as the default.
+DEFAULT_RESEARCH_MULTIPLIER = "10"
+
+
+def validate_multiplier(raw: str) -> str:
+    """Validate and normalize a research-price multiplier.
+
+    '0' is legal and means "deep research forbidden on this key".
+    Returns the normalized string; raises ValueError otherwise.
+    """
+    try:
+        value = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Invalid multiplier: {raw!r} is not a decimal number")
+    if not value.is_finite() or value < 0:
+        raise ValueError("Research multiplier must be zero or a positive number")
+    if value > 1000:
+        raise ValueError("Research multiplier is implausibly large (max 1000)")
+    return format(value.normalize(), "f")
+
+
+def effective_price(price: str, multiplier: Optional[str]) -> str:
+    """The human-unit price after applying the research multiplier."""
+    factor = Decimal(multiplier if multiplier not in (None, "") else DEFAULT_RESEARCH_MULTIPLIER)
+    value = Decimal(str(price).strip()) * factor
+    return format(value.normalize(), "f")
+
+
 # =============================================================================
 # Address validation (config-time checks; the facilitator is authoritative at
 # payment time)
@@ -614,6 +644,47 @@ def get_earnings() -> X402EarningsResponse:
 # The payment gate (FastAPI dependency on the retrieval endpoints)
 # =============================================================================
 
+_ASK_PATHS = frozenset({"/api/ask", "/api/ask/stream", "/api/ask/stream/thinking"})
+
+
+async def _inspect_request_body(request: Request) -> Tuple[dict, bool]:
+    """Read the JSON body (Starlette caches it — the endpoint's Pydantic
+    parsing is unaffected) and decide whether this is a deep-research request.
+
+    Money moves BEFORE the endpoint's own validation runs, so this also
+    rejects requests that would fail validation anyway — a payer must never
+    settle a payment for a guaranteed 422.
+    """
+    try:
+        raw = await request.body()
+        data = json.loads(raw) if raw else {}
+        if not isinstance(data, dict):
+            raise ValueError
+    except (ValueError, json.JSONDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="Request body must be a JSON object (no payment was taken)",
+        )
+
+    path = request.url.path
+    required_field = "question" if path in _ASK_PATHS else "query"
+    value = data.get(required_field)
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=f"Field '{required_field}' is required (no payment was taken)",
+        )
+
+    # Mirrors the routing condition in main.py: agentic mode actually runs
+    # only when requested, enabled on the instance, and not in fast-search.
+    is_research = (
+        path in _ASK_PATHS
+        and data.get("use_agentic") is True
+        and not data.get("use_fast_search")
+        and bool(getattr(get_settings(), "enable_agentic_rag", False))
+    )
+    return data, is_research
+
 def _payment_required_exc(cfg: dict, requirements: dict, request: Request,
                           error: str, status_code: int = 402) -> HTTPException:
     payment_required = build_payment_required(cfg, requirements, str(request.url), error)
@@ -686,8 +757,27 @@ async def enforce_x402_payment(
             headers={"Retry-After": "60"},
         )
 
+    # Deep-research pricing: agentic requests cost price × the key's research
+    # multiplier ('0' = research not offered on this key). The multiplied
+    # amount lands in the 402 challenge, so agents see the true cost of a
+    # research query BEFORE signing anything.
+    _, is_research = await _inspect_request_body(request)
+    multiplier = auth.research_multiplier or DEFAULT_RESEARCH_MULTIPLIER
+    if is_research and Decimal(multiplier) == 0:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This API key does not permit deep-research (agentic) queries. "
+                "Retry without use_agentic, or use a key priced for research."
+            ),
+        )
+
     try:
-        requirements = build_payment_requirements(cfg, auth.price_per_query)
+        price = (
+            effective_price(auth.price_per_query, multiplier)
+            if is_research else auth.price_per_query
+        )
+        requirements = build_payment_requirements(cfg, price)
     except (ValueError, InvalidOperation) as e:
         logger.error(f"Invalid price on key {auth.key_id}: {e}")
         raise HTTPException(status_code=500, detail="Invalid price configuration for this API key")

@@ -52,7 +52,8 @@ class AuthResult:
         collection_scope: str = "all",
         allowed_collections: List[str] = None,
         service_error: bool = False,
-        price_per_query: Optional[str] = None
+        price_per_query: Optional[str] = None,
+        research_multiplier: Optional[str] = None
     ):
         self.is_authenticated = is_authenticated
         self.is_admin = is_admin
@@ -70,6 +71,10 @@ class AuthResult:
         # key": read-only, restricted to MONETIZED_KEY_ALLOWED_PATHS, and
         # gated by enforce_x402_payment (x402_service).
         self.price_per_query = price_per_query
+        # Deep-research price multiplier: agentic queries cost price × this.
+        # None = key predates the field (treated as the default, 10);
+        # "0" = deep research forbidden on this key.
+        self.research_multiplier = research_multiplier
 
     @property
     def is_monetized(self) -> bool:
@@ -285,7 +290,8 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                     key_name=stored_key["name"],
                     collection_scope=collection_scope,
                     allowed_collections=allowed_collections,
-                    price_per_query=price_per_query
+                    price_per_query=price_per_query,
+                    research_multiplier=stored_key.get("research_multiplier") or None
                 )
 
                 # Telemetry, not auth: throttled, and a failure here must

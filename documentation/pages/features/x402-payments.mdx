@@ -24,7 +24,7 @@ Payment always settles before the answer is produced, and on-chain replay protec
    - **Facilitator URL** — any spec-compliant x402 facilitator. Optional auth headers are stored encrypted.
    - **Network + asset** — presets for USDC on Base, Base Sepolia (testnet), Avalanche, and Solana, or enter a custom network/token.
 3. Click **Verify configuration**. Cortex checks your wallet address format (including EIP-55 checksum), reaches the facilitator, and confirms it supports your chosen scheme and network — each check reported individually so misconfiguration is obvious.
-4. Once verified, create a key on **Settings → API Keys** and choose **Monetized public key**, setting a price per query (e.g. `0.05` USDC).
+4. Once verified, create a key on **Settings → API Keys** and choose **Monetized public key**, setting a price per query (e.g. `0.05` USDC) and a **deep research multiplier** (default `10×`). Quick queries and search bill at the flat price; agentic deep-research queries bill at `price × multiplier` — the modal previews both rates live, and the 402 challenge always quotes the exact amount before an agent signs. Set the multiplier to `0` to disable deep research on that key entirely.
 
 Until the configuration verifies, priced keys cannot be created and paid requests are refused — you can't accidentally run a broken paywall.
 

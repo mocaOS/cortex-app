@@ -9,6 +9,7 @@ allowlist, MANAGE stripping), and the admin/key-CRUD endpoint guards.
 No network: the facilitator is always monkeypatched.
 """
 
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -31,6 +32,7 @@ from app.services.x402_service import (
     build_payment_requirements,
     config_hash,
     decode_b64_json,
+    effective_price,
     encode_b64_json,
     enforce_x402_payment,
     format_atomic,
@@ -38,6 +40,7 @@ from app.services.x402_service import (
     keccak256,
     to_atomic,
     validate_evm_address,
+    validate_multiplier,
     validate_price,
     validate_solana_address,
 )
@@ -78,7 +81,16 @@ def verified_config(**overrides) -> dict:
     return cfg
 
 
-def make_request(path: str = "/api/search", headers: dict | None = None) -> Request:
+def make_request(path: str = "/api/search", headers: dict | None = None,
+                 body: dict | str | None = None) -> Request:
+    """Build a Request with a readable body (the payment gate inspects it)."""
+    if body is None:
+        body = {"question": "hi"} if path.startswith("/api/ask") else {"query": "hi"}
+    payload = (body if isinstance(body, str) else json.dumps(body)).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": payload, "more_body": False}
+
     raw_headers = [
         (k.lower().encode("ascii"), v.encode("ascii"))
         for k, v in (headers or {}).items()
@@ -91,16 +103,17 @@ def make_request(path: str = "/api/search", headers: dict | None = None) -> Requ
         "query_string": b"",
         "server": ("test", 80),
         "scheme": "http",
-    })
+    }, receive=receive)
 
 
-def monetized_auth(price: str = "0.05") -> AuthResult:
+def monetized_auth(price: str = "0.05", multiplier: str | None = None) -> AuthResult:
     return AuthResult(
         is_authenticated=True,
         permissions=[APIKeyPermission.READ],
         key_id="key_pub1",
         key_name="Public Paid",
         price_per_query=price,
+        research_multiplier=multiplier,
     )
 
 
@@ -394,6 +407,134 @@ class TestEnforcePayment:
 
 
 # =============================================================================
+# Deep-research pricing (per-key multiplier)
+# =============================================================================
+
+class TestMultiplierMath:
+    def test_validate_multiplier(self):
+        assert validate_multiplier("10") == "10"
+        assert validate_multiplier("0") == "0"
+        assert validate_multiplier(" 2.5 ") == "2.5"
+        assert validate_multiplier("1") == "1"
+
+    @pytest.mark.parametrize("bad", ["-1", "abc", "", "1e9", "1001"])
+    def test_validate_multiplier_rejects(self, bad):
+        with pytest.raises(ValueError):
+            validate_multiplier(bad)
+
+    def test_effective_price(self):
+        assert effective_price("0.05", "10") == "0.5"
+        assert effective_price("0.05", "1") == "0.05"
+        assert effective_price("0.05", "2.5") == "0.125"
+        # None/empty falls back to the default multiplier (10)
+        assert effective_price("0.05", None) == "0.5"
+        assert effective_price("0.05", "") == "0.5"
+
+
+class TestResearchPricing:
+    """Agentic requests are priced at price × multiplier, decided per request
+    from the body — advertised in the 402 challenge before any signature."""
+
+    def _challenge_amount(self, exc) -> str:
+        pr = decode_b64_json(exc.value.headers["PAYMENT-REQUIRED"])
+        return pr["accepts"][0]["amount"]
+
+    async def _amount_for(self, x402_on, monkeypatch, body, auth=None):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", True)
+        request = make_request("/api/ask/stream", body=body)
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, auth or monetized_auth())
+        assert exc.value.status_code == 402
+        return self._challenge_amount(exc)
+
+    async def test_agentic_charges_multiplied_price(self, x402_on, mock_neo4j, monkeypatch):
+        amount = await self._amount_for(
+            x402_on, monkeypatch, {"question": "deep", "use_agentic": True},
+        )
+        assert amount == "500000"  # 0.05 × 10 @ 6 decimals
+
+    async def test_standard_ask_charges_base_price(self, x402_on, mock_neo4j, monkeypatch):
+        amount = await self._amount_for(x402_on, monkeypatch, {"question": "quick"})
+        assert amount == "50000"
+
+    async def test_fast_search_never_research_priced(self, x402_on, mock_neo4j, monkeypatch):
+        amount = await self._amount_for(
+            x402_on, monkeypatch,
+            {"question": "quick", "use_agentic": True, "use_fast_search": True},
+        )
+        assert amount == "50000"
+
+    async def test_agentic_disabled_on_instance_charges_base(self, x402_on, mock_neo4j, monkeypatch):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", False)
+        request = make_request("/api/ask/stream", body={"question": "q", "use_agentic": True})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert self._challenge_amount(exc) == "50000"
+
+    async def test_custom_multiplier(self, x402_on, mock_neo4j, monkeypatch):
+        amount = await self._amount_for(
+            x402_on, monkeypatch, {"question": "deep", "use_agentic": True},
+            auth=monetized_auth(multiplier="2.5"),
+        )
+        assert amount == "125000"  # 0.05 × 2.5
+
+    async def test_multiplier_zero_forbids_research(self, x402_on, mock_neo4j, monkeypatch):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", True)
+        request = make_request("/api/ask/stream", body={"question": "deep", "use_agentic": True})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth(multiplier="0"))
+        assert exc.value.status_code == 403
+        assert "deep-research" in exc.value.detail
+
+    async def test_multiplier_zero_still_allows_standard(self, x402_on, mock_neo4j):
+        request = make_request("/api/ask/stream", body={"question": "quick"})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth(multiplier="0"))
+        assert exc.value.status_code == 402
+        assert self._challenge_amount(exc) == "50000"
+
+    async def test_search_never_research_priced(self, x402_on, mock_neo4j, monkeypatch):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", True)
+        request = make_request("/api/search", body={"query": "q", "use_agentic": True})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert self._challenge_amount(exc) == "50000"
+
+
+class TestPrePaymentValidation:
+    """Requests that would 422 anyway must be rejected BEFORE any payment —
+    settle-then-422 would burn the payer's money for nothing."""
+
+    async def test_missing_question_422_before_payment(self, x402_on, facilitator, mock_neo4j):
+        request = make_request("/api/ask/stream", body={"use_agentic": True})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 422
+        assert "no payment was taken" in exc.value.detail
+        facilitator.verify.assert_not_awaited()
+        facilitator.settle.assert_not_awaited()
+
+    async def test_missing_query_422_before_payment(self, x402_on, facilitator, mock_neo4j):
+        request = make_request("/api/search", body={})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 422
+        facilitator.settle.assert_not_awaited()
+
+    async def test_malformed_json_400_before_payment(self, x402_on, facilitator, mock_neo4j):
+        request = make_request("/api/search", body="{not json")
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 400
+        facilitator.settle.assert_not_awaited()
+
+    async def test_free_key_body_untouched(self, mock_neo4j):
+        # Free keys bypass the gate entirely — even a bodyless request passes.
+        auth = AuthResult(is_authenticated=True, permissions=[APIKeyPermission.READ], key_id="k")
+        await enforce_x402_payment(make_request(body={}), auth)  # no exception
+
+
+# =============================================================================
 # Auth hardening: MANAGE strip + endpoint allowlist
 # =============================================================================
 
@@ -677,5 +818,56 @@ class TestKeyCrudGuards:
         mock_neo4j.get_api_key_by_id.return_value = record
         response = client.patch("/api/admin/api-keys/key_pub1", json={
             "price_per_query": "0.05",
+        })
+        assert response.status_code == 422
+
+    def test_create_priced_key_stores_default_multiplier(self, client, mock_neo4j,
+                                                         _isolate_env, monkeypatch):
+        self._enable_verified(_isolate_env, monkeypatch)
+        mock_neo4j.create_api_key.return_value = {
+            "created_at": datetime.utcnow(), "allowed_collections": [],
+            "price_per_query": "0.05", "research_multiplier": "10",
+        }
+        response = client.post("/api/admin/api-keys", json={
+            "name": "Paid", "permissions": ["read"], "price_per_query": "0.05",
+        })
+        assert response.status_code == 200
+        assert mock_neo4j.create_api_key.call_args.kwargs["research_multiplier"] == "10"
+
+    def test_create_priced_key_with_custom_multiplier(self, client, mock_neo4j,
+                                                      _isolate_env, monkeypatch):
+        self._enable_verified(_isolate_env, monkeypatch)
+        mock_neo4j.create_api_key.return_value = {
+            "created_at": datetime.utcnow(), "allowed_collections": [],
+            "price_per_query": "0.05", "research_multiplier": "0",
+        }
+        response = client.post("/api/admin/api-keys", json={
+            "name": "Paid", "permissions": ["read"],
+            "price_per_query": "0.05", "research_multiplier": "0",
+        })
+        assert response.status_code == 200
+        assert mock_neo4j.create_api_key.call_args.kwargs["research_multiplier"] == "0"
+
+    def test_multiplier_without_price_422(self, client, _isolate_env, monkeypatch):
+        self._enable_verified(_isolate_env, monkeypatch)
+        response = client.post("/api/admin/api-keys", json={
+            "name": "Member", "permissions": ["read"], "research_multiplier": "10",
+        })
+        assert response.status_code == 422
+
+    def test_update_multiplier_on_free_key_422(self, client, mock_neo4j, _isolate_env):
+        _isolate_env.x402_enabled = True
+        record = priced_key_record("cortex_ro_" + "k" * 64, price=None)
+        mock_neo4j.get_api_key_by_id.return_value = record
+        response = client.patch("/api/admin/api-keys/key_pub1", json={
+            "research_multiplier": "5",
+        })
+        assert response.status_code == 422
+
+    def test_bad_multiplier_422(self, client, _isolate_env, monkeypatch):
+        self._enable_verified(_isolate_env, monkeypatch)
+        response = client.post("/api/admin/api-keys", json={
+            "name": "Paid", "permissions": ["read"],
+            "price_per_query": "0.05", "research_multiplier": "-3",
         })
         assert response.status_code == 422
