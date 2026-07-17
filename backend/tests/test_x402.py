@@ -528,6 +528,21 @@ class TestPrePaymentValidation:
         assert exc.value.status_code == 400
         facilitator.settle.assert_not_awaited()
 
+    async def test_agentic_on_nonstreaming_ask_400_before_payment(
+        self, x402_on, facilitator, mock_neo4j, monkeypatch,
+    ):
+        # main.py rejects use_agentic on the non-streaming /api/ask AFTER
+        # dependencies run — the gate must mirror it pre-payment or the payer
+        # settles (at the research rate) for a guaranteed 400.
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agent_research", True, raising=False)
+        request = make_request("/api/ask", body={"question": "q", "use_agentic": True})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 400
+        assert "no payment was taken" in exc.value.detail
+        facilitator.verify.assert_not_awaited()
+        facilitator.settle.assert_not_awaited()
+
     async def test_free_key_body_untouched(self, mock_neo4j):
         # Free keys bypass the gate entirely — even a bodyless request passes.
         auth = AuthResult(is_authenticated=True, permissions=[APIKeyPermission.READ], key_id="k")

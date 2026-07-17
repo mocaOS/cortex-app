@@ -675,6 +675,24 @@ async def _inspect_request_body(request: Request) -> Tuple[dict, bool]:
             detail=f"Field '{required_field}' is required (no payment was taken)",
         )
 
+    # Mirror of main.py's agentic_requires_streaming guard: the non-streaming
+    # /api/ask rejects use_agentic with 400 AFTER dependencies run — without
+    # this pre-check a payer would settle (at the research rate!) for a
+    # guaranteed error.
+    if (
+        path == "/api/ask"
+        and data.get("use_agentic")
+        and bool(getattr(get_settings(), "enable_agent_research", False))
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Agentic deep research is not supported on the non-streaming "
+                "POST /api/ask endpoint — use POST /api/ask/stream "
+                "(no payment was taken)"
+            ),
+        )
+
     # Mirrors the routing condition in main.py: agentic mode actually runs
     # only when requested, enabled on the instance, and not in fast-search.
     is_research = (
