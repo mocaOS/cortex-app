@@ -96,6 +96,11 @@ from app.models import (
     WebDiscoverRequest,
     WebDiscoverResponse,
     WebDiscoverLink,
+    # x402 Payments models
+    X402ConfigUpdate,
+    X402ConfigResponse,
+    X402VerifyResponse,
+    X402EarningsResponse,
 )
 from app.services.neo4j_service import get_neo4j_service
 from app.services.document_processor import get_document_processor, get_query_processor
@@ -123,6 +128,8 @@ from app.services.auth_service import (
 )
 from app.services.api_key_service import get_api_key_service
 from app.services.api_usage_service import get_api_usage_service
+from app.services import x402_service
+from app.services.x402_service import enforce_x402_payment
 from app.services.audit_log import audit, get_audit_logger
 from app.services.crypto_service import get_crypto_service, migrate_secrets_at_rest
 
@@ -813,6 +820,9 @@ app.add_middleware(
     allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    # x402 protocol headers ride on 402/200 responses; without exposure,
+    # browser-based agents can't read them (server-side clients are fine).
+    expose_headers=["PAYMENT-REQUIRED", "PAYMENT-RESPONSE", "X-Request-ID"],
 )
 
 
@@ -1042,7 +1052,11 @@ class APIUsageMiddleware(BaseHTTPMiddleware):
                 return response
             
             try:
-                is_error = response.status_code >= 400
+                # 402 is excluded: it's not a failure but the first leg of
+                # every x402 payment handshake (challenge → pay → retry).
+                # Counting challenges as errors would pin a healthy monetized
+                # key's error rate near 50% forever.
+                is_error = response.status_code >= 400 and response.status_code != 402
                 error_message = None
                 if is_error:
                     error_message = f"HTTP {response.status_code}"
@@ -1099,6 +1113,12 @@ async def request_id_and_metrics_middleware(request: Request, call_next):
     rid = get_request_id()
     if rid:
         response.headers["X-Request-ID"] = rid
+    # x402: settle-before-serve stashes the SettlementResponse on
+    # request.state (enforce_x402_payment); emit it here so streaming
+    # responses carry it before the first body byte.
+    payment_response = getattr(request.state, "x402_payment_response", None)
+    if payment_response:
+        response.headers[x402_service.HEADER_PAYMENT_RESPONSE] = payment_response
     return response
 
 
@@ -3230,6 +3250,7 @@ async def search(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _x402: None = Depends(enforce_x402_payment),
 ):
     """
     Perform hybrid search on the knowledge base.
@@ -3300,6 +3321,7 @@ async def ask_question(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _x402: None = Depends(enforce_x402_payment),
     _track: None = Depends(track_ask_activity),
 ):
     """
@@ -3444,6 +3466,7 @@ async def ask_question_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _x402: None = Depends(enforce_x402_payment),
     _track: None = Depends(track_ask_activity),
 ):
     """
@@ -5155,6 +5178,7 @@ async def ask_with_thinking_stream(
     auth: AuthResult = Depends(require_read_permission),
     _quota: None = Depends(enforce_query_quota),
     _rate: None = Depends(enforce_rate_limit),
+    _x402: None = Depends(enforce_x402_payment),
     _track: None = Depends(track_ask_activity),
 ):
     """
@@ -6156,6 +6180,92 @@ async def list_orphaned_git_documents(connection_id: str, auth: AuthResult = Dep
 # Admin API Key Management Endpoints
 # =============================================================================
 
+# =============================================================================
+# x402 Payments — admin configuration, verification, earnings
+# =============================================================================
+
+def _require_x402_enabled() -> None:
+    """The whole admin surface is hidden while X402_ENABLED=false; API writes
+    are rejected too (same pattern as the runtime-settings gate)."""
+    if not get_settings().x402_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="x402 payments are disabled on this instance (X402_ENABLED=false)"
+        )
+
+
+@app.get("/api/admin/x402/config", response_model=X402ConfigResponse)
+async def get_x402_config(auth: AuthResult = Depends(require_admin)):
+    """Current x402 configuration + verification state (secrets masked).
+
+    Available even when X402_ENABLED=false so the UI can decide what to render
+    (the response carries the flag).
+    """
+    try:
+        cfg = await asyncio.to_thread(x402_service.load_x402_config, True)
+        return x402_service.build_config_response(cfg)
+    except Exception as e:
+        logger.error(f"Error reading x402 config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/admin/x402/config", response_model=X402ConfigResponse)
+async def update_x402_config(
+    request: X402ConfigUpdate,
+    auth: AuthResult = Depends(require_admin)
+):
+    """Save the x402 configuration (runtime, stored in Neo4j — survives
+    redeploys, never rides library exports). Changing any payment-relevant
+    field invalidates the verified state until POST /verify passes again.
+    """
+    _require_x402_enabled()
+    try:
+        result = await asyncio.to_thread(x402_service.save_x402_config, request)
+        audit("x402.config_updated", actor=auth.key_id, outcome="ok")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving x402 config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/x402/verify", response_model=X402VerifyResponse)
+async def verify_x402_config(auth: AuthResult = Depends(require_admin)):
+    """Run the verification suite against the saved configuration:
+    address formats, facilitator reachability (GET /supported), and
+    scheme+network support. All checks passing stamps the config verified —
+    the precondition for creating priced keys and serving paid requests.
+    """
+    _require_x402_enabled()
+    cfg = await asyncio.to_thread(x402_service.load_x402_config, True)
+    if not x402_service.config_complete(cfg):
+        raise HTTPException(
+            status_code=400,
+            detail="Save a complete x402 configuration before verifying"
+        )
+    try:
+        result = await x402_service.run_verification(cfg)
+        audit(
+            "x402.config_verified", actor=auth.key_id,
+            outcome="ok" if result.valid else "failed",
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error verifying x402 config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/x402/earnings", response_model=X402EarningsResponse)
+async def get_x402_earnings(auth: AuthResult = Depends(require_admin)):
+    """Instance-wide settled-payment totals, overall and per key."""
+    try:
+        return await asyncio.to_thread(x402_service.get_earnings)
+    except Exception as e:
+        logger.error(f"Error reading x402 earnings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/admin/api-keys", response_model=List[APIKeyListItem])
 async def list_api_keys(auth: AuthResult = Depends(require_admin)):
     """
@@ -6172,44 +6282,90 @@ async def list_api_keys(auth: AuthResult = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _validate_monetized_key_price(price_raw: str, permissions: List[APIKeyPermission]) -> str:
+    """Guard rails for x402-priced ("monetized public") keys, enforced at the
+    API level — a priced key must be read-only, and pricing is only available
+    once the x402 config exists and has passed verification.
+
+    Returns the normalized price string.
+    """
+    settings = get_settings()
+    if not settings.x402_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="x402 payments are disabled on this instance (X402_ENABLED=false)"
+        )
+    cfg = x402_service.load_x402_config()
+    if not x402_service.is_config_verified(cfg):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The x402 configuration must be saved and verified before "
+                "priced keys can be created (Settings → x402 Payments)"
+            )
+        )
+    if APIKeyPermission.MANAGE in permissions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Monetized keys must be read-only: 'manage' permission cannot "
+                "be combined with a price_per_query"
+            )
+        )
+    try:
+        return x402_service.validate_price(price_raw, int(cfg.get("asset_decimals") or 0))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 @app.post("/api/admin/api-keys", response_model=CreateAPIKeyResponse)
 async def create_api_key(request: CreateAPIKeyRequest, auth: AuthResult = Depends(require_admin)):
     """
     Create a new API key.
-    
+
     Admin-only endpoint. The actual API key is returned only once in this response.
     Make sure to save it securely as it cannot be retrieved again.
-    
+
     Collection scope options:
     - "all": Key can access all collections (default)
     - "restricted": Key can only access collections specified in allowed_collections
+
+    Setting price_per_query creates a monetized public key (x402): read-only
+    by construction and restricted to the retrieval endpoints.
     """
     try:
         # Validate that if scope is restricted, we have at least one collection
         if request.collection_scope == CollectionScope.RESTRICTED:
             if not request.allowed_collections:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail="At least one collection must be specified when scope is 'restricted'"
                 )
-            
+
             # Validate that all specified collections exist
             neo4j = get_neo4j_service()
             for coll_id in request.allowed_collections:
                 collection = await asyncio.to_thread(neo4j.get_collection, coll_id)
                 if not collection:
                     raise HTTPException(
-                        status_code=400, 
+                        status_code=400,
                         detail=f"Collection not found: {coll_id}"
                     )
-        
+
+        price_per_query = None
+        if request.price_per_query:
+            price_per_query = _validate_monetized_key_price(
+                request.price_per_query, request.permissions
+            )
+
         api_key_service = get_api_key_service()
         result = api_key_service.create_api_key(
             name=request.name,
             permissions=request.permissions,
             created_by="admin",
             collection_scope=request.collection_scope,
-            allowed_collections=request.allowed_collections
+            allowed_collections=request.allowed_collections,
+            price_per_query=price_per_query
         )
         
         if not result:
@@ -6289,14 +6445,46 @@ async def update_api_key(
             status_code=403,
             detail="The system admin key cannot be modified through this endpoint"
         )
-    
+
     try:
         api_key_service = get_api_key_service()
+
+        # Monetized-key invariant, checked against the EFFECTIVE post-update
+        # state: a priced key can never hold MANAGE, in either direction
+        # (adding a price to a manage key, or adding manage to a priced key).
+        existing = api_key_service.get_api_key(key_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="API key not found")
+
+        if request.price_per_query is None:
+            effective_price = existing.price_per_query
+        else:
+            effective_price = request.price_per_query or None  # "" clears
+        effective_permissions = (
+            request.permissions if request.permissions is not None
+            else existing.permissions
+        )
+        if effective_price:
+            if request.price_per_query:
+                # Setting/changing a price revalidates it against the current
+                # verified x402 config (and the enabled flag).
+                request.price_per_query = _validate_monetized_key_price(
+                    request.price_per_query, effective_permissions
+                )
+            elif APIKeyPermission.MANAGE in effective_permissions:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "This key is monetized (x402-priced) and must stay "
+                        "read-only: clear the price before granting 'manage'"
+                    )
+                )
+
         result = api_key_service.update_api_key(key_id, request)
-        
+
         if not result:
             raise HTTPException(status_code=404, detail="API key not found")
-        
+
         return result
     except HTTPException:
         raise

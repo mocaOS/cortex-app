@@ -280,6 +280,14 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 | `CRAWL_MAX_URLS_PER_JOB` | `100` | Maximum URLs accepted per import. `0` = unlimited. |
 | `CRAWL_DISCOVER_MAX_LINKS` | `200` | Cap on candidate links returned by the Discover sub-flow. |
 
+## x402 Payments Configuration
+
+Pay-per-query monetization of the retrieval endpoints via the open [x402 standard](https://github.com/x402-foundation/x402). See [Chapter 17: Administration](17-administration.md#x402-payments-monetization) for the full guide.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `X402_ENABLED` | `false` | Master switch — and deliberately the **only** x402 environment variable. When true, the **Settings → x402 Payments** section appears; recipient wallet, facilitator URL, network and asset are configured there at runtime (stored in Neo4j, survive redeploys, excluded from export/reset). Priced API keys activate once that config passes the built-in verification. |
+
 ## Community Detection Configuration
 
 | Variable | Default | Description |

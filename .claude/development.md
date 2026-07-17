@@ -10,6 +10,16 @@ docker compose up --build
 docker compose -f docker-compose.prod.yml up --build
 ```
 
+**Frontend memory limits are mode-dependent.** Dev mode runs the Turbopack
+compiler in-process plus `@sentry/nextjs` instrumentation and peaks well past
+1g while compiling routes — the dev compose defaults `FRONTEND_MEM_LIMIT` to
+**3g**. An undersized limit shows up as an OOM **crash-loop** (RestartCount
+climbing, `docker events` showing `start→oom→die`; in the browser the page
+"refreshes every few seconds" as HMR reconnects). The prod/Dokploy composes
+keep the **1g** default because `next start` serves a prebuilt bundle at a
+fraction of dev's footprint; the Coolify compose carries no mem ceilings at
+all (removed 2026-07 — host-level isolation instead).
+
 ## Local Development (without Docker)
 
 ```bash

@@ -83,7 +83,12 @@ services:
       dockerfile: Dockerfile
     container_name: cortex-frontend
     restart: unless-stopped
-    mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
+    # Dev mode runs the Turbopack compiler in-process + @sentry/nextjs
+    # instrumentation — peaks well past 1g while compiling routes, and an
+    # undersized limit produces an OOM crash-loop (browser "refreshes" every
+    # few seconds as HMR reconnects). Prod composes keep 1g: `next start`
+    # serves a prebuilt bundle at a fraction of this.
+    mem_limit: ${FRONTEND_MEM_LIMIT:-3g}
     env_file:
       - .env
     environment:

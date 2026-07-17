@@ -935,6 +935,18 @@ class Settings(BaseSettings):
     # Empty = encryption disabled (plaintext fallback). Generate a key with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
+    # ==========================================================================
+    # x402 Payments (pay-per-query monetization for retrieval endpoints)
+    # ==========================================================================
+    x402_enabled: bool = Field(
+        default=False
+    )  # Master switch for x402 micropayments. When true, an "x402 Payments"
+    #   section appears on the admin Settings page where the owner configures
+    #   recipient wallet, facilitator, network and asset at runtime (stored in
+    #   Neo4j, never env). Priced API keys and the 402 payment gate only
+    #   activate once that config passes verification. The rest of the setup
+    #   is deliberately NOT env-driven — see .claude/domain/x402.md.
+
     @property
     def vision_model_available(self) -> bool:
         """Check if a vision model is configured."""

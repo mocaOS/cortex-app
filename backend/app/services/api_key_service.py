@@ -69,39 +69,44 @@ class APIKeyService:
         permissions: List[APIKeyPermission],
         created_by: str = "admin",
         collection_scope: CollectionScope = CollectionScope.ALL,
-        allowed_collections: Optional[List[str]] = None
+        allowed_collections: Optional[List[str]] = None,
+        price_per_query: Optional[str] = None
     ) -> Optional[CreateAPIKeyResponse]:
         """
         Create a new API key with the specified permissions.
-        
+
         Args:
             name: Human-readable name for the key
             permissions: List of permissions to grant
             created_by: Who is creating this key
             collection_scope: 'all' for unrestricted, 'restricted' for collection-specific
             allowed_collections: List of collection IDs when scope is 'restricted'
-            
+            price_per_query: x402 price in human asset units (monetized public key)
+
         Returns:
             CreateAPIKeyResponse with the actual key (shown only once)
         """
         # Generate unique ID
         key_id = f"key_{uuid.uuid4().hex[:16]}"
-        
-        # Determine prefix based on permissions
-        if APIKeyPermission.MANAGE in permissions:
+
+        # Determine prefix based on permissions; monetized keys get their own
+        # prefix so a priced key is recognizable at a glance.
+        if price_per_query:
+            prefix = "cortex_pub_"  # Monetized public key (read-only, x402-gated)
+        elif APIKeyPermission.MANAGE in permissions:
             prefix = "cortex_rw_"  # Read-write key
         else:
             prefix = "cortex_ro_"  # Read-only key
-        
+
         # Generate the actual API key
         full_key, key_prefix = generate_api_key(prefix)
-        
+
         # Hash the key for storage
         key_hash = hash_api_key(full_key)
-        
+
         # Convert permissions to string list for storage
         permission_strings = [p.value for p in permissions]
-        
+
         # Store in Neo4j
         result = self.neo4j_service.create_api_key(
             key_id=key_id,
@@ -111,12 +116,13 @@ class APIKeyService:
             permissions=permission_strings,
             created_by=created_by,
             collection_scope=collection_scope.value,
-            allowed_collections=allowed_collections or []
+            allowed_collections=allowed_collections or [],
+            price_per_query=price_per_query
         )
-        
+
         if not result:
             return None
-        
+
         # Return response with the actual key (shown only once!)
         return CreateAPIKeyResponse(
             id=key_id,
@@ -126,7 +132,8 @@ class APIKeyService:
             permissions=permissions,
             created_at=_convert_neo4j_datetime(result.get("created_at")) or datetime.utcnow(),
             collection_scope=collection_scope,
-            allowed_collections=result.get("allowed_collections", [])
+            allowed_collections=result.get("allowed_collections", []),
+            price_per_query=result.get("price_per_query")
         )
     
     def list_api_keys(self) -> List[APIKeyListItem]:
@@ -161,7 +168,8 @@ class APIKeyService:
                 created_by=key_data.get("created_by", "admin"),
                 collection_scope=collection_scope,
                 allowed_collections=key_data.get("allowed_collections", []),
-                allowed_collection_names=key_data.get("allowed_collection_names")
+                allowed_collection_names=key_data.get("allowed_collection_names"),
+                price_per_query=key_data.get("price_per_query")
             ))
         
         return result
@@ -199,7 +207,8 @@ class APIKeyService:
             created_by=key_data.get("created_by", "admin"),
             collection_scope=collection_scope,
             allowed_collections=key_data.get("allowed_collections", []),
-            allowed_collection_names=key_data.get("allowed_collection_names")
+            allowed_collection_names=key_data.get("allowed_collection_names"),
+            price_per_query=key_data.get("price_per_query")
         )
     
     def update_api_key(
@@ -226,14 +235,21 @@ class APIKeyService:
         collection_scope_str = None
         if request.collection_scope is not None:
             collection_scope_str = request.collection_scope.value
-        
+
+        # Price semantics: None = unchanged, "" = clear (revert to free key),
+        # non-empty = set new price.
+        clear_price = request.price_per_query == ""
+        new_price = request.price_per_query if request.price_per_query else None
+
         result = self.neo4j_service.update_api_key(
             key_id=key_id,
             name=request.name,
             permissions=permission_strings,
             is_active=request.is_active,
             collection_scope=collection_scope_str,
-            allowed_collections=request.allowed_collections
+            allowed_collections=request.allowed_collections,
+            price_per_query=new_price,
+            clear_price=clear_price
         )
 
         # Revocation/permission changes must take effect immediately, not
@@ -264,7 +280,8 @@ class APIKeyService:
             created_by=result.get("created_by", "admin"),
             collection_scope=collection_scope,
             allowed_collections=result.get("allowed_collections", []),
-            allowed_collection_names=result.get("allowed_collection_names")
+            allowed_collection_names=result.get("allowed_collection_names"),
+            price_per_query=result.get("price_per_query")
         )
     
     def delete_api_key(self, key_id: str) -> bool:

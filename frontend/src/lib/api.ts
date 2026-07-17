@@ -29,6 +29,10 @@ import type {
   APIKeyStats,
   APIKeyWithStats,
   APIKeyUsageHistoryResponse,
+  X402ConfigResponse,
+  X402ConfigUpdateRequest,
+  X402VerifyResponse,
+  X402EarningsResponse,
   AdminStatsOverview,
   SystemResetRequest,
   SystemResetResponse,
@@ -1180,6 +1184,49 @@ class ApiClient {
    */
   async getAdminStatsOverview(): Promise<AdminStatsOverview> {
     return this.request<AdminStatsOverview>("/api/admin/stats/overview");
+  }
+
+  // ===========================================================================
+  // x402 Micropayments (admin only)
+  // ===========================================================================
+
+  /**
+   * Get the current x402 payment configuration (admin only).
+   * Secrets (facilitator auth headers) are never returned — only a set flag.
+   */
+  async getX402Config(): Promise<X402ConfigResponse> {
+    return this.request<X402ConfigResponse>("/api/admin/x402/config");
+  }
+
+  /**
+   * Update the x402 payment configuration (admin only).
+   *
+   * `facilitator_auth_headers`: omit/null = leave stored headers unchanged;
+   * `{}` = clear; object = replace. Any change to payment-relevant fields
+   * resets `verified` to false.
+   */
+  async updateX402Config(body: X402ConfigUpdateRequest): Promise<X402ConfigResponse> {
+    return this.request<X402ConfigResponse>("/api/admin/x402/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Run the x402 configuration verification checks (admin only).
+   * Returns per-check results; on `valid` the config is marked verified.
+   */
+  async verifyX402Config(): Promise<X402VerifyResponse> {
+    return this.request<X402VerifyResponse>("/api/admin/x402/verify", {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Get x402 earnings totals and a per-key breakdown (admin only).
+   */
+  async getX402Earnings(): Promise<X402EarningsResponse> {
+    return this.request<X402EarningsResponse>("/api/admin/x402/earnings");
   }
 
   // ===========================================================================

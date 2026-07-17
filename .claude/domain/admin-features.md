@@ -121,6 +121,7 @@ AskAI activity is tracked via the `track_ask_activity` FastAPI `yield` dependenc
 ## API Key Management
 
 - `services/api_key_service.py` — CRUD operations for API keys with permissions (READ, MANAGE) and collection scope
+- **Monetized public keys (x402)** — a key with `price_per_query` sells pay-per-query access to the retrieval endpoints: read-only by construction (price ⊕ MANAGE enforced at the API level, MANAGE stripped at validation as defense in depth), restricted to an endpoint allowlist, minted with the `cortex_pub_` prefix, creatable only while the x402 config is verified. See [`x402.md`](x402.md)
 - `services/api_usage_service.py` — Request logging per key, endpoint categorization, error tracking, statistics aggregation. `categorize_endpoint()` matches the **longest** (most-specific) prefix in `ENDPOINT_CATEGORIES` — required so `/api/custom-inputs/{id}` resolves to `documents` rather than being swallowed by the shorter `/api/custom-input` (`upload`) prefix.
 - `services/auth_service.py` — Admin API key validation, generated API key validation against Neo4j, permission + collection access checking
 

@@ -1,0 +1,50 @@
+---
+title: x402 Payments
+description: Monetize your knowledge base with pay-per-query micropayments — agents pay per retrieval query via the open x402 standard, with any spec-compliant facilitator
+---
+
+x402 Payments lets a Cortex owner sell access to their knowledge base in the fast-growing market of real-time agentic micropayments. Alongside your existing free member keys, you mint **monetized public keys**: anyone holding such a key — typically an AI agent — can query your Cortex, but each retrieval query must be paid via the open [x402 payment standard](https://github.com/x402-foundation/x402) (HTTP 402, stablecoin settlement, no accounts or subscriptions). Revenue lands directly in a wallet you control and can subsidize your members' inference or amortize your infrastructure.
+
+The integration is **vendor-agnostic by design**: Cortex speaks the standardized x402 facilitator interface (`/verify`, `/settle`, `/supported`), so any spec-compliant facilitator works — Coinbase's, a community-run one, or one you host yourself. Cortex never touches chain RPCs or private keys; the payout wallet only ever *receives*.
+
+## How it works
+
+1. A client calls a retrieval endpoint (`/api/search` or the Ask AI endpoints) with a monetized key and no payment attached.
+2. Cortex answers **HTTP 402** with a `PAYMENT-REQUIRED` header describing exactly what to pay: amount (the key's price), asset (e.g. USDC), network, and your wallet address.
+3. The client signs a payment authorization and retries with a `PAYMENT-SIGNATURE` header.
+4. Cortex verifies and settles the payment through your configured facilitator, **then** serves the query, returning the settlement receipt (transaction hash) in the `PAYMENT-RESPONSE` header.
+
+Payment always settles before the answer is produced, and on-chain replay protection means a payment authorization can never buy two responses.
+
+## Setup
+
+1. Set `X402_ENABLED=true` on your deployment. This is the only environment variable — everything else is configured in the UI and survives redeploys.
+2. Open **Settings → x402 Payments** and configure:
+   - **Recipient wallet** — where every payment goes (global for the instance).
+   - **Facilitator URL** — any spec-compliant x402 facilitator. Optional auth headers are stored encrypted.
+   - **Network + asset** — presets for USDC on Base, Base Sepolia (testnet), Avalanche, and Solana, or enter a custom network/token.
+3. Click **Verify configuration**. Cortex checks your wallet address format (including EIP-55 checksum), reaches the facilitator, and confirms it supports your chosen scheme and network — each check reported individually so misconfiguration is obvious.
+4. Once verified, create a key on **Settings → API Keys** and choose **Monetized public key**, setting a price per query (e.g. `0.05` USDC).
+
+Until the configuration verifies, priced keys cannot be created and paid requests are refused — you can't accidentally run a broken paywall.
+
+## Monetized keys are locked down
+
+A monetized key is safe to publish precisely because it is *not* a normal read key:
+
+- **Read-only by construction** — the API refuses to combine a price with the `manage` permission, in either direction.
+- **Retrieval endpoints only** — search and Ask AI. Raw document content, file downloads, graph browsing, and stats are off-limits; the paid retrieval is the only product the key exposes.
+- **Collection scoping still applies** — scope a priced key to selected collections to sell exactly the slice of knowledge you choose.
+
+Two keys with different prices let you tier your offering (e.g. a cheap search key and a premium research key).
+
+## Earnings
+
+**Settings → x402 Payments** shows settled totals — overall and per key — and every payment is recorded with its on-chain transaction hash, so revenue is independently auditable. Earnings records are operational data: they stay out of library exports and survive a system reset.
+
+## Notes for operators
+
+- **Point paying agents at `POST /api/ask/stream`** (or `/api/search`) rather than the non-streaming `/api/ask`: payment settles before the answer is generated, and the non-streaming endpoint's server-side deadline (~28s) can expire on long agentic answers *after* the payment settled — a paid 504. The streaming endpoint has no deadline and returns the settlement receipt in its response headers.
+- Paid queries still count against `MAX_QUERIES_PER_MONTH` — the quota meters inference cost regardless of who pays.
+- If the facilitator is unreachable, paid requests fail closed with `503` (never served free). Free member keys are unaffected.
+- Test end-to-end without real funds using Base Sepolia and a testnet facilitator, then switch the config to mainnet and re-verify.

@@ -7,3 +7,4 @@ export { LibraryTransferSection } from "./LibraryTransferSection";
 export { SkillsManager } from "./SkillsManager";
 export { SkillConfigModal } from "./SkillConfigModal";
 export { GitIntegrations } from "./GitIntegrations";
+export { X402Section } from "./X402Section";

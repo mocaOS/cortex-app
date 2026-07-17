@@ -250,6 +250,7 @@ class APIUsageService:
                 collection_scope=collection_scope,
                 allowed_collections=key_data.get("allowed_collections", []),
                 allowed_collection_names=key_data.get("allowed_collection_names"),
+                price_per_query=key_data.get("price_per_query"),
                 stats=stats
             ))
         

@@ -5740,9 +5740,116 @@ class Neo4jService:
         return raw == "true"
 
     # =========================================================================
+    # x402 Payments
+    #
+    # Config lives on a dedicated singleton node (X402Config {id:'x402'}) — a
+    # deliberate departure from SystemMeta: payment configuration is
+    # instance-operational (like git connections), so it must NOT travel with
+    # library exports and must survive System Reset. Settlement records
+    # (X402Payment) denormalize key_id/key_name so earnings history survives
+    # key deletion; neither label is included in export or reset.
+    # =========================================================================
+
+    def get_x402_config(self) -> Optional[dict]:
+        """Read the x402 payment configuration (None when never saved)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (x:X402Config {id: 'x402'})
+                RETURN x.pay_to as pay_to,
+                       x.facilitator_url as facilitator_url,
+                       x.network as network,
+                       x.asset_address as asset_address,
+                       x.asset_name as asset_name,
+                       x.asset_decimals as asset_decimals,
+                       x.asset_eip712_version as asset_eip712_version,
+                       x.max_timeout_seconds as max_timeout_seconds,
+                       x.service_name as service_name,
+                       x.facilitator_auth_headers as facilitator_auth_headers,
+                       x.verified_hash as verified_hash,
+                       x.verified_at as verified_at,
+                       x.updated_at as updated_at
+            """)
+            record = result.single()
+            return dict(record) if record else None
+
+    def save_x402_config(self, props: dict) -> None:
+        """Upsert the x402 configuration singleton.
+
+        `props` holds exactly the properties to SET (the service layer decides
+        whether to preserve or reset verified_hash/verified_at and how the
+        auth-headers secret is encoded).
+        """
+        with self.driver.session() as session:
+            session.run(
+                """
+                MERGE (x:X402Config {id: 'x402'})
+                SET x += $props, x.updated_at = datetime()
+                """,
+                props=props,
+            )
+
+    def mark_x402_verified(self, verified_hash: str) -> None:
+        """Stamp the current config as verified (hash binds it to the state
+        that passed the checks; any later save with different payment fields
+        invalidates it)."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (x:X402Config {id: 'x402'})
+                SET x.verified_hash = $verified_hash, x.verified_at = datetime()
+            """, verified_hash=verified_hash)
+
+    def record_x402_payment(
+        self,
+        key_id: str,
+        key_name: str,
+        transaction: str,
+        network: str,
+        payer: Optional[str],
+        amount_atomic: int,
+        asset_address: str,
+        endpoint: str,
+    ) -> None:
+        """Persist one settled x402 payment (audit trail + earnings)."""
+        with self.driver.session() as session:
+            session.run("""
+                CREATE (:X402Payment {
+                    key_id: $key_id,
+                    key_name: $key_name,
+                    transaction: $transaction,
+                    network: $network,
+                    payer: $payer,
+                    amount_atomic: $amount_atomic,
+                    asset_address: $asset_address,
+                    endpoint: $endpoint,
+                    created_at: datetime()
+                })
+            """,
+                key_id=key_id, key_name=key_name, transaction=transaction,
+                network=network, payer=payer, amount_atomic=amount_atomic,
+                asset_address=asset_address, endpoint=endpoint,
+            )
+
+    def get_x402_earnings(self) -> dict:
+        """Aggregate settled payments: overall + per key (atomic units)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (p:X402Payment)
+                WITH p.key_id as key_id, p.key_name as key_name,
+                     count(p) as payment_count, sum(p.amount_atomic) as total_atomic
+                RETURN key_id, key_name, payment_count, total_atomic
+                ORDER BY total_atomic DESC
+            """)
+            by_key = [dict(record) for record in result]
+            return {
+                "payment_count": sum(k["payment_count"] for k in by_key),
+                "total_atomic": sum(k["total_atomic"] or 0 for k in by_key),
+                "by_key": by_key,
+            }
+
+    # =========================================================================
     # API Key Management
     # =========================================================================
-    
+
     def create_api_key(
         self,
         key_id: str,
@@ -5752,10 +5859,11 @@ class Neo4jService:
         permissions: List[str],
         created_by: str = "admin",
         collection_scope: str = "all",
-        allowed_collections: Optional[List[str]] = None
+        allowed_collections: Optional[List[str]] = None,
+        price_per_query: Optional[str] = None
     ) -> Optional[dict]:
         """Create a new API key in the database.
-        
+
         Args:
             key_id: Unique identifier for the key
             name: Human-readable name
@@ -5765,9 +5873,10 @@ class Neo4jService:
             created_by: Who created this key
             collection_scope: 'all' for unrestricted, 'restricted' for collection-specific
             allowed_collections: List of collection IDs when scope is 'restricted'
+            price_per_query: x402 price in human asset units (None = free key)
         """
         allowed_collections = allowed_collections or []
-        
+
         with self.driver.session() as session:
             # Create the API key node
             result = session.run("""
@@ -5780,7 +5889,8 @@ class Neo4jService:
                     is_active: true,
                     created_at: datetime(),
                     created_by: $created_by,
-                    collection_scope: $collection_scope
+                    collection_scope: $collection_scope,
+                    price_per_query: $price_per_query
                 })
                 WITH k
                 // Create HAS_ACCESS_TO relationships for restricted keys
@@ -5803,6 +5913,7 @@ class Neo4jService:
                        k.created_at as created_at,
                        k.created_by as created_by,
                        k.collection_scope as collection_scope,
+                       k.price_per_query as price_per_query,
                        collect(DISTINCT c.id) as allowed_collections,
                        collect(DISTINCT c.name) as allowed_collection_names
             """,
@@ -5813,7 +5924,8 @@ class Neo4jService:
                 permissions=permissions,
                 created_by=created_by,
                 collection_scope=collection_scope,
-                allowed_collections=allowed_collections
+                allowed_collections=allowed_collections,
+                price_per_query=price_per_query
             )
             
             record = result.single()
@@ -5901,6 +6013,7 @@ class Neo4jService:
                        k.last_used_at as last_used_at,
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
+                       k.price_per_query as price_per_query,
                        collect(DISTINCT c.id) as allowed_collections,
                        collect(DISTINCT c.name) as allowed_collection_names
             """, id=key_id)
@@ -5933,6 +6046,7 @@ class Neo4jService:
                        k.last_used_at as last_used_at,
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
+                       k.price_per_query as price_per_query,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names
             """, prefix=key_prefix)
@@ -5962,6 +6076,7 @@ class Neo4jService:
                        k.last_used_at as last_used_at,
                        coalesce(k.created_by, '') as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
+                       k.price_per_query as price_per_query,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names
                 ORDER BY k.created_at DESC
@@ -5983,10 +6098,12 @@ class Neo4jService:
         permissions: Optional[List[str]] = None,
         is_active: Optional[bool] = None,
         collection_scope: Optional[str] = None,
-        allowed_collections: Optional[List[str]] = None
+        allowed_collections: Optional[List[str]] = None,
+        price_per_query: Optional[str] = None,
+        clear_price: bool = False
     ) -> Optional[dict]:
         """Update an API key's properties.
-        
+
         Args:
             key_id: The API key ID to update
             name: New name (optional)
@@ -5994,12 +6111,14 @@ class Neo4jService:
             is_active: New active status (optional)
             collection_scope: New collection scope - 'all' or 'restricted' (optional)
             allowed_collections: New list of allowed collection IDs (optional)
+            price_per_query: New x402 price in human asset units (optional)
+            clear_price: Remove the x402 price (key reverts to free)
         """
         with self.driver.session() as session:
             # Build dynamic SET clause
             set_clauses = []
             params = {"id": key_id}
-            
+
             if name is not None:
                 set_clauses.append("k.name = $name")
                 params["name"] = name
@@ -6012,6 +6131,11 @@ class Neo4jService:
             if collection_scope is not None:
                 set_clauses.append("k.collection_scope = $collection_scope")
                 params["collection_scope"] = collection_scope
+            if clear_price:
+                set_clauses.append("k.price_per_query = null")
+            elif price_per_query is not None:
+                set_clauses.append("k.price_per_query = $price_per_query")
+                params["price_per_query"] = price_per_query
             
             # Handle collection relationships update
             if allowed_collections is not None:
@@ -6505,6 +6629,7 @@ class Neo4jService:
                        k.last_used_at as last_used_at,
                        k.created_by as created_by,
                        coalesce(k.collection_scope, 'all') as collection_scope,
+                       k.price_per_query as price_per_query,
                        coll_ids as allowed_collections,
                        coll_names as allowed_collection_names,
                        COALESCE(k.total_requests, 0) as total_requests,
@@ -6548,6 +6673,7 @@ class Neo4jService:
                     "last_used_at": record["last_used_at"],
                     "created_by": record["created_by"],
                     "collection_scope": record["collection_scope"],
+                    "price_per_query": record["price_per_query"],
                     "allowed_collections": allowed_collections,
                     "allowed_collection_names": allowed_collection_names,
                     "stats": {

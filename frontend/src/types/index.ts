@@ -450,6 +450,8 @@ export interface APIKeyListItem {
   collection_scope: CollectionScope;
   allowed_collections: string[];
   allowed_collection_names?: string[] | null;
+  /** x402 price per query in human units (e.g. "0.05"); null for regular keys */
+  price_per_query?: string | null;
 }
 
 export interface CreateAPIKeyRequest {
@@ -457,6 +459,8 @@ export interface CreateAPIKeyRequest {
   permissions: APIKeyPermission[];
   collection_scope?: CollectionScope;
   allowed_collections?: string[];
+  /** x402 price per query (human units, e.g. "0.05"). Read-only keys only; requires verified x402 config. */
+  price_per_query?: string;
 }
 
 export interface CreateAPIKeyResponse {
@@ -468,6 +472,7 @@ export interface CreateAPIKeyResponse {
   created_at: string;
   collection_scope: CollectionScope;
   allowed_collections: string[];
+  price_per_query?: string | null;
 }
 
 export interface UpdateAPIKeyRequest {
@@ -476,6 +481,72 @@ export interface UpdateAPIKeyRequest {
   is_active?: boolean;
   collection_scope?: CollectionScope;
   allowed_collections?: string[];
+  /** x402 price per query. "" clears the price; omitted = unchanged. */
+  price_per_query?: string;
+}
+
+// =============================================================================
+// x402 Micropayments Types
+// =============================================================================
+
+export interface X402ConfigResponse {
+  /** The X402_ENABLED env flag; the UI renders the section only when true */
+  enabled: boolean;
+  configured: boolean;
+  verified: boolean;
+  verified_at: string | null;
+  pay_to: string | null;
+  facilitator_url: string | null;
+  network: string | null;
+  asset_address: string | null;
+  asset_name: string | null;
+  asset_eip712_version: string | null;
+  service_name: string | null;
+  asset_decimals: number | null;
+  max_timeout_seconds: number | null;
+  /** Secrets are never returned; only whether auth headers are stored */
+  facilitator_auth_headers_set: boolean;
+}
+
+export interface X402ConfigUpdateRequest {
+  pay_to: string;
+  facilitator_url: string;
+  network: string;
+  asset_address: string;
+  asset_name?: string;
+  asset_decimals?: number;
+  asset_eip712_version?: string;
+  max_timeout_seconds?: number;
+  service_name?: string | null;
+  /** null/omitted = leave stored headers unchanged; {} = clear; object = replace */
+  facilitator_auth_headers?: Record<string, string> | null;
+}
+
+export interface X402VerifyCheck {
+  check: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface X402VerifyResponse {
+  valid: boolean;
+  checks: X402VerifyCheck[];
+  verified_at: string | null;
+}
+
+export interface X402EarningsByKey {
+  key_id: string;
+  key_name: string;
+  payment_count: number;
+  total_amount: string;
+}
+
+export interface X402EarningsResponse {
+  asset_name: string | null;
+  payment_count: number;
+  total_amount: string;
+  by_key: X402EarningsByKey[];
 }
 
 // =============================================================================

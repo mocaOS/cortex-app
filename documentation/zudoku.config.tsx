@@ -99,6 +99,7 @@ const config: ZudokuConfig = {
             "/features/skills",
             "/features/git-integration",
             "/features/web-import",
+            "/features/x402-payments",
           ],
         },
         {

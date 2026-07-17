@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { createPortal } from "react-dom";
 import { PageTransition } from "@/components/layout";
-import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations } from "@/components/admin";
+import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations, X402Section } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LogOut,
@@ -385,6 +385,10 @@ export default function AdminPage() {
         >
           <ApiKeyManager />
         </motion.div>
+
+        {/* x402 Payments — fetches its own gate (GET /api/admin/x402/config)
+            and renders nothing when the X402_ENABLED env flag is off. */}
+        <X402Section />
 
         {/* Agent Skills */}
         {config?.enable_skills && (

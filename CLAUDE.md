@@ -22,6 +22,7 @@ Cortex is an agentic knowledge base that ingests documents, extracts entities/re
 | [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
 | [`.claude/domain/git-integration.md`](.claude/domain/git-integration.md) | Git connector (GitHub/GitLab/Gitea): provider abstraction, incremental sync engine, document provenance, `git_repo` write tool, scheduled polling |
 | [`.claude/domain/web-crawl.md`](.claude/domain/web-crawl.md) | MDHarvest powered by Crawl4ai — web→markdown harvesting via a (self-hosted or shared) crawl4ai service, crawl client, Web Import endpoints/UI, multi-tenant privacy model |
+| [`.claude/domain/x402.md`](.claude/domain/x402.md) | x402 pay-per-query monetization — env flag → runtime config → verification, monetized public keys (read-only + endpoint allowlist), settle-before-serve payment gate, vendor-agnostic facilitator client, earnings |
 | [`.claude/domain/observability.md`](.claude/domain/observability.md) | Langfuse LLM tracing & cost — env-driven activation, OpenAI client factory, agentic-trace grouping (`observed_trace`/`traced_sse`), manual records for Haystack embeddings + raw-httpx vision, streaming usage capture. GlitchTip error tracking (`SENTRY_*`): backend `error_tracking.py`, frontend `@sentry/nextjs` + source-map upload |
 | [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
 | [`.claude/qa.md`](.claude/qa.md) | QA & testing — backend pytest suite (`.qa-venv`, conftest fixtures, coverage map), live E2E harness (`test_live_e2e*.py`), canonical QA spreadsheet (`qa/`), defect log |
@@ -44,9 +45,10 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/services/skill_service.py` | `domain/skills.md` |
 | `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |
 | `backend/app/services/crawl_client.py` | `domain/web-crawl.md` |
+| `backend/app/services/x402_service.py` | `domain/x402.md`, `domain/admin-features.md` (API key management) |
 | `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md`, `domain/observability.md` (OpenAI client factory) |
 | `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
-| `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md` |
+| `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md`, `domain/x402.md` (monetized keys) |
 | `backend/app/services/prompt_security.py` | `architecture.md` |
 | `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |
 | `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md`, `domain/web-crawl.md` (Web Import modal) |

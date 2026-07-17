@@ -13,6 +13,7 @@ import {
   Activity,
   Shield,
   Layers,
+  Coins,
 } from "lucide-react";
 import type { APIKeyWithStats } from "@/types";
 
@@ -23,6 +24,8 @@ interface ApiKeyCardProps {
   onDelete: (keyId: string) => void;
   onViewAnalytics: (keyId: string) => void;
   isLoading?: boolean;
+  /** Asset name from the x402 config (e.g. "USDC") for price display on monetized keys */
+  x402AssetName?: string;
 }
 
 export function ApiKeyCard({
@@ -32,12 +35,17 @@ export function ApiKeyCard({
   onDelete,
   onViewAnalytics,
   isLoading,
+  x402AssetName,
 }: ApiKeyCardProps) {
   const [showDetails, setShowDetails] = useState(false);
 
   // Check if this is the protected admin key from .env
   const isProtectedAdminKey = apiKey.id === "admin";
-  
+
+  // Monetized public key (x402): carries a per-query price in human units
+  const isMonetized = !!apiKey.price_per_query;
+  const priceLabel = `${apiKey.price_per_query}${x402AssetName ? ` ${x402AssetName}` : ""}/query`;
+
   const stats = apiKey.stats;
   const hasStats = stats && stats.total_requests > 0;
   const errorRate = stats && stats.total_requests > 0
@@ -114,6 +122,16 @@ export function ApiKeyCard({
                   : "bg-muted text-muted-foreground"
               }`}>
                 {apiKey.permissions.includes("manage") ? "Read/Write" : "Read Only"}
+              </span>
+            )}
+            {/* x402 monetized key badge */}
+            {isMonetized && (
+              <span
+                className="px-2 py-0.5 text-xs rounded-full flex items-center gap-1 bg-accent/20 text-accent"
+                title="Monetized public key — paid per query via x402"
+              >
+                <Coins className="w-3 h-3" />
+                x402 · {priceLabel}
               </span>
             )}
             {/* Collection scope badge */}
@@ -265,6 +283,23 @@ export function ApiKeyCard({
                         {stats.last_error_message}
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* x402 Monetization */}
+              {isMonetized && (
+                <div className="mt-3">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                    <Coins className="w-3 h-3" />
+                    x402 Monetization
+                  </div>
+                  <div className="text-sm text-foreground">
+                    <span className="font-mono">{priceLabel}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      — read-only, paid per query to the configured wallet
+                    </span>
                   </div>
                 </div>
               )}

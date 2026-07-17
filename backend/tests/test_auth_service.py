@@ -161,10 +161,17 @@ async def test_validate_api_key_generated_key_success_path(mock_neo4j):
 
 # --- 401 vs 503 mapping in the require_* dependencies -------------------------
 
+def _fake_request(path: str = "/api/search"):
+    """Minimal starlette Request for calling require_read_permission directly
+    (it needs the path for the monetized-key endpoint allowlist)."""
+    from starlette.requests import Request
+    return Request(scope={"type": "http", "method": "GET", "path": path, "headers": []})
+
+
 async def test_dependency_returns_503_when_auth_store_down(mock_neo4j):
     mock_neo4j.get_api_key_by_prefix.side_effect = RuntimeError("neo4j down")
     with pytest.raises(HTTPException) as exc:
-        await require_read_permission("cortex_ro_" + "e" * 64)
+        await require_read_permission(_fake_request(), "cortex_ro_" + "e" * 64)
     assert exc.value.status_code == 503
     assert exc.value.headers.get("Retry-After") == "2"
 
@@ -172,7 +179,7 @@ async def test_dependency_returns_503_when_auth_store_down(mock_neo4j):
 async def test_dependency_returns_401_for_unknown_key(mock_neo4j):
     mock_neo4j.get_api_key_by_prefix.return_value = []
     with pytest.raises(HTTPException) as exc:
-        await require_read_permission("cortex_ro_" + "f" * 64)
+        await require_read_permission(_fake_request(), "cortex_ro_" + "f" * 64)
     assert exc.value.status_code == 401
 
 

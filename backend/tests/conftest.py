@@ -64,6 +64,7 @@ def _isolate_env(tmp_path, monkeypatch):
         "enable_ingestion_injection_scan": settings.enable_ingestion_injection_scan,
         "track_admin_api_key_usage": settings.track_admin_api_key_usage,
         "api_key_cache_ttl_seconds": settings.api_key_cache_ttl_seconds,
+        "x402_enabled": settings.x402_enabled,
     }
 
     settings.max_files = 0
@@ -88,15 +89,21 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.enable_ingestion_injection_scan = False
     settings.track_admin_api_key_usage = False
     settings.api_key_cache_ttl_seconds = 30
+    # x402 is opt-in per deployment — tests enable it explicitly.
+    settings.x402_enabled = False
 
     # The auth validation cache is module-global; never leak entries between
     # tests (a cached AuthResult would mask each test's mock_neo4j setup).
     from app.services.auth_service import invalidate_api_key_cache
     invalidate_api_key_cache()
+    # Same for the x402 config cache.
+    from app.services.x402_service import invalidate_x402_config_cache
+    invalidate_x402_config_cache()
 
     yield settings
 
     invalidate_api_key_cache()
+    invalidate_x402_config_cache()
     for k, v in saved.items():
         setattr(settings, k, v)
 

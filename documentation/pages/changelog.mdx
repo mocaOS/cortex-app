@@ -7,6 +7,24 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 17, 2026 (x402 Payments — monetize your knowledge base with agentic micropayments)
+
+Cortex can now sell pay-per-query access to its retrieval endpoints via the open [x402 payment standard](https://github.com/x402-foundation/x402). Free member keys keep working exactly as before; in parallel, admins can mint **monetized public keys** that agents pay per query in stablecoins, with revenue flowing straight to a wallet the owner controls — a way to earn on domain-specific knowledge and subsidize members' inference.
+
+### x402 Payments
+
+- **One env var, everything else at runtime** — `X402_ENABLED=true` (default `false`) unlocks a new **Settings → x402 Payments** section; recipient wallet, facilitator URL, network, and asset are configured there, stored in Neo4j (survive redeploys, excluded from library export and system reset). Facilitator auth headers are encrypted at rest via `ENCRYPTION_KEY`.
+- **Verification before money moves** — a one-click verify suite checks wallet address format (EIP-55 checksum / Solana base58), facilitator reachability, and scheme+network support, reported check-by-check. Priced keys can only be created — and paid requests only served — while the saved config is verified; any payment-relevant change re-requires verification.
+- **Vendor-agnostic by design** — Cortex implements the x402 v2 facilitator interface (`/verify`, `/settle`, `/supported`) over plain HTTP: any spec-compliant facilitator works, no vendor SDK, no chain RPC, no private keys on the server.
+- **Monetized public keys are locked down at the API level** — read-only by construction (a price can never be combined with `manage`), restricted to the four retrieval endpoints (`/api/search` + the Ask AI endpoints; raw document/file access and stats are off-limits), and still collection-scopable — sell exactly the slice of knowledge you choose. New `cortex_pub_` key prefix.
+- **Settle-before-serve payment flow** — unpaid requests get HTTP 402 + `PAYMENT-REQUIRED` (base64 requirements per the x402 HTTP transport); paid requests are verified and settled through the facilitator before the query runs, with the settlement receipt returned in `PAYMENT-RESPONSE`. Facilitator outages fail closed (503, never served free).
+- **Earnings dashboard** — settled totals overall and per key in the admin section, every payment recorded with its on-chain transaction hash for independent auditability.
+- **Honest analytics for paid keys** — HTTP 402 challenges are excluded from per-key error-rate tracking: a challenge is the normal first leg of every x402 handshake, not a failure.
+- Paid queries still consume `MAX_QUERIES_PER_MONTH` units — the quota meters inference cost regardless of who pays.
+- No API or schema breakage: existing keys, clients, and flows are unaffected while the flag is off (default) and for all non-priced keys when it is on.
+
+---
+
 ## July 13, 2026 (Entity deduplication rebuilt for production-scale graphs)
 
 The duplicate-entity scan behind **Manage → Deduplicate** was the least

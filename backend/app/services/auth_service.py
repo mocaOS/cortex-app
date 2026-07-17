@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 from enum import Enum
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 
 from app.config import get_settings
@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 
 # API Key header extractor
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# The ONLY endpoints a monetized (x402-priced) key may call. Priced keys are
+# public by design, so plain READ is too broad: it would hand out the raw
+# corpus (document content/file download) for free next to the paid retrieval
+# endpoints. /api/stats is deliberately NOT listed — internal data.
+MONETIZED_KEY_ALLOWED_PATHS = frozenset({
+    "/api/search",
+    "/api/ask",
+    "/api/ask/stream",
+    "/api/ask/stream/thinking",
+})
 
 
 class AuthResult:
@@ -40,7 +51,8 @@ class AuthResult:
         key_name: Optional[str] = None,
         collection_scope: str = "all",
         allowed_collections: List[str] = None,
-        service_error: bool = False
+        service_error: bool = False,
+        price_per_query: Optional[str] = None
     ):
         self.is_authenticated = is_authenticated
         self.is_admin = is_admin
@@ -54,7 +66,16 @@ class AuthResult:
         # as opposed to checked-and-rejected. Callers map this to 503, never
         # 401 — a transient Neo4j failure must not read as "invalid key".
         self.service_error = service_error
-    
+        # x402 price in human asset units. A priced key is a "monetized public
+        # key": read-only, restricted to MONETIZED_KEY_ALLOWED_PATHS, and
+        # gated by enforce_x402_payment (x402_service).
+        self.price_per_query = price_per_query
+
+    @property
+    def is_monetized(self) -> bool:
+        """True for x402-priced keys (never for admin)."""
+        return bool(self.price_per_query) and not self.is_admin
+
     def has_permission(self, permission: APIKeyPermission) -> bool:
         """Check if this auth result has a specific permission."""
         if self.is_admin:
@@ -244,6 +265,17 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                 collection_scope = stored_key.get("collection_scope", "all")
                 allowed_collections = stored_key.get("allowed_collections", []) or []
 
+                # Monetized keys are read-only BY CONSTRUCTION: the CRUD layer
+                # rejects price+MANAGE, and this strip is defense in depth —
+                # a hand-edited APIKey node can never authenticate read-write.
+                price_per_query = stored_key.get("price_per_query") or None
+                if price_per_query and APIKeyPermission.MANAGE in permissions:
+                    logger.warning(
+                        f"Monetized API key {stored_key['id']} carried MANAGE "
+                        f"permission — stripped at validation time"
+                    )
+                    permissions = [p for p in permissions if p != APIKeyPermission.MANAGE]
+
                 logger.debug(f"API key authenticated: {stored_key['name']} ({stored_key['id']})")
                 result = AuthResult(
                     is_authenticated=True,
@@ -252,7 +284,8 @@ async def validate_api_key(api_key: Optional[str]) -> AuthResult:
                     key_id=stored_key["id"],
                     key_name=stored_key["name"],
                     collection_scope=collection_scope,
-                    allowed_collections=allowed_collections
+                    allowed_collections=allowed_collections,
+                    price_per_query=price_per_query
                 )
 
                 # Telemetry, not auth: throttled, and a failure here must
@@ -329,10 +362,18 @@ async def require_api_key(api_key: Optional[str] = Depends(api_key_header)) -> A
     return auth
 
 
-async def require_read_permission(api_key: Optional[str] = Depends(api_key_header)) -> AuthResult:
+async def require_read_permission(
+    request: Request,
+    api_key: Optional[str] = Depends(api_key_header)
+) -> AuthResult:
     """
     Dependency that requires READ permission.
     Admin keys automatically have this permission.
+
+    Monetized (x402-priced) keys are additionally restricted to the retrieval
+    endpoints in MONETIZED_KEY_ALLOWED_PATHS — a public paid key must not get
+    free READ access to the rest of the API (raw document/file access would
+    undercut the paid retrieval it fronts).
     """
     auth = await validate_api_key(api_key)
     _raise_if_unauthenticated(auth)
@@ -341,6 +382,15 @@ async def require_read_permission(api_key: Optional[str] = Depends(api_key_heade
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions: READ access required"
+        )
+
+    if auth.is_monetized and request.url.path not in MONETIZED_KEY_ALLOWED_PATHS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This monetized API key only permits the retrieval endpoints: "
+                + ", ".join(sorted(MONETIZED_KEY_ALLOWED_PATHS))
+            )
         )
 
     return auth

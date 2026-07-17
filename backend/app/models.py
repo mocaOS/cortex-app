@@ -617,6 +617,16 @@ class CreateAPIKeyRequest(BaseModel):
     permissions: List[APIKeyPermission] = Field(..., min_length=1, description="Permissions to grant")
     collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
     allowed_collections: Optional[List[str]] = Field(default=None, description="Collection IDs to grant access to (required when scope is RESTRICTED)")
+    price_per_query: Optional[str] = Field(
+        default=None,
+        description=(
+            "x402 price per retrieval query in human units of the configured "
+            "asset (e.g. '0.05'). Setting a price makes this a monetized public "
+            "key: read-only, limited to the retrieval endpoints, and payable "
+            "via x402 micropayments. Requires X402_ENABLED and a verified "
+            "x402 configuration."
+        ),
+    )
     
     class Config:
         json_schema_extra = {
@@ -639,7 +649,8 @@ class CreateAPIKeyResponse(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
     allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
-    
+    price_per_query: Optional[str] = Field(default=None, description="x402 price per retrieval query (None = free key)")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -668,6 +679,7 @@ class APIKeyListItem(BaseModel):
     collection_scope: CollectionScope = Field(default=CollectionScope.ALL, description="Collection access scope")
     allowed_collections: List[str] = Field(default_factory=list, description="Collection IDs this key can access")
     allowed_collection_names: Optional[List[str]] = Field(default=None, description="Collection names for display")
+    price_per_query: Optional[str] = Field(default=None, description="x402 price per retrieval query (None = free key)")
 
 
 class UpdateAPIKeyRequest(BaseModel):
@@ -677,6 +689,14 @@ class UpdateAPIKeyRequest(BaseModel):
     is_active: Optional[bool] = Field(default=None, description="Activate or deactivate the key")
     collection_scope: Optional[CollectionScope] = Field(default=None, description="New collection access scope")
     allowed_collections: Optional[List[str]] = Field(default=None, description="New collection IDs to grant access to")
+    price_per_query: Optional[str] = Field(
+        default=None,
+        description=(
+            "New x402 price per retrieval query in human units (e.g. '0.05'). "
+            "Empty string clears the price (reverts to a free member key); "
+            "None leaves it unchanged."
+        ),
+    )
 
 
 # =============================================================================
@@ -743,6 +763,85 @@ class APIKeyUsageHistoryResponse(BaseModel):
     key_name: str = Field(..., description="API key name")
     history: List[APIKeyUsageDataPoint] = Field(default_factory=list, description="Daily usage data")
     period_days: int = Field(default=30, description="Number of days in history")
+
+
+# =============================================================================
+# x402 Payments (pay-per-query monetization)
+# =============================================================================
+
+class X402ConfigUpdate(BaseModel):
+    """Admin request to save the instance's x402 payment configuration.
+
+    Stored on a dedicated Neo4j node (never SystemMeta): payment config is
+    instance-operational — excluded from library export and system reset,
+    like git connections.
+    """
+    pay_to: str = Field(..., min_length=1, description="Recipient wallet address (global for this instance)")
+    facilitator_url: str = Field(..., min_length=1, description="Base URL of any spec-compliant x402 facilitator")
+    network: str = Field(..., min_length=1, description="CAIP-2 network identifier, e.g. 'eip155:8453'")
+    asset_address: str = Field(..., min_length=1, description="Token contract address (EVM) or mint (Solana)")
+    asset_name: str = Field(default="USDC", description="Asset display name (rides in the scheme 'extra')")
+    asset_decimals: int = Field(default=6, ge=0, le=18, description="Token decimals for atomic-unit conversion")
+    asset_eip712_version: str = Field(default="2", description="EIP-712 domain version for the exact scheme")
+    max_timeout_seconds: int = Field(default=60, ge=10, le=600, description="maxTimeoutSeconds in PaymentRequirements")
+    service_name: Optional[str] = Field(default=None, max_length=32, description="Optional ResourceInfo serviceName for discovery")
+    facilitator_auth_headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description=(
+            "Optional static auth headers sent to the facilitator (secret; "
+            "stored encrypted, never returned). None leaves stored headers "
+            "unchanged; {} clears them."
+        ),
+    )
+
+
+class X402ConfigResponse(BaseModel):
+    """Current x402 configuration state (secrets masked)."""
+    enabled: bool = Field(..., description="X402_ENABLED env flag")
+    configured: bool = Field(default=False, description="A configuration has been saved")
+    verified: bool = Field(default=False, description="Current config passed verification (invalidated on change)")
+    verified_at: Optional[datetime] = Field(default=None, description="When the current config was verified")
+    pay_to: Optional[str] = None
+    facilitator_url: Optional[str] = None
+    network: Optional[str] = None
+    asset_address: Optional[str] = None
+    asset_name: Optional[str] = None
+    asset_decimals: Optional[int] = None
+    asset_eip712_version: Optional[str] = None
+    max_timeout_seconds: Optional[int] = None
+    service_name: Optional[str] = None
+    facilitator_auth_headers_set: bool = Field(default=False, description="Auth headers are stored (values never returned)")
+
+
+class X402VerifyCheck(BaseModel):
+    """One verification check result."""
+    check: str = Field(..., description="Check identifier (payto_format, facilitator_reachable, scheme_network_supported, asset_format)")
+    label: str = Field(..., description="Human-readable check name")
+    passed: bool = Field(...)
+    detail: str = Field(default="", description="Explanation, especially on failure")
+
+
+class X402VerifyResponse(BaseModel):
+    """Result of running the x402 configuration verification suite."""
+    valid: bool = Field(..., description="All checks passed; priced keys are now usable")
+    checks: List[X402VerifyCheck] = Field(default_factory=list)
+    verified_at: Optional[datetime] = Field(default=None)
+
+
+class X402KeyEarnings(BaseModel):
+    """Aggregated x402 earnings for one API key."""
+    key_id: str
+    key_name: str
+    payment_count: int = 0
+    total_amount: str = Field(default="0", description="Sum in human units of the configured asset")
+
+
+class X402EarningsResponse(BaseModel):
+    """Instance-wide x402 earnings summary."""
+    asset_name: Optional[str] = Field(default=None)
+    payment_count: int = 0
+    total_amount: str = Field(default="0", description="Sum in human units of the configured asset")
+    by_key: List[X402KeyEarnings] = Field(default_factory=list)
 
 
 class AdminStatsOverview(BaseModel):

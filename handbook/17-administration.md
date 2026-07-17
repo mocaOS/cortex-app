@@ -483,6 +483,40 @@ The panel also includes a **Privacy** section (always shown, even in the curated
 
 Together these let an operator — or a customer auditing a hosted instance — confirm at a glance that the host is not logging prompt or completion content. See [Configuration → Observability](04-configuration.md) and `.claude/domain/observability.md` for the masking policy.
 
+## x402 Payments (Monetization)
+
+Cortex can sell pay-per-query access to its retrieval endpoints via the open [x402 standard](https://github.com/x402-foundation/x402): agents pay per query in stablecoins, revenue lands in a wallet you control, and your free member keys keep working unchanged alongside.
+
+Enable with `X402_ENABLED=true` (the only x402 environment variable), then configure everything else at runtime in **Settings → x402 Payments**:
+
+1. **Configure** — recipient wallet (global for the instance), facilitator URL (any spec-compliant x402 facilitator; optional auth headers are stored encrypted), network + asset (USDC presets for Base, Base Sepolia, Avalanche, Solana — or custom). The config lives in Neo4j: it survives redeploys and is deliberately excluded from library export and System Reset.
+2. **Verify** — the one-click verify suite checks the wallet address format (EIP-55 checksum / base58), facilitator reachability, and scheme+network support, reported check by check. Priced keys can only be created — and paid requests only served — while the current config is verified; changing any payment-relevant field requires re-verification.
+3. **Mint a monetized public key** — in API key creation choose *Monetized public key* and set a price per query (e.g. `0.05` USDC). Monetized keys are locked down at the API level: read-only by construction (never combinable with `manage`), restricted to `/api/search` and the Ask AI endpoints (no raw document/file access, no stats), still collection-scopable to sell exactly the slice of knowledge you choose.
+
+Admin endpoints (all admin-key only):
+
+```bash
+# Read config + verification state (secrets masked)
+curl http://localhost:8000/api/admin/x402/config -H "X-API-Key: your-admin-key"
+
+# Save config (payment-relevant changes reset verification)
+curl -X PUT http://localhost:8000/api/admin/x402/config \
+  -H "X-API-Key: your-admin-key" -H "Content-Type: application/json" \
+  -d '{"pay_to": "0x...", "facilitator_url": "https://...",
+       "network": "eip155:8453", "asset_address": "0x..."}'
+
+# Run the verification suite
+curl -X POST http://localhost:8000/api/admin/x402/verify -H "X-API-Key: your-admin-key"
+
+# Earnings (settled totals, overall + per key, with tx hashes recorded)
+curl http://localhost:8000/api/admin/x402/earnings -H "X-API-Key: your-admin-key"
+```
+
+Operational notes:
+- Paid queries still consume `MAX_QUERIES_PER_MONTH` units — the quota meters inference cost regardless of who pays.
+- Facilitator unreachable → paid requests fail closed with `503` (never served free); member keys are unaffected.
+- Test on Base Sepolia with a testnet facilitator before pointing the config at mainnet.
+
 ## Maintenance Checklist
 
 ### Weekly

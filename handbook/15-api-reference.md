@@ -160,6 +160,21 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 | `GET` | `/api/admin/api-keys/{id}/usage-history` | Admin | Daily usage history. Query: `days` (1-365) |
 | `GET` | `/api/admin/stats/overview` | Admin | Aggregated stats across all keys |
 
+Create/update also accept `price_per_query` (decimal string, e.g. `"0.05"`) to make a **monetized public key** ([x402 Payments](17-administration.md#x402-payments-monetization)): requires `X402_ENABLED` + a verified x402 config, read-only permissions (422 when combined with `manage`), and restricts the key to the retrieval endpoints. On update, `""` clears the price.
+
+## Admin — x402 Payments
+
+Available when `X402_ENABLED=true` (PUT/verify return 400 otherwise). See [Chapter 17](17-administration.md#x402-payments-monetization).
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/admin/x402/config` | Admin | Config + verification state (secrets masked; carries the `enabled` flag) |
+| `PUT` | `/api/admin/x402/config` | Admin | Save config. Body: `{pay_to, facilitator_url, network, asset_address, asset_name?, asset_decimals?, asset_eip712_version?, max_timeout_seconds?, service_name?, facilitator_auth_headers?}` — payment-relevant changes reset verification |
+| `POST` | `/api/admin/x402/verify` | Admin | Run the verification suite (address formats, facilitator reachability, scheme+network support) |
+| `GET` | `/api/admin/x402/earnings` | Admin | Settled-payment totals, overall and per key |
+
+Unpaid requests on the retrieval endpoints with a monetized key return **`402`** with a base64 `PAYMENT-REQUIRED` header (x402 v2 HTTP transport); paid requests carry `PAYMENT-SIGNATURE` and receive the settlement receipt in `PAYMENT-RESPONSE`.
+
 **`CreateAPIKeyRequest` body:**
 
 ```json

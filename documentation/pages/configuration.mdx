@@ -588,6 +588,21 @@ Run crawl4ai with `docker run -d -p 11235:11235 --shm-size=1g unclecode/crawl4ai
 
 ---
 
+## x402 Payments
+
+Monetize the retrieval endpoints with pay-per-query micropayments via the open [x402 standard](https://github.com/x402-foundation/x402). See the [x402 Payments feature guide](/features/x402-payments) for the full walkthrough.
+
+```bash
+# Master switch — and deliberately the ONLY x402 environment variable.
+# Everything else (recipient wallet, facilitator URL, network, asset) is
+# configured at runtime in Settings → x402 Payments and stored in Neo4j
+# (survives redeploys; excluded from library export and system reset).
+# Priced API keys activate once that config passes the built-in verification.
+X402_ENABLED=true
+```
+
+---
+
 ## Vision Model Configuration
 
 Configure image analysis capabilities:

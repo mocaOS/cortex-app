@@ -12,6 +12,7 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  Coins,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { copyToClipboard as copyTextToClipboard } from "@/lib/utils";
@@ -23,6 +24,7 @@ import type {
   APIKeyPermission,
   CollectionScope,
   Collection,
+  X402ConfigResponse,
 } from "@/types";
 import { ApiKeyCard } from "./ApiKeyCard";
 import { ApiKeyAnalytics } from "./ApiKeyAnalytics";
@@ -42,10 +44,23 @@ export function ApiKeyManager() {
   // Portal mount state for SSR compatibility
   const [mounted, setMounted] = useState(false);
 
+  // x402 status gates the "Monetized public key" option in the create modal
+  // and provides the asset name for price display. null = feature unavailable.
+  const [x402Config, setX402Config] = useState<X402ConfigResponse | null>(null);
+
   useBodyScrollLock(showCreateModal || !!newKeyResult);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    api
+      .getX402Config()
+      .then((c) => setX402Config(c))
+      .catch(() => {
+        // x402 not available on this backend — monetized keys stay hidden/disabled.
+      });
   }, []);
 
   // Fetch API keys with stats
@@ -68,17 +83,19 @@ export function ApiKeyManager() {
 
   // Create new API key
   const handleCreate = async (
-    name: string, 
+    name: string,
     permissions: APIKeyPermission[],
     collectionScope: CollectionScope,
-    allowedCollections: string[]
+    allowedCollections: string[],
+    pricePerQuery?: string
   ) => {
     try {
-      const result = await api.createApiKey({ 
-        name, 
+      const result = await api.createApiKey({
+        name,
         permissions,
         collection_scope: collectionScope,
-        allowed_collections: collectionScope === "restricted" ? allowedCollections : undefined
+        allowed_collections: collectionScope === "restricted" ? allowedCollections : undefined,
+        price_per_query: pricePerQuery,
       });
       setNewKeyResult(result);
       setShowCreateModal(false);
@@ -223,6 +240,7 @@ export function ApiKeyManager() {
                 onDelete={handleDelete}
                 onViewAnalytics={handleViewAnalytics}
                 isLoading={actionLoading === key.id}
+                x402AssetName={x402Config?.asset_name ?? undefined}
               />
             ))}
           </div>
@@ -238,6 +256,7 @@ export function ApiKeyManager() {
               <CreateKeyModal
                 onClose={() => setShowCreateModal(false)}
                 onCreate={handleCreate}
+                x402Config={x402Config}
               />
             )}
           </AnimatePresence>
@@ -315,21 +334,34 @@ export function ApiKeyManager() {
   );
 }
 
+// Valid positive decimal, e.g. "0.05", "1", ".5"
+const PRICE_RE = /^(\d+(\.\d+)?|\.\d+)$/;
+
 // Create Key Modal Component
 function CreateKeyModal({
   onClose,
   onCreate,
   preselectedCollectionId,
+  x402Config,
 }: {
   onClose: () => void;
-  onCreate: (name: string, permissions: APIKeyPermission[], collectionScope: CollectionScope, allowedCollections: string[]) => void;
+  onCreate: (name: string, permissions: APIKeyPermission[], collectionScope: CollectionScope, allowedCollections: string[], pricePerQuery?: string) => void;
   preselectedCollectionId?: string;
+  x402Config?: X402ConfigResponse | null;
 }) {
   const [name, setName] = useState("");
+  const [keyType, setKeyType] = useState<"member" | "monetized">("member");
   const [readOnly, setReadOnly] = useState(true);
   const [manage, setManage] = useState(false);
+  const [price, setPrice] = useState("");
   const [creating, setCreating] = useState(false);
   const dialogRef = useModalDismiss<HTMLDivElement>(onClose);
+
+  // Monetized keys require the x402 feature to be enabled AND the payment
+  // config to be verified (the server enforces this with a 400 otherwise).
+  const monetizedAvailable = !!x402Config?.enabled && !!x402Config?.verified;
+  const isMonetized = keyType === "monetized";
+  const priceValid = PRICE_RE.test(price.trim()) && parseFloat(price.trim()) > 0;
   
   // Collection scope state
   const [collectionScope, setCollectionScope] = useState<CollectionScope>(
@@ -361,13 +393,25 @@ function CreateKeyModal({
   const handleCreate = async () => {
     if (!name.trim()) return;
     if (collectionScope === "restricted" && selectedCollections.length === 0) return;
+    if (isMonetized && !priceValid) return;
 
+    // Monetized public keys are always read-only (server rejects manage).
     const permissions: APIKeyPermission[] = [];
-    if (readOnly || manage) permissions.push("read");
-    if (manage) permissions.push("manage");
+    if (isMonetized) {
+      permissions.push("read");
+    } else {
+      if (readOnly || manage) permissions.push("read");
+      if (manage) permissions.push("manage");
+    }
 
     setCreating(true);
-    await onCreate(name, permissions, collectionScope, selectedCollections);
+    await onCreate(
+      name,
+      permissions,
+      collectionScope,
+      selectedCollections,
+      isMonetized ? price.trim() : undefined
+    );
     setCreating(false);
   };
 
@@ -415,49 +459,136 @@ function CreateKeyModal({
             />
           </div>
 
-          {/* Permissions */}
+          {/* Key Type */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-3">
-              Permissions
+              Key Type
             </label>
             <div className="space-y-3">
               <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
                 <input
-                  type="checkbox"
-                  checked={readOnly}
-                  onChange={(e) => {
-                    setReadOnly(e.target.checked);
-                    if (!e.target.checked) setManage(false);
-                  }}
-                  className="mt-0.5 w-4 h-4 rounded border-border bg-muted accent-accent"
+                  type="radio"
+                  name="keyType"
+                  checked={keyType === "member"}
+                  onChange={() => setKeyType("member")}
+                  className="mt-0.5 w-4 h-4 border-border bg-muted accent-accent"
                 />
                 <div>
-                  <div className="font-medium text-foreground">Read Only</div>
+                  <div className="font-medium text-foreground">Member key</div>
                   <div className="text-sm text-muted-foreground">
-                    Can use Ask AI, search, and view the knowledge graph
+                    Standard key with configurable permissions
                   </div>
                 </div>
               </label>
 
-              <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+              <label
+                title={!monetizedAvailable ? "Configure and verify x402 Payments first" : undefined}
+                className={`flex items-start gap-3 p-3 bg-muted/50 rounded-lg transition-colors ${
+                  monetizedAvailable
+                    ? "cursor-pointer hover:bg-muted"
+                    : "opacity-50 cursor-not-allowed"
+                }`}
+              >
                 <input
-                  type="checkbox"
-                  checked={manage}
-                  onChange={(e) => {
-                    setManage(e.target.checked);
-                    if (e.target.checked) setReadOnly(true);
-                  }}
-                  className="mt-0.5 w-4 h-4 rounded border-border bg-muted accent-accent"
+                  type="radio"
+                  name="keyType"
+                  checked={keyType === "monetized"}
+                  disabled={!monetizedAvailable}
+                  onChange={() => setKeyType("monetized")}
+                  className="mt-0.5 w-4 h-4 border-border bg-muted accent-accent"
                 />
                 <div>
-                  <div className="font-medium text-foreground">Read/Write (Manage)</div>
+                  <div className="font-medium text-foreground flex items-center gap-1.5">
+                    <Coins className="w-3.5 h-3.5 text-accent" />
+                    Monetized public key (x402)
+                  </div>
                   <div className="text-sm text-muted-foreground">
-                    Can upload, edit, and delete documents and collections
+                    Read-only retrieval key that charges a price per query via x402
+                    {!monetizedAvailable && " — configure and verify x402 Payments first"}
                   </div>
                 </div>
               </label>
             </div>
           </div>
+
+          {/* Permissions (member keys) / forced read-only + price (monetized) */}
+          {isMonetized ? (
+            <>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+                <KeyRound className="w-4 h-4 text-accent flex-shrink-0" />
+                <span>
+                  Monetized keys are always <span className="text-foreground">read-only</span> and
+                  restricted to the retrieval endpoints.
+                </span>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Price per query
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="0.05"
+                    className="w-full px-4 py-2.5 pr-20 bg-background border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">
+                    {x402Config?.asset_name || ""}
+                  </span>
+                </div>
+                {price.trim() !== "" && !priceValid && (
+                  <p className="text-xs text-destructive mt-1">
+                    Enter a positive decimal amount, e.g. 0.05
+                  </p>
+                )}
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-3">
+                Permissions
+              </label>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={readOnly}
+                    onChange={(e) => {
+                      setReadOnly(e.target.checked);
+                      if (!e.target.checked) setManage(false);
+                    }}
+                    className="mt-0.5 w-4 h-4 rounded border-border bg-muted accent-accent"
+                  />
+                  <div>
+                    <div className="font-medium text-foreground">Read Only</div>
+                    <div className="text-sm text-muted-foreground">
+                      Can use Ask AI, search, and view the knowledge graph
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={manage}
+                    onChange={(e) => {
+                      setManage(e.target.checked);
+                      if (e.target.checked) setReadOnly(true);
+                    }}
+                    className="mt-0.5 w-4 h-4 rounded border-border bg-muted accent-accent"
+                  />
+                  <div>
+                    <div className="font-medium text-foreground">Read/Write (Manage)</div>
+                    <div className="text-sm text-muted-foreground">
+                      Can upload, edit, and delete documents and collections
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Collection Scope */}
           <div>
@@ -552,8 +683,8 @@ function CreateKeyModal({
           <button
             onClick={handleCreate}
             disabled={
-              !name.trim() || 
-              (!readOnly && !manage) || 
+              !name.trim() ||
+              (isMonetized ? !priceValid : !readOnly && !manage) ||
               (collectionScope === "restricted" && selectedCollections.length === 0) ||
               creating
             }

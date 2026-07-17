@@ -274,6 +274,10 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 
 - `ENCRYPTION_KEY` (default: empty = disabled) — comma-separated Fernet keys for at-rest encryption of user-supplied secrets: git connector PATs (Neo4j `GitConnection.pat`) and secret-typed skill config fields (`config.json`). First key encrypts, all keys decrypt (MultiFernet). Ciphertext is `enc:`-prefixed; plaintext values pass through reads, so enabling the key later is safe — an idempotent startup migration encrypts existing plaintext (and re-encrypts rotated-key values with the primary key). Unset → loud startup warning + plaintext storage. Malformed key → startup fails fast. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Rotation: prepend new key (`ENCRYPTION_KEY=<new>,<old>`), restart, then drop the old key.
 
+## x402 Payments
+
+- `X402_ENABLED` (default: false) — master switch for x402 pay-per-query monetization. Deliberately the **only** x402 env var: when true, the "x402 Payments" section appears on the admin Settings page where the owner configures recipient wallet, facilitator, network and asset at **runtime** (stored on the Neo4j `X402Config` node — survives redeploys, excluded from library export and System Reset). Priced API keys and the 402 payment gate only activate once that config passes the admin verify suite. See [`domain/x402.md`](domain/x402.md).
+
 ## Observability (Langfuse)
 
 Optional LLM tracing/cost. All empty = disabled; the same image runs identically traced or untraced. See [`.claude/domain/observability.md`](domain/observability.md) for the instrumentation map.
