@@ -84,6 +84,88 @@ Runs asynchronously after text processing completes:
 - Graph extraction runs on image content if enabled. When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true`, each image's extracted entities are batch-embedded (one `generate_entity_embeddings_batch_async()` call per image) before `store_graph_extraction()`, so they flow through `store_entity_with_embedding()` and land in the same `entity_embedding` vector index that text entities populate. The image and text surfaces now share one dedup signal — see [`entities.md`](entities.md#fuzzy-resolution).
 - Reasoning is suppressed on capable multimodal models via `VISION_REASONING_MODE` (default `off`). `vision_analyzer.py` uses raw httpx, so it merges `flatten_reasoning_body()` output into the `/chat/completions` JSON body and falls back once on 400, marking the model via `mark_reasoning_unsupported`. Lets you point both `GRAPH_EXTRACTION_MODEL` and `VISION_MODEL` at e.g. Qwen3-VL-27B with one endpoint. See [`.claude/environment.md`](../environment.md#reasoning-control-ingestion).
 
+### Ingest checkpoint/resume + endpoint-outage pause
+
+`ENABLE_INGEST_RESUME` (default **true**) makes Step 1 resumable at sub-document
+granularity — before it, every recovery path (startup orphan reset, stranded
+sweep, manual reprocess) restarted `_process_document` from zero, re-paying
+Docling, a full embed pass, and every extraction batch even when 95% of the
+work was already persisted (live incident 2026-07-20: a litellm restart at 95%
+of a 3000-chunk document restarted it from scratch).
+
+Three pieces of durable state, all keyed to a fingerprint (file SHA-256 +
+`_reprocess_config_hash`) now written at the START of each run:
+
+1. **Chunk reuse** — `_prepare_ingest_resume` (top of `_process_document`):
+   when the fingerprint matches the stored chunks (`text_chunk_count > 0`, no
+   unembedded chunks), conversion/splitting/embedding/storage are skipped and
+   the chunk list is rebuilt from Neo4j (`get_text_chunks_for_document`). A
+   mismatch (config or file changed) deletes the stale chunks first — which
+   also fixes the old orphan-reset path that could mix chunkings.
+   `queue_document_for_reprocessing`/`reprocess_document*` keep resumable
+   chunks (`_cleanup_before_reprocess`) instead of unconditionally deleting.
+2. **Entity-extraction watermark** — the extractor fires `on_batch_entities`
+   after each settled batch; the processor stores that batch's entities
+   immediately (`_store_entity_batch`, batched or sequential) and persists the
+   covered chunk-index ranges as `Document.extraction_done_ranges` (JSON
+   `[[lo,hi),...]`). On resume the ranges become `skip_chunk_indices` (batches
+   pack only remaining chunks; progress continues at e.g. 2850/3000), and
+   previously-stored entities are merged back for linking via
+   `get_entities_for_document_provenance` (`e.source_documents` — the only
+   entity↔doc link that exists before the MENTIONS phase).
+3. **Relationship flags** — each per-chunk relationship unit that settles
+   marks its chunks `Chunk.rels_extracted = true` (a chunk can legitimately
+   yield 0 relationships, so this can't be inferred from stored edges); a
+   resumed run skips flagged chunks.
+
+The checkpoint is cleared on successful completion and when reusing chunks of
+a doc that previously **completed** (deliberate re-run → extraction redone
+fully). Resume state is only consulted when the interrupted run never
+completed. On a resume-reuse run, unfinished image analysis is relaunched
+through `resume_image_analysis` after the text pipeline completes.
+
+**Endpoint-outage pause** (`LLM_OUTAGE_MAX_WAIT_SECONDS`, default 900):
+`_is_connection_error` (graph_extractor) classifies endpoint-down failures —
+connection refused/reset, `Connect*` class names, gateway 502/503/504 —
+separately from timeouts (split-retry) and 429s (requeue). Name-based on
+purpose: openai's `APITimeoutError` subclasses `APIConnectionError`. Before
+this, a hard-down endpoint fell into the generic error arm, which **dropped
+every remaining batch in seconds** (connection-refused fails in ms) and let
+the document "complete" with massive silent entity loss. Now:
+
+- **Entity batches**: the failed batch is requeued and retried with backoff
+  (5s→60s, capped to remaining budget); the requeued batch IS the probe. Any
+  response resets the outage clock. `connection_retries` counter in run
+  telemetry.
+- **Per-chunk relationships**: `extract_chunk_relationships_async`/`_batch_async`
+  re-raise connection errors (excluded from their tenacity retries) so the
+  processor's outage loop requeues the affected work units and sleeps between
+  rounds, instead of every concurrent call spinning its own retries.
+- Past the budget, `ExtractionEndpointUnavailable` fails the document with the
+  checkpoint intact; the error message tells the operator a reprocess resumes
+  from the checkpoint. Progress heartbeats during waits keep the stranded
+  sweep from resetting the doc.
+
+**User-visible paused state**: two additive Document fields drive the UI
+(neither is a new `ProcessingStatus`):
+
+- `processing_paused` + `paused_reason` — set on outage-wait TRANSITIONS
+  (`set_document_pause_state`, which also bumps the heartbeat): the entity
+  loop signals via the extractor's `on_outage_state` callback
+  (transition-only, best-effort — a callback failure never affects the run);
+  the relationship outage loop sets/clears it directly. Cleared at run start,
+  on recovery, on completion, and on any failure; the orphan/stranded resets
+  clear it too so a `pending` doc never shows a stale pause.
+- `resume_available` — set (`set_document_resume_available`) when the outage
+  budget fails the document; means "failed, but the checkpoint survives — a
+  reprocess resumes". Cleared at the start of every run.
+
+Both are returned by `get_all_documents`/`get_document` and rendered by the
+frontend as amber "Paused"/"Interrupted" badges — see
+[`frontend-patterns.md`](../frontend-patterns.md#paused--interrupted-documents-ui).
+
+Tests: `backend/tests/test_ingest_resume.py`.
+
 ### Startup recovery of orphaned in-flight documents
 
 Processing runs as in-process background tasks, so a backend restart (every

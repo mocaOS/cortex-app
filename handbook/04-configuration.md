@@ -441,6 +441,8 @@ Performance flags (each can be disabled per stack):
 | `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Chunks per batched call. |
 | `ENABLE_PHASEB_CHECKPOINTING` | `false` | Resume cross-document analysis after a crash; reuse candidates across rounds. |
 | `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing of unchanged documents (git re-syncs become free). |
+| `ENABLE_INGEST_RESUME` | `true` | Mid-document checkpoint: an interrupted processing run (restart, LLM outage) resumes from stored chunks + extraction watermark instead of restarting from zero. |
+| `LLM_OUTAGE_MAX_WAIT_SECONDS` | `900` | How long processing waits (with backoff probes) for an unreachable LLM endpoint before failing the document — with its checkpoint intact. |
 | `RESEARCHER_STABLE_PROMPT` | `true` | Prompt-cache-friendly researcher loop. |
 | `ENABLE_PROMPT_CACHE_CONTROL` | `false` | Anthropic prompt caching via OpenRouter. |
 

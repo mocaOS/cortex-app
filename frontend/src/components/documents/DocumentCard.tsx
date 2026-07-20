@@ -22,6 +22,7 @@ import {
   X,
   AlertTriangle,
   ShieldAlert,
+  CirclePause,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -55,6 +56,9 @@ interface Document {
   unembedded_chunk_count?: number;
   injection_flagged?: boolean;
   injection_reason?: string;
+  processing_paused?: boolean;
+  paused_reason?: string;
+  resume_available?: boolean;
 }
 
 interface DocumentCardProps {
@@ -116,6 +120,26 @@ const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
 };
 
 const getStatusConfig = (status: string, doc?: Document) => {
+  // Live outage pause: processing is alive but waiting for the LLM endpoint
+  // to come back — the run continues automatically once it does.
+  if ((status === "processing" || status === "extracting") && doc?.processing_paused) {
+    return {
+      icon: CirclePause,
+      color: "text-amber-400",
+      bgColor: "bg-amber-500/10",
+      label: "Paused",
+    };
+  }
+  // Failed with a surviving checkpoint: a reprocess resumes where it
+  // stopped instead of starting over.
+  if (status === "failed" && doc?.resume_available) {
+    return {
+      icon: CirclePause,
+      color: "text-amber-400",
+      bgColor: "bg-amber-500/10",
+      label: "Interrupted",
+    };
+  }
   if (status === "completed" && doc) {
     const hasImages = (doc.image_progress_total ?? 0) > 0;
     const imagesDone = hasImages && doc.image_progress_current === doc.image_progress_total;
@@ -226,6 +250,10 @@ export function DocumentCard({
   const StatusIcon = status.icon;
   const isCustomInput = doc.is_custom_input === true;
   const degradedReason = getDegradedReason(doc);
+  const isPaused =
+    (doc.processing_status === "processing" || doc.processing_status === "extracting") &&
+    doc.processing_paused === true;
+  const isInterrupted = doc.processing_status === "failed" && doc.resume_available === true;
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -358,7 +386,7 @@ export function DocumentCard({
             {/* Status badge */}
             <div
               className={cn("flex items-center gap-1.5 px-2 py-1 rounded-full text-xs", status.bgColor)}
-              title={degradedReason ?? undefined}
+              title={(isPaused ? doc.paused_reason : undefined) ?? degradedReason ?? undefined}
             >
               <StatusIcon className={cn("w-3 h-3", status.color, status.animate && "animate-spin")} />
               <span className={status.color}>{status.label}</span>
@@ -370,6 +398,15 @@ export function DocumentCard({
             <div className="mt-3">
               <IngestionStepper doc={doc} />
             </div>
+          )}
+
+          {/* Live outage pause: the run is alive and re-probing the LLM
+              endpoint; it continues automatically once the endpoint is back */}
+          {isPaused && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-amber-400/90">
+              <CirclePause className="w-3 h-3 shrink-0" />
+              {doc.paused_reason || "Waiting for the LLM endpoint..."} — continues automatically
+            </p>
           )}
 
           {/* Image analysis progress (post-text-pipeline; while processing the
@@ -395,6 +432,14 @@ export function DocumentCard({
           {/* Error message */}
           {doc.processing_status === "failed" && doc.error_message && (
             <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{doc.error_message}</p>
+          )}
+
+          {/* Interrupted with a surviving checkpoint */}
+          {isInterrupted && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-amber-400/90">
+              <CirclePause className="w-3 h-3 shrink-0" />
+              Progress is checkpointed — reprocess to resume from where it stopped
+            </p>
           )}
 
           {/* Degraded reason */}
@@ -485,8 +530,11 @@ export function DocumentCard({
                 <button
                   onClick={() => onReprocess(doc.id)}
                   disabled={isReprocessing}
-                  className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
-                  title="Reprocess document"
+                  className={cn(
+                    "p-2 rounded-lg hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50",
+                    isInterrupted ? "text-amber-400" : "text-muted-foreground"
+                  )}
+                  title={isInterrupted ? "Resume from checkpoint" : "Reprocess document"}
                 >
                   {isReprocessing ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

@@ -341,7 +341,7 @@ curl -X POST http://localhost:8000/api/documents/reprocess \
   -d '{"document_ids": ["id1", "id2", "id3"]}'
 ```
 
-Reprocessing deletes existing chunks and entities for the document, then re-runs the full pipeline.
+Reprocessing re-runs the pipeline — but it is not always a full redo: when the file and the extraction configuration are unchanged, Cortex reuses the stored chunks and embeddings (skipping conversion and the embed pass), and if the previous run was interrupted mid-extraction it continues from the checkpoint instead of starting over. Chunks and entities are only deleted when the file bytes or extraction config actually changed.
 
 ### Failed and Degraded Documents
 
@@ -352,6 +352,13 @@ A document can finish processing "successfully" yet still be incomplete — for 
 - Reprocessing is the fix: for degraded documents the "content unchanged" reprocess skip is bypassed automatically, so a reprocess always re-runs the full pipeline.
 
 The signals behind the badge (`entity_count`, unembedded chunk count) are computed during processing and backfilled once at startup for existing libraries.
+
+### Paused and Interrupted Documents
+
+Long-running processing survives LLM endpoint hiccups (for example a litellm router restart) instead of failing or silently losing work:
+
+- **Paused** (amber badge on a processing document) — the LLM endpoint is temporarily unreachable; Cortex is re-probing it automatically with backoff and the run continues by itself once the endpoint answers. No action is needed; the status line shows how long it has been waiting.
+- **Interrupted** (amber badge on a stopped document) — the endpoint stayed down past the wait budget (`LLM_OUTAGE_MAX_WAIT_SECONDS`, default 15 minutes). The document stopped, but all completed work — chunks, embeddings, extracted entities, relationships — is checkpointed. The reprocess button acts as **Resume**: processing continues from where it stopped rather than restarting from the first chunk.
 
 ### Moving Documents
 

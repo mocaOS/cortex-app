@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, XCircle, FileImage } from "lucide-react";
+import { Check, Loader2, XCircle, FileImage, CirclePause } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   deriveIngestionPhases,
@@ -23,6 +23,8 @@ export function IngestionStepper({
 }) {
   const info = deriveIngestionPhases(doc);
   const images = deriveImageProgress(doc);
+  // Outage pause: the run is alive, re-probing the LLM endpoint with backoff.
+  const paused = doc.processing_paused === true;
 
   if (info.queued) {
     return (
@@ -62,7 +64,11 @@ export function IngestionStepper({
               {phase.state === "done" ? (
                 <Check className={compact ? "w-2.5 h-2.5" : "w-3 h-3"} />
               ) : phase.state === "active" ? (
-                <Loader2 className={cn("animate-spin", compact ? "w-2.5 h-2.5" : "w-3 h-3")} />
+                paused ? (
+                  <CirclePause className={cn("text-amber-400", compact ? "w-2.5 h-2.5" : "w-3 h-3")} />
+                ) : (
+                  <Loader2 className={cn("animate-spin", compact ? "w-2.5 h-2.5" : "w-3 h-3")} />
+                )
               ) : phase.state === "failed" ? (
                 <XCircle className={compact ? "w-2.5 h-2.5" : "w-3 h-3"} />
               ) : (
@@ -84,18 +90,27 @@ export function IngestionStepper({
         <div className={compact ? "mt-1" : "mt-1.5"}>
           <div
             className={cn(
-              "flex items-center justify-between text-muted-foreground",
+              "flex items-center justify-between",
+              paused ? "text-amber-400/90" : "text-muted-foreground",
               compact ? "text-[10px]" : "text-xs"
             )}
           >
-            <span className="truncate" title={doc.progress_message || undefined}>
-              {info.statusLine}
+            <span
+              className="truncate"
+              title={(paused ? doc.paused_reason : undefined) || doc.progress_message || undefined}
+            >
+              {paused
+                ? doc.paused_reason || "Paused — waiting for the LLM endpoint"
+                : info.statusLine}
             </span>
             <span className="shrink-0 ml-2">{info.percent}%</span>
           </div>
           <div className={cn("bg-muted rounded-full overflow-hidden", compact ? "h-1 mt-0.5" : "h-1.5 mt-1")}>
             <div
-              className="h-full bg-accent transition-all duration-500"
+              className={cn(
+                "h-full transition-all duration-500",
+                paused ? "bg-amber-500/70" : "bg-accent"
+              )}
               style={{ width: `${info.percent}%` }}
             />
           </div>

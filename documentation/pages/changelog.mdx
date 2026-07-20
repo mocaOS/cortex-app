@@ -7,6 +7,34 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 20, 2026 (Resumable document processing — interruptions no longer restart from zero)
+
+Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document.
+
+### Ingest checkpoint & resume
+
+- **Stored work is reused, not redone** — each run records a fingerprint (file hash + extraction config). When an interrupted or reprocessed document still matches it, the stored chunks and embeddings are loaded from the database instead of re-running document conversion and a full re-embed. Reprocessing keeps resumable chunks instead of deleting them.
+- **Entity extraction checkpoints per batch** — every settled extraction batch persists its entities immediately and advances a chunk-range watermark on the document. A resumed run skips completed ranges, and the progress bar continues where it stopped (e.g. `2850/3000 chunks`) instead of resetting.
+- **Per-chunk relationship extraction checkpoints too** — chunks whose relationship pass settled are flagged and skipped on resume (a chunk can legitimately yield zero relationships, so completion is tracked explicitly).
+- Controlled by `ENABLE_INGEST_RESUME` (default `true`); set `false` for the legacy restart-from-zero behavior. Checkpoints are invalidated automatically when the file bytes or extraction config change.
+
+### LLM endpoint outage handling
+
+- **Batches are no longer silently dropped when the endpoint is down** — connection failures (endpoint restart, gateway 502/503) previously fell into the generic error path, which discarded every remaining batch within seconds and let the document "complete" with silent entity loss. They are now classified separately: the affected batch is requeued and re-probed with backoff until the endpoint returns.
+- **Bounded by `LLM_OUTAGE_MAX_WAIT_SECONDS`** (default `900`) — if the endpoint stays unreachable past the budget, the document is marked failed **with its checkpoint intact**, and the error message says so: reprocessing resumes from the checkpoint once the endpoint is back.
+- The document's progress message shows the outage live (`LLM endpoint unreachable — retrying in 20s...`), and run telemetry gains a `connection_retries` counter.
+
+### Paused & Interrupted states in the UI
+
+The outage and checkpoint machinery is now fully visible in the frontend, so operators see exactly what a document is doing instead of a generic spinner or failure:
+
+- **Paused badge (amber)** — a processing document whose LLM endpoint is temporarily unreachable shows a pause badge, an amber status line with the wait details ("LLM endpoint unreachable — retrying automatically (waited 40s of 900s)"), and an amber progress bar in the phase stepper — on both the Documents page and Knowledge Graph Step 1. Processing continues automatically; no action needed.
+- **Interrupted badge (amber)** — a document that failed because the outage outlasted the wait budget is labeled **Interrupted** instead of Failed, with an inline note that progress is checkpointed; its reprocess button becomes **Resume from checkpoint**.
+- Backed by additive document fields (`processing_paused`, `paused_reason`, `resume_available`) returned by the document endpoints — not a new processing status, so filters, integrations, and API clients are unaffected.
+- No API or schema breakage: new document/chunk properties are additive, and behavior with `ENABLE_INGEST_RESUME=false` matches the previous release.
+
+---
+
 ## July 17, 2026 (x402 Payments — monetize your knowledge base with agentic micropayments)
 
 Cortex can now sell pay-per-query access to its retrieval endpoints via the open [x402 payment standard](https://github.com/x402-foundation/x402). Free member keys keep working exactly as before; in parallel, admins can mint **monetized public keys** that agents pay per query in stablecoins, with revenue flowing straight to a wallet the owner controls — a way to earn on domain-specific knowledge and subsidize members' inference.

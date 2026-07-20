@@ -21,6 +21,10 @@ export interface IngestionDocLike {
   image_progress_current?: number;
   image_progress_total?: number;
   image_progress_message?: string;
+  // LLM-endpoint outage pause: the run is alive and re-probing; it continues
+  // automatically once the endpoint answers again.
+  processing_paused?: boolean;
+  paused_reason?: string;
 }
 
 export type PhaseKey = "convert" | "chunk" | "store" | "extract";

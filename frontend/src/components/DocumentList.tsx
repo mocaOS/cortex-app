@@ -51,6 +51,9 @@ interface Document {
   unembedded_chunk_count?: number;
   injection_flagged?: boolean;
   injection_reason?: string;
+  processing_paused?: boolean;
+  paused_reason?: string;
+  resume_available?: boolean;
 }
 
 type UploadFileStatus = "uploading" | "uploaded" | "error";

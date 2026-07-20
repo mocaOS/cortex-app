@@ -24,6 +24,12 @@ export interface Document {
   // Degraded-document signals (-1 entity_count = unknown / extraction disabled)
   entity_count?: number;
   unembedded_chunk_count?: number;
+  // Ingest resume / outage state: paused = processing alive but waiting for
+  // the LLM endpoint to come back; resume_available = failed with a
+  // checkpoint (reprocess continues where it stopped)
+  processing_paused?: boolean;
+  paused_reason?: string;
+  resume_available?: boolean;
 }
 
 export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";

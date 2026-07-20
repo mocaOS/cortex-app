@@ -847,6 +847,24 @@ class Settings(BaseSettings):
     #   (chunk content hashes + extraction config hash match), and reuse
     #   embeddings of unchanged chunks on partial edits. Git re-syncs and
     #   re-uploads of unchanged files drop to ~zero LLM/embedding cost.
+    enable_ingest_resume: bool = Field(
+        default=True
+    )  # Mid-document checkpoint/resume for Step 1 ingest. The pipeline
+    #   records what it has already paid for (stored+embedded chunks, entity
+    #   extraction batch watermark, per-chunk relationship flags) keyed by
+    #   file hash + extraction config hash. A run interrupted mid-extraction
+    #   (backend restart, LLM endpoint outage past the wait budget) resumes
+    #   from the checkpoint instead of re-running Docling, re-embedding every
+    #   chunk, and re-extracting from batch 1. Set false for the legacy
+    #   restart-from-zero behavior.
+    llm_outage_max_wait_seconds: int = Field(
+        default=900
+    )  # When the extraction/relationship endpoint refuses connections
+    #   mid-document (litellm/gateway restart), the pipeline pauses and
+    #   re-probes with backoff instead of silently dropping batches. If the
+    #   endpoint stays unreachable past this budget, the document is marked
+    #   failed WITH its checkpoint intact (see enable_ingest_resume) so a
+    #   reprocess continues where it stopped.
 
     # ==========================================================================
     # Observability

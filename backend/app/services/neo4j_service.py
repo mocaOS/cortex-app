@@ -483,12 +483,14 @@ class Neo4jService:
     @retry_on_transient
     def get_document_fingerprint(self, doc_id: str) -> Optional[dict]:
         """Return {file_sha256, config_hash, processing_status, entity_count,
-        unembedded_chunk_count} or None.
+        unembedded_chunk_count, text_chunk_count} or None.
 
         The degraded signals (entity_count == 0 / unembedded chunks) let the
         reprocess delta-skip force a real reprocess for a document that
         "completed" without a usable graph or embeddings — an unchanged
-        file+config must not no-op a degraded doc."""
+        file+config must not no-op a degraded doc. `text_chunk_count` lets the
+        ingest-resume path decide whether stored chunks exist to reuse without
+        streaming their contents."""
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $id})
@@ -496,7 +498,8 @@ class Neo4jService:
                        d.reprocess_config_hash as config_hash,
                        coalesce(d.processing_status, 'pending') as processing_status,
                        coalesce(d.entity_count, -1) as entity_count,
-                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.has_embedding = false | 1]) as unembedded_chunk_count
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.has_embedding = false | 1]) as unembedded_chunk_count,
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.chunk_index < 1000 | 1]) as text_chunk_count
             """, id=doc_id)
             record = result.single()
             return dict(record) if record else None
@@ -577,6 +580,159 @@ class Neo4jService:
                 id=doc_id,
                 stats=stats_json,
             )
+
+    # =========================================================================
+    # Ingest resume checkpoint (enable_ingest_resume)
+    # =========================================================================
+    # A Step 1 run interrupted mid-document (backend restart, LLM endpoint
+    # outage) resumes instead of restarting from zero. Three pieces of state,
+    # all valid only while the document's fingerprint (file_sha256 +
+    # reprocess_config_hash) matches the current file+config:
+    #   - stored chunks with embeddings (already persisted by the pipeline)
+    #   - d.extraction_done_ranges — JSON [[lo, hi), ...] chunk-index ranges
+    #     whose entity-extraction batches settled
+    #   - Chunk.rels_extracted — per-chunk flag set once the chunk's
+    #     relationship extraction stored its results (a chunk can legitimately
+    #     yield 0 relationships, so this can't be inferred from stored edges)
+
+    @retry_on_transient
+    def set_document_extraction_progress(
+        self, doc_id: str, ranges_json: Optional[str]
+    ) -> None:
+        """Persist (or clear, with None) the entity-extraction watermark."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.extraction_done_ranges = $ranges
+                """,
+                id=doc_id,
+                ranges=ranges_json,
+            )
+
+    @retry_on_transient
+    def get_document_extraction_progress(self, doc_id: str) -> Optional[str]:
+        """Return the entity-extraction watermark JSON, or None."""
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (d:Document {id: $id})
+                RETURN d.extraction_done_ranges as ranges
+                """,
+                id=doc_id,
+            )
+            record = result.single()
+            return record["ranges"] if record else None
+
+    @retry_on_transient
+    def mark_chunks_rels_extracted(self, chunk_ids: List[str]) -> None:
+        """Flag chunks whose per-chunk relationship extraction has settled."""
+        if not chunk_ids:
+            return
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $ids AS cid
+                MATCH (c:Chunk {id: cid})
+                SET c.rels_extracted = true
+                """,
+                ids=chunk_ids,
+            )
+
+    @retry_on_transient
+    def get_rels_extracted_chunk_ids(self, doc_id: str) -> List[str]:
+        """Chunk ids of a document whose relationship extraction already ran."""
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.rels_extracted = true
+                RETURN c.id as id
+                """,
+                id=doc_id,
+            )
+            return [record["id"] for record in result]
+
+    @retry_on_transient
+    def clear_ingest_checkpoint(self, doc_id: str) -> None:
+        """Drop the resume checkpoint: extraction watermark + per-chunk
+        relationship flags. Called on successful completion (the checkpoint
+        has served its purpose) and before a deliberate full re-run on reused
+        chunks (so extraction actually re-runs)."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.extraction_done_ranges = null
+                """,
+                id=doc_id,
+            )
+            session.run(
+                """
+                MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.rels_extracted = true
+                SET c.rels_extracted = null
+                """,
+                id=doc_id,
+            )
+
+    @retry_on_transient
+    def set_document_pause_state(
+        self, doc_id: str, paused: bool, reason: str = ""
+    ) -> None:
+        """Mark a document as paused (LLM endpoint outage — processing is
+        alive and re-probing) or clear the mark. Also bumps the
+        status-heartbeat so the stranded-document sweep leaves a legitimately
+        paused document alone."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.processing_paused = $paused,
+                    d.paused_reason = $reason,
+                    d.status_updated_at = datetime()
+                """,
+                id=doc_id,
+                paused=bool(paused),
+                reason=reason or "",
+            )
+
+    @retry_on_transient
+    def set_document_resume_available(self, doc_id: str, available: bool) -> None:
+        """Flag a FAILED document whose ingest checkpoint survives — a
+        reprocess resumes from the checkpoint instead of starting over. The
+        frontend renders these as "Interrupted" rather than a plain failure."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.resume_available = $available
+                """,
+                id=doc_id,
+                available=bool(available),
+            )
+
+    @retry_on_transient
+    def get_entities_for_document_provenance(self, doc_id: str) -> List[dict]:
+        """Entities recorded with this document in their source_documents.
+
+        Used by ingest resume: entities stored by an interrupted run exist in
+        the graph before the chunk-MENTIONS linking phase runs, so the
+        (d)-[:HAS_CHUNK]->()-[:MENTIONS]->() path can't find them yet —
+        provenance is the only durable link at that point.
+        """
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (e:Entity)
+                WHERE $doc_id IN coalesce(e.source_documents, [])
+                RETURN e.name as name,
+                       coalesce(e.type, 'Concept') as type,
+                       coalesce(e.description, '') as description
+                """,
+                doc_id=doc_id,
+            )
+            return [dict(record) for record in result]
 
     @retry_on_transient
     def update_document_progress(
@@ -697,7 +853,9 @@ class Neo4jService:
                 WHERE d.processing_status IN ['processing', 'extracting']
                 SET d.processing_status = 'pending',
                     d.progress_message = 'Reset to pending after a server restart interrupted processing — reprocess to retry',
-                    d.error_message = null
+                    d.error_message = null,
+                    d.processing_paused = false,
+                    d.paused_reason = null
                 RETURN d.id AS id
             """)
             return [record["id"] for record in result]
@@ -727,6 +885,8 @@ class Neo4jService:
                 SET d.processing_status = 'pending',
                     d.progress_message = 'Reset to pending after processing stalled with no live task — reprocess to retry',
                     d.error_message = null,
+                    d.processing_paused = false,
+                    d.paused_reason = null,
                     d.status_updated_at = datetime()
                 RETURN d.id AS id
             """, active=active_ids, stale=stale_minutes)
@@ -987,6 +1147,9 @@ class Neo4jService:
                        coalesce(d.entity_count, -1) as entity_count,
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
+                       coalesce(d.processing_paused, false) as processing_paused,
+                       coalesce(d.paused_reason, '') as paused_reason,
+                       coalesce(d.resume_available, false) as resume_available,
                        size([(d)-[:HAS_CHUNK]->(uc:Chunk) WHERE uc.has_embedding = false | 1]) as unembedded_chunk_count
                 ORDER BY d.upload_date DESC
             """)
@@ -1033,6 +1196,9 @@ class Neo4jService:
                        coalesce(d.entity_count, -1) as entity_count,
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
+                       coalesce(d.processing_paused, false) as processing_paused,
+                       coalesce(d.paused_reason, '') as paused_reason,
+                       coalesce(d.resume_available, false) as resume_available,
                        unembedded_chunk_count,
                        col.id as collection_id,
                        col.name as collection_name,

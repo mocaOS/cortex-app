@@ -43,13 +43,18 @@ from app.models import (
     ConversationMessage,
     DocumentChunk,
     DocumentMetadata,
+    Entity,
     GraphContext,
     ProcessingStatus,
     ReasoningStep,
     ThinkingEvent,
 )
 from app.services import usage_meter
-from app.services.graph_extractor import get_graph_extractor
+from app.services.graph_extractor import (
+    ExtractionEndpointUnavailable,
+    _is_connection_error,
+    get_graph_extractor,
+)
 from app.services.llm_config import (
     get_llm_config,
     build_chat_params,
@@ -1144,13 +1149,8 @@ class DocumentProcessor:
                 f"File path: {file_path}"
             )
 
-        # Delete existing chunks and entities
-        cleanup_result = self.neo4j.delete_document_chunks(doc_id)
-        logger.info(
-            f"Cleaned up document {doc_id}: "
-            f"{cleanup_result['chunks_deleted']} chunks, "
-            f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
-        )
+        # Delete existing chunks and entities (kept when resumable — see helper)
+        self._cleanup_before_reprocess(doc_id, file_path)
 
         # Update status to pending (will be picked up by process_pending_documents)
         self.neo4j.update_document_status(
@@ -1194,6 +1194,188 @@ class DocumentProcessor:
             for block in iter(lambda: fh.read(1 << 20), b""):
                 h.update(block)
         return h.hexdigest()
+
+    # =========================================================================
+    # Ingest resume (enable_ingest_resume)
+    # =========================================================================
+
+    @staticmethod
+    def _ranges_to_indices(ranges_json: Optional[str]) -> set:
+        """Parse the extraction watermark JSON ([[lo, hi], ...] half-open
+        ranges) into a set of chunk indices. Malformed or legacy values
+        resolve to an empty set — the run just re-extracts everything; a
+        broken checkpoint must never fail processing."""
+        if not ranges_json:
+            return set()
+        try:
+            indices: set = set()
+            for lo, hi in json.loads(ranges_json):
+                indices.update(range(int(lo), int(hi)))
+            return indices
+        except Exception:  # noqa: BLE001 — checkpoint is best-effort by design
+            logger.warning("Ignoring malformed extraction watermark: %r", ranges_json[:200])
+            return set()
+
+    @staticmethod
+    def _indices_to_ranges(indices: set) -> list:
+        """Compress a set of chunk indices into sorted [lo, hi) pairs."""
+        ranges: list = []
+        for i in sorted(indices):
+            if ranges and i == ranges[-1][1]:
+                ranges[-1][1] = i + 1
+            else:
+                ranges.append([i, i + 1])
+        return ranges
+
+    def _ingest_fingerprint_matches(self, doc_id: str, file_path: str) -> bool:
+        """True when the document's stored chunks were produced from the
+        current file bytes AND the current extraction config — the condition
+        under which partial work is safe to build on."""
+        fingerprint = self.neo4j.get_document_fingerprint(doc_id) or {}
+        return (
+            (fingerprint.get("text_chunk_count") or 0) > 0
+            and fingerprint.get("file_sha256") == self._file_sha256(file_path)
+            and fingerprint.get("config_hash") == self._reprocess_config_hash()
+        )
+
+    def _cleanup_before_reprocess(self, doc_id: str, file_path: str) -> None:
+        """Clear a document's chunks/entities before reprocessing — unless
+        ingest resume can build on them: with an unchanged file + extraction
+        config, the stored chunks/embeddings (and any extraction checkpoint)
+        are exactly what a reprocess would recreate, so _process_document
+        reuses them instead of re-converting and re-embedding."""
+        keep_for_resume = False
+        if getattr(self.settings, "enable_ingest_resume", False):
+            try:
+                keep_for_resume = self._ingest_fingerprint_matches(doc_id, file_path)
+            except Exception as e:  # noqa: BLE001 — fall back to the clean path
+                logger.warning(
+                    f"Could not check resume fingerprint for {doc_id} ({e}); "
+                    f"clearing chunks"
+                )
+        if keep_for_resume:
+            logger.info(
+                f"Document {doc_id}: keeping stored chunks for reprocessing "
+                f"(fingerprint match — processing will reuse them instead of "
+                f"re-converting and re-embedding)"
+            )
+            return
+        cleanup_result = self.neo4j.delete_document_chunks(doc_id)
+        logger.info(
+            f"Cleaned up document {doc_id}: "
+            f"{cleanup_result['chunks_deleted']} chunks, "
+            f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
+        )
+
+    async def _prepare_ingest_resume(self, doc_id: str, file_path: str) -> dict:
+        """Decide how much of an earlier run this run can reuse.
+
+        Called at the top of _process_document. Three outcomes:
+
+        1. Fingerprint (file hash + extraction config hash) matches the
+           stored chunks → reuse them: skip Docling, chunking, and the full
+           embed pass. If the document never completed, also load the
+           extraction watermark and per-chunk relationship flags so
+           extraction continues where the interrupted run stopped
+           (`resumed=True`). If it DID complete (deliberate re-run, e.g. a
+           degraded doc), the checkpoint is cleared so extraction re-runs
+           fully on the reused chunks.
+        2. Fingerprint mismatch but stale chunks exist (config or file
+           changed since they were stored) → delete them; a resume over a
+           different chunking would corrupt the graph.
+        3. Fresh document → nothing to do.
+
+        In all flag-on cases the CURRENT fingerprint is recorded up front so
+        this run's own partial work is resumable (the completion-time write
+        only covers runs that finish).
+
+        Any failure here degrades to the full pipeline — resume is an
+        optimization and must never block processing.
+        """
+        default = {
+            "reuse_chunks": False,
+            "chunks": None,
+            "done_indices": set(),
+            "rels_done_chunk_ids": set(),
+            "resumed": False,
+        }
+        if not getattr(self.settings, "enable_ingest_resume", False):
+            return default
+        out = dict(default)
+        try:
+            file_hash = await asyncio.to_thread(self._file_sha256, file_path)
+            cfg_hash = self._reprocess_config_hash()
+            fingerprint = await asyncio.to_thread(
+                self.neo4j.get_document_fingerprint, doc_id
+            ) or {}
+            matches = (
+                fingerprint.get("file_sha256") == file_hash
+                and fingerprint.get("config_hash") == cfg_hash
+            )
+            text_chunk_count = fingerprint.get("text_chunk_count") or 0
+            if (
+                matches
+                and text_chunk_count > 0
+                and (fingerprint.get("unembedded_chunk_count") or 0) == 0
+            ):
+                chunks = await asyncio.to_thread(
+                    self.neo4j.get_text_chunks_for_document, doc_id
+                )
+                # Watermark indices are positions in the chunk-content list —
+                # an empty stored content would shift them, so bail to a full
+                # run rather than risk misalignment.
+                if chunks and all((c.get("content") or "").strip() for c in chunks):
+                    out["reuse_chunks"] = True
+                    out["chunks"] = chunks
+                    if fingerprint.get("processing_status") == "completed":
+                        await asyncio.to_thread(
+                            self.neo4j.clear_ingest_checkpoint, doc_id
+                        )
+                    else:
+                        out["resumed"] = True
+                        out["done_indices"] = self._ranges_to_indices(
+                            await asyncio.to_thread(
+                                self.neo4j.get_document_extraction_progress, doc_id
+                            )
+                        )
+                        out["rels_done_chunk_ids"] = set(
+                            await asyncio.to_thread(
+                                self.neo4j.get_rels_extracted_chunk_ids, doc_id
+                            )
+                        )
+                    logger.info(
+                        f"Document {doc_id}: reusing {len(chunks)} stored chunks "
+                        f"(fingerprint match); "
+                        + (
+                            f"resuming — {len(out['done_indices'])} chunks past "
+                            f"entity extraction, {len(out['rels_done_chunk_ids'])} "
+                            f"past relationship extraction"
+                            if out["resumed"]
+                            else "re-running extraction on reused chunks"
+                        )
+                    )
+            elif text_chunk_count > 0:
+                # Stale partial state from different file bytes or extraction
+                # config — building on it would mix incompatible chunkings.
+                cleanup = await asyncio.to_thread(
+                    self.neo4j.delete_document_chunks, doc_id
+                )
+                await asyncio.to_thread(self.neo4j.clear_ingest_checkpoint, doc_id)
+                logger.info(
+                    f"Document {doc_id}: stored chunks not reusable (fingerprint "
+                    f"changed or embeddings incomplete) — cleared "
+                    f"{cleanup.get('chunks_deleted', 0)} stale chunks before reprocessing"
+                )
+            await asyncio.to_thread(
+                self.neo4j.set_document_fingerprint, doc_id, file_hash, cfg_hash
+            )
+            return out
+        except Exception as e:  # noqa: BLE001 — resume must never block processing
+            logger.warning(
+                f"Ingest-resume preparation failed for document {doc_id} ({e}); "
+                f"running the full pipeline"
+            )
+            return default
 
     async def _reprocess_delta_skip(self, doc_id: str, file_path: str) -> bool:
         """True when reprocessing can be skipped entirely: the document
@@ -1279,13 +1461,8 @@ class DocumentProcessor:
         if await self._reprocess_delta_skip(doc_id, file_path):
             return True
 
-        # Delete existing chunks and entities
-        cleanup_result = self.neo4j.delete_document_chunks(doc_id)
-        logger.info(
-            f"Cleaned up document {doc_id}: "
-            f"{cleanup_result['chunks_deleted']} chunks, "
-            f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
-        )
+        # Delete existing chunks and entities (kept when resumable — see helper)
+        await asyncio.to_thread(self._cleanup_before_reprocess, doc_id, file_path)
 
         # Update status to pending
         self.neo4j.update_document_status(
@@ -1308,13 +1485,8 @@ class DocumentProcessor:
         if await self._reprocess_delta_skip(doc_id, file_path):
             return True
 
-        # Delete existing chunks and entities
-        cleanup_result = self.neo4j.delete_document_chunks(doc_id)
-        logger.info(
-            f"Cleaned up document {doc_id}: "
-            f"{cleanup_result['chunks_deleted']} chunks, "
-            f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
-        )
+        # Delete existing chunks and entities (kept when resumable — see helper)
+        await asyncio.to_thread(self._cleanup_before_reprocess, doc_id, file_path)
 
         # Process in background (same as new document, with task tracking)
         await self._start_processing(doc_id, file_path, file_type)
@@ -1724,6 +1896,35 @@ class DocumentProcessor:
                     progress_message="Starting document processing...",
                 ),
             )
+
+            # A fresh run owns the pause/interrupted flags: clear anything a
+            # previous run left behind so the UI reflects this run only.
+            async def _set_pause_state(active: bool, reason: str = "") -> None:
+                try:
+                    await loop.run_in_executor(
+                        _get_processing_executor(),
+                        functools.partial(
+                            self.neo4j.set_document_pause_state,
+                            doc_id, active, reason,
+                        ),
+                    )
+                except Exception as e:  # noqa: BLE001 — UI flag is best-effort
+                    logger.debug(f"Could not update pause state for {doc_id}: {e}")
+
+            await _set_pause_state(False)
+            try:
+                await asyncio.to_thread(
+                    self.neo4j.set_document_resume_available, doc_id, False
+                )
+            except Exception as e:  # noqa: BLE001 — UI flag is best-effort
+                logger.debug(f"Could not clear resume flag for {doc_id}: {e}")
+
+            # Ingest resume: decide up front how much of an earlier run this
+            # one can build on (stored chunks with embeddings, extraction
+            # watermark, relationship flags) — see _prepare_ingest_resume.
+            resume = await self._prepare_ingest_resume(doc_id, file_path)
+            resume_reuse = resume["reuse_chunks"]
+
             await loop.run_in_executor(
                 _get_processing_executor(),
                 functools.partial(
@@ -1734,7 +1935,9 @@ class DocumentProcessor:
                     # Flipped to "Converting document..." by the on_progress
                     # callback once the conversion-slot semaphore is acquired —
                     # a queued doc no longer claims to be converting.
-                    "Waiting for a conversion slot...",
+                    "Resuming from checkpoint..."
+                    if resume_reuse
+                    else "Waiting for a conversion slot...",
                 ),
             )
 
@@ -1758,9 +1961,16 @@ class DocumentProcessor:
                 )
 
             # Choose conversion path. Code/markdown is ingested as-is (fast path);
-            # everything else goes through Docling.
+            # everything else goes through Docling. On resume-reuse the stored
+            # chunks ARE the conversion output — skip Docling entirely (the
+            # single biggest redo cost on large documents).
             ext = file_type.lower()
-            if ext in self.RAW_TEXT_EXTENSIONS:
+            if resume_reuse:
+                use_vision = False
+                md_text = ""
+                filename = Path(file_path).name
+                conversion_result = {"markdown": "", "filename": filename, "images": []}
+            elif ext in self.RAW_TEXT_EXTENSIONS:
                 use_vision = False
                 md_text = await loop.run_in_executor(
                     _get_processing_executor(),
@@ -1800,7 +2010,10 @@ class DocumentProcessor:
             # heuristic always runs and the LLM classifier runs only when the
             # runtime toggle is on (env default overridable via SystemMeta).
             # Fully guarded so a scanner failure never fails ingestion.
-            if self.settings.enable_ingestion_injection_scan:
+            # Skipped on resume-reuse: there's no converted text to scan, and
+            # re-writing the flag from empty text would clear a legit result
+            # from the original run.
+            if self.settings.enable_ingestion_injection_scan and not resume_reuse:
                 try:
                     _llm_scan_enabled = await asyncio.to_thread(
                         self.neo4j.get_runtime_setting,
@@ -1844,186 +2057,212 @@ class DocumentProcessor:
                     )
                 )
 
-            await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(
-                    self.neo4j.update_document_progress,
-                    doc_id,
-                    10,
-                    100,
-                    "Splitting into chunks...",
-                ),
-            )
-
-            # Yield control
-            await asyncio.sleep(0)
-
-            # =================================================================
-            # Clean image placeholders from markdown before chunking
-            # =================================================================
-            if use_vision:
-                documents = [
-                    dataclasses.replace(
-                        doc, content=_clean_image_placeholders(doc.content)
-                    )
-                    for doc in documents
+            if resume_reuse:
+                # Stored chunks match this file+config — rebuild the in-memory
+                # chunk list from Neo4j instead of re-running Docling, the
+                # splitter, and the full embed pass. Downstream phases only
+                # need chunk text + deterministic ids; the embeddings are
+                # already in the DB.
+                embedded_chunks = [
+                    HaystackDocument(content=c["content"], meta={"chunk_id": c["id"]})
+                    for c in resume["chunks"]
                 ]
-
-            # =================================================================
-            # URL Protection: Prevent URLs from being split across chunks
-            # =================================================================
-            # Replace URLs with placeholders before splitting, then restore after
-            url_maps = []  # Store URL map for each document
-            protected_documents = []
-
-            for doc in documents:
-                protected_content, url_map = _protect_urls(doc.content)
-                url_maps.append(url_map)
-                # Create a new document with protected content
-                protected_doc = HaystackDocument(
-                    content=protected_content, meta=doc.meta
-                )
-                protected_documents.append(protected_doc)
-
-                if url_map:
-                    logger.debug(f"Protected {len(url_map)} URLs from chunking")
-
-            # Split documents into chunks (run in thread pool)
-            split_result = await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(self.splitter.run, documents=protected_documents),
-            )
-            chunks = split_result.get("documents", [])
-
-            # Restore URLs in each chunk
-            # Note: We need to restore URLs from all URL maps since chunks may
-            # come from any of the original documents
-            combined_url_map = {}
-            for url_map in url_maps:
-                combined_url_map.update(url_map)
-
-            if combined_url_map:
-                for chunk in chunks:
-                    chunk.content = _restore_urls(chunk.content, combined_url_map)
-                logger.debug(f"Restored URLs in {len(chunks)} chunks")
-
-            # Enforce embed-token cap after URL restoration (URLs can grow content).
-            # Splits any oversize chunk into safe pieces so the downstream embed call
-            # never trips ContextWindowExceeded errors on managed providers / litellm
-            # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
-            chunks = _drop_empty_chunks(chunks)
-            chunks = _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
-
-            # Check for cancellation after chunking
-            self._check_cancellation(doc_id)
-
-            await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(
-                    self.neo4j.update_document_progress,
-                    doc_id,
-                    15,
-                    100,
-                    f"Generating embeddings for {len(chunks)} chunks...",
-                ),
-            )
-
-            # Yield control before heavy embedding operation
-            await asyncio.sleep(0)
-
-            # Check for cancellation before embedding
-            self._check_cancellation(doc_id)
-
-            # Generate embeddings (most CPU-intensive - run in thread pool)
-            _truncate_for_embedding(chunks, self.settings.embedding_max_input_tokens)
-            _embed_call = functools.partial(self.embedder.run, documents=chunks)
-            try:
-                embed_result = await loop.run_in_executor(
-                    _get_processing_executor(), _embed_call
-                )
-            except Exception as exc:
-                # One retry: gateways like Venice wrap upstream errors in an
-                # HTTP 200 envelope with data=null, which surfaces here as a
-                # TypeError from response parsing rather than an APIError the
-                # embedder would handle — transient causes deserve a second try.
-                logger.warning(
-                    f"Embedding pass failed ({exc}); retrying once", exc_info=True
-                )
-                await asyncio.sleep(5)
-                embed_result = await loop.run_in_executor(
-                    _get_processing_executor(), _embed_call
-                )
-            embedded_chunks = embed_result.get("documents", [])
-            embedded_chunks = await self._recover_missing_embeddings(
-                loop, embedded_chunks
-            )
-
-            # Check for cancellation after embedding
-            self._check_cancellation(doc_id)
-
-            await loop.run_in_executor(
-                _get_processing_executor(),
-                functools.partial(
-                    self.neo4j.update_document_progress,
-                    doc_id,
-                    25,
-                    100,
-                    "Storing chunks in database...",
-                ),
-            )
-
-            # Store chunks in Neo4j
-            chunk_ids = []
-            for idx, chunk in enumerate(embedded_chunks):
-                # Check for cancellation BEFORE EVERY chunk storage
-                self._check_cancellation(doc_id)
-
-                chunk_id = f"{doc_id}_chunk_{idx}"
-                chunk_ids.append(chunk_id)
-                # Store chunk_id in meta so fuzzy entity linking can find the correct ID
-                chunk.meta["chunk_id"] = chunk_id
-                chunk_model = DocumentChunk(
-                    id=chunk_id,
-                    document_id=doc_id,
-                    content=chunk.content,
-                    embedding=chunk.embedding,
-                    chunk_index=idx,
-                    metadata=chunk.meta,
-                )
-                # Store chunk in thread pool
                 await loop.run_in_executor(
                     _get_processing_executor(),
-                    functools.partial(self.neo4j.store_chunk, chunk_model),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        35,
+                        100,
+                        f"Reusing {len(embedded_chunks)} stored chunks "
+                        f"(conversion and embedding already done)...",
+                    ),
+                )
+                logger.info(
+                    f"Document {doc_id}: reusing {len(embedded_chunks)} stored "
+                    f"chunks — conversion and embedding skipped"
+                )
+            else:
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        10,
+                        100,
+                        "Splitting into chunks...",
+                    ),
                 )
 
-                # Update progress for chunk storage (25-35%)
-                storage_progress = 25 + int((idx + 1) / len(embedded_chunks) * 10)
-                _store_interval = max(1, min(3, len(embedded_chunks) // 5))
-                if (
-                    idx == 0
-                    or (idx + 1) % _store_interval == 0
-                    or idx == len(embedded_chunks) - 1
-                ):
-                    remaining = len(embedded_chunks) - (idx + 1)
-                    msg = f"Storing chunks: {idx + 1}/{len(embedded_chunks)} done"
-                    if remaining > 0:
-                        msg += f", {remaining} pending"
+                # Yield control
+                await asyncio.sleep(0)
+
+                # =============================================================
+                # Clean image placeholders from markdown before chunking
+                # =============================================================
+                if use_vision:
+                    documents = [
+                        dataclasses.replace(
+                            doc, content=_clean_image_placeholders(doc.content)
+                        )
+                        for doc in documents
+                    ]
+
+                # =============================================================
+                # URL Protection: Prevent URLs from being split across chunks
+                # =============================================================
+                # Replace URLs with placeholders before splitting, then restore after
+                url_maps = []  # Store URL map for each document
+                protected_documents = []
+
+                for doc in documents:
+                    protected_content, url_map = _protect_urls(doc.content)
+                    url_maps.append(url_map)
+                    # Create a new document with protected content
+                    protected_doc = HaystackDocument(
+                        content=protected_content, meta=doc.meta
+                    )
+                    protected_documents.append(protected_doc)
+
+                    if url_map:
+                        logger.debug(f"Protected {len(url_map)} URLs from chunking")
+
+                # Split documents into chunks (run in thread pool)
+                split_result = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(self.splitter.run, documents=protected_documents),
+                )
+                chunks = split_result.get("documents", [])
+
+                # Restore URLs in each chunk
+                # Note: We need to restore URLs from all URL maps since chunks may
+                # come from any of the original documents
+                combined_url_map = {}
+                for url_map in url_maps:
+                    combined_url_map.update(url_map)
+
+                if combined_url_map:
+                    for chunk in chunks:
+                        chunk.content = _restore_urls(chunk.content, combined_url_map)
+                    logger.debug(f"Restored URLs in {len(chunks)} chunks")
+
+                # Enforce embed-token cap after URL restoration (URLs can grow content).
+                # Splits any oversize chunk into safe pieces so the downstream embed call
+                # never trips ContextWindowExceeded errors on managed providers / litellm
+                # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
+                chunks = _drop_empty_chunks(chunks)
+                chunks = _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
+
+                # Check for cancellation after chunking
+                self._check_cancellation(doc_id)
+
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        15,
+                        100,
+                        f"Generating embeddings for {len(chunks)} chunks...",
+                    ),
+                )
+
+                # Yield control before heavy embedding operation
+                await asyncio.sleep(0)
+
+                # Check for cancellation before embedding
+                self._check_cancellation(doc_id)
+
+                # Generate embeddings (most CPU-intensive - run in thread pool)
+                _truncate_for_embedding(chunks, self.settings.embedding_max_input_tokens)
+                _embed_call = functools.partial(self.embedder.run, documents=chunks)
+                try:
+                    embed_result = await loop.run_in_executor(
+                        _get_processing_executor(), _embed_call
+                    )
+                except Exception as exc:
+                    # One retry: gateways like Venice wrap upstream errors in an
+                    # HTTP 200 envelope with data=null, which surfaces here as a
+                    # TypeError from response parsing rather than an APIError the
+                    # embedder would handle — transient causes deserve a second try.
+                    logger.warning(
+                        f"Embedding pass failed ({exc}); retrying once", exc_info=True
+                    )
+                    await asyncio.sleep(5)
+                    embed_result = await loop.run_in_executor(
+                        _get_processing_executor(), _embed_call
+                    )
+                embedded_chunks = embed_result.get("documents", [])
+                embedded_chunks = await self._recover_missing_embeddings(
+                    loop, embedded_chunks
+                )
+
+                # Check for cancellation after embedding
+                self._check_cancellation(doc_id)
+
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id,
+                        25,
+                        100,
+                        "Storing chunks in database...",
+                    ),
+                )
+
+                # Store chunks in Neo4j
+                chunk_ids = []
+                for idx, chunk in enumerate(embedded_chunks):
+                    # Check for cancellation BEFORE EVERY chunk storage
+                    self._check_cancellation(doc_id)
+
+                    chunk_id = f"{doc_id}_chunk_{idx}"
+                    chunk_ids.append(chunk_id)
+                    # Store chunk_id in meta so fuzzy entity linking can find the correct ID
+                    chunk.meta["chunk_id"] = chunk_id
+                    chunk_model = DocumentChunk(
+                        id=chunk_id,
+                        document_id=doc_id,
+                        content=chunk.content,
+                        embedding=chunk.embedding,
+                        chunk_index=idx,
+                        metadata=chunk.meta,
+                    )
+                    # Store chunk in thread pool
                     await loop.run_in_executor(
                         _get_processing_executor(),
-                        functools.partial(
-                            self.neo4j.update_document_progress,
-                            doc_id,
-                            storage_progress,
-                            100,
-                            msg,
-                        ),
+                        functools.partial(self.neo4j.store_chunk, chunk_model),
                     )
 
-                # Yield control every 3 chunks to keep API responsive
-                if idx % 3 == 0:
-                    await asyncio.sleep(0)
+                    # Update progress for chunk storage (25-35%)
+                    storage_progress = 25 + int((idx + 1) / len(embedded_chunks) * 10)
+                    _store_interval = max(1, min(3, len(embedded_chunks) // 5))
+                    if (
+                        idx == 0
+                        or (idx + 1) % _store_interval == 0
+                        or idx == len(embedded_chunks) - 1
+                    ):
+                        remaining = len(embedded_chunks) - (idx + 1)
+                        msg = f"Storing chunks: {idx + 1}/{len(embedded_chunks)} done"
+                        if remaining > 0:
+                            msg += f", {remaining} pending"
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.update_document_progress,
+                                doc_id,
+                                storage_progress,
+                                100,
+                                msg,
+                            ),
+                        )
 
-            logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
+                    # Yield control every 3 chunks to keep API responsive
+                    if idx % 3 == 0:
+                        await asyncio.sleep(0)
+
+                logger.info(f"Document {doc_id}: stored {len(embedded_chunks)} chunks")
 
             # Check for cancellation before graph extraction
             self._check_cancellation(doc_id)
@@ -2088,12 +2327,77 @@ class DocumentProcessor:
                         ),
                     )
 
+                # Dedup strategy decided up front: with semantic resolution
+                # on, each settled batch's entities are embedded in one HTTP
+                # call before storage.
+                use_embedding_dedup = (
+                    self.settings.enable_semantic_entity_resolution
+                    and self.graph_extractor.async_extraction_client is not None
+                )
+
+                # Track original → canonical name mapping for relationship extraction
+                entity_canonical_map: dict[str, str] = {}
+                # Extraction watermark: chunk indices whose batches settled AND
+                # had their entities persisted. Advanced per batch below so an
+                # interrupted run resumes here instead of at batch 1.
+                extraction_done_indices: set = set(resume["done_indices"])
+
+                async def _persist_entity_batch(
+                    batch_entities: list, lo: int, hi: int
+                ) -> None:
+                    """Checkpoint hook fired by the extractor after each batch
+                    settles: store the batch's (new) entities, then advance and
+                    persist the watermark. An interrupted run therefore never
+                    redoes a settled batch's LLM call or loses its entities."""
+                    self._check_cancellation(doc_id)
+                    seen_in_batch: set = set()
+                    new_entities = []
+                    for entity in batch_entities:
+                        key = entity.name.lower()
+                        if key in entity_canonical_map or key in seen_in_batch:
+                            continue  # already stored by an earlier batch this run
+                        seen_in_batch.add(key)
+                        new_entities.append(entity)
+                    if new_entities:
+                        embeddings = None
+                        if use_embedding_dedup:
+                            try:
+                                embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
+                                    new_entities
+                                )
+                            except Exception as e:  # noqa: BLE001 — degrade to Levenshtein
+                                logger.warning(
+                                    f"Document {doc_id}: batch entity embedding failed "
+                                    f"({e}); falling back to Levenshtein for this batch"
+                                )
+                                embeddings = None
+                        entity_canonical_map.update(
+                            await self._store_entity_batch(
+                                doc_id, new_entities, embeddings, loop
+                            )
+                        )
+                    extraction_done_indices.update(range(lo, hi))
+                    if self.settings.enable_ingest_resume:
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.set_document_extraction_progress,
+                                doc_id,
+                                json.dumps(
+                                    self._indices_to_ranges(extraction_done_indices)
+                                ),
+                            ),
+                        )
+
                 extraction_run_stats: dict = {}
                 entities = await self.graph_extractor.extract_entities_from_document_async(
                     chunks=chunk_contents,
                     max_tokens=self.settings.extraction_max_context,
                     progress_callback=_entity_progress,
                     run_stats=extraction_run_stats,
+                    on_batch_entities=_persist_entity_batch,
+                    skip_chunk_indices=resume["done_indices"] or None,
+                    on_outage_state=_set_pause_state,
                 )
                 if extraction_run_stats:
                     # Persisted for post-hoc tuning/monitoring only — nothing
@@ -2107,118 +2411,40 @@ class DocumentProcessor:
                         ),
                     )
 
-                # Decide dedup strategy up-front so we can pre-batch embeddings
-                # for the whole document (one HTTP call) instead of one per entity.
-                use_embedding_dedup = (
-                    self.settings.enable_semantic_entity_resolution
-                    and self.graph_extractor.async_extraction_client is not None
-                )
-
-                entity_embeddings: List[Optional[List[float]]] = []
-                if use_embedding_dedup and entities:
-                    await loop.run_in_executor(
-                        _get_processing_executor(),
-                        functools.partial(
-                            self.neo4j.update_document_progress,
-                            doc_id,
-                            65,
-                            100,
-                            f"Embedding {len(entities)} entities for semantic dedup...",
-                        ),
+                # Entities were stored per batch (checkpoint hook above). On
+                # resume, merge back the entities the interrupted run already
+                # stored — they exist in the graph (found via source_documents
+                # provenance) but not in this run's extractor output, and the
+                # linking/relationship phases need the full set.
+                if resume["resumed"]:
+                    known_names = {e.name.lower() for e in entities}
+                    known_names.update(
+                        v.lower() for v in entity_canonical_map.values()
                     )
-                    try:
-                        entity_embeddings = await self.graph_extractor.generate_entity_embeddings_batch_async(
-                            entities
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Document {doc_id}: batch entity embedding failed ({e}); "
-                            f"falling back to Levenshtein for all entities"
-                        )
-                        entity_embeddings = [None] * len(entities)
-
-                await loop.run_in_executor(
-                    _get_processing_executor(),
-                    functools.partial(
-                        self.neo4j.update_document_progress,
-                        doc_id,
-                        70,
-                        100,
-                        f"Storing {len(entities)} entities...",
-                    ),
-                )
-
-                # Track original → canonical name mapping for relationship extraction
-                entity_canonical_map: dict[str, str] = {}
-
-                if getattr(self.settings, "enable_batched_kg_writes", False):
-                    entity_canonical_map.update(
-                        await self._store_entities_batched(
-                            doc_id,
-                            entities,
-                            entity_embeddings if use_embedding_dedup else None,
-                            loop,
-                        )
+                    prior_entities = await asyncio.to_thread(
+                        self.neo4j.get_entities_for_document_provenance, doc_id
                     )
-                    total_entities += len(entities)
-                else:
-                    # Update the "Storing N/total" message at most ~10 times to
-                    # avoid flooding Neo4j with progress writes.
-                    store_progress_interval = max(1, len(entities) // 10) if entities else 1
-
-                    for idx, entity in enumerate(entities):
-                        self._check_cancellation(doc_id)
-
-                        embedding = entity_embeddings[idx] if use_embedding_dedup and entity_embeddings else None
-
-                        if embedding:
-                            result = await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.store_entity_with_embedding,
-                                    entity,
-                                    chunk_id=None,
-                                    document_id=doc_id,
-                                    embedding=embedding,
-                                ),
+                    merged_back = 0
+                    for prior in prior_entities:
+                        key = (prior.get("name") or "").lower()
+                        if not key or key in known_names:
+                            continue
+                        known_names.add(key)
+                        entity_canonical_map.setdefault(key, prior["name"])
+                        entities.append(
+                            Entity(
+                                name=prior["name"],
+                                type=prior.get("type") or "Concept",
+                                description=prior.get("description") or "",
                             )
-                            canonical_name = result[0] if isinstance(result, tuple) else entity.name
-                            entity_canonical_map[entity.name.lower()] = canonical_name
-                        else:
-                            canonical_name = await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.store_entity_with_resolution,
-                                    entity,
-                                    document_id=doc_id,
-                                    similarity_threshold=0.85,
-                                ),
-                            )
-                            entity_canonical_map[entity.name.lower()] = canonical_name or entity.name
-
-                        total_entities += 1
-
-                        if (
-                            idx == 0
-                            or (idx + 1) % store_progress_interval == 0
-                            or idx == len(entities) - 1
-                        ):
-                            # Progress band 70-85% reserved for entity storage;
-                            # 85% is the next phase ("Linking entities to chunks...").
-                            storage_progress = 70 + int((idx + 1) / max(1, len(entities)) * 14)
-                            await loop.run_in_executor(
-                                _get_processing_executor(),
-                                functools.partial(
-                                    self.neo4j.update_document_progress,
-                                    doc_id,
-                                    storage_progress,
-                                    100,
-                                    f"Storing entity {idx + 1}/{len(entities)}...",
-                                ),
-                            )
-
-                        if idx % 10 == 0:
-                            await asyncio.sleep(0)
+                        )
+                        merged_back += 1
+                    if merged_back:
+                        logger.info(
+                            f"Document {doc_id}: merged {merged_back} entities "
+                            f"from the interrupted run for chunk linking"
+                        )
+                total_entities = len(entities)
 
                 await loop.run_in_executor(
                     _get_processing_executor(),
@@ -2303,44 +2529,41 @@ class DocumentProcessor:
                     import asyncio as _asyncio
                     sem = _asyncio.Semaphore(self.settings.concurrent_relations)
 
-                    async def _extract_from_chunk(cid: str, ents: list):
-                        """Single-chunk extraction → (chunks_done, rels)."""
-                        async with sem:
-                            text = chunk_content_map.get(cid, "")
-                            rels = await self.graph_extractor.extract_chunk_relationships_async(
-                                text,
-                                ents,
-                                max_output_tokens=self.settings.relationship_max_output_tokens,
-                            )
-                            return 1, rels
+                    # Resume checkpoint: chunks whose relationship extraction
+                    # already settled in an interrupted run are skipped (a
+                    # chunk can legitimately yield 0 relationships, so this
+                    # can't be inferred from stored edges — see
+                    # Chunk.rels_extracted).
+                    rels_done: set = set(resume["rels_done_chunk_ids"])
+                    eligible_items = [
+                        {
+                            "key": cid,
+                            "chunk_text": chunk_content_map.get(cid, ""),
+                            "entities": ents,
+                        }
+                        for cid, ents in chunk_entities_map.items()
+                        if len(ents) >= 2 and cid not in rels_done
+                    ]
+                    skipped_done = eligible_chunks - len(eligible_items)
+                    if skipped_done > 0:
+                        logger.info(
+                            f"Document {doc_id}: skipping {skipped_done} chunks whose "
+                            f"relationship extraction already settled (resume checkpoint)"
+                        )
 
-                    async def _extract_from_batch(batch: list):
-                        """Multi-chunk extraction (one LLM call) → (chunks_done, rels)."""
-                        async with sem:
-                            results_map = await self.graph_extractor.extract_chunk_relationships_batch_async(
-                                batch,
-                                max_output_tokens=self.settings.relationship_max_output_tokens,
-                            )
-                            return len(batch), [
-                                r for rels in results_map.values() for r in rels
-                            ]
-
-                    # Gather all chunks with 2+ entities
-                    tasks = []
-                    if getattr(self.settings, "enable_batched_chunk_relationships", False):
+                    batched_mode = getattr(
+                        self.settings, "enable_batched_chunk_relationships", False
+                    )
+                    # Work units: each is a list of eligible items answered by
+                    # ONE LLM call — a greedy-packed batch in batched mode, a
+                    # single item otherwise. Unit granularity is what the
+                    # outage loop below requeues.
+                    work_units: list = []
+                    if batched_mode:
                         # Greedy-pack eligible chunks into batches: hard cap
                         # relationship_chunks_per_call, plus a character budget
                         # (~60% of the relationship context at ~4 chars/token)
                         # so oversized chunks don't blow the prompt.
-                        eligible_items = [
-                            {
-                                "key": cid,
-                                "chunk_text": chunk_content_map.get(cid, ""),
-                                "entities": ents,
-                            }
-                            for cid, ents in chunk_entities_map.items()
-                            if len(ents) >= 2
-                        ]
                         max_per_call = max(1, self.settings.relationship_chunks_per_call)
                         char_budget = max(
                             4000,
@@ -2354,41 +2577,95 @@ class DocumentProcessor:
                                 len(batch) >= max_per_call
                                 or batch_chars + item_chars > char_budget
                             ):
-                                tasks.append(_extract_from_batch(batch))
+                                work_units.append(batch)
                                 batch, batch_chars = [], 0
                             batch.append(item)
                             batch_chars += item_chars
                         if batch:
-                            tasks.append(_extract_from_batch(batch))
-                        if tasks:
+                            work_units.append(batch)
+                        if work_units:
                             logger.info(
                                 f"Document {doc_id}: batched per-chunk extraction — "
-                                f"{eligible_chunks} chunks in {len(tasks)} LLM calls"
+                                f"{len(eligible_items)} chunks in {len(work_units)} LLM calls"
                             )
                     else:
-                        for cid, ents in chunk_entities_map.items():
-                            if len(ents) >= 2:
-                                tasks.append(_extract_from_chunk(cid, ents))
+                        work_units = [[item] for item in eligible_items]
 
-                    if tasks:
-                        # Stream results via as_completed so each chunk's relationships
-                        # land in Neo4j (and the visible counter ticks) the moment its
-                        # LLM call returns — instead of waiting for the entire batch
-                        # before any storage happens. Also offload the Neo4j write
-                        # via run_in_executor so it doesn't block the event loop
-                        # while other LLM tasks are still running concurrently.
-                        failed_count = 0
-                        completed_count = 0
-                        progress_interval = max(1, eligible_chunks // 10)
-                        for coro in _asyncio.as_completed(tasks):
+                    async def _run_unit(unit: list):
+                        """One relationship LLM call (single- or multi-chunk).
+
+                        Returns ("ok", chunk_ids, rels) on success, ("err",
+                        chunk_ids, exc) on a non-recoverable failure (chunk
+                        dropped, matching the old behavior), or ("outage",
+                        unit, exc) when the endpoint is unreachable — the
+                        outage loop below requeues the unit instead of losing
+                        its relationships.
+                        """
+                        async with sem:
                             try:
-                                chunks_done, result = await coro
-                            except Exception:
-                                failed_count += 1
-                                completed_count += 1
+                                if batched_mode:
+                                    results_map = await self.graph_extractor.extract_chunk_relationships_batch_async(
+                                        unit,
+                                        max_output_tokens=self.settings.relationship_max_output_tokens,
+                                    )
+                                    rels = [r for rs in results_map.values() for r in rs]
+                                else:
+                                    rels = await self.graph_extractor.extract_chunk_relationships_async(
+                                        unit[0]["chunk_text"],
+                                        unit[0]["entities"],
+                                        max_output_tokens=self.settings.relationship_max_output_tokens,
+                                    )
+                                return ("ok", [it["key"] for it in unit], rels)
+                            except Exception as e:  # noqa: BLE001 — classified below
+                                if isinstance(e, ExtractionEndpointUnavailable) or _is_connection_error(e):
+                                    return ("outage", unit, e)
+                                return ("err", [it["key"] for it in unit], e)
+
+                    # Stream results via as_completed so each chunk's relationships
+                    # land in Neo4j (and the visible counter ticks) the moment its
+                    # LLM call returns — instead of waiting for the entire batch
+                    # before any storage happens. Also offload the Neo4j write
+                    # via run_in_executor so it doesn't block the event loop
+                    # while other LLM tasks are still running concurrently.
+                    remaining_chunks = len(eligible_items)
+                    failed_count = 0
+                    completed_count = 0
+                    launched_units = len(work_units)
+                    progress_interval = max(1, remaining_chunks // 10)
+                    outage_started: Optional[float] = None
+                    outage_round = 0
+                    pause_flag_set = False
+                    max_outage_wait = max(0, self.settings.llm_outage_max_wait_seconds)
+
+                    while work_units:
+                        requeue: list = []
+                        outage_error: Optional[BaseException] = None
+                        for coro in _asyncio.as_completed(
+                            [_run_unit(u) for u in work_units]
+                        ):
+                            status, payload, result = await coro
+                            if status == "outage":
+                                requeue.append(payload)
+                                outage_error = result
                                 continue
+                            if status == "err":
+                                failed_count += 1
+                                completed_count += len(payload)
+                                logger.warning(
+                                    f"Per-chunk extraction call failed "
+                                    f"({len(payload)} chunks dropped): {result}"
+                                )
+                                continue
+                            # The endpoint answered — clear the outage clock
+                            # (and the visible paused state, if set).
+                            outage_started = None
+                            outage_round = 0
+                            if pause_flag_set:
+                                pause_flag_set = False
+                                await _set_pause_state(False)
+                            done_chunk_ids, rels = payload, result
                             chunk_new_rels = []
-                            for rel in result:
+                            for rel in rels:
                                 # Remap to canonical entity names from dedup
                                 rel.source = entity_canonical_map.get(rel.source.lower(), rel.source)
                                 rel.target = entity_canonical_map.get(rel.target.lower(), rel.target)
@@ -2430,11 +2707,27 @@ class DocumentProcessor:
                                             total_relationships += 1
                                     except Exception as e:
                                         logger.warning(f"Failed to store per-chunk relationship: {e}")
-                            completed_count += chunks_done
+                            # Relationship checkpoint: these chunks' results
+                            # (possibly zero relationships) are stored — a
+                            # resumed run must not re-pay their LLM calls.
+                            if self.settings.enable_ingest_resume:
+                                try:
+                                    await loop.run_in_executor(
+                                        _get_processing_executor(),
+                                        functools.partial(
+                                            self.neo4j.mark_chunks_rels_extracted,
+                                            done_chunk_ids,
+                                        ),
+                                    )
+                                except Exception as e:  # noqa: BLE001 — checkpoint is best-effort
+                                    logger.debug(
+                                        f"Could not persist relationship checkpoint: {e}"
+                                    )
+                            completed_count += len(done_chunk_ids)
                             if (
-                                completed_count <= chunks_done
-                                or completed_count % progress_interval < chunks_done
-                                or completed_count >= eligible_chunks
+                                completed_count <= len(done_chunk_ids)
+                                or completed_count % progress_interval < len(done_chunk_ids)
+                                or completed_count >= remaining_chunks
                             ):
                                 await loop.run_in_executor(
                                     _get_processing_executor(),
@@ -2443,11 +2736,63 @@ class DocumentProcessor:
                                         doc_id,
                                         90,
                                         100,
-                                        f"Extracting per-chunk relationships: {completed_count}/{eligible_chunks} chunks ({total_relationships} found)...",
+                                        f"Extracting per-chunk relationships: {completed_count}/{remaining_chunks} chunks ({total_relationships} found)...",
                                     ),
                                 )
-                        if failed_count:
-                            logger.warning(f"Document {doc_id}: {failed_count}/{len(tasks)} per-chunk extraction calls failed")
+                        if not requeue:
+                            break
+                        # Endpoint outage: every requeued unit failed with a
+                        # connection error. Wait and re-probe instead of
+                        # dropping them; abort past the budget with the
+                        # checkpoint intact.
+                        now = time.monotonic()
+                        if outage_started is None:
+                            outage_started = now
+                        outage_elapsed = now - outage_started
+                        if outage_elapsed >= max_outage_wait:
+                            raise ExtractionEndpointUnavailable(
+                                f"LLM endpoint unreachable for {outage_elapsed:.0f}s during "
+                                f"per-chunk relationship extraction "
+                                f"({completed_count}/{remaining_chunks} chunks this run; "
+                                f"work up to the checkpoint is preserved): {outage_error}"
+                            ) from outage_error
+                        outage_round += 1
+                        delay = min(60.0, 5.0 * (2 ** min(outage_round - 1, 4)))
+                        delay = min(delay, max(1.0, max_outage_wait - outage_elapsed))
+                        requeued_chunks = sum(len(u) for u in requeue)
+                        if not pause_flag_set:
+                            pause_flag_set = True
+                            await _set_pause_state(
+                                True,
+                                f"LLM endpoint unreachable — retrying automatically "
+                                f"(waited {outage_elapsed:.0f}s of {max_outage_wait}s)",
+                            )
+                        logger.warning(
+                            f"Document {doc_id}: LLM endpoint unreachable during "
+                            f"relationship extraction — retrying {requeued_chunks} "
+                            f"chunks in {delay:.0f}s (outage {outage_elapsed:.0f}s/"
+                            f"{max_outage_wait}s budget)"
+                        )
+                        await loop.run_in_executor(
+                            _get_processing_executor(),
+                            functools.partial(
+                                self.neo4j.update_document_progress,
+                                doc_id,
+                                90,
+                                100,
+                                f"LLM endpoint unreachable — retrying {requeued_chunks} chunks in {delay:.0f}s...",
+                            ),
+                        )
+                        await _asyncio.sleep(delay)
+                        work_units = requeue
+
+                    if pause_flag_set:
+                        # Loop can exit with the flag still up when the final
+                        # requeued units drain as non-connection errors.
+                        await _set_pause_state(False)
+
+                    if failed_count:
+                        logger.warning(f"Document {doc_id}: {failed_count}/{launched_units} per-chunk extraction calls failed")
 
                     if total_relationships > 0:
                         logger.info(f"Document {doc_id}: {total_relationships} per-chunk relationships extracted")
@@ -2457,6 +2802,16 @@ class DocumentProcessor:
                     f"{total_entities} entities, {len(chunk_entity_links)} chunk links, "
                     f"{total_relationships} per-chunk relationships"
                 )
+
+            # The checkpoint has served its purpose — clear it so a future
+            # deliberate reprocess re-extracts instead of no-oping against a
+            # completed run's watermark. Same for the paused flag.
+            await _set_pause_state(False)
+            if self.settings.enable_ingest_resume:
+                try:
+                    await asyncio.to_thread(self.neo4j.clear_ingest_checkpoint, doc_id)
+                except Exception as e:  # noqa: BLE001 — cleanup is best-effort
+                    logger.debug(f"Could not clear ingest checkpoint for {doc_id}: {e}")
 
             await loop.run_in_executor(
                 _get_processing_executor(),
@@ -2504,6 +2859,28 @@ class DocumentProcessor:
             except Exception as e:
                 logger.debug(f"Could not record document fingerprint: {e}")
 
+            # On a resume-reuse run the original conversion (and its extracted
+            # images) never happened in this process — if the interrupted run
+            # left image analysis unfinished, relaunch it through the same
+            # machinery the startup resume uses (re-extracts images locally,
+            # skips already-stored ones).
+            if resume_reuse:
+                try:
+                    doc_info = await asyncio.to_thread(self.neo4j.get_document, doc_id)
+                    if doc_info and (doc_info.get("image_progress_total") or 0) > (
+                        doc_info.get("image_progress_current") or 0
+                    ):
+                        logger.info(
+                            f"Document {doc_id}: resuming interrupted image analysis "
+                            f"({doc_info.get('image_progress_current')}/"
+                            f"{doc_info.get('image_progress_total')} images done)"
+                        )
+                        asyncio.ensure_future(self.resume_image_analysis(doc_info))
+                except Exception as e:  # noqa: BLE001 — image resume is best-effort
+                    logger.warning(
+                        f"Could not relaunch image analysis for {doc_id}: {e}"
+                    )
+
             try:
                 from app.metrics import DOCUMENTS_PROCESSED
                 DOCUMENTS_PROCESSED.labels(status="completed").inc()
@@ -2527,6 +2904,30 @@ class DocumentProcessor:
             raise  # Re-raise to properly cancel the task
         except Exception as e:
             logger.error(f"Error processing document {doc_id}: {e}")
+            error_message = str(e)
+            if isinstance(e, ExtractionEndpointUnavailable):
+                # The checkpoint (chunks, extracted entities, relationship
+                # flags) survives this failure — say so where the operator
+                # will read it, and flag the document as resumable so the
+                # UI shows "Interrupted" instead of a plain failure.
+                error_message += (
+                    " Reprocess once the endpoint is back — processing "
+                    "resumes from the checkpoint instead of starting over."
+                )
+                try:
+                    await asyncio.to_thread(
+                        self.neo4j.set_document_resume_available, doc_id, True
+                    )
+                except Exception as flag_err:  # noqa: BLE001 — UI flag is best-effort
+                    logger.debug(f"Could not set resume flag for {doc_id}: {flag_err}")
+            try:
+                # The run is over — a lingering paused flag would read as
+                # "still waiting" on a failed document.
+                await asyncio.to_thread(
+                    self.neo4j.set_document_pause_state, doc_id, False
+                )
+            except Exception as flag_err:  # noqa: BLE001 — UI flag is best-effort
+                logger.debug(f"Could not clear pause state for {doc_id}: {flag_err}")
             try:
                 from app.metrics import DOCUMENTS_PROCESSED
                 DOCUMENTS_PROCESSED.labels(status="failed").inc()
@@ -2539,7 +2940,7 @@ class DocumentProcessor:
                         self.neo4j.update_document_status,
                         doc_id,
                         ProcessingStatus.FAILED,
-                        error_message=str(e),
+                        error_message=error_message,
                     ),
                 )
             except Exception as status_err:
@@ -2578,6 +2979,60 @@ class DocumentProcessor:
                 if fuzz.partial_ratio(entity_name_lower, chunk_content_lower) >= 85:
                     links.append((chunk_id, entity.name))
         return links
+
+    async def _store_entity_batch(
+        self,
+        doc_id: str,
+        entities: list,
+        entity_embeddings: Optional[list],
+        loop,
+    ) -> dict:
+        """Store one extraction batch's entities and return the
+        original-name(lower) → canonical-name map.
+
+        Dispatch wrapper used by the per-batch checkpoint hook: batched UNWIND
+        writes when enable_batched_kg_writes is on, otherwise the sequential
+        per-entity resolution path (same dedup semantics as the pre-checkpoint
+        whole-document storage loop).
+        """
+        if not entities:
+            return {}
+        if getattr(self.settings, "enable_batched_kg_writes", False):
+            return await self._store_entities_batched(
+                doc_id, entities, entity_embeddings, loop
+            )
+        canonical_map: dict[str, str] = {}
+        for idx, entity in enumerate(entities):
+            self._check_cancellation(doc_id)
+            embedding = entity_embeddings[idx] if entity_embeddings else None
+            if embedding:
+                result = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.store_entity_with_embedding,
+                        entity,
+                        chunk_id=None,
+                        document_id=doc_id,
+                        embedding=embedding,
+                    ),
+                )
+                canonical_map[entity.name.lower()] = (
+                    result[0] if isinstance(result, tuple) else entity.name
+                )
+            else:
+                canonical_name = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.store_entity_with_resolution,
+                        entity,
+                        document_id=doc_id,
+                        similarity_threshold=0.85,
+                    ),
+                )
+                canonical_map[entity.name.lower()] = canonical_name or entity.name
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
+        return canonical_map
 
     async def _store_entities_batched(
         self,

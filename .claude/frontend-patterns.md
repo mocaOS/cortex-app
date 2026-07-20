@@ -50,6 +50,14 @@ Filter dropdowns: Collection, Status, Source. Source filter auto-shown when docu
 
 `DocumentCard` shows an amber `AlertTriangle` "Degraded" badge (tooltip + inline reason line: "0 entities extracted" / "N chunks missing embeddings — reprocess to retry"); the existing completed-doc reprocess button is the one-click fix. `DocumentList` renders a single combined needs-attention banner ("N failed / M degraded documents") with a **Select all** button that selects failed + degraded for bulk reprocess; `selectAllDegraded` mirrors `selectAllFailed`.
 
+## Paused / Interrupted Documents UI
+
+Backed by the ingest-resume fields on the document payload (`processing_paused` + `paused_reason` while a live run waits out an LLM endpoint outage; `resume_available` on a failed doc whose checkpoint survives — see [`domain/document-pipeline.md`](domain/document-pipeline.md#ingest-checkpointresume--endpoint-outage-pause)):
+
+- `DocumentCard.getStatusConfig` overrides the badge: processing/extracting + `processing_paused` → amber `CirclePause` **"Paused"** (not a spinner — nothing is decoding); failed + `resume_available` → amber **"Interrupted"**. Amber inline lines explain each ("… — continues automatically" / "Progress is checkpointed — reprocess to resume from where it stopped"), and the reprocess button turns amber with title "Resume from checkpoint".
+- `IngestionStepper` (shared by Documents cards and extract Step 1 compact rows) reads `processing_paused` from `IngestionDocLike`: the active phase chip swaps its spinner for an amber pause icon, and the status line + progress bar turn amber showing `paused_reason`.
+- Neither state is a new `ProcessingStatus` — paused docs still count as processing everywhere (filters, Step 1 tiles); the flags are additive document fields.
+
 ## Document Bulk Actions
 
 Bulk action toolbar: Select All, Reprocess, Download (ZIP), Move to Collection, Delete. See [`.claude/domain/admin-features.md`](domain/admin-features.md#bulk-download) for download implementation details.

@@ -51,6 +51,38 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
     msg = str(exc).lower()
     return "rate limit" in msg or "error code: 429" in msg
 
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Endpoint-down error from any layer: connection refused/reset while a
+    litellm router or gateway restarts (openai.APIConnectionError,
+    httpx.ConnectError/ConnectTimeout), or a proxy's 502/503/504 while the
+    upstream is away. Distinct from request timeouts (endpoint alive but too
+    slow — handled by split-retry) and 429s (endpoint healthy but saturated).
+
+    Name-based on purpose: openai's APITimeoutError SUBCLASSES
+    APIConnectionError, so an isinstance check would misroute read timeouts
+    into the outage path; the class-name check keeps them apart.
+    """
+    if getattr(exc, "status_code", None) in (502, 503, 504):
+        return True
+    name = type(exc).__name__.lower()
+    if "connect" in name:  # APIConnectionError, ConnectError, ConnectTimeout, ConnectionRefusedError
+        return True
+    msg = str(exc).lower()
+    return (
+        "connection error" in msg
+        or "connection refused" in msg
+        or "connection reset" in msg
+        or "all connection attempts failed" in msg
+    )
+
+
+class ExtractionEndpointUnavailable(RuntimeError):
+    """The LLM endpoint stayed unreachable past the outage wait budget
+    (LLM_OUTAGE_MAX_WAIT_SECONDS). Callers mark the document failed WITHOUT
+    discarding checkpointed work — a later run resumes from the checkpoint
+    instead of restarting from zero."""
+
 # Thread pool for running synchronous LLM calls - size matches concurrent_extractions setting
 # This is used as fallback; prefer async methods which use AsyncOpenAI directly
 _settings = get_settings()
@@ -2146,6 +2178,11 @@ Respond with ONLY the community name, nothing else."""
         max_tokens: int = 8192,
         progress_callback: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
         run_stats: Optional[dict] = None,
+        on_batch_entities: Optional[
+            Callable[[List[Entity], int, int], Awaitable[None]]
+        ] = None,
+        skip_chunk_indices: Optional[set] = None,
+        on_outage_state: Optional[Callable[[bool, str], Awaitable[None]]] = None,
     ) -> List[Entity]:
         """Extract entities from an entire document (batched by token budget).
 
@@ -2176,13 +2213,40 @@ Respond with ONLY the community name, nothing else."""
                 with the run's health counters (planned_batches, llm_calls,
                 truncation_splits, timeout_splits, single_chunk_truncations,
                 empty_responses, errors, suspect_batches, dense_batches,
-                rate_limit_retries, prompt_tokens,
+                rate_limit_retries, connection_retries, prompt_tokens,
                 completion_tokens). Passed as an out-param (not an instance
                 attribute) because one extractor instance serves concurrent
                 document runs.
+            on_batch_entities: Optional async callback(entities, lo, hi)
+                fired after EACH batch settles successfully, with the batch's
+                parsed entities and the [lo, hi) chunk-index range it covered.
+                This is the ingest-resume checkpoint hook: the caller persists
+                the batch's entities and its watermark so an interrupted run
+                doesn't redo settled batches. Exceptions propagate — a caller
+                that can't persist a checkpoint must fail the run, not
+                silently continue past it.
+            skip_chunk_indices: Optional set of chunk indices (positions in
+                `chunks`) already covered by a previous run's checkpoint —
+                they are excluded from batch packing but still counted as done
+                in progress reporting, so a resumed document shows e.g.
+                "2850/3000 chunks" instead of restarting the bar.
+            on_outage_state: Optional async callback(active, reason) fired on
+                endpoint-outage TRANSITIONS only (entering the wait loop /
+                first response after it) — the caller surfaces this as a
+                user-visible paused state. Best-effort: callback failures are
+                logged and never affect the run.
 
         Returns:
-            Deduplicated list of Entity objects
+            Deduplicated list of Entity objects extracted THIS run (excludes
+            entities from skipped checkpoint ranges — the caller merges those
+            back from storage).
+
+        Raises:
+            ExtractionEndpointUnavailable: the endpoint refused connections
+                for longer than LLM_OUTAGE_MAX_WAIT_SECONDS. Batches are never
+                silently dropped on connection errors — they are requeued and
+                re-probed with backoff until the endpoint returns or the
+                budget is exhausted.
         """
         client = self.async_extraction_client or self.async_client
         if not client:
@@ -2243,26 +2307,38 @@ Respond with ONLY the community name, nothing else."""
             )
             available_tokens = learned_cap
 
-        # Batch chunks by token budget
-        batches: List[List[str]] = []
-        current_batch: List[str] = []
+        # Batch chunks by token budget. Batches carry (chunk_index, text)
+        # tuples so each settled batch can report the [lo, hi) chunk range it
+        # covered to the resume checkpoint. Chunks already covered by a prior
+        # run's checkpoint are excluded from packing but still count as done
+        # in progress reporting.
+        skip = skip_chunk_indices or set()
+        batches: List[List[tuple]] = []
+        current_batch: List[tuple] = []
         current_tokens = 0
 
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
+            if idx in skip:
+                continue
             chunk_tokens = count_tokens(chunk)
             if current_batch and (current_tokens + chunk_tokens) > available_tokens:
                 batches.append(current_batch)
                 # 1-chunk overlap: include last chunk of previous batch
                 current_batch = [current_batch[-1]]
-                current_tokens = count_tokens(current_batch[0])
-            current_batch.append(chunk)
+                current_tokens = count_tokens(current_batch[0][1])
+            current_batch.append((idx, chunk))
             current_tokens += chunk_tokens
 
         if current_batch:
             batches.append(current_batch)
 
+        if skip:
+            logger.info(
+                f"Entity extraction: resuming from checkpoint — "
+                f"{len(skip)} of {len(chunks)} chunks already extracted"
+            )
         logger.info(
-            f"Entity extraction: {len(chunks)} chunks split into {len(batches)} batch(es) "
+            f"Entity extraction: {len(chunks) - len(skip)} chunks split into {len(batches)} batch(es) "
             f"(model={model}, budget={max_tokens})"
         )
 
@@ -2287,9 +2363,11 @@ Respond with ONLY the community name, nothing else."""
         pending = deque(batches)
         batch_num = 0
         # Progress accounting: a split batch's halves sum to the parent's chunk
-        # count, so total_units stays stable while done_units climbs.
-        total_units = sum(len(b) for b in batches)
-        done_units = 0
+        # count, so total_units stays stable while done_units climbs. Chunks
+        # skipped via the resume checkpoint start counted as done, so a
+        # resumed document's progress continues where it stopped.
+        total_units = sum(len(b) for b in batches) + len(skip)
+        done_units = len(skip)
         # Health telemetry: planned batches vs actual LLM calls makes retry
         # churn (truncation/timeout splits) measurable per run instead of
         # inferable from scattered per-batch warnings.
@@ -2304,6 +2382,7 @@ Respond with ONLY the community name, nothing else."""
             "suspect_batches": 0,
             "dense_batches": 0,
             "rate_limit_retries": 0,
+            "connection_retries": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
@@ -2392,10 +2471,33 @@ Respond with ONLY the community name, nothing else."""
             or client
         )
 
+        # Endpoint-outage tracking: connection errors (litellm/gateway restart)
+        # requeue the batch and re-probe with backoff instead of dropping it.
+        # The clock starts at the first connection failure and resets on any
+        # response from the endpoint; past the budget the run aborts with
+        # ExtractionEndpointUnavailable so the caller keeps its checkpoint.
+        outage_started: Optional[float] = None
+        consecutive_connection_failures = 0
+        max_outage_wait = max(0, self.settings.llm_outage_max_wait_seconds)
+        outage_flagged = False
+
+        async def _notify_outage(active: bool, reason: str = "") -> None:
+            # Transition-only, best-effort: surfaces the paused state in the
+            # UI; a callback failure must never affect the extraction run.
+            nonlocal outage_flagged
+            if on_outage_state is None or outage_flagged == active:
+                return
+            outage_flagged = active
+            try:
+                await on_outage_state(active, reason)
+            except Exception as cb_exc:  # noqa: BLE001
+                logger.debug(f"Outage-state callback failed: {cb_exc}")
+
         while pending:
             batch = pending.popleft()
             batch_num += 1
-            batch_text = "\n\n".join(batch)
+            checkpoint_payload = None
+            batch_text = "\n\n".join(text for _, text in batch)
             user_prompt = ENTITY_EXTRACTION_USER_PROMPT.format(
                 entity_types=", ".join(e_types),
                 document_summary=document_summary or "No summary available.",
@@ -2421,6 +2523,10 @@ Respond with ONLY the community name, nothing else."""
                 )
                 elapsed = time.monotonic() - call_started
                 consecutive_rate_limits = 0
+                # Any response means the endpoint is reachable again.
+                outage_started = None
+                consecutive_connection_failures = 0
+                await _notify_outage(False)
                 prompt_toks, completion_toks = _usage_tokens(response)
                 if prompt_toks is None:
                     prompt_toks = prompt_overhead + count_tokens(batch_text)
@@ -2462,15 +2568,22 @@ Respond with ONLY the community name, nothing else."""
                     _maybe_diagnose_ratio()
 
                 xml_entities = self._parse_entities_output(content)
+                batch_entities: List[Entity] = []
                 for e in xml_entities:
                     try:
-                        all_entities.append(Entity(
+                        batch_entities.append(Entity(
                             name=e["name"],
                             type=e.get("type", "Concept"),
                             description=e.get("description", ""),
                         ))
                     except Exception as ex:
                         logger.warning(f"Failed to parse entity {e}: {ex}")
+                all_entities.extend(batch_entities)
+                # Checkpoint payload — the callback itself runs AFTER the
+                # except block, so a callback failure (cancellation, Neo4j
+                # down) propagates instead of being misclassified as a
+                # batch-call error and silently dropped.
+                checkpoint_payload = (batch_entities, batch[0][0], batch[-1][0] + 1)
 
                 # Degeneration guard: a repetition-looping model inflates the
                 # entity list until it hits the output cap (observed live:
@@ -2514,6 +2627,61 @@ Respond with ONLY the community name, nothing else."""
 
             except Exception as e:
                 elapsed = time.monotonic() - call_started
+                # Endpoint down (connection refused/reset, gateway 502/503):
+                # requeue the batch and wait for the endpoint to come back
+                # instead of dropping it. Checked BEFORE the timeout arm —
+                # a ConnectTimeout matches both classifiers, and splitting a
+                # batch against a dead endpoint is pure waste. The requeued
+                # batch itself is the probe: it fails in milliseconds while
+                # the port refuses, and succeeds the moment litellm is back.
+                if _is_connection_error(e):
+                    now = time.monotonic()
+                    if outage_started is None:
+                        outage_started = now
+                    outage_elapsed = now - outage_started
+                    if outage_elapsed >= max_outage_wait:
+                        logger.error(
+                            f"Entity extraction: LLM endpoint unreachable for "
+                            f"{outage_elapsed:.0f}s (budget {max_outage_wait}s) — "
+                            f"aborting with checkpoint intact "
+                            f"({done_units}/{total_units} chunks done): {e}"
+                        )
+                        if run_stats is not None:
+                            run_stats.update(stats)
+                        raise ExtractionEndpointUnavailable(
+                            f"LLM endpoint unreachable for {outage_elapsed:.0f}s "
+                            f"({done_units}/{total_units} chunks extracted before the "
+                            f"outage; work up to the checkpoint is preserved): {e}"
+                        ) from e
+                    stats["connection_retries"] += 1
+                    consecutive_connection_failures += 1
+                    total_batches += 1  # the requeued batch is one more expected call
+                    delay = min(
+                        60.0, 5.0 * (2 ** min(consecutive_connection_failures - 1, 4))
+                    )
+                    delay = min(delay, max(1.0, max_outage_wait - outage_elapsed))
+                    pending.appendleft(batch)
+                    logger.warning(
+                        f"Entity extraction batch {batch_num} ({len(batch)} chunks): "
+                        f"LLM endpoint unreachable ({type(e).__name__}) — retrying in "
+                        f"{delay:.0f}s (outage {outage_elapsed:.0f}s/"
+                        f"{max_outage_wait}s budget)"
+                    )
+                    await _notify_outage(
+                        True,
+                        f"LLM endpoint unreachable — retrying automatically "
+                        f"(waited {outage_elapsed:.0f}s of {max_outage_wait}s)",
+                    )
+                    await _report_progress(
+                        f"LLM endpoint unreachable — retrying in {delay:.0f}s"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                # Any non-connection failure means the endpoint answered —
+                # clear the outage clock.
+                outage_started = None
+                consecutive_connection_failures = 0
+                await _notify_outage(False)
                 # With the max_retries=0 batch client, 429s land here instead
                 # of being absorbed by the SDK: requeue the whole batch (its
                 # size is fine — the endpoint is momentarily saturated) with
@@ -2568,6 +2736,14 @@ Respond with ONLY the community name, nothing else."""
                     done_units += len(batch)
                     await _report_progress()
 
+            if checkpoint_payload is not None and on_batch_entities is not None:
+                # Resume checkpoint: persist this batch's entities and the
+                # chunk range it covered. Deliberately unguarded — if the
+                # caller can't persist the checkpoint, continuing would
+                # double-spend these batches on the next resume.
+                ents, lo, hi = checkpoint_payload
+                await on_batch_entities(ents, lo, hi)
+
         # Deduplicate by name (case-insensitive), keep longest description
         seen: dict[str, Entity] = {}
         for entity in all_entities:
@@ -2587,6 +2763,7 @@ Respond with ONLY the community name, nothing else."""
             f"{stats['single_chunk_truncations']} single-chunk truncations, "
             f"{stats['empty_responses']} empty, {stats['errors']} errors, "
             f"{stats['rate_limit_retries']} rate-limit requeues, "
+            f"{stats['connection_retries']} connection requeues, "
             f"{stats['suspect_batches']} suspect, {stats['dense_batches']} dense), "
             f"tokens in≈{stats['prompt_tokens']} "
             f"out≈{stats['completion_tokens']}, {run_elapsed:.0f}s"
@@ -2851,8 +3028,14 @@ Extract relationships supported by the text above:"""
             # errors — but NOT timeouts: a timed-out per-chunk call against a
             # saturated endpoint is deterministic waste (each retry re-sends
             # the full prompt and blocks a slot for another timeout period).
+            # Connection errors (endpoint down) are also excluded: they
+            # propagate to the document pipeline's outage loop, which pauses
+            # ALL relationship work and re-probes with backoff instead of
+            # having every concurrent call spin its own retries.
             @retry(
-                retry=retry_if_exception(lambda e: not _is_timeout_error(e)),
+                retry=retry_if_exception(
+                    lambda e: not _is_timeout_error(e) and not _is_connection_error(e)
+                ),
                 stop=stop_after_attempt(4),
                 wait=wait_exponential(multiplier=2, min=2, max=30),
                 before_sleep=lambda rs: logger.debug(
@@ -2898,6 +3081,11 @@ Extract relationships supported by the text above:"""
             return relationships
 
         except Exception as e:
+            if _is_connection_error(e):
+                # Endpoint down — surface to the pipeline's outage loop so
+                # this chunk is requeued instead of silently losing its
+                # relationships.
+                raise
             logger.warning(f"Per-chunk relationship extraction failed after retries: {e}")
             return []
 
@@ -3045,8 +3233,13 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
         try:
             # Timeouts skip the retries and fall straight through to the
             # single-chunk fallback (see the single-chunk path's rationale).
+            # Connection errors skip them too and propagate to the pipeline's
+            # outage loop — falling back to N single-chunk calls against a
+            # dead endpoint would just fail N more times.
             @retry(
-                retry=retry_if_exception(lambda e: not _is_timeout_error(e)),
+                retry=retry_if_exception(
+                    lambda e: not _is_timeout_error(e) and not _is_connection_error(e)
+                ),
                 stop=stop_after_attempt(4),
                 wait=wait_exponential(multiplier=2, min=2, max=30),
                 before_sleep=lambda rs: logger.debug(
@@ -3071,6 +3264,11 @@ Output an empty <chunk index="i"></chunk> when a source has no supported relatio
             response = await _call_llm()
             content = self._extract_response_content(response)
         except Exception as e:
+            if _is_connection_error(e):
+                # Endpoint down — the single-chunk fallback would fail
+                # identically; let the pipeline's outage loop requeue the
+                # whole batch instead.
+                raise
             logger.warning(
                 f"Batched per-chunk extraction failed after retries "
                 f"({len(items)} chunks) — falling back to single-chunk calls: {e}"
