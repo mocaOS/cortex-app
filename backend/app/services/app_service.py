@@ -61,8 +61,8 @@ _RESERVED_IDS = {"launch"}
 _SUPPORTED_TYPES = {"static", "platform"}
 
 # Platform capabilities implemented so far. Declaring anything else is
-# rejected at install with a clear message (tasks/storage/llm land later).
-_SUPPORTED_CAPABILITIES = {"http"}
+# rejected at install with a clear message.
+_SUPPORTED_CAPABILITIES = {"http", "tasks", "storage", "llm"}
 
 TOKEN_VERSION = 1
 GRANT_TOKEN_PREFIX = "cag_"  # grant (share-link) bearer string
@@ -230,6 +230,10 @@ class AppService:
                             'capability "http" requires a non-empty "hosts" list '
                             "(literal hostnames or ${CONFIG_VAR} references)"
                         )
+                elif spec not in (None, {}):
+                    # tasks/storage/llm take no config in v1 — reject stray
+                    # fields loudly rather than silently ignoring them
+                    issues.append(f'capability "{cap}" takes no configuration (use {{}})')
 
         return issues
 
@@ -410,6 +414,12 @@ class AppService:
         if not loaded:
             return False
         _, record = loaded
+        try:  # stop any live platform-task runs before the files disappear
+            from app.services.app_task_service import get_app_task_service
+
+            get_app_task_service().stop_all(app_id)
+        except Exception as e:
+            logger.warning(f"App '{app_id}': failed to stop live tasks: {e}")
         key_id = record.get("key_id")
         if key_id:
             try:

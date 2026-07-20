@@ -1352,6 +1352,10 @@ class AppGrantCreateRequest(BaseModel):
     expires_hours: Optional[int] = None  # None = no expiry
 
 
+class AppTaskActionRequest(BaseModel):
+    action: str  # "pause" | "resume" | "cancel" | "retryFailed" | "runNow"
+
+
 class AppGrantInfo(BaseModel):
     id: str
     label: str

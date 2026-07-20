@@ -993,6 +993,40 @@ class Settings(BaseSettings):
         default=30
     )  # Timeout in seconds for the platform "http" capability (server-side
     #   external calls on behalf of platform apps, secret-injected).
+    app_storage_max_mb: int = Field(
+        default=50
+    )  # Per-app quota for the platform "storage" capability (KV store backed
+    #   by a per-app SQLite file in the apps_data volume).
+    app_storage_max_value_kb: int = Field(
+        default=1024
+    )  # Max size of a single stored value in the platform storage capability.
+    app_task_max_items: int = Field(
+        default=2000
+    )  # Max items a single platform task (declarative step-queue) may hold.
+    app_task_max_steps: int = Field(
+        default=50
+    )  # Max steps per section (setup / per-item / finally) of a platform task.
+    app_task_max_concurrency: int = Field(
+        default=4
+    )  # Upper bound on a platform task's per-run item worker pool.
+    app_tasks_global_concurrency: int = Field(
+        default=8
+    )  # Global cap on concurrently executing task items across ALL apps —
+    #   protects small instances from a fleet of scheduled tasks.
+    app_task_min_schedule_minutes: int = Field(
+        default=15
+    )  # Floor for a scheduled task's everyMinutes interval.
+    app_task_llm_calls_per_run: int = Field(
+        default=500
+    )  # Cap on llm-step completions in one task run (chunked llm steps count
+    #   each chunk). LLM steps also count toward MAX_QUERIES_PER_MONTH.
+    app_task_step_output_max_kb: int = Field(
+        default=2048
+    )  # A step whose output exceeds this fails (truncation would corrupt) —
+    #   large artifacts belong in storage via store steps, not step context.
+    app_task_max_per_app: int = Field(
+        default=50
+    )  # Max stored task records per app (completed one-shots age out first).
 
     @property
     def vision_model_available(self) -> bool:

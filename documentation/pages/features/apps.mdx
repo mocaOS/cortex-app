@@ -92,18 +92,33 @@ Outbound targets are restricted to the hosts declared in the app's manifest (lit
 
 Every app can read back its own **non-secret** configuration values at runtime. Secret-typed values are excluded from this — they exist only for server-side auth injection.
 
-:::note
+### `storage` — per-app key/value store
 
-Other platform capabilities — background tasks, storage, and LLM access — are specified in the manifest schema but are **not yet available**. Only `http` and `config` read work today. Declaring an unsupported capability fails install with a clear message.
+An app with the `storage` capability gets its own persistent key/value store, backed by a per-app SQLite file inside the apps volume. Values are JSON documents; keys are path-like identifiers (`transcripts/abc`, `sync/cursor`). The store supports get/put/delete, prefix listing, and is what makes apps *stateful* across sessions and devices — no more localStorage-only state. Quotas apply per value (`APP_STORAGE_MAX_VALUE_KB`) and per app (`APP_STORAGE_MAX_MB`). Storage is strictly namespaced: no app can ever read another app's data, and uninstalling an app deletes its store.
 
-:::
+### `tasks` — background work that survives a closed tab
+
+Apps ship no server code, so background work is expressed as a **declarative step-queue**: the app submits a JSON program of steps — external `http` calls, allowlisted `cortex` API calls, `llm` completions, `store` reads/writes, string `template` rendering, and conditional item skips — and Cortex executes it server-side in its existing async loop. Close the tab; the work keeps going.
+
+What the engine provides:
+
+- **Setup → items → finally structure.** Setup steps run once (e.g. list new documents from an external system, paginated). The item list can *fan out* from a setup result, with optional built-in deduplication against the app's storage (`skipIfStored`). Per-item steps run through a bounded worker pool with per-item error isolation — one bad item never aborts the run. Finally steps run once at the end (the place to persist a sync cursor).
+- **Schedules.** A task with `"schedule": {"everyMinutes": N}` re-runs on its own — no browser, no cron container. This is what turns an integration app into a true sync daemon: e.g. a paperless-ngx app that pulls newly added documents into Cortex every hour.
+- **Control.** Tasks can be paused, resumed, cancelled, retried (failed items only), or triggered early; state and per-item statuses are persisted, and runs interrupted by a server restart resume on boot.
+- **LLM policies.** The `llm` step supports automatic **chunking** of long inputs and built-in **output validation** (length-ratio + word-overlap guards with retry-once-then-keep-original), so transcript-cleanup-style workloads are safe against silent LLM truncation without any app-side code.
+
+Every step passes the same security gates as the interactive paths: `http` steps are host-allowlisted and SSRF-guarded with server-side secret injection, `cortex` steps are checked against the manifest's endpoint allowlist and use the app's minted key, and `llm` steps run through the instance's configured model — metered against the instance quota like any other completion.
+
+### `llm` — instance-model completions
+
+The `llm` capability lets task steps call the instance's configured chat model. Calls are counted toward the instance's unit metering (`MAX_QUERIES_PER_MONTH`), traced by Langfuse when observability is enabled, and capped per task run (`APP_TASK_LLM_CALLS_PER_RUN`).
 
 ## App classes
 
 | Class | Where it runs | What it can reach |
 |-------|---------------|-------------------|
 | **static** | Browser (sandboxed iframe), served by Cortex | The Cortex API, through the proxy allowlist |
-| **platform** | Browser + server-side capabilities in Cortex | Cortex API, plus server-side `http` to allowlisted external hosts and `config` read |
+| **platform** | Browser + server-side capabilities in Cortex | Cortex API, plus `http` (allowlisted external hosts), `storage`, `tasks` (scheduled step-queues), `llm`, and `config` read |
 | **service** | Its own container (not hosted by Cortex) | Out of scope for in-instance hosting |
 
 ## Security model
@@ -128,6 +143,15 @@ The whole subsystem is controlled by these environment variables. Only `ENABLE_A
 | `APP_TOKEN_TTL_SECONDS` | `900` | Lifetime of the short-lived app tokens handed to sandboxed apps; apps renew via the handshake. |
 | `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where the app proxy forwards allowlisted `/apps/{id}/api/cortex/*` calls (self-loopback, so auth/metering/rate-limit paths match external API traffic). |
 | `APP_HTTP_TIMEOUT` | `30` | Timeout in seconds for the platform `http` capability (server-side external calls on behalf of platform apps). |
+| `APP_STORAGE_MAX_MB` | `50` | Per-app quota for the `storage` capability. |
+| `APP_STORAGE_MAX_VALUE_KB` | `1024` | Maximum size of a single stored value. |
+| `APP_TASK_MAX_ITEMS` | `2000` | Maximum items a single platform task may hold. |
+| `APP_TASK_MAX_CONCURRENCY` | `4` | Upper bound on a task's per-run item worker pool. |
+| `APP_TASKS_GLOBAL_CONCURRENCY` | `8` | Global cap on concurrently executing task items across **all** apps. |
+| `APP_TASK_MIN_SCHEDULE_MINUTES` | `15` | Floor for a scheduled task's `everyMinutes` interval. |
+| `APP_TASK_LLM_CALLS_PER_RUN` | `500` | Cap on `llm`-step completions in one task run (chunked steps count each chunk). |
+| `APP_TASK_STEP_OUTPUT_MAX_KB` | `2048` | A step whose output exceeds this fails — large artifacts belong in storage. |
+| `APP_TASK_MAX_PER_APP` | `50` | Maximum stored task records per app (finished one-shots age out first). |
 
 ### Docker volume persistence
 

@@ -85,6 +85,7 @@ from app.models import (
     AppEnableRequest,
     AppConfigSaveRequest,
     AppGrantCreateRequest,
+    AppTaskActionRequest,
     AppTokenResponse,
     UpdateEntityRequest,
     # Git integration models
@@ -660,6 +661,20 @@ async def lifespan(app: FastAPI):
         git_scheduler_task = asyncio.create_task(_git_sync_scheduler())
         logger.info("Git integration enabled; scheduled-sync poller started")
 
+    # Apps platform tasks: resume runs interrupted by the restart and start
+    # the schedule poller (recurring headless tasks, e.g. a paperless sync).
+    app_task_scheduler = None
+    if settings.enable_apps:
+        try:
+            from app.services.app_task_service import get_app_task_service
+
+            app_tasks = get_app_task_service()
+            app_tasks.resume_interrupted()
+            app_task_scheduler = asyncio.create_task(app_tasks.scheduler_loop())
+            logger.info("Apps enabled; platform task scheduler started")
+        except Exception as e:
+            logger.warning(f"App task scheduler failed to start: {e}")
+
     # Warm up processors
     try:
         get_document_processor()
@@ -712,6 +727,8 @@ async def lifespan(app: FastAPI):
         background_tasks.append(schema_retry_task)
     if git_scheduler_task:
         background_tasks.append(git_scheduler_task)
+    if app_task_scheduler:
+        background_tasks.append(app_task_scheduler)
     for task in background_tasks:
         task.cancel()
     # Let cancellation handlers actually run before tearing down their deps.
@@ -5989,82 +6006,290 @@ async def app_platform_http(app_id: str, request: Request):
     manifest's declared hosts (admin-approved at install) and SSRF-guarded
     (loopback/metadata blocked; private ranges allowed — self-hosted targets
     are the point). Redirects are not followed (they could escape the
-    allowlist)."""
+    allowlist). The enforcement itself lives in execute_app_http, shared with
+    http task steps so both paths pass identical gates."""
     _require_apps_enabled()
-    from urllib.parse import urlsplit
-
     from app.services.app_service import get_app_service
-    from app.services.ssrf_guard import SSRFError, validate_url
+    from app.services.app_task_service import AppHttpError, execute_app_http
 
     _app_token_payload(request, app_id)
-    service = get_app_service()
-    if not service.has_capability(app_id, "http"):
+    if not get_app_service().has_capability(app_id, "http"):
         raise HTTPException(
             status_code=403, detail='This app does not declare the "http" capability'
         )
 
     try:
         envelope = await request.json()
-        method = str(envelope["method"]).upper()
+        method = str(envelope["method"])
         url = str(envelope["url"])
     except Exception:
         raise HTTPException(
             status_code=400, detail='Body must be JSON: {"method", "url", "body"?}'
         )
-    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
-        raise HTTPException(status_code=400, detail=f"Unsupported method {method}")
 
-    allowed_hosts = service.allowed_http_hosts(app_id)
-    if not allowed_hosts:
-        raise HTTPException(
-            status_code=503,
-            detail="No allowed hosts resolved — the admin must fill in this app's configuration",
-        )
-    target_host = (urlsplit(url).hostname or "").lower()
-    if target_host not in allowed_hosts:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Host '{target_host}' is not in this app's declared hosts",
-        )
     try:
-        validate_url(url, allow_private=True)
-    except SSRFError as e:
-        raise HTTPException(status_code=403, detail=f"Blocked target: {e}")
+        upstream = await execute_app_http(
+            app_id,
+            method=method,
+            url=url,
+            body=envelope.get("body") if isinstance(envelope.get("body"), str) else None,
+            content_type=(
+                str(envelope["content_type"]) if envelope.get("content_type") else None
+            ),
+        )
+    except AppHttpError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
 
-    headers = dict(service.platform_auth_headers(app_id))
-    headers.setdefault("Accept", "application/json")
-    if envelope.get("content_type"):
-        headers["Content-Type"] = str(envelope["content_type"])
-    elif envelope.get("body") is not None:
-        headers.setdefault("Content-Type", "application/json")
-
-    timeout = get_settings().app_http_timeout
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=False
-        ) as client:
-            upstream = await client.request(
-                method,
-                url,
-                content=(
-                    envelope["body"].encode()
-                    if isinstance(envelope.get("body"), str)
-                    else None
-                ),
-                headers=headers,
-            )
-    except httpx.HTTPError as e:
-        logger.warning(f"App '{app_id}' platform http to {target_host} failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Upstream request failed: {type(e).__name__}")
-
-    content = upstream.content
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=502, detail="Upstream response exceeds 20 MB")
     return Response(
-        content=content,
+        content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type"),
     )
+
+
+def _require_app_capability(app_id: str, capability: str) -> None:
+    from app.services.app_service import get_app_service
+
+    if not get_app_service().has_capability(app_id, capability):
+        raise HTTPException(
+            status_code=403,
+            detail=f'This app does not declare the "{capability}" capability',
+        )
+
+
+def _require_app_writer(payload: dict) -> None:
+    """Mutating platform calls (storage writes, task control) need an owner
+    or editor token — share-link viewers stay read-only."""
+    if payload.get("role") not in ("admin", "editor"):
+        raise HTTPException(
+            status_code=403, detail="This action requires an editor or owner token"
+        )
+
+
+@app.get("/apps/{app_id}/api/platform/storage")
+async def app_storage_list(
+    app_id: str,
+    request: Request,
+    prefix: str = "",
+    limit: int = 100,
+    after: str = "",
+):
+    """Platform capability: list the app's stored keys (metadata only)."""
+    _require_apps_enabled()
+    _app_token_payload(request, app_id)
+    _require_app_capability(app_id, "storage")
+    from app.services.app_storage_service import AppStorageError, get_app_storage_service
+
+    try:
+        return await asyncio.to_thread(
+            get_app_storage_service().list_keys, app_id, prefix, limit, after
+        )
+    except AppStorageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/apps/{app_id}/api/platform/storage/{key:path}")
+async def app_storage_get(app_id: str, key: str, request: Request):
+    """Platform capability: read one stored value (JSON envelope)."""
+    _require_apps_enabled()
+    _app_token_payload(request, app_id)
+    _require_app_capability(app_id, "storage")
+    from app.services.app_storage_service import AppStorageError, get_app_storage_service
+
+    storage = get_app_storage_service()
+    try:
+        value = await asyncio.to_thread(storage.get, app_id, key)
+        if value is None and not await asyncio.to_thread(storage.exists, app_id, key):
+            raise HTTPException(status_code=404, detail=f"Key '{key}' not found")
+    except AppStorageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"key": key, "value": value}
+
+
+@app.put("/apps/{app_id}/api/platform/storage/{key:path}")
+async def app_storage_put(app_id: str, key: str, request: Request):
+    """Platform capability: store a JSON value under a key (quota-capped)."""
+    _require_apps_enabled()
+    payload = _app_token_payload(request, app_id)
+    _require_app_writer(payload)
+    _require_app_capability(app_id, "storage")
+    from app.services.app_storage_service import AppStorageError, get_app_storage_service
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict) or "value" not in body:
+        raise HTTPException(status_code=400, detail='Body must be JSON: {"value": …}')
+    try:
+        await asyncio.to_thread(get_app_storage_service().put, app_id, key, body["value"])
+    except AppStorageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"key": key, "stored": True}
+
+
+@app.delete("/apps/{app_id}/api/platform/storage/{key:path}")
+async def app_storage_delete(app_id: str, key: str, request: Request):
+    """Platform capability: delete a stored key."""
+    _require_apps_enabled()
+    payload = _app_token_payload(request, app_id)
+    _require_app_writer(payload)
+    _require_app_capability(app_id, "storage")
+    from app.services.app_storage_service import AppStorageError, get_app_storage_service
+
+    try:
+        deleted = await asyncio.to_thread(get_app_storage_service().delete, app_id, key)
+    except AppStorageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"key": key, "deleted": deleted}
+
+
+@app.post("/apps/{app_id}/api/platform/tasks")
+async def app_tasks_submit(app_id: str, request: Request):
+    """Platform capability: submit a declarative step-queue (app_task_dsl).
+    Executes server-side, so the work survives a closed tab — and a schedule
+    makes it recurring with no browser at all."""
+    _require_apps_enabled()
+    payload = _app_token_payload(request, app_id)
+    _require_app_writer(payload)
+    _require_app_capability(app_id, "tasks")
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        defn = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be a JSON task definition")
+    try:
+        return get_app_task_service().submit(
+            app_id, defn, created_by=payload["principal"]
+        )
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+
+
+@app.get("/apps/{app_id}/api/platform/tasks")
+async def app_tasks_list(app_id: str, request: Request):
+    """Platform capability: list the app's tasks (summaries, newest first)."""
+    _require_apps_enabled()
+    _app_token_payload(request, app_id)
+    _require_app_capability(app_id, "tasks")
+    from app.services.app_task_service import get_app_task_service
+
+    return {"tasks": get_app_task_service().list_tasks(app_id)}
+
+
+@app.get("/apps/{app_id}/api/platform/tasks/{task_id}")
+async def app_tasks_get(app_id: str, task_id: str, request: Request):
+    """Platform capability: one task with per-item statuses + definition."""
+    _require_apps_enabled()
+    _app_token_payload(request, app_id)
+    _require_app_capability(app_id, "tasks")
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        task = get_app_task_service().get_task(app_id, task_id)
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@app.patch("/apps/{app_id}/api/platform/tasks/{task_id}")
+async def app_tasks_action(app_id: str, task_id: str, request: Request):
+    """Platform capability: control a task —
+    {"action": "pause" | "resume" | "cancel" | "retryFailed" | "runNow"}."""
+    _require_apps_enabled()
+    payload = _app_token_payload(request, app_id)
+    _require_app_writer(payload)
+    _require_app_capability(app_id, "tasks")
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        body = await request.json()
+        action = str(body["action"])
+    except Exception:
+        raise HTTPException(status_code=400, detail='Body must be JSON: {"action": …}')
+    try:
+        task = get_app_task_service().apply_action(app_id, task_id, action)
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@app.delete("/apps/{app_id}/api/platform/tasks/{task_id}")
+async def app_tasks_delete(app_id: str, task_id: str, request: Request):
+    """Platform capability: delete a task (cancels it first if running)."""
+    _require_apps_enabled()
+    payload = _app_token_payload(request, app_id)
+    _require_app_writer(payload)
+    _require_app_capability(app_id, "tasks")
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        deleted = get_app_task_service().delete_task(app_id, task_id)
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return {"task_id": task_id, "deleted": True}
+
+
+@app.get("/api/admin/apps/{app_id}/tasks")
+async def admin_list_app_tasks(app_id: str, auth: AuthResult = Depends(require_admin)):
+    """Admin oversight: an app's platform tasks (scheduled syncs et al.)."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+    from app.services.app_task_service import get_app_task_service
+
+    if not get_app_service().get_app(app_id):
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return {"tasks": get_app_task_service().list_tasks(app_id)}
+
+
+@app.patch("/api/admin/apps/{app_id}/tasks/{task_id}")
+async def admin_app_task_action(
+    app_id: str,
+    task_id: str,
+    request: AppTaskActionRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Admin oversight: pause/resume/cancel/retryFailed/runNow an app task."""
+    _require_apps_enabled()
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        task = get_app_task_service().apply_action(app_id, task_id, request.action)
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@app.delete("/api/admin/apps/{app_id}/tasks/{task_id}")
+async def admin_delete_app_task(
+    app_id: str, task_id: str, auth: AuthResult = Depends(require_admin)
+):
+    """Admin oversight: remove an app task (cancels it first if running)."""
+    _require_apps_enabled()
+    from app.services.app_task_dsl import TaskDefinitionError
+    from app.services.app_task_service import get_app_task_service
+
+    try:
+        deleted = get_app_task_service().delete_task(app_id, task_id)
+    except TaskDefinitionError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return {"task_id": task_id, "deleted": True}
 
 
 @app.get("/apps/{app_id}/{asset_path:path}")

@@ -63,7 +63,13 @@ When a platform app makes an external call, Cortex makes it *for* the app, from 
 
 This is the recommended way to integrate other software with Cortex. A platform app can also read back its own non-secret settings at runtime; secret settings are never exposed to it.
 
-A few further platform abilities — running background tasks, storing data, and calling a language model — are planned but **not yet available**. Only the external-call and settings-read capabilities work today. A third class of app, called a **service** app, ships its own container and runs separately; Cortex does not host those, and they are outside the scope of this chapter.
+Platform apps have three further abilities:
+
+- **Storing data.** An app can keep its own data — sync progress, results, user preferences — in a private, size-limited store inside your instance. Each app's store is completely separate from every other app's, and it is deleted when the app is uninstalled. This is what lets an app remember things across sessions and devices, instead of only inside one browser.
+- **Running background work.** An app can hand Cortex a list of jobs to run **on the server** — fetching from an external service, calling the language model, saving results. Once submitted, the work keeps running even if you close the tab, and you can pause, resume, cancel, or retry it from the app. If the Cortex server restarts mid-run, unfinished work resumes automatically.
+- **Running on a schedule.** A background job can repeat at a fixed interval (for example, every hour). This turns an integration app into a true sync: a paperless-ngx app, say, can pull newly added documents into Cortex around the clock, with no browser open anywhere. The app's language-model use is counted against the instance's normal usage quota, and sensible caps keep any single app from monopolizing a small server.
+
+A third class of app, called a **service** app, ships its own container and runs separately; Cortex does not host those, and they are outside the scope of this chapter.
 
 ## Why apps are safe to run
 
@@ -71,8 +77,9 @@ Everything about the Apps subsystem is built so that installing an app — and e
 
 - **No real key ever reaches the browser.** The app's dedicated key stays on the server. The browser only ever holds a short-lived token that stops working after a few minutes and is automatically renewed while the app is open.
 - **The sandbox is strict.** An app runs isolated from the rest of Cortex and cannot read your session or cookies.
-- **Access is on a leash.** Every call the app makes to Cortex is checked against the endpoints its manifest declared, and scoped to the collections you chose at install time.
-- **You can pull the plug.** Disabling or deleting an app, or revoking a share link, takes effect immediately.
+- **Access is on a leash.** Every call the app makes to Cortex is checked against the endpoints its manifest declared, and scoped to the collections you chose at install time. Background jobs pass exactly the same checks as live calls — there is no privileged "server mode".
+- **Visitors can look, not touch.** Someone using an app through a share link can read what the app shows them, but cannot change the app's stored data or start background work unless the link was created with editor rights.
+- **You can pull the plug.** Disabling or deleting an app, or revoking a share link, takes effect immediately — deletion also stops any background work the app had running.
 
 ## Configuration reference
 
@@ -86,5 +93,14 @@ These settings, placed in the backend environment, control the Apps subsystem. O
 | `APP_TOKEN_TTL_SECONDS` | `900` | How long the short-lived app tokens last (15 minutes) before renewal. |
 | `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where the app proxy forwards allowed Cortex API calls (the instance itself). |
 | `APP_HTTP_TIMEOUT` | `30` | Timeout, in seconds, for a platform app's server-side external calls. |
+| `APP_STORAGE_MAX_MB` | `50` | How much data one app may keep in its private store. |
+| `APP_STORAGE_MAX_VALUE_KB` | `1024` | Largest single item an app may store. |
+| `APP_TASK_MAX_ITEMS` | `2000` | Most items one background job may contain. |
+| `APP_TASK_MAX_CONCURRENCY` | `4` | How many of a job's items may run at once. |
+| `APP_TASKS_GLOBAL_CONCURRENCY` | `8` | Server-wide ceiling on simultaneously running job items, across all apps. |
+| `APP_TASK_MIN_SCHEDULE_MINUTES` | `15` | Shortest allowed repeat interval for scheduled jobs. |
+| `APP_TASK_LLM_CALLS_PER_RUN` | `500` | Most language-model calls one job run may make. |
+| `APP_TASK_STEP_OUTPUT_MAX_KB` | `2048` | Largest intermediate result a job step may produce. |
+| `APP_TASK_MAX_PER_APP` | `50` | Most stored jobs per app; old finished ones are cleaned up first. |
 
 In Docker deployments, mount `APPS_DIR` as a named volume (for example `apps_data:/app/.agents/apps`) so that installed apps survive container restarts.

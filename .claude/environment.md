@@ -260,6 +260,13 @@ See [`.claude/domain/apps.md`](domain/apps.md) for the full subsystem (security 
 - `APP_TOKEN_TTL_SECONDS` (default: 900) — lifetime of the short-lived app tokens handed to sandboxed apps; apps renew via postMessage. Signing secret derives from `SESSION_SECRET` (fallback `ENCRYPTION_KEY`/`ADMIN_API_KEY`)
 - `APP_PROXY_UPSTREAM` (default: `http://127.0.0.1:8000`) — where the app proxy forwards allowlisted `/apps/{id}/api/cortex/*` calls (self-loopback so auth/metering/rate-limit paths are identical to external API traffic)
 - `APP_HTTP_TIMEOUT` (default: 30) — timeout in seconds for the platform `http` capability (server-side external calls on behalf of `type: "platform"` apps, with secrets injected from app config)
+- `APP_STORAGE_MAX_MB` (default: 50) / `APP_STORAGE_MAX_VALUE_KB` (default: 1024) — per-app quota and per-value cap for the platform `storage` capability (per-app SQLite KV in the apps volume)
+- `APP_TASK_MAX_ITEMS` (default: 2000) / `APP_TASK_MAX_STEPS` (default: 50) / `APP_TASK_MAX_CONCURRENCY` (default: 4) — caps on a single platform task (declarative step-queue): items, steps per section, per-run worker pool
+- `APP_TASKS_GLOBAL_CONCURRENCY` (default: 8) — global cap on concurrently executing task items across ALL apps
+- `APP_TASK_MIN_SCHEDULE_MINUTES` (default: 15) — floor for a scheduled task's `everyMinutes` interval
+- `APP_TASK_LLM_CALLS_PER_RUN` (default: 500) — cap on `llm`-step completions per task run (chunked steps count each chunk; also metered via MAX_QUERIES_PER_MONTH)
+- `APP_TASK_STEP_OUTPUT_MAX_KB` (default: 2048) — step outputs above this fail (large artifacts go to storage, not step context)
+- `APP_TASK_MAX_PER_APP` (default: 50) — max stored task records per app; terminal one-shots age out first
 
 ## Git Integration
 

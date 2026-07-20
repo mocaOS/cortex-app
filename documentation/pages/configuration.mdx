@@ -634,6 +634,35 @@ APP_PROXY_UPSTREAM=http://127.0.0.1:8000
 # external calls made on behalf of platform apps, with secrets injected
 # from the app's encrypted config.
 APP_HTTP_TIMEOUT=30
+
+# --- Platform storage capability (per-app SQLite key/value store) ---
+
+# Per-app storage quota (MB) and per-value size cap (KB).
+APP_STORAGE_MAX_MB=50
+APP_STORAGE_MAX_VALUE_KB=1024
+
+# --- Platform tasks capability (declarative server-side step-queues) ---
+
+# Max items one task may hold, per-task worker pool ceiling, and the
+# global cap on concurrently executing items across ALL apps (protects
+# small instances from a fleet of scheduled tasks).
+APP_TASK_MAX_ITEMS=2000
+APP_TASK_MAX_CONCURRENCY=4
+APP_TASKS_GLOBAL_CONCURRENCY=8
+
+# Floor for a scheduled task's everyMinutes interval.
+APP_TASK_MIN_SCHEDULE_MINUTES=15
+
+# Cap on llm-step completions in one task run (chunked llm steps count
+# each chunk). LLM steps also count toward MAX_QUERIES_PER_MONTH.
+APP_TASK_LLM_CALLS_PER_RUN=500
+
+# A step whose output exceeds this (KB) fails — large artifacts belong
+# in storage via store steps, not in the step context.
+APP_TASK_STEP_OUTPUT_MAX_KB=2048
+
+# Max stored task records per app (finished one-shots age out first).
+APP_TASK_MAX_PER_APP=50
 ```
 
 ---
