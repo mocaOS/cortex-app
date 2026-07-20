@@ -9,10 +9,10 @@ When adding, modifying, or removing API endpoints, features, or configuration op
 
 #### Changelog structure (`documentation/pages/changelog.mdx`)
 
-Newest entries first. **Exactly one `##` heading per calendar day** — never two `##` entries for the same date. Each day follows this shape:
+Newest entries first. **Exactly one `##` heading per calendar day** — never two `##` entries for the same date. The `##` heading is the **date only** — no parenthetical theme, no suffix (per explicit owner preference; a themed-header format was tried June 10–July 20, 2026 and rolled back). Each day follows this shape:
 
 ```markdown
-## <Month> <D>, <YYYY> (<short combined theme for the day>)
+## <Month> <D>, <YYYY>
 
 One intro paragraph summarizing what the day's changes accomplish and why they matter.
 
@@ -24,7 +24,7 @@ Optional context paragraph, then bullets (`- **Bold lead-in** — detail.`).
 ...
 ```
 
-- If a day covers several unrelated ships, each becomes its own `###` section under the single day heading; combine their themes in the `##` parenthetical and merge their intros into one paragraph.
+- If a day covers several unrelated ships, each becomes its own `###` section under the single day heading; merge their intros into one paragraph.
 - Never use bold pseudo-headers (`**Skills**`) as section dividers — use `###`. Sub-structure inside a `###` section uses `####`.
 - Separate days with `---`; no `---` between sections within a day.
 - Keep operator-relevant details in bullets: env vars in backticks with defaults, behavior changes and revert flags called out, and a "No API or schema breakage" note (or explicit breakage warning) where relevant.

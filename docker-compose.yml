@@ -103,6 +103,11 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Session cookie Secure flag: set false when serving the dashboard over
+      # plain HTTP (e.g. LAN self-host without TLS) — browsers silently drop
+      # Secure cookies on HTTP and login appears to do nothing. Unset keeps
+      # the default (Secure in production builds).
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-}
       # Error tracking (GlitchTip) — override what env_file would inherit:
       # SENTRY_DSN in .env is the BACKEND project's DSN; the frontend reports to
       # its own project. Defaults to this project's frontend GlitchTip; empty

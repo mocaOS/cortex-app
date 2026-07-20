@@ -52,6 +52,20 @@ function resolveSessionSecret(): string {
 const secretKey = resolveSessionSecret();
 const encodedKey = new TextEncoder().encode(secretKey);
 
+// The session cookie's Secure flag. Browsers silently drop Secure cookies on
+// plain-HTTP connections, so a self-hosted instance served over HTTP on a LAN
+// (no TLS termination in front) would accept the login but never store the
+// cookie — SESSION_COOKIE_SECURE=false is the runtime escape hatch for that
+// setup. NODE_ENV alone can't express this: Next.js inlines it at build time,
+// so the flag would be baked into the image. SESSION_COOKIE_SECURE is an
+// ordinary env var, read from process.env at runtime on every login.
+function resolveCookieSecure(): boolean {
+  const configured = process.env.SESSION_COOKIE_SECURE?.trim().toLowerCase();
+  if (configured === "true" || configured === "1") return true;
+  if (configured === "false" || configured === "0") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 /**
  * Encrypt session payload into a JWT token.
  */
@@ -104,10 +118,10 @@ export async function createSession(email: string): Promise<void> {
   });
   
   const cookieStore = await cookies();
-  
+
   cookieStore.set("session", session, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: resolveCookieSecure(),
     expires: expiresAt,
     sameSite: "lax",
     path: "/",

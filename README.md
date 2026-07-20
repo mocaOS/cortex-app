@@ -183,7 +183,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 - **Coolify**: point a Docker Compose project at `coolify/docker-compose.coolify.yml` — see the [Coolify guide](coolify/README.md)
 - **Dokploy**: use `dokploy/docker-compose.dokploy.yml` — see [`dokploy/`](dokploy/)
-- **Hardening**: set `ENVIRONMENT=production` (fails fast on weak secrets, disables interactive API docs), an explicit `CORS_ALLOWED_ORIGINS`, strong `NEO4J_PASSWORD`/`SESSION_SECRET`/`ENCRYPTION_KEY`, HTTPS via reverse proxy, and block public access to Neo4j ports (7474/7687)
+- **Hardening**: set `ENVIRONMENT=production` (fails fast on weak secrets, disables interactive API docs), an explicit `CORS_ALLOWED_ORIGINS`, strong `NEO4J_PASSWORD`/`SESSION_SECRET`/`ENCRYPTION_KEY`, HTTPS via reverse proxy, and block public access to Neo4j ports (7474/7687). No TLS yet (e.g. LAN-only self-host)? Set `SESSION_COOKIE_SECURE=false` or browsers will silently drop the login cookie over plain HTTP
 - **Backups**: the prod overlay and both PaaS composes include a nightly backup sidecar with verified server-side graph export, retention that never deletes the newest complete backup, a staleness healthcheck, and a tested `/restore.sh <timestamp>` runbook
 
 The [Deployment guide](https://docs.cortex.eco/guides/deployment) covers all of this in depth.

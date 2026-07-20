@@ -7,9 +7,9 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
-## July 20, 2026 (Resumable document processing — interruptions no longer restart from zero)
+## July 20, 2026
 
-Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document.
+Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document. Separately, two silent login foot-guns reported by self-hosters are fixed: the session cookie's `Secure` flag gets a runtime switch for plain-HTTP setups, and a missing `ADMIN_EMAIL` now fails loudly instead of silently substituting a default.
 
 ### Ingest checkpoint & resume
 
@@ -33,9 +33,25 @@ The outage and checkpoint machinery is now fully visible in the frontend, so ope
 - Backed by additive document fields (`processing_paused`, `paused_reason`, `resume_available`) returned by the document endpoints — not a new processing status, so filters, integrations, and API clients are unaffected.
 - No API or schema breakage: new document/chunk properties are additive, and behavior with `ENABLE_INGEST_RESUME=false` matches the previous release.
 
+### Session cookie configurable for plain-HTTP self-hosts
+
+Serving the dashboard over plain HTTP (e.g. a LAN self-host without TLS termination) used to break login silently: the session cookie was sent with the `Secure` flag hard-wired at image-build time, browsers drop `Secure` cookies over HTTP per spec, and the login form simply bounced back with no error. There was no runtime override — only rebuilding the image could change it.
+
+- **New `SESSION_COOKIE_SECURE` env var** (`true`/`false`, read at container runtime) — overrides the session cookie's `Secure` flag; set `false` for TLS-less HTTP setups, leave unset behind HTTPS. Default unchanged (`Secure` in production builds).
+- Mapped through the frontend service in all compose files (local, prod, Coolify, Dokploy) — a `.env` edit plus container restart is enough; no image rebuild, no compose patches.
+- Documented in the [configuration reference](/configuration) and the [authentication guide](/guides/authentication).
+- No API or schema breakage; behavior with the variable unset is identical to the previous release.
+
+### Missing `ADMIN_EMAIL` fails loudly instead of silently defaulting
+
+When the frontend container started without `ADMIN_EMAIL` (env file pointed at the wrong path, secrets not wired into a standalone deployment), the code silently substituted `admin@example.com` — so logging in with the *correct* credentials answered "Invalid email or password", indistinguishable from a typo'd password, and the real cause (env loading) left no trace.
+
+- **No more silent default** — a missing/empty `ADMIN_EMAIL` or `ADMIN_PASSWORD` now answers "Admin authentication not configured" at login (the same actionable error the password path already used) and logs a startup warning naming exactly which variable is missing.
+- The compose files are unaffected: they already supply `admin@example.com` as a visible env-level fallback (`${ADMIN_EMAIL:-admin@example.com}`). Correctly configured deployments see no change.
+
 ---
 
-## July 17, 2026 (x402 Payments — monetize your knowledge base with agentic micropayments)
+## July 17, 2026
 
 Cortex can now sell pay-per-query access to its retrieval endpoints via the open [x402 payment standard](https://github.com/x402-foundation/x402). Free member keys keep working exactly as before; in parallel, admins can mint **monetized public keys** that agents pay per query in stablecoins, with revenue flowing straight to a wallet the owner controls — a way to earn on domain-specific knowledge and subsidize members' inference.
 
@@ -54,7 +70,7 @@ Cortex can now sell pay-per-query access to its retrieval endpoints via the open
 
 ---
 
-## July 13, 2026 (Entity deduplication rebuilt for production-scale graphs)
+## July 13, 2026
 
 The duplicate-entity scan behind **Manage → Deduplicate** was the least
 reliable surface on large graphs: requests timed out at the proxy while the
@@ -113,7 +129,7 @@ document is actually flagged.
 
 ---
 
-## July 11, 2026 (Security hardening pass & restart-proof Generate Graph chain)
+## July 11, 2026
 
 ### Security hardening pass
 
@@ -172,7 +188,7 @@ API changes.
 
 ---
 
-## July 10, 2026 (Extraction tuning lands as defaults, zero-config onboarding & abort control)
+## July 10, 2026
 
 Two days of live extraction-tuning (July 9-10) distilled into shipped defaults
 plus a new low-friction onboarding path — a fresh install now runs the
@@ -296,7 +312,7 @@ re-sending the same prompt into a saturated endpoint.
 
 ---
 
-## July 8, 2026 (Ingestion reliability overhaul, compact extraction format & error tracking)
+## July 8, 2026
 
 A deep reliability pass over the entire document-ingestion pipeline, driven by
 live debugging of large-PDF ingestion (multi-hundred-page books) against a
@@ -452,7 +468,7 @@ env-driven: without a DSN the images run exactly as before.
 
 ---
 
-## July 7, 2026 (Production hardening for launch)
+## July 7, 2026
 
 A resilience-focused release: every change is about keeping an instance
 healthy under real-world failure — provider hangs, database restarts,
@@ -620,7 +636,7 @@ size-rotated. See the [Security guide](/guides/security) for details.
 
 ---
 
-## July 6, 2026 (Layered prompt-injection defenses)
+## July 6, 2026
 
 A security-focused release that hardens Cortex against **prompt injection** on
 both the paths an attacker can reach: the questions users ask, and the content
@@ -701,7 +717,7 @@ avoid over-flagging benign questions that merely contain trigger words.
 
 ---
 
-## July 4, 2026 (Usage metering, degraded documents & leaner graph builds)
+## July 4, 2026
 
 The monthly quota now measures what actually costs money, silently broken documents are now visible and fixable from the UI, and the knowledge-graph build pipeline got a pass focused on API-call economy and robustness on large libraries.
 
@@ -741,7 +757,7 @@ Graph content and quality semantics are unchanged; builds complete faster and ma
 
 ---
 
-## July 3, 2026 (Graph build: batched Step 1 extraction & targeted Step 2 discovery)
+## July 3, 2026
 
 Both knowledge-graph build steps got cheaper, faster defaults — substantially fewer LLM calls at equivalent extraction quality, with the previous behaviors preserved behind flags.
 
@@ -762,7 +778,7 @@ Deep relationship analysis (Step 2) got a new default engine that scales much be
 
 ---
 
-## July 2, 2026 (Reliability at scale & AskAI v2 — faster Chat & Deep Research)
+## July 2, 2026
 
 Two operations that worked fine on small instances but failed on grown ones are now size-independent, and a structural latency pass over the agentic ask pipeline cut average chat time-to-first-token by **~65%** on the reference deployment.
 
@@ -800,7 +816,7 @@ A chat turn now costs **2 LLM calls instead of 3** (plus one eliminated helper c
 
 ---
 
-## June 30, 2026 (Recommended primary model → Gemma4 26B A4B)
+## June 30, 2026
 
 The bench-validated default primary for Q&A / research / chat is now **Gemma4 26B A4B** (`google-gemma-4-26b-a4b-it` on Venice) — a 26B/4B-active MoE that benches **even faster than MiniMax-M3 at similar answer quality**, making it an ideal fit for fast data retrieval from Cortex. MiniMax M2.7 / M3 were comparatively slower on this workload.
 
@@ -814,7 +830,7 @@ Existing deployments are unaffected — any explicit `OPENAI_MODEL` you set stil
 
 ---
 
-## June 29, 2026 (Launch-readiness hardening)
+## June 29, 2026
 
 A round of reliability and UX hardening across the backend pipeline and the chat experience.
 
@@ -842,7 +858,7 @@ A round of reliability and UX hardening across the backend pipeline and the chat
 
 ---
 
-## June 26, 2026 (Privacy by default & a curated system config)
+## June 26, 2026
 
 Two admin-surface improvements: Langfuse traces now redact all authored content by default, and the System Configuration panel gained a curated view.
 
@@ -860,7 +876,7 @@ This is **display-only** — settings, the `/api/admin/config` response shape, a
 
 ---
 
-## June 23, 2026 (LLM observability & redeploy safety)
+## June 23, 2026
 
 Two additive operator features: optional LLM tracing and cost tracking via a self-hosted Langfuse instance, and a status endpoint deploy automation can poll before restarting an instance.
 
@@ -884,7 +900,7 @@ Requires `manage` permission. **No API or schema breakage** — the endpoint is 
 
 ---
 
-## June 22, 2026 (Web Import & a systematic QA pass)
+## June 22, 2026
 
 Two additions: **Web Import** harvests web pages into the knowledge base as clean markdown, and a systematic QA pass expanded the backend test suite and fixed four defects.
 
@@ -939,7 +955,7 @@ A systematic quality pass: a canonical feature/defect inventory (`qa/cortex_qa_m
 
 ---
 
-## June 18, 2026 (fast, grounded, concise chat)
+## June 18, 2026
 
 A major overhaul of the chat/answer path. Reasoning-capable models (especially on Venice) were returning **empty or 30–90 s answers**: the chat path never suppressed model "thinking", so hidden chain-of-thought streamed in a separate `reasoning_content` channel the answer stream ignores — adding seconds before the first token and, across the multi-iteration agent loop, frequently exhausting the budget into empty/timeout answers. This update makes chat answers fast, grounded, concise, and deterministic.
 
@@ -963,7 +979,7 @@ A major overhaul of the chat/answer path. Reasoning-capable models (especially o
 
 ---
 
-## June 10, 2026 (v-next efficiency, leaner instances & production hardening)
+## June 10, 2026
 
 Opt-in flags that cut the LLM and database cost of graph building, leaner instance memory with an optional shared per-machine model service, and a broad production-hardening pass. All changes are additive or flag-gated — existing `.env` files and deployments keep working unchanged.
 

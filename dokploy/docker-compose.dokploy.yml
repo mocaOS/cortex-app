@@ -327,12 +327,18 @@ services:
       - NEXT_PUBLIC_ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       - ACCENT_COLOR=${NEXT_PUBLIC_ACCENT_COLOR:-}
       # Admin authentication (must match backend). ADMIN_EMAIL is compared literally
-      # by the frontend (frontend/src/lib/auth.ts) — without it, it falls back to its
-      # hardcoded "admin@example.com" default and every real login is rejected.
+      # by the frontend (frontend/src/lib/auth.ts); when unset there, login answers
+      # "Admin authentication not configured" — the :-default below keeps the
+      # documented example email as the compose-level fallback.
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      # Session cookie Secure flag: set false only if serving over plain HTTP
+      # (browsers drop Secure cookies on HTTP). Unset keeps the default
+      # (Secure in production builds). Must be declared here or Dokploy
+      # never interpolates the injected value into the container.
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-}
       # Error tracking (GlitchTip) — server-side runtime DSN (the client DSN is
       # inlined at build via the build arg above; this covers Server
       # Components/proxy errors reported by the Node process). Defaults to this

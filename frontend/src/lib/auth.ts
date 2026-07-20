@@ -3,10 +3,32 @@
 import { redirect } from "next/navigation";
 import { createSession, deleteSession, verifySession } from "./session";
 
-// Get admin credentials from environment
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@example.com";
+// Get admin credentials from environment. Deliberately NO fallback for
+// ADMIN_EMAIL: substituting a default here would turn a missing/mis-loaded
+// env file (wrong --env-file path, secrets not wired into the deployment)
+// into "Invalid email or password" against credentials the user knows are
+// right — a cold diagnostic trail. Missing credentials must fail loudly as
+// "not configured", the same way ADMIN_PASSWORD already does. The compose
+// files default ADMIN_EMAIL to admin@example.com at the env layer, where
+// the substitution is visible.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
+
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  const missing = [
+    !ADMIN_EMAIL && "ADMIN_EMAIL",
+    !ADMIN_PASSWORD && "ADMIN_PASSWORD",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  console.warn(
+    `[cortex] ${missing} not set — admin login is disabled and will answer ` +
+      `"Admin authentication not configured". Check that your deployment ` +
+      `actually loads your .env into the frontend container ` +
+      `(docker exec <frontend> printenv ADMIN_EMAIL).`
+  );
+}
 
 export interface LoginResult {
   success: boolean;
@@ -33,8 +55,9 @@ export async function login(
     };
   }
 
-  // Check if admin password is configured
-  if (!ADMIN_PASSWORD) {
+  // Check if admin credentials are configured — a missing ADMIN_EMAIL must
+  // NOT degrade into "Invalid email or password" (see note at top of file).
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
     return {
       success: false,
       error: "Admin authentication not configured",

@@ -377,10 +377,11 @@ Frontend variables (the compose files map a single `SENTRY_DSN_FRONTEND` value o
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins. `*` allows any origin with credentials disabled (auth is header-based); set an explicit allowlist for production. |
 | `EXPOSE_API_DOCS` | `auto` | Interactive API docs (`/docs`, `/redoc`, `/openapi.json`). `auto` = on in development, off in production (prevents unauthenticated API-schema disclosure). Set `true`/`false` to force. See [Chapter 5](05-security.md#api-documentation-exposure). |
 | `PROMPT_SECURITY` | `true` | Enable prompt injection detection and protection. |
-| `ADMIN_EMAIL` | `admin@example.com` | Admin login email for the web interface. |
+| `ADMIN_EMAIL` | — | Admin login email for the web interface. **Required** — if unset, login answers "Admin authentication not configured" (no silent default; the compose files supply `admin@example.com` as their env-level fallback). |
 | `ADMIN_PASSWORD` | — | Admin login password. **Required.** |
 | `ADMIN_API_KEY` | — | Admin API key for full backend access. **Required.** |
 | `SESSION_SECRET` | — | JWT session encryption secret. Minimum 32 characters. **Required.** |
+| `SESSION_COOKIE_SECURE` | secure in production builds | `Secure` flag on the admin session cookie, read at runtime (`true`/`false`). Set `false` **only** when serving the dashboard over plain HTTP (e.g. LAN self-host without TLS) — browsers silently drop `Secure` cookies on HTTP, so login appears to do nothing. Prefer TLS in front and leave unset. |
 | `TRACK_ADMIN_API_KEY_USAGE` | `false` | Track usage analytics for the admin API key. |
 | `ENCRYPTION_KEY` | — | At-rest encryption key(s) for user-supplied secrets: git connector PATs and secret-typed skill config fields. Comma-separated Fernet keys — the first encrypts, all decrypt (rotation support). **Strongly recommended.** Without it, these secrets are stored in plaintext and a warning is logged at startup. |
 

@@ -47,6 +47,7 @@ The admin account provides:
 - Tokens are stored in HTTP-only cookies (not accessible to JavaScript)
 - `SESSION_SECRET` must be at least 32 characters of cryptographically random data
 - Generate one with: `openssl rand -hex 32`
+- The cookie carries the `Secure` flag by default in production builds. If you serve the dashboard over plain HTTP (e.g. a LAN self-host without TLS termination), browsers silently drop the cookie and login appears to do nothing — set `SESSION_COOKIE_SECURE=false` for that setup, and switch back once TLS is in front. See [Chapter 4](04-configuration.md#security-configuration).
 
 ## API Key Authentication
 

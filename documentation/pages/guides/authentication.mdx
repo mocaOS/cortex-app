@@ -25,6 +25,12 @@ SESSION_SECRET=at-least-32-characters-random-string
 
 Login at `http://localhost:3000/login` with these credentials.
 
+:::note
+
+**Serving over plain HTTP (no TLS)?** The session cookie carries the `Secure` flag by default in production builds. Browsers silently drop `Secure` cookies over plain HTTP, so on a TLS-less setup (e.g. a LAN self-host) login appears to succeed but immediately bounces back to the login page. Set `SESSION_COOKIE_SECURE=false` in `.env` for that setup — and remove it once TLS termination is in front.
+
+:::
+
 ## API Key Authentication
 
 All API endpoints (except `/health`) require an API key.
