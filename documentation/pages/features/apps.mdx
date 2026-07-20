@@ -1,0 +1,139 @@
+---
+title: Apps
+description: Install web apps into your Cortex instance — sandboxed, served under /apps/, with least-privilege API access and no keys in the browser
+---
+
+Apps let you install small web applications directly into your Cortex instance. An app is a self-contained bundle — installed from a zip by an administrator — that Cortex serves under `/apps/{id}/`, runs inside a locked-down sandbox, and grants scoped, proxied access to your Cortex API. Apps turn Cortex from a knowledge base into a small platform: a custom dashboard, a domain-specific search UI, an integration with another tool, or a purpose-built workflow can live right next to your documents and graph.
+
+:::tip{title="Building an app for Cortex"}
+
+This page is about installing apps **into** your instance. To **build** one, start from the [cortex-app-template](https://github.com/mocaOS/cortex-app-template) — it ships the manifest schema, a validator, and a working example bundle. For step-by-step guidance, point your AI coding assistant at the **[builder skills](https://cortexskills.org/builder/SKILL.md)** on [cortexskills.org](https://cortexskills.org): `SKILL.md` files that teach any agent how to scaffold, configure, and package a Cortex app.
+
+:::
+
+## Overview
+
+Apps are **off by default**. The whole subsystem is gated behind a single flag, `ENABLE_APPS`. When it is off, every app route returns `404` and the Apps section of the admin UI hides itself entirely — there are zero traces of the feature until you deliberately turn it on.
+
+Once enabled, an administrator installs apps from **Settings → Apps**. Each installed app:
+
+- is served as a static bundle under `/apps/{id}/`, embedded in a **sandboxed iframe**;
+- gets its own **dedicated, scoped API key**, minted at install time and never exposed to the browser;
+- can reach the Cortex API only through a **proxy** that enforces an endpoint allowlist declared in the app's manifest;
+- appears in a **launcher grid** at `/apps` for logged-in users.
+
+Apps come in classes. **Static** apps run entirely in the browser and talk only to Cortex. **Platform** apps add server-side capabilities (see [Platform capabilities](#platform-capabilities)). A third class, **service** apps (apps that ship their own container), is defined by the manifest but is not hosted by Cortex — those run as separate services and are out of scope for this page.
+
+## How it works
+
+1. An administrator uploads an app package (a zip containing a manifest, an icon, and a static bundle) from **Settings → Apps**.
+2. Cortex validates the manifest, mints a dedicated scoped API key for the app, and stores the bundle on disk.
+3. If the app declares configuration (API tokens, base URLs, etc.), the admin fills it in through a setup wizard — the same wizard pattern used by [Agent Skills](skills), with secret values encrypted at rest.
+4. The admin enables the app. Enabled apps appear in the launcher grid at `/apps`.
+5. A user opens the app. Cortex serves it inside a sandboxed iframe and hands it a **short-lived app token** — never the real API key.
+6. When the app calls the Cortex API, the request goes through a proxy that checks it against the manifest's endpoint allowlist and attaches the minted key **server-side**.
+
+## Installing an app
+
+1. Go to **Settings → Apps** (visible only when `ENABLE_APPS=true`).
+2. Upload the app's `.zip` package. (Packages are size-capped by `APP_MAX_PACKAGE_MB`, and the zip is checked for path traversal and zip-bomb expansion before anything is written to disk.)
+3. Cortex validates the manifest. If anything is wrong, install fails with a clear list of every issue found — nothing is half-installed.
+4. During install, choose the app's **collection scope** with the collection picker: grant access to all collections, or restrict the app's minted key to specific collections. This, together with the manifest's key scope (`read` or `read_write`), determines exactly what the app can touch.
+5. On success the app is installed but **disabled**. Configure it if needed, then enable it.
+
+:::note
+
+Reinstalling (upgrading) an app preserves its minted key, saved configuration, and any share-link grants, so an upgrade doesn't break existing links or require reconfiguration. Deleting an app revokes its API key.
+
+:::
+
+## Configuring an app
+
+If an app declares configuration variables in its manifest, it shows up needing setup. Open its configuration to fill in each value through a wizard-style form:
+
+- **Text** values (base URLs, identifiers) are stored in plain form.
+- **Secret** values (API tokens, keys) are masked in the UI and **encrypted at rest** (Fernet, when `ENCRYPTION_KEY` is set) — exactly like skill config. Submitting the mask placeholder preserves the existing secret.
+
+Non-secret config values can be read back by the app at runtime; secret values never cross that boundary — they are only ever used server-side.
+
+## Launching an app
+
+Enabled apps appear in the **launcher grid at `/apps`**. Opening one loads it in a sandboxed host at `/apps/launch/{id}`, which performs the token handshake: the app requests a token, the host hands it a short-lived one, and the app renews it as needed. All of this happens inside the sandbox — the surrounding Cortex UI and cookies are never exposed to the app's code.
+
+## Share links
+
+Some apps are meant to be used by people who are **not** Cortex users. For apps that allow it, an administrator can mint **revocable share links** from the app's management screen. A share link looks like `/a/{id}?g=...` and opens the app in a minimal, cookie-less shell — no Cortex login required.
+
+A share visitor can use the app, and nothing else:
+
+- the link exchanges its grant for a short-lived app token that validates **only** at the app's proxy;
+- the visitor can never reach the rest of Cortex — not the admin UI, not the main API, not other apps;
+- revoking the share link immediately kills any tokens already issued from it;
+- links can be given a role (viewer or editor) and an optional expiry.
+
+This makes apps a safe way to expose a single, bounded slice of your knowledge base to the outside world.
+
+## Platform capabilities
+
+A **platform** app (`type: "platform"`) can declare server-side capabilities beyond browser-plus-Cortex. The headline capability — and the recommended way to integrate other software — is `http`.
+
+### `http` — the no-CORS integration pattern
+
+An app with the `http` capability can make calls to **external** APIs that execute **server-side**, inside Cortex, with credentials injected from the app's configuration. This is the same authentication model as skills: the app's config carries `auth_header` templates, and Cortex fills them in with the stored (secret) values when it makes the outbound call.
+
+Two properties make this the preferred integration pattern:
+
+- **No CORS setup on the target.** Because the call originates from Cortex's server, not the browser, the external service needs no CORS configuration — a common blocker for browser-only integrations simply disappears.
+- **Credentials never reach the browser.** API tokens for the external service live in encrypted app config and are attached server-side. The app's client code never sees them.
+
+Outbound targets are restricted to the hosts declared in the app's manifest (literal hostnames, or references resolved from the app's config), and requests are additionally guarded against SSRF: loopback and cloud-metadata addresses are blocked, and redirects are not followed. Responses are size-capped, and the call honours `APP_HTTP_TIMEOUT`.
+
+### `config` read
+
+Every app can read back its own **non-secret** configuration values at runtime. Secret-typed values are excluded from this — they exist only for server-side auth injection.
+
+:::note
+
+Other platform capabilities — background tasks, storage, and LLM access — are specified in the manifest schema but are **not yet available**. Only `http` and `config` read work today. Declaring an unsupported capability fails install with a clear message.
+
+:::
+
+## App classes
+
+| Class | Where it runs | What it can reach |
+|-------|---------------|-------------------|
+| **static** | Browser (sandboxed iframe), served by Cortex | The Cortex API, through the proxy allowlist |
+| **platform** | Browser + server-side capabilities in Cortex | Cortex API, plus server-side `http` to allowlisted external hosts and `config` read |
+| **service** | Its own container (not hosted by Cortex) | Out of scope for in-instance hosting |
+
+## Security model
+
+Apps are built to be safe to install and, for share links, safe to expose to strangers.
+
+- **No real API key in the browser.** Install mints a dedicated, scoped key (`read` or `read_write`, optionally collection-restricted). Its plaintext stays server-side (encrypted when `ENCRYPTION_KEY` is set) because the proxy must present it upstream. The browser only ever holds a short-lived app token.
+- **Short-lived app tokens.** Tokens expire after `APP_TOKEN_TTL_SECONDS` (default 15 minutes) and are renewed via the sandbox handshake. They validate **only** at the app proxy, never on the main Cortex API.
+- **Sandboxed iframe.** Apps are embedded with a restrictive sandbox and **never** `allow-same-origin`, so an app runs in an opaque origin with no access to Cortex cookies or the surrounding page.
+- **Proxy allowlist.** Cortex API calls are forwarded only if their path matches the manifest's declared endpoints; everything else is rejected. Streaming (SSE) responses — needed by chat-style apps — pass through unbuffered.
+- **Per-app Content-Security-Policy.** Every served file carries a CSP that limits network access to Cortex and the app's declared external hosts.
+
+## Configuration
+
+The whole subsystem is controlled by these environment variables. Only `ENABLE_APPS` is required to turn it on; the rest have sensible defaults.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_APPS` | `false` | Master switch. Off = every app route returns `404` and the admin UI section hides itself. |
+| `APPS_DIR` | `.agents/apps` | Directory holding installed app bundles. Persist via a Docker volume (`apps_data`) in production. |
+| `APP_MAX_PACKAGE_MB` | `50` | Maximum uploaded package (zip) size. Uncompressed contents are capped at 4× this (zip-bomb guard). |
+| `APP_TOKEN_TTL_SECONDS` | `900` | Lifetime of the short-lived app tokens handed to sandboxed apps; apps renew via the handshake. |
+| `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where the app proxy forwards allowlisted `/apps/{id}/api/cortex/*` calls (self-loopback, so auth/metering/rate-limit paths match external API traffic). |
+| `APP_HTTP_TIMEOUT` | `30` | Timeout in seconds for the platform `http` capability (server-side external calls on behalf of platform apps). |
+
+### Docker volume persistence
+
+Installed apps live on the filesystem under `APPS_DIR`. In Docker deployments, mount it as a named volume so apps survive container restarts:
+
+```yaml
+volumes:
+  - apps_data:/app/.agents/apps
+```

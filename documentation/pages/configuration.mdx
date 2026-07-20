@@ -603,6 +603,41 @@ X402_ENABLED=true
 
 ---
 
+## Apps (in-instance app hosting)
+
+Host self-contained web apps (built from the [Cortex App Template](https://github.com/mocaOS/cortex-app-template)) inside your instance. Off by default — when disabled, every app route returns 404 and the admin UI section is hidden entirely. See the [Apps feature guide](/features/apps).
+
+```bash
+# Master switch for the Apps subsystem (install / serve / proxy).
+# Off by default: zero new surface until an operator opts in.
+ENABLE_APPS=true
+
+# Directory holding installed app bundles (relative to project root or
+# absolute). Persist via a Docker volume (apps_data) in production.
+APPS_DIR=.agents/apps
+
+# Max uploaded app package (zip) size in MB. Uncompressed contents are
+# capped at 4x this (zip-bomb guard).
+APP_MAX_PACKAGE_MB=50
+
+# Lifetime of the short-lived app tokens handed to sandboxed apps; apps
+# renew automatically. The signing secret derives from SESSION_SECRET
+# (falls back to ENCRYPTION_KEY / ADMIN_API_KEY).
+APP_TOKEN_TTL_SECONDS=900
+
+# Where the app proxy forwards allowlisted /apps/{id}/api/cortex/* calls
+# (self-loopback so auth, metering, and rate-limit paths match external
+# API traffic).
+APP_PROXY_UPSTREAM=http://127.0.0.1:8000
+
+# Timeout (seconds) for the platform "http" capability — server-side
+# external calls made on behalf of platform apps, with secrets injected
+# from the app's encrypted config.
+APP_HTTP_TIMEOUT=30
+```
+
+---
+
 ## Vision Model Configuration
 
 Configure image analysis capabilities:

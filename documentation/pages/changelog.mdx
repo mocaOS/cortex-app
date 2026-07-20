@@ -9,7 +9,7 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## July 20, 2026
 
-Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document. Separately, two silent login foot-guns reported by self-hosters are fixed: the session cookie's `Secure` flag gets a runtime switch for plain-HTTP setups, and a missing `ADMIN_EMAIL` now fails loudly instead of silently substituting a default.
+Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document. Separately, two silent login foot-guns reported by self-hosters are fixed: the session cookie's `Secure` flag gets a runtime switch for plain-HTTP setups, and a missing `ADMIN_EMAIL` now fails loudly instead of silently substituting a default. This release also introduces **Apps** — self-contained web apps that install into an instance from a zip and run sandboxed against a proxied, least-privilege slice of the Cortex API.
 
 ### Ingest checkpoint & resume
 
@@ -48,6 +48,17 @@ When the frontend container started without `ADMIN_EMAIL` (env file pointed at t
 
 - **No more silent default** — a missing/empty `ADMIN_EMAIL` or `ADMIN_PASSWORD` now answers "Admin authentication not configured" at login (the same actionable error the password path already used) and logs a startup warning naming exactly which variable is missing.
 - The compose files are unaffected: they already supply `admin@example.com` as a visible env-level fallback (`${ADMIN_EMAIL:-admin@example.com}`). Correctly configured deployments see no change.
+
+### Apps — in-instance app hosting
+
+Cortex can now host self-contained web apps built from the [Cortex App Template](https://github.com/mocaOS/cortex-app-template). An admin uploads a packaged app (a zip of a static bundle plus a manifest) in **Settings → Apps**; it is served sandboxed under `/apps/{id}/` and reaches the Cortex API only through a proxy that enforces the manifest's endpoint allowlist. Off by default (`ENABLE_APPS=true`). See the [Apps feature guide](/features/apps).
+
+- **Least-privilege by construction** — each install mints a dedicated API key scoped to exactly what the manifest declares (read or read-write, optionally restricted to chosen collections at install time via a collection picker). The browser never holds a real key: apps receive a short-lived, auto-renewing token, and the proxy attaches the minted key server-side. Uninstalling revokes the key.
+- **Sandboxed** — apps run in an iframe without `allow-same-origin` (opaque origin, no cookie access), each served with a per-app Content-Security-Policy. Config values (if the app declares any) use the same encrypted-secret storage as skills.
+- **Platform capabilities** — a `type: "platform"` app can make external API calls through a server-side `http` capability: the call executes from the backend with credentials injected from the app's encrypted config, so the external service needs **no CORS configuration** and secrets never reach the browser. (Additional capabilities — background tasks, storage, LLM — are specced for a later release.)
+- **Share links** — for apps that allow it, an admin mints revocable share links (`/a/{id}?g=…`) so people who are **not** Cortex users can open an app without logging in; a share visitor's token validates only at that app's proxy and never grants access to the rest of Cortex.
+- **New environment variables** (all optional; documented in the [configuration reference](/configuration)): `ENABLE_APPS` (default `false`), `APPS_DIR` (default `.agents/apps`, persisted via the new `apps_data` volume), `APP_MAX_PACKAGE_MB` (default `50`), `APP_TOKEN_TTL_SECONDS` (default `900`), `APP_PROXY_UPSTREAM`, `APP_HTTP_TIMEOUT` (default `30`).
+- No API or schema breakage: the subsystem is filesystem-backed with no Neo4j schema changes, and every route is inert unless `ENABLE_APPS=true`.
 
 ---
 

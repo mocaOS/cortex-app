@@ -97,6 +97,7 @@ const config: ZudokuConfig = {
             "/features/collections",
             "/features/communities",
             "/features/skills",
+            "/features/apps",
             "/features/git-integration",
             "/features/web-import",
             "/features/x402-payments",
