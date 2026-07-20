@@ -686,6 +686,29 @@ export interface AppInfo {
   config_status?: "configured" | "needs_setup" | null;
 }
 
+export interface RegistryAppEntry {
+  slug: string;
+  name: string;
+  version: string;
+  type: string;
+  description: string;
+  publisher: AppPublisher;
+  repo?: string | null;
+  tags: string[];
+  key_scope: "read" | "read_write" | string;
+  endpoints: string[];
+  capabilities: string[];
+  config_vars: string[];
+  artifact_size?: number | null;
+  installed_version: string | null;
+  update_available: boolean;
+}
+
+export interface AppRegistryResponse {
+  registry_url: string;
+  apps: RegistryAppEntry[];
+}
+
 export interface AppConfigVariable {
   name: string;
   description?: string;

@@ -663,6 +663,11 @@ APP_TASK_STEP_OUTPUT_MAX_KB=2048
 
 # Max stored task records per app (finished one-shots age out first).
 APP_TASK_MAX_PER_APP=50
+
+# The public app catalog behind the admin "Browse Registry" panel.
+# Installs re-verify each artifact against the catalog's pinned sha256
+# before unpacking. Set empty to disable registry browsing.
+APP_REGISTRY_URL=https://raw.githubusercontent.com/mocaOS/cortex-registry/main/index.json
 ```
 
 ---

@@ -45,6 +45,7 @@ import type {
   SkillDetail,
   SkillRegistryItem,
   AppInfo,
+  AppRegistryResponse,
   AppConfigResponse,
   AppGrant,
   AppGrantCreateResponse,
@@ -1583,6 +1584,34 @@ class ApiClient {
    */
   async listApps(): Promise<AppInfo[]> {
     return this.request<AppInfo[]>("/api/admin/apps");
+  }
+
+  /**
+   * Browse the public app registry (admin only). The backend joins the
+   * catalog with local install state (installed_version / update_available).
+   */
+  async browseAppRegistry(refresh = false): Promise<AppRegistryResponse> {
+    return this.request<AppRegistryResponse>(
+      `/api/admin/apps/registry${refresh ? "?refresh=true" : ""}`,
+    );
+  }
+
+  /**
+   * Install (or upgrade) an app from the registry (admin only). The backend
+   * downloads the release artifact and verifies its pinned sha256 before
+   * unpacking anything.
+   */
+  async installAppFromRegistry(
+    slug: string,
+    collections?: string[],
+  ): Promise<AppInfo> {
+    return this.request<AppInfo>("/api/admin/apps/registry/install", {
+      method: "POST",
+      body: JSON.stringify({
+        slug,
+        ...(collections && collections.length ? { collections } : {}),
+      }),
+    });
   }
 
   /**

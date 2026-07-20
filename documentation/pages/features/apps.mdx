@@ -47,6 +47,30 @@ Reinstalling (upgrading) an app preserves its minted key, saved configuration, a
 
 :::
 
+## Installing from the registry
+
+Instead of uploading a zip, admins can install straight from the public
+[Cortex Registry](https://github.com/mocaOS/cortex-registry) — a git-native,
+PR-moderated catalog of apps. Open **Settings → Apps → Browse Registry** to
+see what's available, with each app's declared key scope, endpoint allowlist,
+and platform capabilities visible before you commit to anything.
+
+Installing from the registry is checksum-verified end to end: the catalog
+pins every release artifact by sha256, the registry's CI re-downloads and
+re-verifies artifacts on every listing change, and **your instance verifies
+the download against the pinned digest again before a single byte is
+unpacked**. A moved, re-uploaded, or tampered release asset fails closed.
+Updates surface in the same panel (`Update v0.3.0 → v0.3.1`) and preserve the
+app's key, configuration, share links, storage, and scheduled tasks.
+
+The catalog location is `APP_REGISTRY_URL` (defaults to the official
+registry; set it empty to hide registry browsing entirely, or point it at
+your own fork for a curated internal catalog).
+
+Publishing your own app is a PR — see the
+[registry README](https://github.com/mocaOS/cortex-registry#publishing-your-app)
+for the release flow.
+
 ## Configuring an app
 
 If an app declares configuration variables in its manifest, it shows up needing setup. Open its configuration to fill in each value through a wizard-style form:

@@ -23,7 +23,7 @@ import { api, AppInstallError } from "@/lib/api";
 import { useIsMounted } from "@/lib/hooks";
 import { AppConfigModal } from "./AppConfigModal";
 import { AppGrantsModal } from "./AppGrantsModal";
-import type { AppInfo, Collection } from "@/types";
+import type { AppInfo, Collection, RegistryAppEntry } from "@/types";
 
 /**
  * Admin section for the Apps subsystem (in-instance app hosting).
@@ -56,6 +56,57 @@ export function AppsManager() {
   // Modals
   const [configModalApp, setConfigModalApp] = useState<AppInfo | null>(null);
   const [grantsModalApp, setGrantsModalApp] = useState<AppInfo | null>(null);
+
+  // Registry browser (lazy: only fetched when the section is opened)
+  const [registryOpen, setRegistryOpen] = useState(false);
+  const [registryApps, setRegistryApps] = useState<RegistryAppEntry[] | null>(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [registryInstalling, setRegistryInstalling] = useState<string | null>(null);
+
+  const fetchRegistry = useCallback(
+    async (refresh = false) => {
+      setRegistryLoading(true);
+      setRegistryError(null);
+      try {
+        const data = await api.browseAppRegistry(refresh);
+        if (!mounted.current) return;
+        setRegistryApps(data.apps);
+      } catch (err) {
+        if (!mounted.current) return;
+        setRegistryError(
+          err instanceof Error ? err.message : "Failed to reach the registry",
+        );
+      } finally {
+        if (mounted.current) setRegistryLoading(false);
+      }
+    },
+    [mounted],
+  );
+
+  const handleRegistryInstall = async (entry: RegistryAppEntry) => {
+    setRegistryInstalling(entry.slug);
+    setRegistryError(null);
+    try {
+      const installed = await api.installAppFromRegistry(
+        entry.slug,
+        installCollections.length ? installCollections : undefined,
+      );
+      if (!mounted.current) return;
+      await fetchApps();
+      await fetchRegistry();
+      if (installed.config_status === "needs_setup") {
+        setConfigModalApp(installed);
+      }
+    } catch (err) {
+      if (!mounted.current) return;
+      setRegistryError(
+        err instanceof Error ? err.message : "Registry install failed",
+      );
+    } finally {
+      if (mounted.current) setRegistryInstalling(null);
+    }
+  };
 
   const fetchApps = useCallback(async () => {
     try {
@@ -445,6 +496,161 @@ export function AppsManager() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-border/30" />
+
+          {/* Registry browser */}
+          <div>
+            <button
+              onClick={() => {
+                const next = !registryOpen;
+                setRegistryOpen(next);
+                if (next && registryApps === null) void fetchRegistry();
+              }}
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+            >
+              {registryOpen ? (
+                <ChevronDown className="w-3 h-3" />
+              ) : (
+                <ChevronRight className="w-3 h-3" />
+              )}
+              Browse Registry
+            </button>
+
+            <AnimatePresence>
+              {registryOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-2 space-y-1">
+                    {registryLoading && (
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground py-3">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Loading catalog…
+                      </p>
+                    )}
+                    {registryError && (
+                      <div className="flex items-center gap-2 text-xs text-red-400 p-2 rounded bg-red-500/10 border border-red-500/20">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        <span>{registryError}</span>
+                        <button
+                          onClick={() => void fetchRegistry(true)}
+                          className="ml-auto underline hover:text-red-300"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {!registryLoading && registryApps?.length === 0 && (
+                      <p className="text-xs text-muted-foreground py-3 text-center">
+                        The registry has no apps yet.
+                      </p>
+                    )}
+                    {registryApps?.map((entry) => (
+                      <div
+                        key={entry.slug}
+                        className="border border-border/30 rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-foreground truncate">
+                                {entry.name}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                v{entry.version}
+                              </span>
+                              <span
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                                  entry.key_scope === "read_write"
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                    : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                }`}
+                              >
+                                {entry.key_scope === "read_write" ? (
+                                  <PenLine className="w-2.5 h-2.5" />
+                                ) : (
+                                  <Lock className="w-2.5 h-2.5" />
+                                )}
+                                {entry.key_scope === "read_write" ? "read + write" : "read"}
+                              </span>
+                              {entry.endpoints.map((ep) => (
+                                <span
+                                  key={ep}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono text-muted-foreground bg-muted border border-border/50"
+                                >
+                                  {ep}
+                                </span>
+                              ))}
+                              {entry.capabilities.map((cap) => (
+                                <span
+                                  key={cap}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-[var(--accent)]/80 bg-[var(--accent)]/5 border border-[var(--accent)]/20"
+                                  title="Platform capability (admin-approved at install)"
+                                >
+                                  {cap}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">
+                              {entry.description}
+                              {entry.publisher?.name && (
+                                <span className="text-muted-foreground/70">
+                                  {" "}
+                                  · by {entry.publisher.name}
+                                </span>
+                              )}
+                              {entry.repo && (
+                                <>
+                                  {" "}
+                                  ·{" "}
+                                  <a
+                                    href={entry.repo}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[var(--accent)]/70 hover:text-[var(--accent)] hover:underline"
+                                  >
+                                    source
+                                  </a>
+                                </>
+                              )}
+                            </p>
+                          </div>
+
+                          {entry.installed_version && !entry.update_available ? (
+                            <span className="shrink-0 text-[10px] text-emerald-400 px-2 py-1">
+                              Installed
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleRegistryInstall(entry)}
+                              disabled={registryInstalling !== null}
+                              className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20 hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-50"
+                              title="Downloads the release artifact and verifies its pinned sha256 before installing"
+                            >
+                              {registryInstalling === entry.slug ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Upload className="w-3 h-3" />
+                              )}
+                              {entry.update_available
+                                ? `Update (v${entry.installed_version} → v${entry.version})`
+                                : "Install"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Divider */}

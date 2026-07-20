@@ -85,6 +85,7 @@ from app.models import (
     AppEnableRequest,
     AppConfigSaveRequest,
     AppGrantCreateRequest,
+    AppRegistryInstallRequest,
     AppTaskActionRequest,
     AppTokenResponse,
     UpdateEntityRequest,
@@ -6296,6 +6297,57 @@ async def admin_delete_app_task(
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     return {"task_id": task_id, "deleted": True}
+
+
+# NOTE: /api/admin/apps/registry must be registered before any route with an
+# {app_id} segment would shadow it — FastAPI matches in registration order,
+# and the earlier /api/admin/apps/{app_id} PATCH/DELETE routes use different
+# methods, so a literal "registry" path segment is safe here.
+@app.get("/api/admin/apps/registry")
+async def browse_app_registry(
+    refresh: bool = False, auth: AuthResult = Depends(require_admin)
+):
+    """The public app catalog (APP_REGISTRY_URL), joined with local install
+    state so the admin browser can show installed/update-available."""
+    _require_apps_enabled()
+    from app.services.app_registry_service import RegistryError, get_app_registry_service
+    from app.services.app_service import get_app_service
+
+    registry = get_app_registry_service()
+    try:
+        listings = await registry.listings(force_refresh=refresh)
+    except RegistryError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    installed = {info.id: info.version for info in get_app_service().list_apps()}
+    return {
+        "registry_url": get_settings().app_registry_url,
+        "apps": [registry.summarize(listing, installed) for listing in listings],
+    }
+
+
+@app.post("/api/admin/apps/registry/install")
+async def install_app_from_registry(
+    request: AppRegistryInstallRequest, auth: AuthResult = Depends(require_admin)
+):
+    """Install (or upgrade) an app from the registry: fetch its release
+    artifact, verify the pinned sha256 + size, then run the normal installer.
+    Nothing is unpacked unless the checksum matches the catalog."""
+    _require_apps_enabled()
+    from app.services.app_registry_service import RegistryError, get_app_registry_service
+    from app.services.app_service import AppValidationError, get_app_service
+
+    registry = get_app_registry_service()
+    try:
+        listing = await registry.get_listing(request.slug)
+        data = await registry.fetch_verified_artifact(listing)
+    except RegistryError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    try:
+        return get_app_service().install_from_zip(
+            data, collections=request.collections or None
+        )
+    except AppValidationError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
 
 
 @app.get("/apps/{app_id}/{asset_path:path}")

@@ -35,6 +35,26 @@ Installation happens on the **Settings → Apps** page, which only appears when 
 
 Upgrading an app (installing a newer package for one you already have) keeps its key, its saved configuration, and any share links intact, so an upgrade won't break links or force you to reconfigure. Deleting an app revokes its dedicated key.
 
+## Installing from the registry
+
+Instead of handling zip files, you can install apps straight from the public
+Cortex Registry. In **Settings → Apps**, open **Browse Registry**: every
+listed app shows what it will be allowed to do — its key scope, the exact
+API endpoints it may call, and any server-side capabilities — before you
+install it.
+
+Registry installs are integrity-checked twice over: the registry pins every
+app package by checksum and its automation re-verifies packages continuously,
+and your own instance verifies the downloaded package against that pinned
+checksum again before unpacking it. If the file on the internet has changed
+in any way since it was reviewed, the install refuses. When a newer version
+of an installed app is listed, the same panel offers a one-click update that
+keeps your configuration, share links, and stored data.
+
+The registry location is configurable (`APP_REGISTRY_URL`) — organizations
+can point their instances at a private fork to curate exactly which apps
+their admins may install.
+
 ## Using an app (for everyone)
 
 Enabled apps show up in a **launcher grid** — a page inside your instance that lists every app available to you, each with its icon. Click one and it opens in its own sandboxed view. From your point of view it simply works: you interact with the app, and it talks to your Cortex knowledge base in the background. You never have to copy or paste an API key, and nothing you do in the app can reach outside the bounds the administrator set.
@@ -102,5 +122,6 @@ These settings, placed in the backend environment, control the Apps subsystem. O
 | `APP_TASK_LLM_CALLS_PER_RUN` | `500` | Most language-model calls one job run may make. |
 | `APP_TASK_STEP_OUTPUT_MAX_KB` | `2048` | Largest intermediate result a job step may produce. |
 | `APP_TASK_MAX_PER_APP` | `50` | Most stored jobs per app; old finished ones are cleaned up first. |
+| `APP_REGISTRY_URL` | official registry | Where the Browse Registry panel gets its catalog; empty hides it. |
 
 In Docker deployments, mount `APPS_DIR` as a named volume (for example `apps_data:/app/.agents/apps`) so that installed apps survive container restarts.

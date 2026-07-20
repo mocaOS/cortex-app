@@ -1356,6 +1356,11 @@ class AppTaskActionRequest(BaseModel):
     action: str  # "pause" | "resume" | "cancel" | "retryFailed" | "runNow"
 
 
+class AppRegistryInstallRequest(BaseModel):
+    slug: str
+    collections: Optional[List[str]] = None  # for "user-selected" manifests
+
+
 class AppGrantInfo(BaseModel):
     id: str
     label: str

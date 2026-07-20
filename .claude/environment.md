@@ -267,6 +267,7 @@ See [`.claude/domain/apps.md`](domain/apps.md) for the full subsystem (security 
 - `APP_TASK_LLM_CALLS_PER_RUN` (default: 500) — cap on `llm`-step completions per task run (chunked steps count each chunk; also metered via MAX_QUERIES_PER_MONTH)
 - `APP_TASK_STEP_OUTPUT_MAX_KB` (default: 2048) — step outputs above this fail (large artifacts go to storage, not step context)
 - `APP_TASK_MAX_PER_APP` (default: 50) — max stored task records per app; terminal one-shots age out first
+- `APP_REGISTRY_URL` (default: `https://raw.githubusercontent.com/mocaOS/cortex-registry/main/index.json`) — the public app catalog behind the admin "Browse Registry" panel; installs re-verify each artifact against the catalog's pinned sha256 before unpacking. Empty = registry browsing disabled (404)
 
 ## Git Integration
 

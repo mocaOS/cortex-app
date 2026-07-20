@@ -1027,6 +1027,11 @@ class Settings(BaseSettings):
     app_task_max_per_app: int = Field(
         default=50
     )  # Max stored task records per app (completed one-shots age out first).
+    app_registry_url: str = Field(
+        default="https://raw.githubusercontent.com/mocaOS/cortex-registry/main/index.json"
+    )  # The public app catalog consumed by the admin "Browse Registry" panel.
+    #   Installs re-verify each artifact against the catalog's pinned sha256
+    #   before unpacking. Set empty to disable registry browsing entirely.
 
     @property
     def vision_model_available(self) -> bool:
