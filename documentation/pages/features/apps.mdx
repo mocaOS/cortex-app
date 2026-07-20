@@ -88,6 +88,8 @@ Two properties make this the preferred integration pattern:
 
 Outbound targets are restricted to the hosts declared in the app's manifest (literal hostnames, or references resolved from the app's config), and requests are additionally guarded against SSRF: loopback and cloud-metadata addresses are blocked, and redirects are not followed. Responses are size-capped, and the call honours `APP_HTTP_TIMEOUT`.
 
+Apps that talk to **more than one** external host should scope each credential with `auth_host` on the config variable — the header is then injected only on calls to that host, so one service's key is never sent to another (the app template's validator warns when a multi-host app leaves a credential unscoped).
+
 ### `config` read
 
 Every app can read back its own **non-secret** configuration values at runtime. Secret-typed values are excluded from this — they exist only for server-side auth injection.
@@ -111,7 +113,7 @@ Every step passes the same security gates as the interactive paths: `http` steps
 
 ### `llm` — instance-model completions
 
-The `llm` capability lets task steps call the instance's configured chat model. Calls are counted toward the instance's unit metering (`MAX_QUERIES_PER_MONTH`), traced by Langfuse when observability is enabled, and capped per task run (`APP_TASK_LLM_CALLS_PER_RUN`).
+The `llm` capability lets task steps call the instance's configured **extraction-tier** model (falling back to the main model when no dedicated extraction model is set) — task steps are bulk text work, where the extraction workhorse beats a slow reasoning chat model. Calls are counted toward the instance's unit metering (`MAX_QUERIES_PER_MONTH`), traced by Langfuse when observability is enabled, and capped per task run (`APP_TASK_LLM_CALLS_PER_RUN`).
 
 ## App classes
 

@@ -6027,6 +6027,11 @@ async def app_platform_http(app_id: str, request: Request):
             status_code=400, detail='Body must be JSON: {"method", "url", "body"?}'
         )
 
+    extra_headers = (
+        {str(k): str(v) for k, v in envelope["headers"].items()}
+        if isinstance(envelope.get("headers"), dict)
+        else None
+    )
     try:
         upstream = await execute_app_http(
             app_id,
@@ -6036,6 +6041,7 @@ async def app_platform_http(app_id: str, request: Request):
             content_type=(
                 str(envelope["content_type"]) if envelope.get("content_type") else None
             ),
+            extra_headers=extra_headers,
         )
     except AppHttpError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)

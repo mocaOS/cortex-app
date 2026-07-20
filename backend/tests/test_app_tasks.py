@@ -484,7 +484,7 @@ def fake_llm(monkeypatch, tasks_env):
     from app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "openai_api_key", "test-key")
-    calls = {"n": 0}
+    calls = {"n": 0, "closed": 0}
 
     async def fake_create(*, model, messages, **params):
         calls["n"] += 1
@@ -499,7 +499,7 @@ def fake_llm(monkeypatch, tasks_env):
         )
 
     async def fake_close():
-        pass
+        calls["closed"] += 1
 
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)),
@@ -543,6 +543,10 @@ def test_yt_batch_shape_end_to_end(tasks_env, fake_llm, monkeypatch):
     stored_def = env.storage.get(env.app_id, "transcripts/def")
     assert "GARBLED" in stored_def["refined"]  # invalid chunk kept original
     assert fake_llm["n"] >= 4  # chunked calls happened (incl. one retry)
+    # the factory's client is CACHED and shared backend-wide — the engine
+    # must never close it (a closed cached client breaks every later LLM
+    # call, ask pipeline included; found live)
+    assert fake_llm["closed"] == 0
 
 
 def test_llm_call_cap_fails_item(tasks_env, fake_llm, monkeypatch):
@@ -659,12 +663,92 @@ def test_forbidden_headers_never_reach_upstream(tasks_env, monkeypatch):
     asyncio.run(execute_app_http(
         "sync-app", method="GET", url="http://paperless.local/api/x",
         extra_headers={"Authorization": "Bearer stolen", "Host": "evil",
-                        "X-Custom": "ok", "Transfer-Encoding": "chunked"},
+                        "X-Custom": "ok", "Transfer-Encoding": "chunked",
+                        "Cookie": "SOCS=CAI"},
     ))
     assert captured["Authorization"] == "Token tok"  # config injection wins
     assert captured["X-Custom"] == "ok"
+    assert captured["Cookie"] == "SOCS=CAI"  # app cookies allowed (consent bypass)
     assert "Host" not in captured
     assert "Transfer-Encoding" not in captured
+
+
+def test_auth_host_scopes_credentials_per_host(apps_env, monkeypatch):  # noqa: F811
+    """A multi-host app must not leak one service's credential to another:
+    a var with auth_host only injects on calls to that host; unscoped vars
+    keep the inject-everywhere behavior."""
+    manifest = platform_manifest(
+        id="multi-host-app",
+        capabilities={"http": {"hosts": ["api.venice.example", "www.youtube.example"]},
+                       "tasks": {}, "storage": {}},
+        config=[
+            {"name": "VENICE_API_KEY", "type": "secret",
+             "auth_header": "Authorization: Bearer VENICE_API_KEY",
+             "auth_host": "api.venice.example"},
+            {"name": "GLOBAL_TAG", "type": "text",
+             "auth_header": "X-Tag: GLOBAL_TAG"},
+        ],
+    )
+    apps_env.install_from_zip(make_zip(manifest))
+    apps_env.save_config(
+        "multi-host-app", {"VENICE_API_KEY": "vk-secret", "GLOBAL_TAG": "t1"}
+    )
+
+    venice = apps_env.platform_auth_headers("multi-host-app", target_host="api.venice.example")
+    assert venice["Authorization"] == "Bearer vk-secret"
+    assert venice["X-Tag"] == "t1"
+
+    youtube = apps_env.platform_auth_headers("multi-host-app", target_host="www.youtube.example")
+    assert "Authorization" not in youtube  # the venice key never reaches youtube
+    assert youtube["X-Tag"] == "t1"  # unscoped var still injects everywhere
+
+    # auth_host also accepts ${CONFIG_VAR} URL references
+    manifest2 = platform_manifest(
+        id="ref-host-app",
+        capabilities={"http": {"hosts": ["${SERVICE_BASE_URL}"]}, "tasks": {}, "storage": {}},
+        config=[
+            {"name": "SERVICE_BASE_URL", "type": "text", "required": True},
+            {"name": "SERVICE_TOKEN", "type": "secret",
+             "auth_header": "Authorization: Token SERVICE_TOKEN",
+             "auth_host": "${SERVICE_BASE_URL}"},
+        ],
+    )
+    apps_env.install_from_zip(make_zip(manifest2))
+    apps_env.save_config(
+        "ref-host-app",
+        {"SERVICE_BASE_URL": "https://svc.example:8443", "SERVICE_TOKEN": "st"},
+    )
+    assert apps_env.platform_auth_headers("ref-host-app", target_host="svc.example") == {
+        "Authorization": "Token st"
+    }
+    assert apps_env.platform_auth_headers("ref-host-app", target_host="other.example") == {}
+
+
+def test_upgrade_preserves_storage_and_tasks(tasks_env):
+    """Live-verify regression: reinstalling an app (upgrade) must carry over
+    storage.sqlite and tasks/ — wiping them would erase a sync app's dedup
+    state and schedules on every version bump."""
+    env = tasks_env
+    env.storage.put(env.app_id, "sync/cursor", "2026-07-19")
+    _seed_record(env, task_id="apptask_keepme0000001", status="completed",
+                 schedule={"everyMinutes": 60})
+
+    manifest = platform_manifest()
+    manifest["version"] = "1.0.1"
+    env.apps.install_from_zip(make_zip(manifest))
+
+    assert env.storage.get(env.app_id, "sync/cursor") == "2026-07-19"
+    kept = env.tasks._load_task(env.app_id, "apptask_keepme0000001")
+    assert kept is not None and kept["schedule"] == {"everyMinutes": 60}
+    # config survived too (pre-existing behavior, keep it locked)
+    assert env.apps.public_config(env.app_id)["PAPERLESS_BASE_URL"] == "http://paperless.local"
+
+
+def test_manifest_rejects_bad_auth_host(apps_env):  # noqa: F811
+    manifest = platform_manifest(id="bad-auth-host")
+    manifest["config"][1]["auth_host"] = ""
+    issues = apps_env.validate_manifest(manifest)
+    assert any("auth_host" in i for i in issues), issues
 
 
 # ---------------------------------------------------------------------------

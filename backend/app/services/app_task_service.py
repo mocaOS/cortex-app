@@ -75,11 +75,15 @@ class AppHttpError(Exception):
         super().__init__(detail)
 
 
-# Headers an app may never set on outbound platform http calls: credentials
-# are injected exclusively from encrypted config (auth_header semantics), and
-# hop-by-hop/framing headers belong to the client library.
+# Headers an app may never set on outbound platform http calls: credential
+# headers are injected exclusively from encrypted config (auth_header
+# semantics) and always win on collisions, and hop-by-hop/framing headers
+# belong to the client library. Cookie is deliberately NOT forbidden: app
+# values can never contain server secrets (secrets are unreachable from
+# app-templatable context), and legitimate scraping needs it (e.g. YouTube's
+# EU consent bypass SOCS=CAI) — a config-injected Cookie still overrides it.
 _FORBIDDEN_APP_HEADERS = {
-    "authorization", "proxy-authorization", "cookie", "host",
+    "authorization", "proxy-authorization", "host",
     "content-length", "transfer-encoding", "connection",
 }
 
@@ -121,7 +125,7 @@ async def execute_app_http(
     except SSRFError as e:
         raise AppHttpError(403, f"Blocked target: {e}")
 
-    headers = dict(service.platform_auth_headers(app_id))
+    headers = dict(service.platform_auth_headers(app_id, target_host=target_host))
     headers.setdefault("Accept", "application/json")
     for name, value in (extra_headers or {}).items():
         if name.lower() in _FORBIDDEN_APP_HEADERS or name.lower() in (
@@ -593,6 +597,9 @@ class AppTaskService:
                             return
                         item = items[index]
                         item["status"] = "running"
+                        # persist the transition so a long item (chunked llm,
+                        # big download) shows as working, not pending
+                        self._persist(record, force=False)
                         async with self._global_slots:
                             await self._run_item(app_id, defn, item, index, base_ctx, llm_state, flags)
                         if item["status"] == "done":
@@ -640,13 +647,10 @@ class AppTaskService:
             )
         except (StepError, AppHttpError) as e:
             finish("failed", error=str(e))
-        finally:
-            client = llm_state.get("client")
-            if client is not None:
-                try:
-                    await client.close()
-                except Exception:
-                    pass
+        # NOTE: never close llm_state["client"] — make_async_openai_client
+        # returns a CACHED client shared with the whole backend (ask pipeline
+        # included); closing it here poisons the cache and every subsequent
+        # LLM call fails with APIConnectionError until a restart.
 
     @staticmethod
     def _update_counts(record: dict, run_ctx: dict) -> None:
@@ -931,11 +935,15 @@ class AppTaskService:
             raise StepError('this app does not declare the "llm" capability')
         from app.services.llm_config import (
             build_chat_params,
-            get_llm_config,
+            get_extraction_llm_config,
             make_async_openai_client,
         )
 
-        config = get_llm_config()
+        # Extraction tier, not the chat model: llm task steps are bulk
+        # mechanical work (transcript cleanup, summarization) — the chat
+        # model is often a slow reasoning model. Falls back to the main
+        # config automatically when no extraction model is configured.
+        config = get_extraction_llm_config()
         if not config.api_key:
             raise StepError("no LLM is configured on this instance")
         if llm_state.get("client") is None:

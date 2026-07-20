@@ -204,6 +204,13 @@ class AppService:
                 issues.append(f'config var {var.get("name")!r} must be UPPER_SNAKE')
             elif var.get("type") not in ("text", "secret"):
                 issues.append(f'config var {var["name"]}: "type" must be text | secret')
+            elif "auth_host" in var and (
+                not isinstance(var["auth_host"], str) or not var["auth_host"].strip()
+            ):
+                issues.append(
+                    f'config var {var["name"]}: "auth_host" must be a hostname '
+                    "or ${CONFIG_VAR} reference"
+                )
 
         external = manifest.get("externalHosts", [])
         if not isinstance(external, list) or not all(isinstance(h, str) for h in external):
@@ -312,13 +319,22 @@ class AppService:
                 target.write_bytes(zf.read(name))
 
             if existing:
-                # upgrade: carry over install record + config
+                # upgrade: carry over install record, config, AND platform
+                # state — storage.sqlite (KV: cursors, dedup keys, results)
+                # and tasks/ (definitions incl. schedules, run history).
+                # Losing these on a version bump would make e.g. a sync app
+                # re-upload its entire archive after every upgrade.
                 record = existing[1]
                 record["version"] = manifest["version"]
                 record["updated_at"] = _utcnow().isoformat()
-                config_path = app_dir / "config.json"
-                if config_path.exists():
-                    shutil.copy2(config_path, staging / "config.json")
+                for name in ("config.json", "storage.sqlite",
+                             "storage.sqlite-wal", "storage.sqlite-shm"):
+                    src = app_dir / name
+                    if src.exists():
+                        shutil.copy2(src, staging / name)
+                tasks_dir = app_dir / "tasks"
+                if tasks_dir.is_dir():
+                    shutil.copytree(tasks_dir, staging / "tasks")
                 (staging / "install.json").write_text(json.dumps(record, indent=2, default=str))
                 shutil.rmtree(app_dir)
                 staging.rename(app_dir)
@@ -820,10 +836,20 @@ class AppService:
                 hosts.add(host.lower())
         return hosts
 
-    def platform_auth_headers(self, app_id: str) -> Dict[str, str]:
+    def platform_auth_headers(
+        self, app_id: str, target_host: Optional[str] = None
+    ) -> Dict[str, str]:
         """Headers to inject on platform http calls, built from config vars
         with an ``auth_header`` template ("Authorization: Token VAR_NAME") —
-        same semantics as skill auth injection. Secrets stay server-side."""
+        same semantics as skill auth injection. Secrets stay server-side.
+
+        A var may carry ``auth_host`` (literal hostname/URL or ${CONFIG_VAR}
+        reference): its header is then injected ONLY when the call targets
+        that host — a multi-host app (e.g. venice + youtube) must not leak
+        one service's credential to the other. Vars without auth_host keep
+        the inject-everywhere behavior (fine for single-host apps)."""
+        from urllib.parse import urlsplit
+
         loaded = self._load(app_id)
         if not loaded:
             return {}
@@ -835,6 +861,16 @@ class AppService:
             value = config.get(var.get("name", ""))
             if not template or not value or ":" not in template:
                 continue
+            scope = var.get("auth_host")
+            if scope:
+                resolved = self._resolve_config_refs(scope, config)
+                host = (
+                    (urlsplit(resolved).hostname or "")
+                    if "//" in resolved
+                    else resolved.split("/")[0]
+                ).lower()
+                if not host or host != (target_host or "").lower():
+                    continue
             header_name, _, header_value = template.partition(":")
             headers[header_name.strip()] = header_value.strip().replace(
                 var["name"], value
