@@ -47,7 +47,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |
 | `backend/app/services/crawl_client.py` | `domain/web-crawl.md` |
 | `backend/app/services/x402_service.py` | `domain/x402.md`, `domain/admin-features.md` (API key management) |
-| `backend/app/services/app_service.py`, `app_task_service.py`, `app_task_dsl.py`, `app_storage_service.py` | `domain/apps.md`, `domain/admin-features.md` (API key management) |
+| `backend/app/services/app_service.py`, `app_task_service.py`, `app_task_dsl.py`, `app_storage_service.py`, `app_registry_service.py` | `domain/apps.md`, `domain/admin-features.md` (API key management) |
 | `frontend/src/app/apps/**`, `components/admin/Apps*.tsx`, `components/admin/AppConfigModal.tsx`, `components/admin/AppGrantsModal.tsx` | `domain/apps.md`, `frontend-patterns.md` |
 | `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md`, `domain/observability.md` (OpenAI client factory) |
 | `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |

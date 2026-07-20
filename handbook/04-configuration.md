@@ -288,6 +288,22 @@ Pay-per-query monetization of the retrieval endpoints via the open [x402 standar
 |----------|---------|-------------|
 | `X402_ENABLED` | `false` | Master switch — and deliberately the **only** x402 environment variable. When true, the **Settings → x402 Payments** section appears; recipient wallet, facilitator URL, network and asset are configured there at runtime (stored in Neo4j, survive redeploys, excluded from export/reset). Priced API keys activate once that config passes the built-in verification. |
 
+## Apps Configuration (in-instance app hosting)
+
+Host self-contained web apps inside your instance — installed from a zip or straight from the public registry, sandboxed, with least-privilege API access. See [Chapter 24: Apps](24-apps.md) for the full guide.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_APPS` | `false` | Master switch. Off = every app route returns 404 and the admin section is hidden — zero traces until an operator opts in. |
+| `APPS_DIR` | `.agents/apps` | Where installed app bundles, per-app storage, and task state live. Persist via a Docker volume (`apps_data`) in production. |
+| `APP_REGISTRY_URL` | official registry | The catalog behind **Settings → Apps → Browse Registry** (an `index.json`; installs verify each artifact's pinned sha256 before unpacking). Point at a private fork for a curated catalog; empty hides the panel. |
+| `APP_MAX_PACKAGE_MB` | `50` | Package size cap (uncompressed contents capped at 4×). |
+| `APP_TOKEN_TTL_SECONDS` | `900` | Lifetime of the short-lived tokens sandboxed apps hold (auto-renewed). |
+| `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where allowlisted app API calls are forwarded (self-loopback). |
+| `APP_HTTP_TIMEOUT` | `30` | Timeout for platform apps' server-side external calls. |
+| `APP_STORAGE_MAX_MB` / `APP_STORAGE_MAX_VALUE_KB` | `50` / `1024` | Per-app storage quota and per-value cap. |
+| `APP_TASK_*` | see [Ch. 24](24-apps.md#configuration-reference) | Background-task caps: items, concurrency (per-task and global), schedule floor, LLM calls per run, step output size, stored tasks per app. |
+
 ## Community Detection Configuration
 
 | Variable | Default | Description |

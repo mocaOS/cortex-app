@@ -178,6 +178,7 @@ The whole subsystem is controlled by these environment variables. Only `ENABLE_A
 | `APP_TASK_LLM_CALLS_PER_RUN` | `500` | Cap on `llm`-step completions in one task run (chunked steps count each chunk). |
 | `APP_TASK_STEP_OUTPUT_MAX_KB` | `2048` | A step whose output exceeds this fails — large artifacts belong in storage. |
 | `APP_TASK_MAX_PER_APP` | `50` | Maximum stored task records per app (finished one-shots age out first). |
+| `APP_REGISTRY_URL` | official registry | The catalog behind Browse Registry (an `index.json`). Point at a fork for a curated catalog; empty hides the panel. |
 
 ### Docker volume persistence
 
