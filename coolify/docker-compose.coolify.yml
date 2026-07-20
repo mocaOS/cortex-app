@@ -101,6 +101,8 @@ services:
       # --- x402 Payments (optional) — the only x402 env var; everything else
       # (wallet, facilitator, network, asset) is runtime config in the admin UI.
       - X402_ENABLED=${X402_ENABLED:-false}
+      # --- Apps (optional) — in-instance app hosting; see .claude/domain/apps.md
+      - ENABLE_APPS=${ENABLE_APPS:-false}
       # Encrypts stored secrets at rest (git PATs, skill secrets, x402
       # facilitator auth headers). Empty = plaintext + startup warning.
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
@@ -108,6 +110,7 @@ services:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs
       - skills_data:/app/.agents/skills
+      - apps_data:/app/.agents/apps
       # Persist HuggingFace model cache (cross-encoder reranker, embeddings)
       # across container restarts so we don't re-download ~80MB of models each time.
       # Coolify auto-creates named volumes; survives redeploys but not "Cleanup volumes".
@@ -246,5 +249,6 @@ volumes:
   uploads_data:
   custom_inputs_data:
   skills_data:
+  apps_data:
   hf_cache:
   backups:

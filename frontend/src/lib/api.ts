@@ -44,6 +44,11 @@ import type {
   SkillInfo,
   SkillDetail,
   SkillRegistryItem,
+  AppInfo,
+  AppConfigResponse,
+  AppGrant,
+  AppGrantCreateResponse,
+  AppTokenResponse,
   FeatureFlags,
   WebImportRequest,
   WebImportResponse,
@@ -106,8 +111,27 @@ function extractErrorMessage(body: unknown, status: number): string {
     if (detail && typeof detail === "object" && "msg" in detail) {
       return String((detail as { msg: unknown }).msg);
     }
+    // Validation-error envelope used by the Apps endpoints: {detail: {issues: [...]}}
+    if (detail && typeof detail === "object" && "issues" in detail) {
+      const issues = (detail as { issues: unknown }).issues;
+      if (Array.isArray(issues) && issues.length) return issues.map(String).join("; ");
+    }
   }
   return `HTTP ${status}`;
+}
+
+/**
+ * Thrown when an app package fails install validation (HTTP 400 with
+ * {detail: {issues: [...]}}). Carries the FULL issues list so the UI can show
+ * every problem at once instead of a single flattened line.
+ */
+export class AppInstallError extends Error {
+  issues: string[];
+  constructor(issues: string[]) {
+    super(issues.join("; ") || "App package failed validation");
+    this.name = "AppInstallError";
+    this.issues = issues;
+  }
 }
 
 /**
@@ -1546,6 +1570,154 @@ class ApiClient {
       method: "PUT",
       body: JSON.stringify({ values }),
     });
+  }
+
+  // ===========================================================================
+  // Apps (in-instance app hosting)
+  // ===========================================================================
+  // All routes 404 when the backend's ENABLE_APPS flag is off — callers treat
+  // a failed initial list as "feature disabled" and hide their UI entirely.
+
+  /**
+   * List all installed apps (admin only).
+   */
+  async listApps(): Promise<AppInfo[]> {
+    return this.request<AppInfo[]>("/api/admin/apps");
+  }
+
+  /**
+   * Install (or upgrade) an app from a package zip (admin only).
+   *
+   * @param file - The app package zip
+   * @param collections - Optional collection IDs (for manifests declaring
+   *   "user-selected" collection scoping)
+   * @throws AppInstallError on 400 — carries the full validation issues list
+   */
+  async installApp(file: File, collections?: string[]): Promise<AppInfo> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const params = new URLSearchParams();
+    if (collections && collections.length > 0) {
+      params.set("collections", collections.join(","));
+    }
+    const query = params.toString();
+    const url = `${API_BASE}/api/admin/apps/install${query ? `?${query}` : ""}`;
+    const apiKey = getAdminApiKey();
+
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData,
+      headers: apiKey ? { "X-API-Key": apiKey } : {},
+    });
+
+    if (!res.ok) {
+      if (res.status === 400) {
+        const body = (await res.json().catch(() => null)) as
+          | { detail?: { issues?: unknown } }
+          | null;
+        const rawIssues = body?.detail?.issues;
+        const issues = Array.isArray(rawIssues) ? rawIssues.map(String) : [];
+        if (issues.length) throw new AppInstallError(issues);
+        throw new Error(body ? extractErrorMessage(body, res.status) : "HTTP 400");
+      }
+      throw await toApiError(res, "App installation failed");
+    }
+
+    return res.json();
+  }
+
+  /**
+   * Enable/disable an installed app (admin only).
+   */
+  async updateApp(appId: string, update: { enabled: boolean }): Promise<AppInfo> {
+    return this.request<AppInfo>(`/api/admin/apps/${encodeURIComponent(appId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    });
+  }
+
+  /**
+   * Uninstall an app: deletes its files and revokes its minted API key (admin only).
+   */
+  async deleteApp(appId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/api/admin/apps/${encodeURIComponent(appId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  /**
+   * Get an app's declared config variables + masked stored values (admin only).
+   */
+  async getAppConfig(appId: string): Promise<AppConfigResponse> {
+    return this.request<AppConfigResponse>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/config`
+    );
+  }
+
+  /**
+   * Save app config values (admin only). Masked secrets ("••••••••")
+   * preserve the existing stored value server-side.
+   */
+  async saveAppConfig(
+    appId: string,
+    values: Record<string, string>
+  ): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/config`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ values }),
+      }
+    );
+  }
+
+  /**
+   * List an app's share-link grants (admin only).
+   */
+  async listAppGrants(appId: string): Promise<AppGrant[]> {
+    return this.request<AppGrant[]>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/grants`
+    );
+  }
+
+  /**
+   * Mint a share-link grant (admin only). The returned `share_path` embeds
+   * the grant token and is shown ONCE — it cannot be recovered afterwards.
+   */
+  async createAppGrant(
+    appId: string,
+    request: { label: string; role: "viewer" | "editor"; expires_hours?: number }
+  ): Promise<AppGrantCreateResponse> {
+    return this.request<AppGrantCreateResponse>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/grants`,
+      {
+        method: "POST",
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  /**
+   * Revoke a share-link grant (kills its outstanding app tokens too, admin only).
+   */
+  async revokeAppGrant(appId: string, grantId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/grants/${encodeURIComponent(grantId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  /**
+   * Exchange the logged-in session for a short-lived app token to postMessage
+   * into a sandboxed app iframe (read permission).
+   */
+  async issueAppToken(appId: string): Promise<AppTokenResponse> {
+    return this.request<AppTokenResponse>(
+      `/api/apps/${encodeURIComponent(appId)}/token`,
+      { method: "POST" }
+    );
   }
 
   // ---------------------------------------------------------------------------

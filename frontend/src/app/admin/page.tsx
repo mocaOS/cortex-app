@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { createPortal } from "react-dom";
 import { PageTransition } from "@/components/layout";
-import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations, X402Section } from "@/components/admin";
+import { SystemResetModal, ApiKeyManager, LibraryTransferSection, SkillsManager, GitIntegrations, X402Section, AppsManager } from "@/components/admin";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LogOut,
@@ -400,6 +400,10 @@ export default function AdminPage() {
             <SkillsManager />
           </motion.div>
         )}
+
+        {/* Apps — fetches its own gate (GET /api/admin/apps) and renders
+            nothing when the ENABLE_APPS env flag is off (endpoint 404s). */}
+        <AppsManager />
 
         {/* Git Integration */}
         {config?.enable_git_integration && (

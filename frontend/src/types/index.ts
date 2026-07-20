@@ -658,6 +658,73 @@ export interface SkillConfigResponse {
 }
 
 // =============================================================================
+// Apps Types (in-instance app hosting)
+// =============================================================================
+
+export interface AppPublisher {
+  name: string;
+  url?: string | null;
+}
+
+export interface AppInfo {
+  id: string;
+  name: string;
+  version: string;
+  type: string; // "static" | "platform" | "service"
+  description: string;
+  publisher: AppPublisher;
+  entry: string;
+  enabled: boolean;
+  installed_at?: string | null;
+  key_prefix?: string | null;
+  key_scope: "read" | "read_write" | string;
+  endpoints: string[];
+  external_hosts: string[];
+  collections: string[];
+  sharing_links: boolean;
+  grants_count: number;
+  config_status?: "configured" | "needs_setup" | null;
+}
+
+export interface AppConfigVariable {
+  name: string;
+  description?: string;
+  type: "text" | "secret";
+  required?: boolean;
+  auth_header?: string;
+}
+
+export interface AppConfigResponse {
+  variables: AppConfigVariable[];
+  values: Record<string, string>;
+}
+
+export interface AppGrant {
+  id: string;
+  label: string;
+  role: "viewer" | "editor" | string;
+  created_at?: string | null;
+  expires_at?: string | null;
+  revoked: boolean;
+}
+
+/** Response of grant creation — `share_path` embeds the grant token and is shown ONCE. */
+export interface AppGrantCreateResponse {
+  id: string;
+  role: string;
+  expires_at?: string | null;
+  share_path: string;
+}
+
+export interface AppTokenResponse {
+  token: string;
+  expires_at: string;
+  app_id: string;
+  principal: string;
+  role: string;
+}
+
+// =============================================================================
 // Entity Deduplication Types
 // =============================================================================
 

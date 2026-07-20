@@ -965,6 +965,35 @@ class Settings(BaseSettings):
     #   activate once that config passes verification. The rest of the setup
     #   is deliberately NOT env-driven — see .claude/domain/x402.md.
 
+    # ==========================================================================
+    # Apps (in-instance app hosting — see .claude/domain/apps.md)
+    # ==========================================================================
+    enable_apps: bool = Field(
+        default=False
+    )  # Master switch for the Apps subsystem (install/serve/proxy). Off by
+    #   default: zero new surface (routes 404, no UI) until an operator opts in.
+    apps_dir: str = Field(
+        default=".agents/apps"
+    )  # Directory where installed app bundles live (relative to project root
+    #   or absolute). Mounted as the apps_data volume in production compose.
+    app_max_package_mb: int = Field(
+        default=50
+    )  # Max size of an uploaded app package zip. Uncompressed contents are
+    #   capped at 4x this to block zip bombs.
+    app_token_ttl_seconds: int = Field(
+        default=900
+    )  # Lifetime of the short-lived app tokens the launcher/share shell hands
+    #   to sandboxed apps. Apps renew via postMessage; keep this short.
+    app_proxy_upstream: str = Field(
+        default="http://127.0.0.1:8000"
+    )  # Where the app proxy forwards allowlisted /apps/{slug}/api/cortex/*
+    #   calls (self-loopback by default so auth/metering/rate paths are
+    #   identical to external API traffic).
+    app_http_timeout: int = Field(
+        default=30
+    )  # Timeout in seconds for the platform "http" capability (server-side
+    #   external calls on behalf of platform apps, secret-injected).
+
     @property
     def vision_model_available(self) -> bool:
         """Check if a vision model is configured."""

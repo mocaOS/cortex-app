@@ -1302,3 +1302,68 @@ class SystemConfigResponse(BaseModel):
                 "prompt_security": True
             }
         }
+
+
+# =============================================================================
+# Apps Models (in-instance app hosting — see .claude/domain/apps.md)
+# =============================================================================
+
+class AppConfigVariable(BaseModel):
+    """One admin-configurable variable declared in an app manifest."""
+    name: str
+    description: Optional[str] = None
+    type: str = "text"  # "text" | "secret"
+    required: bool = False
+    auth_header: Optional[str] = None
+
+
+class AppInfo(BaseModel):
+    """Installed app summary for admin listing and the launcher."""
+    id: str
+    name: str
+    version: str
+    type: str  # "static" | "platform" | "service"
+    description: str
+    publisher: Dict[str, Any]
+    entry: str = "index.html"
+    enabled: bool = True
+    installed_at: Optional[datetime] = None
+    key_prefix: Optional[str] = None
+    key_scope: str = "read"
+    endpoints: List[str] = Field(default_factory=list)
+    external_hosts: List[str] = Field(default_factory=list)
+    collections: List[str] = Field(default_factory=list)
+    sharing_links: bool = False
+    grants_count: int = 0
+    config_status: Optional[str] = None  # "configured" | "needs_setup" | None
+
+
+class AppEnableRequest(BaseModel):
+    enabled: bool
+
+
+class AppConfigSaveRequest(BaseModel):
+    values: Dict[str, str] = Field(default_factory=dict)
+
+
+class AppGrantCreateRequest(BaseModel):
+    label: str = ""
+    role: str = "viewer"  # "viewer" | "editor"
+    expires_hours: Optional[int] = None  # None = no expiry
+
+
+class AppGrantInfo(BaseModel):
+    id: str
+    label: str
+    role: str
+    created_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    revoked: bool = False
+
+
+class AppTokenResponse(BaseModel):
+    token: str
+    expires_at: datetime
+    app_id: str
+    principal: str
+    role: str

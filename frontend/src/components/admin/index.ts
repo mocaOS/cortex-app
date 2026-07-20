@@ -8,3 +8,6 @@ export { SkillsManager } from "./SkillsManager";
 export { SkillConfigModal } from "./SkillConfigModal";
 export { GitIntegrations } from "./GitIntegrations";
 export { X402Section } from "./X402Section";
+export { AppsManager } from "./AppsManager";
+export { AppConfigModal } from "./AppConfigModal";
+export { AppGrantsModal } from "./AppGrantsModal";

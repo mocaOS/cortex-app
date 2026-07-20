@@ -81,6 +81,11 @@ from app.models import (
     SkillInstallRequest,
     SkillUpdateRequest,
     SkillConfigSaveRequest,
+    # Apps models
+    AppEnableRequest,
+    AppConfigSaveRequest,
+    AppGrantCreateRequest,
+    AppTokenResponse,
     UpdateEntityRequest,
     # Git integration models
     GitConnectionCreate,
@@ -5635,6 +5640,549 @@ async def save_skill_config(
         return {"message": "Configuration saved", "skill_id": skill_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# =============================================================================
+# Apps — in-instance app hosting (install / serve / token broker / proxy)
+# =============================================================================
+#
+# Apps are static bundles (built from cortex-app-template) installed from a
+# zip and served under /apps/{app_id}/ inside a sandboxed iframe. They reach
+# the Cortex API only through the proxy below, which validates short-lived
+# app tokens and attaches the app's server-side minted key — the browser
+# never holds a real key. Gated on ENABLE_APPS (default off: all routes 404).
+# See .claude/domain/apps.md and cortex-registry ECOSYSTEM.md.
+
+
+def _require_apps_enabled():
+    if not get_settings().enable_apps:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def _app_token_payload(request: Request, app_id: str) -> dict:
+    """Validate the Bearer app token on a proxied request or raise 401."""
+    from app.services.app_service import get_app_service
+
+    authz = request.headers.get("authorization", "")
+    token = authz[7:] if authz.lower().startswith("bearer ") else ""
+    payload = get_app_service().validate_token(token, app_id)
+    if not payload:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired app token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
+
+
+@app.get("/api/admin/apps")
+async def list_apps(auth: AuthResult = Depends(require_admin)):
+    """List all installed apps."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    return get_app_service().list_apps()
+
+
+@app.post("/api/admin/apps/install")
+async def install_app(
+    file: UploadFile = File(...),
+    collections: Optional[str] = None,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Install (or upgrade) an app from a package zip.
+
+    `collections` — optional comma-separated collection IDs; used when the
+    manifest declares "user-selected" collection scoping.
+    """
+    _require_apps_enabled()
+    from app.services.app_service import AppValidationError, get_app_service
+
+    data = await file.read()
+    selected = [c.strip() for c in (collections or "").split(",") if c.strip()]
+    try:
+        return get_app_service().install_from_zip(data, collections=selected or None)
+    except AppValidationError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    except Exception as e:
+        logger.error(f"App installation failed: {e}")
+        raise HTTPException(status_code=500, detail="App installation failed")
+
+
+@app.patch("/api/admin/apps/{app_id}")
+async def update_app(
+    app_id: str,
+    request: AppEnableRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Enable/disable an installed app."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    result = get_app_service().set_enabled(app_id, request.enabled)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return result
+
+
+@app.delete("/api/admin/apps/{app_id}")
+async def delete_app(app_id: str, auth: AuthResult = Depends(require_admin)):
+    """Uninstall an app: delete its files and revoke its minted API key."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    if not get_app_service().delete_app(app_id):
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return {"message": f"App '{app_id}' deleted"}
+
+
+@app.get("/api/admin/apps/{app_id}/config")
+async def get_app_config(app_id: str, auth: AuthResult = Depends(require_admin)):
+    """The app's declared config variables + masked stored values."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    config = get_app_service().get_config(app_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return config
+
+
+@app.put("/api/admin/apps/{app_id}/config")
+async def save_app_config(
+    app_id: str,
+    request: AppConfigSaveRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Save app config values (masked secrets preserve existing values)."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    if not get_app_service().save_config(app_id, request.values):
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return {"message": "Configuration saved", "app_id": app_id}
+
+
+@app.get("/api/admin/apps/{app_id}/grants")
+async def list_app_grants(app_id: str, auth: AuthResult = Depends(require_admin)):
+    """List an app's share-link grants."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    grants = get_app_service().list_grants(app_id)
+    if grants is None:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    return grants
+
+
+@app.post("/api/admin/apps/{app_id}/grants")
+async def create_app_grant(
+    app_id: str,
+    request: AppGrantCreateRequest,
+    auth: AuthResult = Depends(require_admin),
+):
+    """Mint a share-link grant. The returned URL is shown ONCE — the grant
+    token inside it is not stored in recoverable form."""
+    _require_apps_enabled()
+    from app.services.app_service import AppValidationError, get_app_service
+
+    try:
+        grant = get_app_service().create_grant(
+            app_id, request.label, request.role, request.expires_hours
+        )
+    except AppValidationError as e:
+        raise HTTPException(status_code=400, detail={"issues": e.issues})
+    if not grant:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    grant["share_path"] = f"/a/{app_id}?g={grant.pop('grant_token')}"
+    return grant
+
+
+@app.delete("/api/admin/apps/{app_id}/grants/{grant_id}")
+async def revoke_app_grant(
+    app_id: str, grant_id: str, auth: AuthResult = Depends(require_admin)
+):
+    """Revoke a share-link grant (kills its outstanding app tokens too)."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    if not get_app_service().revoke_grant(app_id, grant_id):
+        raise HTTPException(status_code=404, detail="Grant not found")
+    return {"message": "Grant revoked"}
+
+
+@app.post("/api/apps/{app_id}/token")
+async def issue_app_token(
+    app_id: str, auth: AuthResult = Depends(require_read_permission)
+):
+    """Owner path: the logged-in frontend launcher exchanges its API access
+    for a short-lived app token to postMessage into the sandboxed iframe."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    service = get_app_service()
+    info = service.get_app(app_id)
+    if not info or not info.enabled:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found")
+    # The proxy will attach the app's minted key on every call. For a
+    # read_write app that key carries MANAGE, so the caller must themselves
+    # hold MANAGE — otherwise a READ-only key could borrow the app's key to
+    # perform writes it isn't entitled to. (Admin satisfies has_permission.)
+    if info.key_scope == "read_write" and not auth.has_permission(APIKeyPermission.MANAGE):
+        raise HTTPException(
+            status_code=403,
+            detail="This app performs writes; a manage-scoped key is required to launch it",
+        )
+    token, expires_at = service.issue_token(app_id, principal="owner", role="admin")
+    return AppTokenResponse(
+        token=token, expires_at=expires_at, app_id=app_id, principal="owner", role="admin"
+    )
+
+
+# Grant exchange is the only unauthenticated apps endpoint, so it gets its
+# own small per-IP limiter (signed grants make brute force impractical, but
+# there's no reason to allow free-running guesses at all).
+_grant_exchange_hits: Dict[str, tuple] = {}
+_GRANT_EXCHANGE_LIMIT = 20  # requests per window per IP
+_GRANT_EXCHANGE_WINDOW = 60.0  # seconds
+
+
+def _grant_exchange_rate_ok(request: Request) -> bool:
+    ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    now = time.monotonic()
+    start, count = _grant_exchange_hits.get(ip, (now, 0))
+    if now - start > _GRANT_EXCHANGE_WINDOW:
+        start, count = now, 0
+    _grant_exchange_hits[ip] = (start, count + 1)
+    if len(_grant_exchange_hits) > 10_000:  # bound memory under IP churn
+        cutoff = now - _GRANT_EXCHANGE_WINDOW
+        for stale in [k for k, v in _grant_exchange_hits.items() if v[0] < cutoff]:
+            _grant_exchange_hits.pop(stale, None)
+    return count + 1 <= _GRANT_EXCHANGE_LIMIT
+
+
+@app.post("/api/apps/{app_id}/grant-exchange")
+async def exchange_app_grant(app_id: str, request: Request):
+    """Share-link path (unauthenticated): a valid grant token → short-lived
+    app token. Grants are signed, revocable, and optionally expiring."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    if not _grant_exchange_rate_ok(request):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many attempts — try again shortly",
+            headers={"Retry-After": "60"},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    grant_token = body.get("grant", "")
+    result = get_app_service().exchange_grant(app_id, grant_token)
+    if not result:
+        raise HTTPException(status_code=403, detail="Invalid, revoked, or expired share link")
+    token, expires_at, role = result
+    return AppTokenResponse(
+        token=token, expires_at=expires_at, app_id=app_id, principal="link", role=role
+    )
+
+
+# NOTE: registered before the static catch-all so /apps/{id}/api/* never
+# falls through to file serving.
+@app.api_route(
+    "/apps/{app_id}/api/cortex/{api_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def app_proxy(app_id: str, api_path: str, request: Request):
+    """The app proxy: validates the app token, enforces the manifest's
+    endpoint allowlist, and forwards to the local API with the app's minted
+    key. SSE responses stream through unbuffered."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    _app_token_payload(request, app_id)
+    service = get_app_service()
+    if not service.endpoint_allowed(app_id, api_path):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Endpoint '{api_path}' is not in this app's manifest allowlist",
+        )
+    upstream_key = service.upstream_api_key(app_id)
+    if not upstream_key:
+        raise HTTPException(status_code=503, detail="App key unavailable")
+
+    url = f"{get_settings().app_proxy_upstream}/api/{api_path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+    headers = {
+        "X-API-Key": upstream_key,
+        "Accept": request.headers.get("accept", "*/*"),
+        "X-Request-ID": request.headers.get("x-request-id", ""),
+    }
+    if request.headers.get("content-type"):
+        headers["Content-Type"] = request.headers["content-type"]
+    body = await request.body()
+
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=None, write=60.0, pool=10.0)
+    )
+    try:
+        upstream = await client.send(
+            client.build_request(request.method, url, content=body, headers=headers),
+            stream=True,
+        )
+    except httpx.HTTPError as e:
+        await client.aclose()
+        logger.error(f"App proxy upstream error for '{app_id}': {e}")
+        raise HTTPException(status_code=502, detail="Upstream request failed")
+
+    async def relay():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    response_headers = {
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() in ("cache-control", "x-accel-buffering", "x-request-id")
+    }
+    return StreamingResponse(
+        relay(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+        headers=response_headers,
+    )
+
+
+@app.get("/apps/{app_id}/api/platform/config")
+async def app_platform_config(app_id: str, request: Request):
+    """Platform capability: the app reads its own NON-SECRET config values
+    (e.g. a base URL the admin set). Secret-typed values never cross this
+    boundary — they are only ever injected server-side."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    _app_token_payload(request, app_id)
+    values = get_app_service().public_config(app_id)
+    if values is None:
+        raise HTTPException(status_code=404, detail="App not found")
+    return {"values": values}
+
+
+@app.post("/apps/{app_id}/api/platform/http")
+async def app_platform_http(app_id: str, request: Request):
+    """Platform capability: server-side external HTTP with secret injection.
+
+    The app posts an envelope {method, url, body?, content_type?}; the call
+    executes from the backend with auth headers built from the app's
+    encrypted config (``auth_header`` semantics, like skills). This removes
+    both browser constraints at once: the target needs no CORS config, and
+    credentials never reach the client. Targets are restricted to the
+    manifest's declared hosts (admin-approved at install) and SSRF-guarded
+    (loopback/metadata blocked; private ranges allowed — self-hosted targets
+    are the point). Redirects are not followed (they could escape the
+    allowlist)."""
+    _require_apps_enabled()
+    from urllib.parse import urlsplit
+
+    from app.services.app_service import get_app_service
+    from app.services.ssrf_guard import SSRFError, validate_url
+
+    _app_token_payload(request, app_id)
+    service = get_app_service()
+    if not service.has_capability(app_id, "http"):
+        raise HTTPException(
+            status_code=403, detail='This app does not declare the "http" capability'
+        )
+
+    try:
+        envelope = await request.json()
+        method = str(envelope["method"]).upper()
+        url = str(envelope["url"])
+    except Exception:
+        raise HTTPException(
+            status_code=400, detail='Body must be JSON: {"method", "url", "body"?}'
+        )
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        raise HTTPException(status_code=400, detail=f"Unsupported method {method}")
+
+    allowed_hosts = service.allowed_http_hosts(app_id)
+    if not allowed_hosts:
+        raise HTTPException(
+            status_code=503,
+            detail="No allowed hosts resolved — the admin must fill in this app's configuration",
+        )
+    target_host = (urlsplit(url).hostname or "").lower()
+    if target_host not in allowed_hosts:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Host '{target_host}' is not in this app's declared hosts",
+        )
+    try:
+        validate_url(url, allow_private=True)
+    except SSRFError as e:
+        raise HTTPException(status_code=403, detail=f"Blocked target: {e}")
+
+    headers = dict(service.platform_auth_headers(app_id))
+    headers.setdefault("Accept", "application/json")
+    if envelope.get("content_type"):
+        headers["Content-Type"] = str(envelope["content_type"])
+    elif envelope.get("body") is not None:
+        headers.setdefault("Content-Type", "application/json")
+
+    timeout = get_settings().app_http_timeout
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False
+        ) as client:
+            upstream = await client.request(
+                method,
+                url,
+                content=(
+                    envelope["body"].encode()
+                    if isinstance(envelope.get("body"), str)
+                    else None
+                ),
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        logger.warning(f"App '{app_id}' platform http to {target_host} failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Upstream request failed: {type(e).__name__}")
+
+    content = upstream.content
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=502, detail="Upstream response exceeds 20 MB")
+    return Response(
+        content=content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.get("/apps/{app_id}/{asset_path:path}")
+async def serve_app_asset(app_id: str, asset_path: str):
+    """Serve an installed app's static bundle with its per-app CSP.
+
+    Cookie-less by design: nothing here reads a session, and the sandboxed
+    iframe (opaque origin) can't send one — the app token is the only
+    credential in play."""
+    _require_apps_enabled()
+    from app.services.app_service import get_app_service
+
+    service = get_app_service()
+    resolved = service.resolve_static(app_id, asset_path)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(
+        resolved,
+        headers={
+            "Content-Security-Policy": service.csp_header(app_id),
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@app.get("/apps/{app_id}")
+async def serve_app_root(app_id: str):
+    """Redirect bare /apps/{id} to the slash form so relative asset and
+    ./api/… URLs resolve under the app's base path."""
+    _require_apps_enabled()
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse(url=f"/apps/{app_id}/", status_code=307)
+
+
+@app.get("/a/{app_id}")
+async def app_share_shell(app_id: str):
+    """Cookie-less share-link shell: hosts the sandboxed iframe and brokers
+    grant → app-token exchange (including renewals) via postMessage. Visitors
+    hold nothing that validates anywhere but the app proxy."""
+    _require_apps_enabled()
+    import html as _html
+
+    from fastapi.responses import HTMLResponse
+    from app.services.app_service import get_app_service
+
+    info = get_app_service().get_app(app_id)
+    if not info or not info.enabled or not info.sharing_links:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # HTML-escape every interpolated value. The manifest is third-party
+    # controlled (app author / registry), so name and entry are untrusted and
+    # only length/suffix-validated at install — without escaping they'd be a
+    # stored XSS in this shell (whose CSP permits inline script). app_id is
+    # slug-validated but escaped too, defensively.
+    safe_name = _html.escape(info.name)
+    safe_entry = _html.escape(info.entry, quote=True)
+    safe_app_id = _html.escape(app_id, quote=True)
+
+    # The grant stays in the URL fragment-free query; the shell exchanges it
+    # for a short-lived token and never renders app-controlled markup itself.
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>{safe_name}</title>
+<style>html,body{{margin:0;height:100%;background:#0a0a0a}}iframe{{border:0;width:100%;height:100%}}
+#err{{color:#fafafa;font:14px monospace;padding:2rem;display:none}}</style>
+</head><body>
+<div id="err">This share link is invalid, revoked, or expired.</div>
+<iframe id="app" sandbox="allow-scripts allow-forms allow-downloads" src="/apps/{safe_app_id}/{safe_entry}"></iframe>
+<!-- entry file loaded directly (not /apps/{app_id}/): through the Next origin,
+     trailing-slash normalization 308s the slash form and the backend 307s it
+     back — an infinite loop. Relative-path resolution is identical either way. -->
+
+<script>
+(function () {{
+  var grant = new URLSearchParams(location.search).get("g") || "";
+  var frame = document.getElementById("app");
+  var token = null;
+  function exchange(cb) {{
+    fetch("/api/apps/{safe_app_id}/grant-exchange", {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{grant: grant}})
+    }}).then(function (r) {{ return r.ok ? r.json() : Promise.reject(r.status); }})
+      .then(function (d) {{ token = d.token; if (cb) cb(); }})
+      .catch(function () {{
+        document.getElementById("err").style.display = "block";
+        frame.style.display = "none";
+      }});
+  }}
+  function send() {{
+    if (token) frame.contentWindow.postMessage({{type: "cortex:token", token: token}}, "*");
+  }}
+  window.addEventListener("message", function (e) {{
+    if (e.source !== frame.contentWindow || !e.data) return;
+    if (e.data.type === "cortex:ready") {{ token ? send() : exchange(send); }}
+    if (e.data.type === "cortex:token:renew") {{ exchange(send); }}
+  }});
+  exchange(null);
+}})();
+</script>
+</body></html>"""
+    return HTMLResponse(
+        html,
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                "frame-src 'self'; connect-src 'self'"
+            ),
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # =============================================================================

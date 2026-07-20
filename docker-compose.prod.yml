@@ -49,10 +49,13 @@ services:
       - PYTHONUNBUFFERED=1
       # API Key Analytics - track admin key usage (default: false)
       - TRACK_ADMIN_API_KEY_USAGE=${TRACK_ADMIN_API_KEY_USAGE:-false}
+      # Apps (in-instance app hosting) — off by default; see .claude/domain/apps.md
+      - ENABLE_APPS=${ENABLE_APPS:-false}
     volumes:
       - uploads_data:/app/uploads
       - custom_inputs_data:/app/custom_inputs
       - skills_data:/app/.agents/skills
+      - apps_data:/app/.agents/apps
       # Persist HuggingFace model cache (cross-encoder reranker, embeddings)
       # across container restarts so we don't re-download ~80MB of models each time.
       - hf_cache:/app/.cache/huggingface
@@ -140,4 +143,5 @@ volumes:
   uploads_data:
   custom_inputs_data:
   skills_data:
+  apps_data:
   hf_cache:

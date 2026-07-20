@@ -14,10 +14,35 @@ const nextConfig = {
     proxyTimeout: 300_000,
   },
   async rewrites() {
+    const backend = process.env.API_URL || "http://localhost:8000";
+    // All rewrites returned as a plain array run in the afterFiles phase:
+    // filesystem routes (Next pages) win first, then these apply.
+    //
+    // Apps routing split:
+    // - /apps               → Next page (launcher grid) — static filesystem
+    //                         route, wins over afterFiles rewrites.
+    // - /apps/launch/:appId → Next page (sandboxed iframe host). This is a
+    //                         DYNAMIC route, and afterFiles rewrites are
+    //                         checked BEFORE dynamic routes — so the rewrite
+    //                         below must exclude the "launch" segment via a
+    //                         negative lookahead or it swallows this page.
+    //                         "launch" is a reserved app id (enforced by the
+    //                         backend manifest validator).
+    // - /apps/:appId/:path* → backend static app serving + token proxy
+    //                         (/apps/{id}/api/cortex/*).
+    // - /a/:path*           → backend share-link shell (/a/{id}?g=...).
     return [
       {
         source: "/api/:path*",
-        destination: `${process.env.API_URL || "http://localhost:8000"}/api/:path*`,
+        destination: `${backend}/api/:path*`,
+      },
+      {
+        source: "/apps/:appId((?!launch(?:/|$))[a-z0-9-]+)/:path*",
+        destination: `${backend}/apps/:appId/:path*`,
+      },
+      {
+        source: "/a/:path*",
+        destination: `${backend}/a/:path*`,
       },
     ];
   },

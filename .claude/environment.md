@@ -250,6 +250,17 @@ See [`.claude/domain/skills.md`](domain/skills.md) for the full Agent Skills sys
 - `MAX_SKILL_TOOLS` (default: 10) — max total skill-provided tools injected into researcher agent
 - `MAX_SKILL_INSTRUCTIONS_TOKENS` (default: 4000) — approximate token budget for skill instruction injection
 
+## Apps (in-instance app hosting)
+
+See [`.claude/domain/apps.md`](domain/apps.md) for the full subsystem (security model, package format, proxy).
+
+- `ENABLE_APPS` (default: false) — master switch for the Apps subsystem. Off = every app route (admin CRUD, static serving, proxy, share shells) returns 404 and the admin UI section hides itself — zero traces when disabled
+- `APPS_DIR` (default: `.agents/apps`) — directory holding installed app bundles (relative to project root or absolute). Persist via a Docker volume (`apps_data`) in production compose
+- `APP_MAX_PACKAGE_MB` (default: 50) — max uploaded app package (zip) size; uncompressed contents capped at 4x this (zip-bomb guard)
+- `APP_TOKEN_TTL_SECONDS` (default: 900) — lifetime of the short-lived app tokens handed to sandboxed apps; apps renew via postMessage. Signing secret derives from `SESSION_SECRET` (fallback `ENCRYPTION_KEY`/`ADMIN_API_KEY`)
+- `APP_PROXY_UPSTREAM` (default: `http://127.0.0.1:8000`) — where the app proxy forwards allowlisted `/apps/{id}/api/cortex/*` calls (self-loopback so auth/metering/rate-limit paths are identical to external API traffic)
+- `APP_HTTP_TIMEOUT` (default: 30) — timeout in seconds for the platform `http` capability (server-side external calls on behalf of `type: "platform"` apps, with secrets injected from app config)
+
 ## Git Integration
 
 See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the full connector. Requires `git` in the backend image and `pathspec` (both included).
