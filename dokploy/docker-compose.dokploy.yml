@@ -181,6 +181,21 @@ services:
       # MUST be declared here or Dokploy never interpolates it (see the
       # helper block note above).
       - X402_ENABLED=${X402_ENABLED:-false}
+      # --- Git Integration (GitHub / GitLab / Gitea repo connector) ---
+      # Set per-tenant in the Dokploy env by the operator. The PAT is NOT an
+      # env var — tenant users enter it in Settings → Git Integration (encrypted
+      # at rest with ENCRYPTION_KEY). MUST be declared here or Dokploy never
+      # interpolates the values (see the helper block note above). Every :-
+      # default equals backend/app/config.py's built-in default. GIT_WORK_DIR
+      # is intentionally NOT declared: it's a self-healing clone cache at
+      # /app/git_repos (sync state lives in Neo4j; a redeploy just re-clones).
+      - ENABLE_GIT_INTEGRATION=${ENABLE_GIT_INTEGRATION:-false}
+      - GIT_CLONE_DEPTH=${GIT_CLONE_DEPTH:-1}
+      - GIT_MAX_REPO_SIZE_MB=${GIT_MAX_REPO_SIZE_MB:-500}
+      - GIT_SYNC_MAX_FILE_SIZE_MB=${GIT_SYNC_MAX_FILE_SIZE_MB:-5}
+      - GIT_SYNC_POLL_INTERVAL=${GIT_SYNC_POLL_INTERVAL:-5}
+      - GIT_HTTP_TIMEOUT=${GIT_HTTP_TIMEOUT:-30}
+      - GIT_HTTP_INSECURE_HOSTS=${GIT_HTTP_INSECURE_HOSTS:-}
       # --- Per-plan overrides (model tiers, processing, resource limits) ---
       # Forwarded from the subscription-plan env so plan tiers actually differ.
       # Dokploy only interpolates DECLARED vars, so each knob a plan controls
