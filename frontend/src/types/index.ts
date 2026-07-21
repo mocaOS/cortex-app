@@ -686,6 +686,30 @@ export interface AppInfo {
   config_status?: "configured" | "needs_setup" | null;
 }
 
+export interface AppTaskSummary {
+  task_id: string;
+  name: string;
+  status: "pending" | "running" | "paused" | "completed" | "failed" | "cancelled" | string;
+  schedule?: { everyMinutes: number } | null;
+  created_at?: string;
+  created_by?: string;
+  counts: {
+    total?: number;
+    done?: number;
+    failed?: number;
+    skipped?: number;
+    deduped?: number;
+  };
+  error?: string | null;
+  message?: string;
+  last_run?: {
+    run_id: string;
+    started_at: string;
+    finished_at?: string;
+    status: string;
+  } | null;
+}
+
 export interface RegistryAppEntry {
   slug: string;
   name: string;

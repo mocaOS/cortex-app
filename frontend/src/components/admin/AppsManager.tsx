@@ -23,6 +23,7 @@ import { api, AppInstallError } from "@/lib/api";
 import { useIsMounted } from "@/lib/hooks";
 import { AppConfigModal } from "./AppConfigModal";
 import { AppGrantsModal } from "./AppGrantsModal";
+import { AppTasksPanel } from "./AppTasksPanel";
 import type { AppInfo, Collection, RegistryAppEntry } from "@/types";
 
 /**
@@ -431,6 +432,9 @@ export function AppsManager() {
                                 </div>
                               )}
                             </div>
+
+                            {/* Background tasks (platform apps; hidden when none) */}
+                            <AppTasksPanel appId={app.id} />
 
                             {/* Actions */}
                             <div className="flex items-center gap-3">

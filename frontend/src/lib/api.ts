@@ -46,6 +46,7 @@ import type {
   SkillRegistryItem,
   AppInfo,
   AppRegistryResponse,
+  AppTaskSummary,
   AppConfigResponse,
   AppGrant,
   AppGrantCreateResponse,
@@ -1584,6 +1585,40 @@ class ApiClient {
    */
   async listApps(): Promise<AppInfo[]> {
     return this.request<AppInfo[]>("/api/admin/apps");
+  }
+
+  /**
+   * List an app's platform tasks (admin oversight — scheduled syncs et al.).
+   */
+  async listAppTasks(appId: string): Promise<AppTaskSummary[]> {
+    const data = await this.request<{ tasks: AppTaskSummary[] }>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/tasks`,
+    );
+    return data.tasks;
+  }
+
+  /**
+   * Control an app task: pause | resume | cancel | retryFailed | runNow.
+   */
+  async appTaskAction(
+    appId: string,
+    taskId: string,
+    action: string,
+  ): Promise<AppTaskSummary> {
+    return this.request<AppTaskSummary>(
+      `/api/admin/apps/${encodeURIComponent(appId)}/tasks/${encodeURIComponent(taskId)}`,
+      { method: "PATCH", body: JSON.stringify({ action }) },
+    );
+  }
+
+  /**
+   * Delete an app task (cancels it first if running).
+   */
+  async deleteAppTask(appId: string, taskId: string): Promise<void> {
+    await this.request(
+      `/api/admin/apps/${encodeURIComponent(appId)}/tasks/${encodeURIComponent(taskId)}`,
+      { method: "DELETE" },
+    );
   }
 
   /**
