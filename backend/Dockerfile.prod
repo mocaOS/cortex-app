@@ -4,9 +4,13 @@ WORKDIR /app
 
 # Install system dependencies for Docling (PDF/image processing requires X11 libs, OCR).
 # gosu lets the entrypoint drop from root to the app user after fixing volume ownership.
+# git is required by the Git Integration connector (git_connector_service spawns
+# the git CLI for clone/fetch/diff) — without it every sync dies instantly with
+# a bare "[Errno 2] No such file or directory" from create_subprocess_exec.
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    git \
     gosu \
     libxcb1 \
     libx11-6 \
