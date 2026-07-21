@@ -895,10 +895,10 @@ class AppService:
                     continue
             header_name, _, header_value = template.partition(":")
             rendered = header_value.strip()
-            # google_sa_token(VAR, scopes) must reach the async minting stage
-            # (execute_app_http) carrying the VAR NAME — shield it from the
-            # substitution below, which would inline the raw key JSON
-            sa_exprs = re.findall(r"google_sa_token\([^()]*\)", rendered)
+            # google_sa_token(...) / ms_graph_token(...) must reach the async
+            # minting stage (execute_app_http) carrying VAR NAMES — shield
+            # them from the substitution below, which would inline raw secrets
+            sa_exprs = re.findall(r"(?:google_sa_token|ms_graph_token)\([^()]*\)", rendered)
             for j, expr in enumerate(sa_exprs):
                 rendered = rendered.replace(expr, f"\x00GSA{j}\x00")
             # longest name first — var names may be prefixes of each other
@@ -1012,6 +1012,82 @@ class AppService:
 
         result = header_value
         for match in re.finditer(r"google_sa_token\(([^()]*)\)", header_value):
+            token = await mint(match)
+            result = result.replace(match.group(0), token)
+        return result
+
+    _MS_LOGIN_BASE = "https://login.microsoftonline.com"
+    _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{1,80}$")
+
+    async def resolve_ms_graph_tokens(self, app_id: str, header_value: str) -> str:
+        """Resolve every ``ms_graph_token(TENANT_VAR, CLIENT_VAR, SECRET_VAR)``
+        expression to an app-only Microsoft Graph Bearer token minted via the
+        OAuth2 client-credentials grant — the Sites.Selected model: the admin
+        registers an Entra app per deployment and grants it specific
+        SharePoint sites; no user sign-in exists anywhere.
+
+        Same containment as the Google transform: the exchange happens
+        server-side against the PINNED login.microsoftonline.com endpoint
+        (tenant segment sanitized — a hostile config value must not steer the
+        path), the client secret never enters task context or the browser,
+        and only the short-lived token goes to allowlisted hosts. Cached
+        until shortly before expiry."""
+
+        async def mint(match: "re.Match[str]") -> str:
+            parts = [p.strip() for p in match.group(1).split(",")]
+            if len(parts) != 3 or not all(parts):
+                raise ValueError(
+                    "ms_graph_token needs exactly: "
+                    "ms_graph_token(TENANT_VAR, CLIENT_ID_VAR, SECRET_VAR)"
+                )
+            cache_key = (app_id, "ms_graph", *parts)
+            cached = self._sa_token_cache.get(cache_key)
+            if cached and time.monotonic() < cached[1]:
+                return cached[0]
+
+            loaded = self._load(app_id)
+            if not loaded:
+                raise ValueError("app not found")
+            config = self._decrypted_config(app_id, loaded[0])
+            tenant, client_id, secret = (config.get(p, "") for p in parts)
+            if not tenant or not client_id or not secret:
+                missing = [p for p in parts if not config.get(p)]
+                raise ValueError(f"config var(s) not set: {', '.join(missing)}")
+            if not self._TENANT_RE.match(tenant):
+                raise ValueError("tenant id must be a GUID or domain name")
+
+            import httpx
+
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    f"{self._MS_LOGIN_BASE}/{tenant}/oauth2/v2.0/token",
+                    data={
+                        "client_id": client_id,
+                        "client_secret": secret,
+                        "grant_type": "client_credentials",
+                        "scope": "https://graph.microsoft.com/.default",
+                    },
+                )
+            if response.status_code != 200:
+                body = response.json() if "json" in response.headers.get(
+                    "content-type", ""
+                ) else {}
+                raise ValueError(
+                    f"Microsoft token exchange failed ({response.status_code}): "
+                    f"{body.get('error_description', response.text[:200])[:200]}"
+                )
+            body = response.json()
+            token = body.get("access_token", "")
+            if not token:
+                raise ValueError("Microsoft token exchange returned no access_token")
+            expires_in = int(body.get("expires_in", 3600))
+            self._sa_token_cache[cache_key] = (
+                token, time.monotonic() + max(60, expires_in - 300)
+            )
+            return token
+
+        result = header_value
+        for match in re.finditer(r"ms_graph_token\(([^()]*)\)", header_value):
             token = await mint(match)
             result = result.replace(match.group(0), token)
         return result

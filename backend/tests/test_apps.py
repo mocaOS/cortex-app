@@ -722,3 +722,65 @@ def test_google_sa_token_transform(apps_env, monkeypatch):
     import pytest as _pytest
     with _pytest.raises(ValueError, match="token_uri"):
         asyncio.run(apps_env.resolve_google_sa_tokens("gdrive-app", header))
+
+
+def test_ms_graph_token_transform(apps_env, monkeypatch):
+    """auth_header ms_graph_token(TENANT, CLIENT, SECRET): app-only client-
+    credentials mint against the pinned Microsoft endpoint, tenant segment
+    sanitized, cached — the Sites.Selected SharePoint model."""
+    import asyncio
+
+    import httpx
+
+    manifest = make_manifest(
+        id="sp-app",
+        type="platform",
+        capabilities={"http": {"hosts": ["graph.microsoft.com"]}},
+        config=[
+            {"name": "ENTRA_TENANT_ID", "type": "text", "required": True},
+            {"name": "ENTRA_CLIENT_ID", "type": "text", "required": True},
+            {"name": "ENTRA_CLIENT_SECRET", "type": "secret",
+             "auth_header": "Authorization: Bearer ms_graph_token(ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET)",
+             "auth_host": "graph.microsoft.com"},
+        ],
+    )
+    apps_env.install_from_zip(make_zip(manifest))
+    apps_env.save_config("sp-app", {
+        "ENTRA_TENANT_ID": "qwellcode.onmicrosoft.com",
+        "ENTRA_CLIENT_ID": "client-guid",
+        "ENTRA_CLIENT_SECRET": "s3cret~value",
+    })
+
+    exchanges = []
+
+    async def fake_post(self, url, data=None, **kwargs):
+        exchanges.append(str(url))
+        assert str(url) == ("https://login.microsoftonline.com/"
+                             "qwellcode.onmicrosoft.com/oauth2/v2.0/token")
+        assert data["client_id"] == "client-guid"
+        assert data["client_secret"] == "s3cret~value"
+        assert data["grant_type"] == "client_credentials"
+        assert data["scope"] == "https://graph.microsoft.com/.default"
+        return httpx.Response(200, json={"access_token": "eyJ.MINTED", "expires_in": 3599},
+                               headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    header = apps_env.platform_auth_headers("sp-app", target_host="graph.microsoft.com")["Authorization"]
+    assert "ms_graph_token(" in header and "s3cret~value" not in header
+
+    resolved = asyncio.run(apps_env.resolve_ms_graph_tokens("sp-app", header))
+    assert resolved == "Bearer eyJ.MINTED"
+    asyncio.run(apps_env.resolve_ms_graph_tokens("sp-app", header))
+    assert len(exchanges) == 1  # cached
+
+    # auth_host scoping: nothing injected on the login host itself
+    assert "Authorization" not in apps_env.platform_auth_headers(
+        "sp-app", target_host="login.microsoftonline.com")
+
+    # hostile tenant value must not steer the URL path
+    import pytest as _pytest
+    apps_env.save_config("sp-app", {"ENTRA_TENANT_ID": "evil.example/..%2f"})
+    apps_env._sa_token_cache.clear()
+    with _pytest.raises(ValueError, match="tenant"):
+        asyncio.run(apps_env.resolve_ms_graph_tokens("sp-app", header))

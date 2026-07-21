@@ -144,14 +144,16 @@ async def execute_app_http(
     if auth_override:
         headers["Authorization"] = auth_override
     for name, value in list(headers.items()):
-        if "google_sa_token(" in value:
-            # server-side service-account token minting (cached) — the key
-            # JSON stays in encrypted config, only the short-lived token
-            # goes on the wire, and only to allowlisted hosts
-            try:
+        # server-side token minting (cached) — credentials stay in encrypted
+        # config, only short-lived tokens go on the wire, and only to
+        # allowlisted hosts
+        try:
+            if "google_sa_token(" in value:
                 headers[name] = await service.resolve_google_sa_tokens(app_id, value)
-            except ValueError as e:
-                raise AppHttpError(502, f"Service-account auth failed: {e}")
+            elif "ms_graph_token(" in value:
+                headers[name] = await service.resolve_ms_graph_tokens(app_id, value)
+        except ValueError as e:
+            raise AppHttpError(502, f"Token minting failed: {e}")
     if content_type:
         headers["Content-Type"] = content_type
     elif body is not None:
