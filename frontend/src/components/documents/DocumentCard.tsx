@@ -59,6 +59,7 @@ interface Document {
   processing_paused?: boolean;
   paused_reason?: string;
   resume_available?: boolean;
+  processing_queued?: boolean;
 }
 
 interface DocumentCardProps {
