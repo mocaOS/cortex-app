@@ -1138,6 +1138,7 @@ class DocumentProcessor:
         run concurrently, and a burst of API ingests queues instead of starting
         one pipeline per document.
         """
+        queued_marked = False
         try:
             slots = _get_processing_slots()
             if slots.locked():
@@ -1146,7 +1147,10 @@ class DocumentProcessor:
                 # pickup and the stranded-document sweep leave it alone and
                 # the UI shows why nothing is happening yet. Restart-safe:
                 # boot resume resets stranded 'processing' docs to pending
-                # and resumes them.
+                # and resumes them. The additive processing_queued flag lets
+                # the UI count these as WAITING, not working — a 300-doc
+                # sync-app burst reads "6 processing, 294 queued" instead of
+                # "300 processing" (which looked like a runaway fan-out).
                 try:
                     await asyncio.to_thread(
                         self.neo4j.update_document_status,
@@ -1154,9 +1158,20 @@ class DocumentProcessor:
                         ProcessingStatus.PROCESSING,
                         progress_message="Queued — waiting for a free processing slot",
                     )
+                    await asyncio.to_thread(
+                        self.neo4j.set_document_queued_state, doc_id, True
+                    )
+                    queued_marked = True
                 except Exception as e:  # noqa: BLE001 — queue marker is best-effort
                     logger.debug(f"Could not mark {doc_id} as queued: {e}")
             async with slots:
+                if queued_marked:
+                    try:
+                        await asyncio.to_thread(
+                            self.neo4j.set_document_queued_state, doc_id, False
+                        )
+                    except Exception as e:  # noqa: BLE001 — best-effort like the marker
+                        logger.debug(f"Could not clear queued mark on {doc_id}: {e}")
                 await self._process_document(doc_id, file_path, file_type)
         finally:
             # Always unregister the task when done (success or failure)

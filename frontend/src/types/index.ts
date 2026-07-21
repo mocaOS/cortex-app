@@ -30,6 +30,10 @@ export interface Document {
   processing_paused?: boolean;
   paused_reason?: string;
   resume_available?: boolean;
+  // Parked on the global processing-slot semaphore (status stays
+  // 'processing' so the sweeps leave it alone) — count as waiting, not
+  // working
+  processing_queued?: boolean;
 }
 
 export type ProcessingStatus = "pending" | "processing" | "extracting" | "completed" | "failed";

@@ -712,8 +712,19 @@ export default function ExtractAnalyzePage() {
   const entityCount = stats?.entity_count ?? 0;
   const relationshipCount = stats?.relationship_count ?? 0;
   const communityCount = stats?.community_count ?? 0;
+  // Queued = parked on the processing-slot semaphore (status stays
+  // 'processing' backend-side, but nothing is running for them yet) —
+  // count them as waiting, not working, or a 300-doc sync-app burst reads
+  // as 300 concurrent pipelines.
+  const queuedDocs = documents.filter(
+    (d) =>
+      (d.processing_status === "processing" || d.processing_status === "extracting") &&
+      d.processing_queued
+  );
   const processingDocs = documents.filter(
-    (d) => d.processing_status === "processing" || d.processing_status === "extracting"
+    (d) =>
+      (d.processing_status === "processing" || d.processing_status === "extracting") &&
+      !d.processing_queued
   );
   const completedDocs = documents.filter((d) => d.processing_status === "completed");
   const failedDocs = documents.filter((d) => d.processing_status === "failed");
@@ -736,9 +747,9 @@ export default function ExtractAnalyzePage() {
   });
 
   // Step 1: Entity Extraction & Relationship Discovery
-  const step1Stale = entityCount > 0 && pendingDocs.length > 0 && processingDocs.length === 0 && analyzingImagesDocs.length === 0 && !isExtractingEntities;
+  const step1Stale = entityCount > 0 && pendingDocs.length > 0 && processingDocs.length === 0 && queuedDocs.length === 0 && analyzingImagesDocs.length === 0 && !isExtractingEntities;
   const step1Status: StepStatus =
-    processingDocs.length > 0 || documents.some((d) => d.processing_status === "extracting") || isExtractingEntities || analyzingImagesDocs.length > 0
+    processingDocs.length > 0 || queuedDocs.length > 0 || documents.some((d) => d.processing_status === "extracting") || isExtractingEntities || analyzingImagesDocs.length > 0
       ? "in_progress"
       : entityCount > 0 && !step1Stale
         ? "complete"
@@ -888,7 +899,12 @@ export default function ExtractAnalyzePage() {
               </p>
 
               {/* Document processing summary */}
-              <div className={cn("grid gap-3 mb-4", analyzingImagesDocs.length > 0 ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
+              <div className={cn(
+                "grid gap-3 mb-4 grid-cols-2",
+                (["sm:grid-cols-4", "sm:grid-cols-5", "sm:grid-cols-6"] as const)[
+                  (analyzingImagesDocs.length > 0 ? 1 : 0) + (queuedDocs.length > 0 ? 1 : 0)
+                ]
+              )}>
                 <div className="p-3 bg-muted/50 rounded-lg">
                   <p className="text-lg font-semibold">{fullyCompletedDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Processed</p>
@@ -897,6 +913,12 @@ export default function ExtractAnalyzePage() {
                   <p className="text-lg font-semibold">{processingDocs.length}</p>
                   <p className="text-xs text-muted-foreground">Processing</p>
                 </div>
+                {queuedDocs.length > 0 && (
+                  <div className="p-3 bg-muted/50 rounded-lg">
+                    <p className="text-lg font-semibold">{queuedDocs.length}</p>
+                    <p className="text-xs text-muted-foreground">Queued</p>
+                  </div>
+                )}
                 {analyzingImagesDocs.length > 0 && (
                   <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                     <p className="text-lg font-semibold text-blue-400">{analyzingImagesDocs.length}</p>
@@ -923,7 +945,8 @@ export default function ExtractAnalyzePage() {
                       {processingDocs.length > 0 && analyzingImagesDocs.length > 0 && " · "}
                       {analyzingImagesDocs.length > 0 &&
                         `${analyzingImagesDocs.length} finishing image analysis (${totalImagesCurrent}/${totalImagesTotal} images)`}
-                      {pendingDocs.length > 0 && ` · ${pendingDocs.length} queued`}
+                      {queuedDocs.length > 0 && ` · ${queuedDocs.length} queued for a slot`}
+                      {pendingDocs.length > 0 && ` · ${pendingDocs.length} pending`}
                     </span>
                   </div>
                   <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">

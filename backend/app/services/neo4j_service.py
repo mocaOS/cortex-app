@@ -677,6 +677,22 @@ class Neo4jService:
             )
 
     @retry_on_transient
+    def set_document_queued_state(self, doc_id: str, queued: bool) -> None:
+        """Mark a document as queued (parked on the global processing-slot
+        semaphore — status stays 'processing' so the sweeps leave it alone,
+        but the UI must count it as waiting, not working) or clear the mark.
+        Bumps the status heartbeat like the pause flag does."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.processing_queued = $queued,
+                    d.status_updated_at = datetime()
+                """,
+                id=doc_id,
+                queued=bool(queued),
+            )
+
     def set_document_pause_state(
         self, doc_id: str, paused: bool, reason: str = ""
     ) -> None:
@@ -855,7 +871,8 @@ class Neo4jService:
                     d.progress_message = 'Reset to pending after a server restart interrupted processing — reprocess to retry',
                     d.error_message = null,
                     d.processing_paused = false,
-                    d.paused_reason = null
+                    d.paused_reason = null,
+                    d.processing_queued = false
                 RETURN d.id AS id
             """)
             return [record["id"] for record in result]
@@ -887,6 +904,7 @@ class Neo4jService:
                     d.error_message = null,
                     d.processing_paused = false,
                     d.paused_reason = null,
+                    d.processing_queued = false,
                     d.status_updated_at = datetime()
                 RETURN d.id AS id
             """, active=active_ids, stale=stale_minutes)
@@ -1148,6 +1166,7 @@ class Neo4jService:
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
                        coalesce(d.processing_paused, false) as processing_paused,
+                       coalesce(d.processing_queued, false) as processing_queued,
                        coalesce(d.paused_reason, '') as paused_reason,
                        coalesce(d.resume_available, false) as resume_available,
                        size([(d)-[:HAS_CHUNK]->(uc:Chunk) WHERE uc.has_embedding = false | 1]) as unembedded_chunk_count
@@ -1197,6 +1216,7 @@ class Neo4jService:
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
                        coalesce(d.processing_paused, false) as processing_paused,
+                       coalesce(d.processing_queued, false) as processing_queued,
                        coalesce(d.paused_reason, '') as paused_reason,
                        coalesce(d.resume_available, false) as resume_available,
                        unembedded_chunk_count,

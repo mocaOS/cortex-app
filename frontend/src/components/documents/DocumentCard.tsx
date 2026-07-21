@@ -120,6 +120,17 @@ const getFileIcon = (fileType: string, isCustomInput?: boolean) => {
 };
 
 const getStatusConfig = (status: string, doc?: Document) => {
+  // Parked on the processing-slot semaphore: nothing is happening yet by
+  // design (a burst of API ingests queues instead of fanning out) — show it
+  // as waiting, not working.
+  if ((status === "processing" || status === "extracting") && doc?.processing_queued) {
+    return {
+      icon: CirclePause,
+      color: "text-muted-foreground",
+      bgColor: "bg-foreground/5",
+      label: "Queued",
+    };
+  }
   // Live outage pause: processing is alive but waiting for the LLM endpoint
   // to come back — the run continues automatically once it does.
   if ((status === "processing" || status === "extracting") && doc?.processing_paused) {

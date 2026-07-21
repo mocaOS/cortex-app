@@ -91,3 +91,38 @@ class TestProcessingSlots:
         assert started == 6  # every document eventually processed
         assert peak == 2  # the cap was never exceeded
         assert not dp._active_tasks  # all tasks unregistered
+
+    async def test_queued_flag_set_while_waiting_and_cleared_on_slot(self, monkeypatch):
+        """Docs parked on the semaphore carry processing_queued=true so the
+        UI counts them as waiting, not working (a 300-doc sync-app burst must
+        not read as 300 concurrent pipelines); the flag clears the moment a
+        slot is acquired."""
+        settings = get_settings()
+        monkeypatch.setattr(settings, "batch_processing_concurrency", 1)
+
+        neo4j = MagicMock()
+        proc = _make_processor(neo4j)
+        release = asyncio.Event()
+
+        async def fake_process(doc_id, file_path, file_type):
+            await release.wait()
+
+        monkeypatch.setattr(proc, "_process_document", fake_process)
+
+        await proc._start_processing("doc-a", "/tmp/a.txt", ".txt")
+        await proc._start_processing("doc-b", "/tmp/b.txt", ".txt")
+        await asyncio.sleep(0.05)
+
+        # only the waiting doc was flagged, and it hasn't been cleared yet
+        assert neo4j.set_document_queued_state.call_args_list == [
+            (("doc-b", True),)
+        ]
+
+        release.set()
+        await asyncio.gather(*dp._active_tasks.values(), return_exceptions=True)
+
+        # the flag was cleared exactly once, when doc-b took its slot
+        assert neo4j.set_document_queued_state.call_args_list == [
+            (("doc-b", True),),
+            (("doc-b", False),),
+        ]
