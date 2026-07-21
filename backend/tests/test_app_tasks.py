@@ -949,3 +949,249 @@ def test_platform_endpoints_require_capability(apps_env, client):  # noqa: F811
         "/apps/http-only-app/api/platform/storage", headers=headers
     ).status_code == 403
     task_module._app_task_service = None
+
+
+# ---------------------------------------------------------------------------
+# Cloud-sync extensions: webdav step, multipart fromUrl, dynamic auth
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "defn,fragment",
+    [
+        ({"name": "x", "setup": [{"webdav": {}}]}, "webdav.url"),
+        ({"name": "x", "setup": [{"webdav": {"url": "u", "depth": 2}}]}, "webdav.depth"),
+        ({"name": "x", "setup": [{"webdav": {"url": "u", "frob": 1}}]}, "unknown webdav"),
+        ({"name": "x", "setup": [{"http": {"method": "GET", "url": "u",
+                                             "auth": "Bearer x"}}]}, "auth must be"),
+        ({"name": "x", "setup": [{"http": {"method": "GET", "url": "u",
+                                             "auth": {"bearer": "$t", "basic": "b"}}}]},
+         "auth must be"),
+        ({"name": "x", "setup": [{"cortex": {"method": "POST", "path": "upload",
+            "multipart": {"content": "$a", "fromUrl": "u", "filename": "f"}}}]},
+         "not both"),
+        ({"name": "x", "setup": [{"cortex": {"method": "POST", "path": "upload",
+            "multipart": {"fromUrl": "u", "filename": "f", "method": "DELETE"}}}]},
+         "multipart.method"),
+    ],
+)
+def test_validate_rejects_cloud_sync_shapes(defn, fragment):
+    issues = _validate(defn)
+    assert any(fragment in issue for issue in issues), issues
+
+
+def test_validate_gates_webdav_and_from_url_on_http_capability():
+    webdav_task = {"name": "x", "setup": [{"webdav": {"url": "u"}}]}
+    assert any('"http"' in i for i in _validate(webdav_task, capabilities=("tasks",)))
+    from_url = {"name": "x", "setup": [{"cortex": {"method": "POST", "path": "upload",
+        "multipart": {"fromUrl": "u", "filename": "f"}}}]}
+    assert any('"http"' in i for i in _validate(from_url, capabilities=("tasks",)))
+    # plain text multipart stays capability-free
+    text_up = {"name": "x", "setup": [{"cortex": {"method": "POST", "path": "upload",
+        "multipart": {"content": "$a", "filename": "f.md"}}}]}
+    assert _validate(text_up, capabilities=("tasks",)) == []
+
+
+_MULTISTATUS = """<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+  <d:response>
+    <d:href>/remote.php/dav/files/rene/Docs/</d:href>
+    <d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>
+      <d:getetag>"root-etag"</d:getetag>
+      <d:resourcetype><d:collection/></d:resourcetype>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/files/rene/Docs/Q3%20Report.pdf</d:href>
+    <d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>
+      <d:getetag>W/"abc123"</d:getetag>
+      <d:getlastmodified>Mon, 20 Jul 2026 10:00:00 GMT</d:getlastmodified>
+      <d:getcontentlength>2048</d:getcontentlength>
+      <d:getcontenttype>application/pdf</d:getcontenttype>
+      <d:resourcetype/>
+      <oc:fileid>991</oc:fileid>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/files/rene/Docs/Sub/</d:href>
+    <d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>
+      <d:getetag>"sub-etag"</d:getetag>
+      <d:resourcetype><d:collection/></d:resourcetype>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>"""
+
+
+def test_parse_multistatus_normalizes_and_drops_self():
+    from app.services.app_task_service import _parse_multistatus
+
+    items = _parse_multistatus(
+        _MULTISTATUS.encode(),
+        request_url="http://nc.local/remote.php/dav/files/rene/Docs/",
+    )
+    assert [i["name"] for i in items] == ["Q3 Report.pdf", "Sub"]
+    pdf, sub = items
+    assert pdf["etag"] == "abc123"            # W/ prefix and quotes stripped
+    assert pdf["size"] == 2048
+    assert pdf["contentType"] == "application/pdf"
+    assert pdf["isDir"] is False
+    assert pdf["fileId"] == "991"
+    assert pdf["lastModified"].startswith("2026-07-20T10:00:00")
+    assert sub["isDir"] is True and sub["etag"] == "sub-etag"
+
+
+def test_webdav_step_end_to_end_and_auth_override(tasks_env, monkeypatch):
+    env = tasks_env
+    calls = []
+
+    async def fake_execute(app_id, *, method, url, body=None, content_type=None,
+                            extra_headers=None, auth_override=None):
+        calls.append({"method": method, "url": url, "depth": (extra_headers or {}).get("Depth"),
+                       "auth": auth_override})
+        return httpx.Response(207, content=_MULTISTATUS.encode(),
+                               headers={"content-type": "application/xml"})
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_execute)
+    result = run_and_wait(env, {
+        "name": "webdav-list",
+        "setup": [
+            {"store": {"put": "auth/token", "value": "live-token"}},
+            {"id": "tok", "store": {"get": "auth/token"}},
+            {"id": "listing", "webdav": {
+                "url": "http://paperless.local/remote.php/dav/files/rene/Docs/",
+                "depth": 1, "auth": {"bearer": "$tok.value"}}},
+            {"store": {"put": "out/count", "value": "$listing.count"}},
+        ],
+    })
+    assert result["status"] == "completed", result
+    assert env.storage.get(env.app_id, "out/count") == 2
+    propfind = calls[-1]
+    assert propfind["method"] == "PROPFIND" and propfind["depth"] == "1"
+    assert propfind["auth"] == "Bearer live-token"
+
+
+def test_from_url_multipart_streams_binary_to_upload(tasks_env, monkeypatch):
+    env = tasks_env
+    pdf_bytes = b"%PDF-1.7 fake body"
+    uploads = []
+
+    async def fake_execute(app_id, *, method, url, body=None, content_type=None,
+                            extra_headers=None, auth_override=None):
+        assert method == "POST" and auth_override == "Bearer at-123"
+        assert (extra_headers or {}).get("Dropbox-API-Arg") == '{"path": "id:001"}'
+        return httpx.Response(200, content=pdf_bytes,
+                               headers={"content-type": "application/pdf"})
+
+    async def fake_request(self, method, url, **kwargs):
+        if "files" in kwargs:
+            uploads.append(kwargs["files"])
+            return httpx.Response(200, json={"task_id": "t1"})
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_execute)
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    result = run_and_wait(env, {
+        "name": "binary-up",
+        "setup": [
+            {"store": {"put": "t", "value": {"access": "at-123"}}},
+            {"id": "tok", "store": {"get": "t"}},
+        ],
+        "items": [{"vars": {"id": "id:001", "name": "report"}}],
+        "steps": [
+            {"cortex": {"method": "POST", "path": "upload?start_processing=true",
+                "multipart": {
+                    "fromUrl": "http://paperless.local/2/files/download",
+                    "method": "POST",
+                    "headers": {"Dropbox-API-Arg": "{{\"path\": \"{vars.id}\"}}"},
+                    "auth": {"bearer": "$tok.value.access"},
+                    "filename": "{vars.name}.pdf"}}},
+        ],
+    })
+    assert result["status"] == "completed", result
+    assert result["counts"]["done"] == 1
+    (fname, payload, ctype) = uploads[0]["file"]
+    assert fname == "report.pdf" and payload == pdf_bytes and ctype == "application/pdf"
+
+
+def test_execute_app_http_allows_propfind_and_auth_override(tasks_env, monkeypatch):
+    from app.services.app_task_service import execute_app_http
+
+    seen = {}
+
+    async def fake_request(self, method, url, content=None, headers=None):
+        seen["method"] = method
+        seen["headers"] = headers or {}
+        seen["body"] = content
+        return httpx.Response(207, content=b"<d:multistatus xmlns:d='DAV:'/>")
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(
+        "app.services.ssrf_guard.validate_url", lambda url, **kw: None
+    )
+    response = asyncio.run(execute_app_http(
+        "sync-app", method="PROPFIND", url="http://paperless.local/dav/",
+        body="<propfind/>", content_type="application/xml",
+        extra_headers={"Depth": "1"}, auth_override="Bearer run-minted",
+    ))
+    assert response.status_code == 207
+    assert seen["method"] == "PROPFIND"
+    assert seen["headers"]["Depth"] == "1"
+    # dynamic auth wins over the config-injected Token header
+    assert seen["headers"]["Authorization"] == "Bearer run-minted"
+
+
+def test_validate_from_each_and_webdav_filter():
+    both = {"name": "x", "items": {"from": "$a", "fromEach": ["$b"], "vars": {"i": "1"}},
+            "steps": [{"template": {"text": "t"}}]}
+    assert any('"from" OR "fromEach"' in i for i in _validate(both))
+    bad_refs = {"name": "x", "items": {"fromEach": ["no-dollar"], "vars": {"i": "1"}},
+                "steps": [{"template": {"text": "t"}}]}
+    assert any("fromEach" in i for i in _validate(bad_refs))
+    bad_filter = {"name": "x", "setup": [{"webdav": {"url": "u", "filter": "folders"}}]}
+    assert any("webdav.filter" in i for i in _validate(bad_filter))
+    good = {"name": "x",
+            "setup": [{"id": "f0", "webdav": {"url": "u", "filter": "files"}}],
+            "items": {"fromEach": ["$f0.items"], "vars": {"n": "{item.name}"}},
+            "steps": [{"template": {"text": "{vars.n}"}}]}
+    assert _validate(good) == []
+
+
+def test_from_each_concatenates_listings_and_filters_files(tasks_env, monkeypatch):
+    env = tasks_env
+
+    async def fake_execute(app_id, *, method, url, body=None, content_type=None,
+                            extra_headers=None, auth_override=None):
+        assert method == "PROPFIND"
+        return httpx.Response(207, content=_MULTISTATUS.encode(),
+                               headers={"content-type": "application/xml"})
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_execute)
+    result = run_and_wait(env, {
+        "name": "multi-folder",
+        "setup": [
+            {"id": "f0", "webdav": {
+                "url": "http://paperless.local/remote.php/dav/files/rene/Docs/",
+                "filter": "files"}},
+            {"id": "f1", "webdav": {
+                "url": "http://paperless.local/remote.php/dav/files/rene/Docs/",
+                "filter": "files"}},
+        ],
+        "items": {"fromEach": ["$f0.items", "$f1.items"],
+                   "vars": {"name": "{item.name}", "etag": "{item.etag}"}},
+        "steps": [{"store": {"put": "seen/{vars.name|slug}-{run.index}",
+                              "value": "{vars.etag}"}}],
+    })
+    assert result["status"] == "completed", result
+    # each listing has 1 file (dirs filtered) → 2 items total
+    assert result["counts"]["total"] == 2 and result["counts"]["done"] == 2
+
+
+def test_ext_filter():
+    from app.services.app_task_dsl import interpolate
+
+    ctx = {"vars": {"a": "Q3 Report.PDF", "b": "no-extension", "c": ".gitignore",
+                      "d": "archive.tar.gz"},
+           "setup": {}, "steps": {}, "run": {}, "config": {}}
+    assert interpolate("{vars.a|ext}", ctx) == "pdf"
+    assert interpolate("{vars.b|ext}", ctx) == ""
+    assert interpolate("{vars.c|ext}", ctx) == ""      # dotfile, no real ext
+    assert interpolate("{vars.d|ext}", ctx) == "gz"

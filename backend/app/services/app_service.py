@@ -496,16 +496,21 @@ class AppService:
             return {}
 
     def get_config(self, app_id: str) -> Optional[dict]:
-        """Schema + masked values for the admin UI."""
+        """Schema + masked values for the admin UI. Only vars declared in the
+        CURRENT manifest are exposed — upgrades preserve config.json, and a
+        var that used to be secret-typed must not surface unmasked once a new
+        manifest stops declaring it (found live: renamed secret leaked)."""
         loaded = self._load(app_id)
         if not loaded:
             return None
         manifest, _ = loaded
         stored = self._read_config(app_id)
+        declared = {v.get("name") for v in (manifest.get("config") or [])}
         secrets_names = self._secret_names(manifest)
         values = {
             name: (_MASK if name in secrets_names and value else value)
             for name, value in stored.items()
+            if name in declared
         }
         return {"variables": manifest.get("config") or [], "values": values}
 
@@ -800,14 +805,23 @@ class AppService:
 
     def public_config(self, app_id: str) -> Optional[Dict[str, str]]:
         """Non-secret config values, readable by the app itself
-        (GET platform/config). Secrets never cross this boundary."""
+        (GET platform/config). Secrets never cross this boundary.
+
+        Only vars DECLARED (non-secret) in the CURRENT manifest are returned —
+        upgrades preserve config.json, so a var that used to be secret-typed
+        would otherwise lose its masking the moment a new manifest stops
+        declaring it (found live: a renamed secret leaked as plaintext)."""
         loaded = self._load(app_id)
         if not loaded or not loaded[1].get("enabled", True):
             return None
         manifest, _ = loaded
-        secrets_names = self._secret_names(manifest)
+        declared_public = {
+            var.get("name")
+            for var in manifest.get("config", []) or []
+            if var.get("type") != "secret"
+        }
         stored = self._read_config(app_id)
-        return {k: v for k, v in stored.items() if k not in secrets_names}
+        return {k: v for k, v in stored.items() if k in declared_public}
 
     def _resolve_config_refs(self, value: str, config: Dict[str, str]) -> str:
         return re.sub(
@@ -847,7 +861,15 @@ class AppService:
         reference): its header is then injected ONLY when the call targets
         that host — a multi-host app (e.g. venice + youtube) must not leak
         one service's credential to the other. Vars without auth_host keep
-        the inject-everywhere behavior (fine for single-host apps)."""
+        the inject-everywhere behavior (fine for single-host apps).
+
+        Templates may reference ANY config var by name (not just the carrying
+        var) and wrap parts in ``base64(...)`` — evaluated after substitution.
+        This is how Basic-auth apps take a plain login + password/app-password
+        as config instead of making users hand-encode credentials (an error
+        magnet): ``Authorization: Basic base64(NC_USER:NC_APP_PASSWORD)``.
+        Everything renders server-side from encrypted config; nothing new
+        reaches the browser."""
         from urllib.parse import urlsplit
 
         loaded = self._load(app_id)
@@ -872,9 +894,17 @@ class AppService:
                 if not host or host != (target_host or "").lower():
                     continue
             header_name, _, header_value = template.partition(":")
-            headers[header_name.strip()] = header_value.strip().replace(
-                var["name"], value
+            rendered = header_value.strip()
+            # longest name first — var names may be prefixes of each other
+            for name in sorted(config, key=len, reverse=True):
+                if config.get(name):
+                    rendered = rendered.replace(name, config[name])
+            rendered = re.sub(
+                r"base64\(([^()]*)\)",
+                lambda m: base64.b64encode(m.group(1).encode()).decode(),
+                rendered,
             )
+            headers[header_name.strip()] = rendered
         return headers
 
     def upstream_api_key(self, app_id: str) -> Optional[str]:

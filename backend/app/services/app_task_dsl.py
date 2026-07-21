@@ -14,6 +14,8 @@ Task definition (all keys camelCase, matching the manifest):
       "setup": [ <step>, ... ],                    // once, sequential
       "items": [{"vars": {...}}, ...]              // literal item list, OR
       "items": {"from": "$setup.docs.items",       // fan-out over a step output
+                                                   // (or "fromEach": [$ref, …] —
+                                                   //  lists concatenated)
                 "vars": {"id": "{item.id}"},
                 "limit": 500,
                 "skipIfStored": "synced/{item.id}"},   // dedup fast path
@@ -26,11 +28,20 @@ Steps carry exactly one type key plus optional "id" (context name) and
 
     {"id": "docs", "http": {"method": "GET", "url": "{config.BASE_URL}/api/…",
         "headers"?, "body"?, "contentType"?, "responseType"?: "json"|"text",
+        "auth"?: {"bearer": "$token.body.access_token"} | {"basic": "…"},
         "paginate"?: {"items": "results", "next": "next",
                        "maxPages"?: 20, "keyBy"?: "id"}}}
+    {"id": "listing", "webdav": {"url": "{config.BASE_URL}/remote.php/dav/…",
+        "depth"?: 0|1|"infinity", "auth"?: <as http>}}      // PROPFIND listing,
+        // multistatus XML parsed server-side → {items: [{href, name, etag,
+        // lastModified, size, contentType, isDir, fileId?}], count}
     {"cortex": {"method": "POST", "path": "upload?start_processing=true",
         "body"?, "multipart"?: {"content": "$md.text", "filename": "x.md",
-                                  "field"?: "file", "contentType"?}}}
+                                  "field"?: "file", "contentType"?}
+                | {"fromUrl": "{item.url}", "filename": "x.pdf",   // binary
+                    "method"?: "GET"|"POST", "headers"?, "auth"?,   // passthrough:
+                    "field"?, "contentType"?}}}                     // fetch → upload,
+        // bytes never enter the step context (same http gates as http steps)
     {"llm": {"prompt": "…{chunk}…", "system"?, "input"?: "$transcribe.body.transcript",
         "chunk"?: {"words": 1000}, "maxTokens"?, "temperature"?,
         "validate"?: {"minLengthRatio": 0.5, "minWordOverlap": 0.6,
@@ -48,7 +59,7 @@ segments index arrays. Ref paths may embed templates for dynamic lookups:
 $setup.tags.map.{full.body.correspondent}.name
 
 Templates interpolate "{path|filter|filter:arg}" into strings; {{ and }}
-escape literal braces. Filters: slug lower upper trim json urlencode
+escape literal braces. Filters: slug lower upper trim ext json urlencode
 default:<arg> join:<sep> pluck:<field> slice:<n> truncate:<n>.
 
 Conditions: {"empty": v} {"notEmpty": v} {"found": v} {"eq": [a,b]}
@@ -65,7 +76,7 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-STEP_TYPES = ("http", "cortex", "llm", "store", "template", "skipItem")
+STEP_TYPES = ("http", "webdav", "cortex", "llm", "store", "template", "skipItem")
 _CONDITION_OPS = ("empty", "notEmpty", "found", "eq", "neq", "gt", "lt",
                   "contains", "and", "or", "not")
 _HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -151,8 +162,25 @@ def validate_task_definition(defn: Any, *, capabilities: set, settings) -> List[
                 issues.append(f'items[{i}] must be {{"vars": {{...}}}}')
                 break
     elif isinstance(items, dict):
-        if not isinstance(items.get("from"), str) or not items["from"].startswith("$"):
+        has_from = "from" in items
+        has_from_each = "fromEach" in items
+        if has_from == has_from_each:
+            issues.append('"items" needs "from" OR "fromEach" (not both)')
+        elif has_from and (
+            not isinstance(items["from"], str) or not items["from"].startswith("$")
+        ):
             issues.append('"items.from" must be a "$" reference to a list')
+        elif has_from_each and (
+            not isinstance(items["fromEach"], list)
+            or not items["fromEach"]
+            or not all(
+                isinstance(r, str) and r.startswith("$") for r in items["fromEach"]
+            )
+        ):
+            issues.append(
+                '"items.fromEach" must be a non-empty list of "$" references '
+                "(their lists are concatenated)"
+            )
         if not isinstance(items.get("vars"), dict) or not items["vars"]:
             issues.append('"items.vars" must map var names to templates')
         if "limit" in items and (
@@ -164,7 +192,7 @@ def validate_task_definition(defn: Any, *, capabilities: set, settings) -> List[
                 issues.append('"items.skipIfStored" must be a key template string')
             elif "storage" not in capabilities:
                 issues.append('"items.skipIfStored" requires the "storage" capability')
-        unknown = set(items) - {"from", "vars", "limit", "skipIfStored"}
+        unknown = set(items) - {"from", "fromEach", "vars", "limit", "skipIfStored"}
         if unknown:
             issues.append(f'unknown items fields: {", ".join(sorted(unknown))}')
     elif items is not None:
@@ -238,6 +266,7 @@ def _validate_step(
             issues.append(f"{where}: http.headers must map names to strings")
         if spec.get("responseType") not in (None, "json", "text"):
             issues.append(f'{where}: http.responseType must be "json" or "text"')
+        issues.extend(_validate_auth(spec.get("auth"), f"{where}: http"))
         paginate = spec.get("paginate")
         if paginate is not None:
             if not isinstance(paginate, dict) or not isinstance(
@@ -256,10 +285,25 @@ def _validate_step(
                 ):
                     issues.append(f"{where}: paginate.maxPages must be 1-50")
         unknown = set(spec) - {
-            "method", "url", "headers", "body", "contentType", "responseType", "paginate",
+            "method", "url", "headers", "body", "contentType", "responseType",
+            "auth", "paginate",
         }
         if unknown:
             issues.append(f'{where}: unknown http fields: {", ".join(sorted(unknown))}')
+
+    elif step_type == "webdav":
+        if "http" not in capabilities:
+            issues.append(f'{where}: webdav steps require the "http" capability')
+        if not isinstance(spec.get("url"), str) or not spec["url"]:
+            issues.append(f"{where}: webdav.url is required")
+        if spec.get("depth") not in (None, 0, 1, "infinity"):
+            issues.append(f'{where}: webdav.depth must be 0, 1, or "infinity"')
+        if spec.get("filter") not in (None, "files", "dirs"):
+            issues.append(f'{where}: webdav.filter must be "files" or "dirs"')
+        issues.extend(_validate_auth(spec.get("auth"), f"{where}: webdav"))
+        unknown = set(spec) - {"url", "depth", "filter", "auth"}
+        if unknown:
+            issues.append(f'{where}: unknown webdav fields: {", ".join(sorted(unknown))}')
 
     elif step_type == "cortex":
         if str(spec.get("method", "")).upper() not in _HTTP_METHODS:
@@ -269,14 +313,37 @@ def _validate_step(
             issues.append(f"{where}: cortex.path must be an /api/-relative path")
         multipart = spec.get("multipart")
         if multipart is not None:
-            if not isinstance(multipart, dict) or not isinstance(
-                multipart.get("content"), str
-            ) or not isinstance(multipart.get("filename"), str):
-                issues.append(
-                    f'{where}: cortex.multipart needs "content" (ref/template) and "filename"'
-                )
-            elif set(multipart) - {"content", "filename", "field", "contentType"}:
-                issues.append(f"{where}: unknown multipart fields")
+            if not isinstance(multipart, dict):
+                issues.append(f"{where}: cortex.multipart must be an object")
+            else:
+                has_content = isinstance(multipart.get("content"), str)
+                has_from_url = isinstance(multipart.get("fromUrl"), str)
+                if has_content == has_from_url:
+                    issues.append(
+                        f'{where}: cortex.multipart needs "content" (text ref/template) '
+                        f'OR "fromUrl" (binary passthrough fetch), not both'
+                    )
+                if not isinstance(multipart.get("filename"), str):
+                    issues.append(f'{where}: cortex.multipart needs a "filename"')
+                if has_from_url:
+                    if "http" not in capabilities:
+                        issues.append(
+                            f'{where}: multipart.fromUrl requires the "http" capability'
+                        )
+                    if str(multipart.get("method", "GET")).upper() not in ("GET", "POST"):
+                        issues.append(f"{where}: multipart.method must be GET or POST")
+                    if "headers" in multipart and not (
+                        isinstance(multipart["headers"], dict)
+                        and all(isinstance(v, str) for v in multipart["headers"].values())
+                    ):
+                        issues.append(f"{where}: multipart.headers must map names to strings")
+                    issues.extend(_validate_auth(multipart.get("auth"), f"{where}: multipart"))
+                    allowed = {"fromUrl", "method", "headers", "auth",
+                               "filename", "field", "contentType"}
+                else:
+                    allowed = {"content", "filename", "field", "contentType"}
+                if set(multipart) - allowed:
+                    issues.append(f"{where}: unknown multipart fields")
             if "body" in spec:
                 issues.append(f"{where}: cortex step takes body OR multipart, not both")
         unknown = set(spec) - {"method", "path", "body", "multipart"}
@@ -370,6 +437,25 @@ def _validate_step(
     return issues
 
 
+def _validate_auth(auth: Any, where: str) -> List[str]:
+    """Dynamic per-request credential: {"bearer": <ref/template>} or
+    {"basic": <ref/template>}. The value must come from the run context (a
+    token minted DURING the run, e.g. an OAuth refresh response) — config
+    secrets are unreachable from templates by construction, so this cannot
+    leak them; static credentials belong in config auth_header vars."""
+    if auth is None:
+        return []
+    if (
+        not isinstance(auth, dict)
+        or len(auth) != 1
+        or next(iter(auth)) not in ("bearer", "basic")
+        or not isinstance(next(iter(auth.values())), str)
+        or not next(iter(auth.values()))
+    ):
+        return [f'{where}.auth must be {{"bearer": <ref/template>}} or {{"basic": …}}']
+    return []
+
+
 def _validate_condition(cond: Any, where: str) -> List[str]:
     if not isinstance(cond, dict) or len(cond) != 1:
         return [f"{where}: condition must be a single-operator object"]
@@ -405,6 +491,12 @@ def _apply_filter(value: Any, name: str, arg: Optional[str]) -> Any:
         return str(value or "").upper()
     if name == "trim":
         return str(value or "").strip()
+    if name == "ext":
+        # lowercase file extension without the dot ("" when there is none) —
+        # lets tasks type-filter listings that carry no MIME type (Dropbox):
+        # {"contains": [" pdf docx md ", " {vars.name|ext} "]}
+        text = str(value or "")
+        return text.rsplit(".", 1)[1].lower() if "." in text.strip(".") else ""
     if name == "json":
         return json.dumps(value, default=str)
     if name == "urlencode":

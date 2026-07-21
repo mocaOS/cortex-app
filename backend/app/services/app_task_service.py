@@ -96,11 +96,19 @@ async def execute_app_http(
     body: Optional[str] = None,
     content_type: Optional[str] = None,
     extra_headers: Optional[Dict[str, str]] = None,
+    auth_override: Optional[str] = None,
 ) -> httpx.Response:
     """The single enforcement path for app-originated external HTTP: host
     allowlist (manifest-declared, config-resolved) → SSRF guard (loopback and
     metadata blocked, LAN allowed) → auth headers injected from encrypted
-    config. Used by the platform/http endpoint AND http task steps."""
+    config. Used by the platform/http endpoint AND http task steps.
+
+    auth_override is a full Authorization value ("Bearer x" / "Basic y")
+    resolved from the run context by a task step's "auth" field — a credential
+    minted DURING the run (OAuth refresh). It wins over config-injected auth
+    for this one request; config secrets can never reach it (untemplatable).
+    PROPFIND is in the method set for WebDAV listings (webdav task steps and
+    interactive folder browsers via the platform/http envelope)."""
     from urllib.parse import urlsplit
 
     from app.services.app_service import get_app_service
@@ -108,7 +116,7 @@ async def execute_app_http(
 
     service = get_app_service()
     method = method.upper()
-    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "PROPFIND"):
         raise AppHttpError(400, f"Unsupported method {method}")
 
     allowed_hosts = service.allowed_http_hosts(app_id)
@@ -133,6 +141,8 @@ async def execute_app_http(
         ):
             continue  # config-injected auth always wins; framing stays ours
         headers[name] = value
+    if auth_override:
+        headers["Authorization"] = auth_override
     if content_type:
         headers["Content-Type"] = content_type
     elif body is not None:
@@ -678,7 +688,19 @@ class AppTaskService:
                 for item in spec
             ], 0
 
-        source = resolve_ref(spec["from"], base_ctx)
+        if spec.get("fromEach") is not None:
+            # concat fan-out: one listing step per source (e.g. one webdav
+            # PROPFIND per selected folder), items merged into a single pool
+            source = []
+            for ref in spec["fromEach"]:
+                part = resolve_ref(ref, base_ctx)
+                if part is None:
+                    continue  # a "when"-skipped listing resolves to null
+                if not isinstance(part, list):
+                    raise StepError(f"items.fromEach entry ({ref}) did not resolve to a list")
+                source.extend(part)
+        else:
+            source = resolve_ref(spec["from"], base_ctx)
         if source is None:
             source = []
         if not isinstance(source, list):
@@ -767,7 +789,9 @@ class AppTaskService:
     async def _exec_step(
         self, app_id: str, step: dict, ctx: dict, section: str, llm_state: dict
     ) -> None:
-        step_type = next(k for k in step if k in ("http", "cortex", "llm", "store", "template", "skipItem"))
+        from app.services.app_task_dsl import STEP_TYPES
+
+        step_type = next(k for k in step if k in STEP_TYPES)
         step_id = step.get("id")
         label = step_id or step_type
         if "when" in step and not eval_condition(step["when"], ctx):
@@ -778,6 +802,8 @@ class AppTaskService:
         try:
             if step_type == "http":
                 output = await self._exec_http(app_id, spec, ctx)
+            elif step_type == "webdav":
+                output = await self._exec_webdav(app_id, spec, ctx)
             elif step_type == "cortex":
                 output = await self._exec_cortex(app_id, spec, ctx)
             elif step_type == "llm":
@@ -814,6 +840,20 @@ class AppTaskService:
         else:
             ctx["steps"][step_id] = output
 
+    @staticmethod
+    def _resolve_auth(auth: Any, ctx: dict) -> Optional[str]:
+        """Resolve a step's dynamic {"bearer"|"basic": ref/template} credential
+        to a full Authorization value. Values come from the run context (e.g.
+        an OAuth refresh response) — config secrets are untemplatable."""
+        if not auth:
+            return None
+        scheme, source = next(iter(auth.items()))
+        value = resolve_value(source, ctx)
+        value = str(value).strip() if value is not None else ""
+        if not value:
+            raise StepError(f"auth.{scheme} resolved to an empty value")
+        return f"{'Bearer' if scheme == 'bearer' else 'Basic'} {value}"
+
     async def _exec_http(self, app_id: str, spec: dict, ctx: dict) -> dict:
         method = str(spec["method"]).upper()
         url = interpolate(spec["url"], ctx)
@@ -828,10 +868,14 @@ class AppTaskService:
             for name, value in (spec.get("headers") or {}).items()
         }
         paginate = spec.get("paginate")
+        auth_kwargs: Dict[str, Any] = {}
+        auth_override = self._resolve_auth(spec.get("auth"), ctx)
+        if auth_override:
+            auth_kwargs["auth_override"] = auth_override
 
         response = await execute_app_http(
             app_id, method=method, url=url, body=body,
-            content_type=content_type, extra_headers=extra_headers,
+            content_type=content_type, extra_headers=extra_headers, **auth_kwargs,
         )
         parsed = _parse_body(response, spec.get("responseType"))
         if not paginate:
@@ -872,7 +916,8 @@ class AppTaskService:
                 break
             # every page re-passes the host allowlist + SSRF gates
             response = await execute_app_http(
-                app_id, method="GET", url=str(next_url), extra_headers=extra_headers
+                app_id, method="GET", url=str(next_url),
+                extra_headers=extra_headers, **auth_kwargs,
             )
             if response.status_code >= 400:
                 raise StepError(f"http pagination page {pages + 1} → {response.status_code}")
@@ -886,6 +931,43 @@ class AppTaskService:
                 if isinstance(el, dict) and el.get(key_by) is not None
             }
         return output
+
+    _PROPFIND_BODY = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop>'
+        "<d:getetag/><d:getlastmodified/><d:getcontentlength/>"
+        "<d:getcontenttype/><d:resourcetype/><oc:fileid/>"
+        "</d:prop></d:propfind>"
+    )
+
+    async def _exec_webdav(self, app_id: str, spec: dict, ctx: dict) -> dict:
+        """PROPFIND folder listing with the multistatus XML parsed server-side
+        into plain items — the DSL has no XML vocabulary, and cloud-folder
+        sync needs listings referenceable from fan-outs/conditions. Same
+        gates as http steps (host allowlist, SSRF guard, config auth)."""
+        url = interpolate(spec["url"], ctx)
+        depth = spec.get("depth", 1)
+        auth_kwargs: Dict[str, Any] = {}
+        auth_override = self._resolve_auth(spec.get("auth"), ctx)
+        if auth_override:
+            auth_kwargs["auth_override"] = auth_override
+        response = await execute_app_http(
+            app_id, method="PROPFIND", url=url, body=self._PROPFIND_BODY,
+            content_type='application/xml; charset="utf-8"',
+            extra_headers={"Depth": str(depth)}, **auth_kwargs,
+        )
+        if response.status_code >= 400:
+            raise StepError(
+                f"webdav PROPFIND {url} → {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        items = _parse_multistatus(response.content, request_url=url)
+        listing_filter = spec.get("filter")
+        if listing_filter == "files":
+            items = [item for item in items if not item["isDir"]]
+        elif listing_filter == "dirs":
+            items = [item for item in items if item["isDir"]]
+        return {"status": response.status_code, "items": items, "count": len(items)}
 
     async def _exec_cortex(self, app_id: str, spec: dict, ctx: dict) -> dict:
         method = str(spec["method"]).upper()
@@ -902,7 +984,38 @@ class AppTaskService:
         headers = {"X-API-Key": upstream_key, "Accept": "application/json"}
         request_kwargs: Dict[str, Any] = {}
         multipart = spec.get("multipart")
-        if multipart:
+        if multipart and multipart.get("fromUrl"):
+            # Binary passthrough: fetch through the shared http gates and hand
+            # the raw bytes straight to the upload — they never enter the step
+            # context (the DSL stays text-only; PDFs/images stay intact).
+            fetch_url = interpolate(multipart["fromUrl"], ctx)
+            fetch_headers = {
+                name: interpolate(value, ctx)
+                for name, value in (multipart.get("headers") or {}).items()
+            }
+            fetch_kwargs: Dict[str, Any] = {}
+            auth_override = self._resolve_auth(multipart.get("auth"), ctx)
+            if auth_override:
+                fetch_kwargs["auth_override"] = auth_override
+            upstream = await execute_app_http(
+                app_id, method=str(multipart.get("method", "GET")).upper(),
+                url=fetch_url, extra_headers=fetch_headers, **fetch_kwargs,
+            )
+            if upstream.status_code >= 400:
+                raise StepError(
+                    f"multipart fetch {fetch_url} → {upstream.status_code}: "
+                    f"{upstream.text[:200]}"
+                )
+            filename = interpolate(multipart["filename"], ctx)
+            field = multipart.get("field", "file")
+            content_type = multipart.get("contentType") or (
+                upstream.headers.get("content-type", "application/octet-stream")
+                .split(";")[0].strip()
+            )
+            request_kwargs["files"] = {
+                field: (filename, upstream.content, content_type)
+            }
+        elif multipart:
             content = resolve_value(multipart["content"], ctx)
             if not isinstance(content, str):
                 content = json.dumps(content, default=str)
@@ -1068,6 +1181,69 @@ class AppTaskService:
             rendered.append(interpolate(line["text"], ctx))
         joiner = spec.get("joiner", "\n")
         return {"text": joiner.join(rendered)}
+
+
+_DAV_NS = {"d": "DAV:", "oc": "http://owncloud.org/ns"}
+
+
+def _parse_multistatus(content: bytes, *, request_url: str) -> List[dict]:
+    """Normalize a WebDAV multistatus into [{href, name, etag, lastModified,
+    size, contentType, isDir, fileId?}]. The requested collection's own entry
+    is dropped — callers want the children. Parsing is bounded by the 20 MB
+    response cap upstream; libexpat's amplification limits cover entity
+    tricks."""
+    from email.utils import parsedate_to_datetime
+    from urllib.parse import unquote, urlsplit
+    from xml.etree import ElementTree
+
+    try:
+        root = ElementTree.fromstring(content)
+    except ElementTree.ParseError as e:
+        raise StepError(f"webdav response is not valid multistatus XML: {e}")
+
+    self_path = unquote(urlsplit(request_url).path).rstrip("/")
+    items: List[dict] = []
+    for response in root.findall("d:response", _DAV_NS):
+        href = unquote(response.findtext("d:href", "", _DAV_NS))
+        prop = None
+        for propstat in response.findall("d:propstat", _DAV_NS):
+            status_line = propstat.findtext("d:status", "", _DAV_NS)
+            if " 200 " in f"{status_line} ":
+                prop = propstat.find("d:prop", _DAV_NS)
+                break
+        if prop is None or href.rstrip("/") == self_path:
+            continue
+        etag = (prop.findtext("d:getetag", "", _DAV_NS) or "").strip()
+        if etag.startswith("W/"):
+            etag = etag[2:]
+        etag = etag.strip('"')
+        modified_raw = prop.findtext("d:getlastmodified", "", _DAV_NS) or ""
+        try:
+            modified = parsedate_to_datetime(modified_raw).isoformat()
+        except (TypeError, ValueError):
+            modified = modified_raw
+        resourcetype = prop.find("d:resourcetype", _DAV_NS)
+        is_dir = resourcetype is not None and (
+            resourcetype.find("d:collection", _DAV_NS) is not None
+        )
+        try:
+            size = int(prop.findtext("d:getcontentlength", "", _DAV_NS) or 0)
+        except ValueError:
+            size = 0
+        item = {
+            "href": href,
+            "name": href.rstrip("/").rsplit("/", 1)[-1],
+            "etag": etag,
+            "lastModified": modified,
+            "size": size,
+            "contentType": prop.findtext("d:getcontenttype", "", _DAV_NS) or "",
+            "isDir": is_dir,
+        }
+        file_id = prop.findtext("oc:fileid", "", _DAV_NS)
+        if file_id:
+            item["fileId"] = file_id
+        items.append(item)
+    return items
 
 
 def _dig(value: Any, path: Optional[str]) -> Any:

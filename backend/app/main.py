@@ -6420,7 +6420,7 @@ async def app_share_shell(app_id: str):
 #err{{color:#fafafa;font:14px monospace;padding:2rem;display:none}}</style>
 </head><body>
 <div id="err">This share link is invalid, revoked, or expired.</div>
-<iframe id="app" sandbox="allow-scripts allow-forms allow-downloads" src="/apps/{safe_app_id}/{safe_entry}"></iframe>
+<iframe id="app" sandbox="allow-scripts allow-forms allow-downloads" allow="clipboard-write *" src="/apps/{safe_app_id}/{safe_entry}"></iframe>
 <!-- entry file loaded directly (not /apps/{app_id}/): through the Next origin,
      trailing-slash normalization 308s the slash form and the backend 307s it
      back — an infinite loop. Relative-path resolution is identical either way. -->

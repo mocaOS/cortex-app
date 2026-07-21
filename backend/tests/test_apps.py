@@ -580,3 +580,72 @@ def test_grant_exchange_rate_limited(apps_env, client):
         assert all(c == 429 for c in codes[main_module._GRANT_EXCHANGE_LIMIT:])
     finally:
         main_module._grant_exchange_hits.clear()  # don't poison other tests
+
+
+def test_auth_header_base64_transform_and_cross_var_substitution(apps_env):
+    """Basic-auth apps declare `Authorization: Basic base64(USER:PASSWORD)` and
+    take plain credentials as config — users never hand-encode base64 (the
+    manual-encode step produced corrupted values in the field)."""
+    manifest = make_manifest(
+        id="basic-auth-app",
+        type="platform",
+        capabilities={"http": {"hosts": ["nc.example"]}},
+        config=[
+            {"name": "NC_USER", "type": "text", "required": True},
+            {
+                "name": "NC_APP_PASSWORD",
+                "type": "secret",
+                "required": True,
+                "auth_header": "Authorization: Basic base64(NC_USER:NC_APP_PASSWORD)",
+            },
+        ],
+    )
+    apps_env.install_from_zip(make_zip(manifest))
+    apps_env.save_config(
+        "basic-auth-app",
+        {"NC_USER": "rene", "NC_APP_PASSWORD": "abcde-12345-fghij-67890-klmno"},
+    )
+    headers = apps_env.platform_auth_headers("basic-auth-app", target_host="nc.example")
+    import base64 as b64
+
+    expected = b64.b64encode(b"rene:abcde-12345-fghij-67890-klmno").decode()
+    assert headers["Authorization"] == f"Basic {expected}"
+
+
+def test_orphaned_config_keys_never_surface_after_upgrade(apps_env):
+    """Upgrades preserve config.json — a var that was secret-typed in the OLD
+    manifest must not reappear (unmasked or at all) once the new manifest
+    stops declaring it. Found live: nextcloud-sync renamed its secret var and
+    the stale secret came back as plaintext in both admin get_config and the
+    app-facing public_config."""
+    v1 = make_manifest(
+        id="upgrade-app",
+        type="platform",
+        capabilities={"http": {"hosts": ["svc.example"]}},
+        config=[
+            {"name": "SVC_URL", "type": "text", "required": True},
+            {"name": "OLD_SECRET", "type": "secret",
+             "auth_header": "Authorization: Token OLD_SECRET"},
+        ],
+    )
+    apps_env.install_from_zip(make_zip(v1))
+    apps_env.save_config(
+        "upgrade-app", {"SVC_URL": "https://svc.example", "OLD_SECRET": "hunter2"}
+    )
+
+    v2 = dict(v1)
+    v2["version"] = "1.1.0"
+    v2["config"] = [
+        {"name": "SVC_URL", "type": "text", "required": True},
+        {"name": "NEW_SECRET", "type": "secret",
+         "auth_header": "Authorization: Token NEW_SECRET"},
+    ]
+    apps_env.install_from_zip(make_zip(v2))
+
+    admin_values = apps_env.get_config("upgrade-app")["values"]
+    assert "OLD_SECRET" not in admin_values
+    assert admin_values["SVC_URL"] == "https://svc.example"
+
+    public = apps_env.public_config("upgrade-app")
+    assert "OLD_SECRET" not in public
+    assert public == {"SVC_URL": "https://svc.example"}

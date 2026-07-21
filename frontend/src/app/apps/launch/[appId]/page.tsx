@@ -133,6 +133,11 @@ export default function AppLaunchPage() {
             title={app.name}
             src={appSrc}
             sandbox="allow-scripts allow-forms allow-downloads"
+            // the sandbox gives apps an opaque origin, where the async
+            // Clipboard API is permission-gated — delegate clipboard-write
+            // (* because opaque origins never match an origin allowlist) so
+            // in-app "copy" buttons (auth generators, OAuth links) work
+            allow="clipboard-write *"
             className="flex-1 w-full rounded-xl border border-border/50 bg-card"
           />
         ) : null}

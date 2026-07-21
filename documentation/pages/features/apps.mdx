@@ -7,7 +7,7 @@ Apps let you install small web applications directly into your Cortex instance. 
 
 :::tip{title="Building an app for Cortex"}
 
-This page is about installing apps **into** your instance. To **build** one, start from the [cortex-app-template](https://github.com/mocaOS/cortex-app-template) — it ships the manifest schema, a validator, and a working example bundle. For step-by-step guidance, point your AI coding assistant at the **[builder skills](https://cortexskills.org/builder/SKILL.md)** on [cortexskills.org](https://cortexskills.org): `SKILL.md` files that teach any agent how to scaffold, configure, and package a Cortex app.
+This page is about installing apps **into** your instance. To **build** one, start from the [cortex-app-template](https://github.com/mocaOS/cortex-app-template) — it ships the manifest schema, a validator, and a working example bundle. For step-by-step guidance, point your AI coding assistant at the <strong><a href="https://cortexskills.org/builder/SKILL.md">builder skills</a></strong> on [cortexskills.org](https://cortexskills.org): `SKILL.md` files that teach any agent how to scaffold, configure, and package a Cortex app.{/* raw anchor on purpose: Nextra rewrites markdown links ending in .md as internal page refs and strips the extension, 404ing the deployed link */}
 
 :::
 
@@ -50,10 +50,13 @@ Reinstalling (upgrading) an app preserves its minted key, saved configuration, a
 ## Installing from the registry
 
 Instead of uploading a zip, admins can install straight from the public
-[Cortex Registry](https://github.com/mocaOS/cortex-registry) — a git-native,
-PR-moderated catalog of apps. Open **Settings → Apps → Browse Registry** to
-see what's available, with each app's declared key scope, endpoint allowlist,
-and platform capabilities visible before you commit to anything.
+Cortex Registry — browse it on the web at
+**[registry.cortex.eco](https://registry.cortex.eco)** (catalog source:
+[mocaOS/cortex-registry](https://github.com/mocaOS/cortex-registry), a
+git-native, PR-moderated repo). Inside your instance, open
+**Settings → Apps → Browse Registry** to see the same catalog, with each
+app's declared key scope, endpoint allowlist, and platform capabilities
+visible before you commit to anything.
 
 Installing from the registry is checksum-verified end to end: the catalog
 pins every release artifact by sha256, the registry's CI re-downloads and

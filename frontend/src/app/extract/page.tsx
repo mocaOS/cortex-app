@@ -106,18 +106,31 @@ export default function ExtractAnalyzePage() {
       const step = savedStep ? parseInt(savedStep, 10) : 1;
       setIsRegenerating(true);
       setRegenerateStep(step >= 1 && step <= 3 ? step : 1);
-      return;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchData]);
 
-    // Normal mount: check for individually running tasks (not part of regeneration)
-    const checkRunningTasks = async () => {
+  // Detect individually running pipeline tasks (not part of regeneration) —
+  // continuously, not just on mount: tasks can start while the page is open
+  // (a sync app's uploads, the Documents page in another tab, the scheduler).
+  // The one-shot mount check used to miss those, leaving the CTA on
+  // "Regenerate Graph" during a live build. Pollers take over once attached
+  // (activePollRef), and the effect stands down while anything is tracked.
+  useEffect(() => {
+    if (isRegenerating || isExtractingEntities || analyzingRelationships || detectingCommunities) return;
+    let cancelled = false;
+
+    const detect = async () => {
+      if (cancelled || activePollRef.current) return;
       try {
         const { tasks } = await api.listTasks("running", "relationship_analysis");
+        if (cancelled) return;
         if (tasks.length > 0) {
           const task = tasks[0];
           setAnalyzingRelationships(true);
           setRelationshipTaskMessage(task.message || "Relationship analysis in progress...");
           pollRelationshipTask(task.task_id);
+          return;
         }
       } catch {
         // No running tasks
@@ -125,11 +138,13 @@ export default function ExtractAnalyzePage() {
 
       try {
         const { tasks } = await api.listTasks("running", "community_detection");
+        if (cancelled) return;
         if (tasks.length > 0) {
           const task = tasks[0];
           setDetectingCommunities(true);
           setCommunityTaskMessage(task.message || "Community detection in progress...");
           pollCommunityTask(task.task_id);
+          return;
         }
       } catch {
         // No running tasks
@@ -138,6 +153,7 @@ export default function ExtractAnalyzePage() {
       try {
         const tasks1 = await api.listTasks("running", "batch_processing");
         const tasks2 = await api.listTasks("running", "reprocess_batch");
+        if (cancelled) return;
         const task = tasks1.tasks[0] || tasks2.tasks[0];
         if (task) {
           setIsExtractingEntities(true);
@@ -149,9 +165,14 @@ export default function ExtractAnalyzePage() {
       }
     };
 
-    checkRunningTasks();
+    detect();
+    const interval = setInterval(detect, 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchData]);
+  }, [isRegenerating, isExtractingEntities, analyzingRelationships, detectingCommunities]);
 
   // Compute how many docs were completed after the last relationship analysis
   useEffect(() => {
@@ -220,12 +241,31 @@ export default function ExtractAnalyzePage() {
     return hasImages && d.image_progress_current !== d.image_progress_total;
   });
 
-  // Auto-refresh stats while tasks are running or images are being analyzed
+  // Ingestion running regardless of who started it (an app upload with
+  // start_processing, the pipeline auto-start, another tab): derived from
+  // document states — the same signal the Step-1 tile uses. Per-document
+  // processing has no batch task record, so the task flags alone miss it,
+  // which used to leave the CTA on "Regenerate Graph" during a live build.
+  const ingestionActive = documents.some(
+    (d) =>
+      d.processing_status === "processing" ||
+      d.processing_status === "extracting" ||
+      (d.processing_status === "completed" &&
+        (d.image_progress_total ?? 0) > 0 &&
+        d.image_progress_current !== d.image_progress_total),
+  );
+
+  // Auto-refresh stats: 5s while anything runs, slow 15s heartbeat when idle —
+  // the heartbeat is what notices externally-started ingestion (sync apps,
+  // other tabs) in the first place; without it document state never updates
+  // and ingestionActive could never flip on.
   useEffect(() => {
-    if (!analyzingRelationships && !detectingCommunities && !isExtractingEntities && !hasImageAnalysisInProgress && !isRegenerating) return;
-    const interval = setInterval(() => fetchData(true), 5000);
+    const active =
+      analyzingRelationships || detectingCommunities || isExtractingEntities ||
+      hasImageAnalysisInProgress || isRegenerating || ingestionActive;
+    const interval = setInterval(() => fetchData(true), active ? 5000 : 15000);
     return () => clearInterval(interval);
-  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, hasImageAnalysisInProgress, isRegenerating, fetchData]);
+  }, [analyzingRelationships, detectingCommunities, isExtractingEntities, hasImageAnalysisInProgress, isRegenerating, ingestionActive, fetchData]);
 
   // End the regeneration flow (called when chain finishes or aborts).
   const finishRegeneration = useCallback(() => {
@@ -752,10 +792,11 @@ export default function ExtractAnalyzePage() {
   return (
     <div className="py-6">
       {/* Top CTA: Generate/Regenerate when idle; Abort while a pipeline run is
-          active. Keyed off the actual running flags (not just the frontend regen
-          state), so a lingering backend task can always be stopped from here. */}
+          active. Keyed off the actual running flags AND document-derived
+          ingestion activity (per-document processing has no batch task — e.g.
+          sync-app uploads), so a live build can always be stopped from here. */}
       <div className="mb-6 flex justify-end">
-        {(isRegenerating || isExtractingEntities || analyzingRelationships || detectingCommunities) ? (
+        {(isRegenerating || isExtractingEntities || analyzingRelationships || detectingCommunities || ingestionActive) ? (
           <button
             onClick={handleAbortGeneration}
             disabled={abortingGeneration}

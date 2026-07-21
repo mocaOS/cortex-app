@@ -7,6 +7,37 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 21, 2026
+
+The app platform learned to speak to cloud storage: the task engine gained WebDAV listings, binary file transfer, and runtime OAuth credentials — the pieces a folder-sync app needs — and the first wave ships with it. [Nextcloud Sync](https://github.com/mocaOS/cortex-app-nextcloud) and [Dropbox Sync](https://github.com/mocaOS/cortex-app-dropbox) are live in the registry (now browseable on the web at [registry.cortex.eco](https://registry.cortex.eco)), and Paperless Sync 0.4.0 switches from re-rendering OCR text to ingesting the actual documents. Shipping these against real accounts also surfaced fixes that land here: a config-masking gap after app upgrades, clipboard access inside the app sandbox, and a Knowledge Graph page that kept offering **Regenerate Graph** while a sync-driven build was already running.
+
+### Cloud-sync task engine extensions
+
+The declarative task DSL (platform apps' server-side step-queues) gained the vocabulary for cloud-storage sync — all behind the existing security gates (host allowlist, SSRF guard, endpoint allowlist), with the manifest schema unchanged:
+
+- **`webdav` step** — a PROPFIND folder listing through the same gates as `http` steps, with the multistatus XML parsed server-side into plain items (`href`, `name`, `etag`, `lastModified`, `size`, `contentType`, `isDir`, `fileId`); `depth` 0/1/infinity and a `files`/`dirs` filter. ETags come normalized, ready to diff against stored state — the change-detection primitive for WebDAV sync. The interactive platform `http` envelope accepts PROPFIND too, so app UIs can drive folder browsers.
+- **Binary passthrough uploads** — `cortex` steps accept `multipart: {fromUrl: …}`: the instance fetches the file server-side and streams the bytes straight into `/api/upload`. PDFs, Office files, and images survive intact, and the bytes never enter the task context or a browser. Capped by the existing 20 MB transfer limit.
+- **Dynamic per-request auth** — `http`/`webdav`/`fromUrl` steps accept `auth: {bearer: …}` (or `basic`) resolved from the run context, so a task can refresh an OAuth token at the start of a run and use it on every call. Config secrets remain untemplatable, so static credentials can't leak through this path.
+- **Multi-listing fan-out** — `items.fromEach` concatenates several listing steps (one per synced folder) into one work pool, and a new `ext` template filter enables extension-based type filtering for APIs whose listings carry no MIME type.
+- **Basic auth without hand-encoding** — `auth_header` templates can now reference any config var and wrap parts in `base64(...)`, evaluated server-side: `Authorization: Basic base64(NC_USER:NC_APP_PASSWORD)`. Users paste a plain login and app password; nobody base64-encodes credentials by hand (a field-tested error magnet).
+
+### Cloud-sync apps in the registry
+
+The registry catalog is browseable on the web at [registry.cortex.eco](https://registry.cortex.eco) — the same checksum-pinned listings the in-instance **Browse Registry** panel installs from.
+
+- **Nextcloud Sync 0.1.0** — pick folders in a built-in WebDAV browser (with a live "~N files across M folders will sync" projection), and a scheduled task keeps them in the graph: ETag-based change detection, edited files replace their previous document instead of duplicating, sub-folders included. Auth is a plain Nextcloud app password; Basic auth is assembled server-side.
+- **Dropbox Sync 0.1.0** — OAuth 2 + PKCE with no app secret and no redirect server (copy/paste code flow, granted scopes verified at connect time with actionable errors), then per-folder delta cursors (`list_folder/continue`) drive incremental sync. The refresh token lives in the app's private storage; access tokens are minted per run.
+- **Paperless Sync 0.4.0** — now ships the **full documents**: each sync downloads the archived PDF (or original upload) server-side and streams it into ingestion, so Docling parses the real document — layout, tables, images — instead of a markdown re-render of paperless's OCR text. Requires the platform extensions above (`minVersion 2.1.0`).
+
+### Fixes from shipping against real accounts
+
+- **Orphaned app config keys no longer surface after upgrades** — app upgrades preserve `config.json`, but a var that was secret-typed in the *old* manifest lost its masking the moment a new manifest stopped declaring it: the stale secret came back as plaintext in both the admin config view and the app-facing `platform/config` endpoint. Both now expose only vars declared by the current manifest (regression-tested).
+- **Copy buttons work inside the app sandbox** — the launcher and share-shell iframes now delegate `clipboard-write` (the async Clipboard API is permission-gated in the sandbox's opaque origin), so in-app copy buttons (auth generators, OAuth links) actually copy.
+- **Knowledge Graph page: Abort during any live build** — the top CTA kept showing **Regenerate Graph** while ingestion started elsewhere (a sync app's uploads, another tab) was running, because per-document processing creates no batch task record and the page only checked for running tasks once on mount. The CTA now also keys on document-derived activity (the same signal as the Step 1 tile), running-task detection is continuous, and an idle 15-second refresh heartbeat notices externally-started ingestion in the first place. Aborting genuinely stops per-document processing — documents are kept.
+- No API or schema breakage: all task-DSL additions are opt-in step fields, the manifest schema is unchanged (all three registry/template/instance validators stay in lockstep), and instances without `ENABLE_APPS` are unaffected.
+
+---
+
 ## July 20, 2026
 
 Restarting the backend or the LLM endpoint mid-processing used to throw away everything a large document had already paid for — conversion, embeddings, and hours of extraction — and start over from the first chunk. Processing is now checkpointed at sub-document granularity and pauses gracefully through LLM endpoint outages, so a litellm restart at 95% of a 3,000-chunk book costs the remaining 5%, not the whole document. Separately, two silent login foot-guns reported by self-hosters are fixed: the session cookie's `Secure` flag gets a runtime switch for plain-HTTP setups, and a missing `ADMIN_EMAIL` now fails loudly instead of silently substituting a default. This release also introduces **Apps** — self-contained web apps that install into an instance from a zip and run sandboxed against a proxied, least-privilege slice of the Cortex API.

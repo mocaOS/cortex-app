@@ -22,6 +22,7 @@ Each step has an "Inspect" button linking to the relevant Explore tab.
 
 - **"Generate Graph"** button (no entities exist) — primary CTA, runs full 3-step pipeline. Rendered right-aligned at the top of the page.
 - **"Regenerate Graph"** button (entities exist) — runs full pipeline from scratch.
+- **"Abort Generation"** replaces the CTA whenever a pipeline run is active — keyed off the four task flags AND document-derived `ingestionActive` (docs `processing`/`extracting`/images-in-flight, the Step-1 tile's signal). Per-document ingestion (sync-app uploads with `start_processing`, pipeline auto-start) creates NO batch task record, so task flags alone missed it and the CTA stayed on "Regenerate" during a live build (2026-07-21 fix). `POST /api/documents/abort-generation` genuinely stops per-document processing + the chain.
 
 Cleanup order on click: `deleteAllCommunities()` → `deleteAllRelationships()` → `deleteAllEntities()` → `reprocessDocuments(ids, chain="relationship_analysis,community_detection")`. After the delete-and-kick-off, the **backend** drives the chain — see below.
 
@@ -59,6 +60,8 @@ The frontend persists only `regenerateActive=true` + `regenerateStep` (highest s
 - none running for 10 consecutive polls (~30 s) → backend likely lost state on reload, abort
 
 No per-step `regenerateTaskId` is stored anymore; the observer rediscovers the active task on every mount. This is what makes the flow robust to closing the browser mid-Step-2 and coming back hours later.
+
+Outside the regen flow, individually running pipeline tasks are detected **continuously** (6 s interval while nothing is tracked, guarded by `activePollRef`), not just on mount — tasks can start while the page is open (sync apps, another tab, the scheduler). The stats/documents auto-refresh runs at 5 s while anything is active and as a **15 s idle heartbeat** otherwise — the heartbeat is what notices externally-started ingestion at all (2026-07-21; previously the refresh was fully gated on activity flags, so an idle page never saw external uploads start processing).
 
 ## Step 1 Details
 
