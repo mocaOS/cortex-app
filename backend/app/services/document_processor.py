@@ -653,6 +653,24 @@ def _get_task_lock() -> asyncio.Lock:
     return _task_lock
 
 
+# Global gate for individually-started document pipelines (API upload with
+# start_processing=true, text ingestion, single reprocess). Batch processing
+# (process_pending_documents) runs its own semaphore over the same setting;
+# without this gate, N parallel API ingests would start N concurrent
+# pipelines regardless of BATCH_PROCESSING_CONCURRENCY.
+_processing_slots: Optional[asyncio.Semaphore] = None
+
+
+def _get_processing_slots() -> asyncio.Semaphore:
+    """Get or create the processing-slot semaphore (must be created in async context)."""
+    global _processing_slots
+    if _processing_slots is None:
+        _processing_slots = asyncio.Semaphore(
+            max(1, get_settings().batch_processing_concurrency)
+        )
+    return _processing_slots
+
+
 def get_active_processing_ids() -> list[str]:
     """Doc ids with any live in-process activity, across both entry paths.
 
@@ -1114,9 +1132,32 @@ class DocumentProcessor:
     ) -> None:
         """
         Wrapper around _process_document that ensures task cleanup on completion.
+
+        Every individually-started pipeline funnels through here, gated by the
+        global slot semaphore: at most BATCH_PROCESSING_CONCURRENCY documents
+        run concurrently, and a burst of API ingests queues instead of starting
+        one pipeline per document.
         """
         try:
-            await self._process_document(doc_id, file_path, file_type)
+            slots = _get_processing_slots()
+            if slots.locked():
+                # All slots busy — this document will wait. Mark it
+                # 'processing' with a queued message so the pending-batch
+                # pickup and the stranded-document sweep leave it alone and
+                # the UI shows why nothing is happening yet. Restart-safe:
+                # boot resume resets stranded 'processing' docs to pending
+                # and resumes them.
+                try:
+                    await asyncio.to_thread(
+                        self.neo4j.update_document_status,
+                        doc_id,
+                        ProcessingStatus.PROCESSING,
+                        progress_message="Queued — waiting for a free processing slot",
+                    )
+                except Exception as e:  # noqa: BLE001 — queue marker is best-effort
+                    logger.debug(f"Could not mark {doc_id} as queued: {e}")
+            async with slots:
+                await self._process_document(doc_id, file_path, file_type)
         finally:
             # Always unregister the task when done (success or failure)
             await self._unregister_task(doc_id)

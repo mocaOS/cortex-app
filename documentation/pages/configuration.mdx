@@ -107,6 +107,8 @@ BATCH_PROCESSING_CONCURRENCY=2
 PROCESSING_THREAD_WORKERS=4
 ```
 
+`BATCH_PROCESSING_CONCURRENCY` applies to *all* processing, not just explicit batches: documents ingested via the API with `start_processing=true` (and single reprocesses) queue on the same global limit, so a burst of API ingests never runs more pipelines concurrently than this value. Waiting documents show "Queued — waiting for a free processing slot" until a slot frees up.
+
 ---
 
 ## GraphRAG Configuration

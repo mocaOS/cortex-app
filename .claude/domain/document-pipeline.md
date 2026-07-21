@@ -9,6 +9,8 @@ Full pipeline from upload to graph storage. See [`.claude/domain/relationships.m
 - `source` field tracks document origin — defaults to `"upload"` for UI uploads, `"custom_input"` for custom inputs, or any custom string set via API `source` parameter
 - Progress tracked per-document in the frontend
 
+**Concurrency cap on auto-started pipelines**: every individually-started pipeline (API upload with `start_processing=true`, text ingestion, single reprocess) funnels through `_process_document_with_cleanup`, gated by a global semaphore sized `BATCH_PROCESSING_CONCURRENCY` (`_get_processing_slots`). A burst of API ingests therefore queues instead of launching one pipeline per document. A doc that has to wait is marked `processing` with progress message "Queued — waiting for a free processing slot" — this keeps `process_pending_documents` and the stranded-doc sweep from grabbing it (it has a live task), and on restart the boot resume resets/resumes it like any stranded `processing` doc. Batch processing (`process_pending_documents`) keeps its own semaphore over the same setting (explicit `concurrency` query param can override it per call). Tests: `backend/tests/test_processing_slots.py`.
+
 ## Docling Conversion
 
 Documents are converted via Docling (PDF, EPUB, DOCX, PPTX, etc. — EPUB parses natively as XHTML with no per-page layout ML, so prefer it over a PDF rendering of the same book). The `docling_worker.py` runs as a separate process for CPU-bound ML inference, OCR, and table structure recognition with memory optimizations for large documents. Images are extracted during this phase for later vision analysis.

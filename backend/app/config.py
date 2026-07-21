@@ -383,6 +383,10 @@ class Settings(BaseSettings):
     )  # Documents processed concurrently in batch mode. Default 2: live measurement
     # (2026-07-08) showed 3 concurrent docs drop per-call decode throughput
     # ~70 → ~23 tok/s and multiply request timeouts — 2 finishes builds faster.
+    # Also the global cap for individually-started pipelines (API upload with
+    # start_processing=true, text ingestion, single reprocess): a burst of API
+    # ingests queues on a shared semaphore instead of starting one pipeline
+    # per document.
     processing_thread_workers: int = Field(
         default=4
     )  # Thread pool workers for CPU-intensive operations
