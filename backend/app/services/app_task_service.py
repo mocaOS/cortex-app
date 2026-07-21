@@ -143,6 +143,15 @@ async def execute_app_http(
         headers[name] = value
     if auth_override:
         headers["Authorization"] = auth_override
+    for name, value in list(headers.items()):
+        if "google_sa_token(" in value:
+            # server-side service-account token minting (cached) — the key
+            # JSON stays in encrypted config, only the short-lived token
+            # goes on the wire, and only to allowlisted hosts
+            try:
+                headers[name] = await service.resolve_google_sa_tokens(app_id, value)
+            except ValueError as e:
+                raise AppHttpError(502, f"Service-account auth failed: {e}")
     if content_type:
         headers["Content-Type"] = content_type
     elif body is not None:
@@ -165,6 +174,40 @@ async def execute_app_http(
     if len(response.content) > 20 * 1024 * 1024:
         raise AppHttpError(502, "Upstream response exceeds 20 MB")
     return response
+
+
+async def follow_upload_redirect(app_id: str, response: httpx.Response) -> httpx.Response:
+    """Follow exactly ONE redirect for a multipart.fromUrl fetch.
+
+    Cloud APIs hand out file bytes via 302s to pre-authenticated URLs on
+    VARIABLE hosts (Microsoft Graph /content → *.sharepoint.com / CDN), which
+    a literal host allowlist can never cover. This is safe to allow ONLY here
+    because the bytes stream straight into the instance's own upload — they
+    never enter the app-readable step context — and the hop is tightly
+    bounded: single redirect, GET, https, public targets only (SSRF guard
+    with allow_private=False — unlike first hops, a redirect target chosen by
+    the external service must not reach LAN/loopback), and NO request headers
+    are forwarded (the pre-authenticated URL needs none; forwarding would
+    leak the app's bearer/config credentials to an arbitrary host)."""
+    from app.services.ssrf_guard import SSRFError, validate_url
+
+    location = response.headers.get("location", "")
+    if not location.lower().startswith("https://"):
+        raise AppHttpError(502, "Redirect target must be https")
+    try:
+        validate_url(location, allow_private=False)
+    except SSRFError as e:
+        raise AppHttpError(403, f"Blocked redirect target: {e}")
+    try:
+        async with httpx.AsyncClient(
+            timeout=get_settings().app_http_timeout, follow_redirects=False
+        ) as client:
+            redirected = await client.get(location)
+    except httpx.HTTPError as e:
+        raise AppHttpError(502, f"Redirect fetch failed: {type(e).__name__}")
+    if len(redirected.content) > 20 * 1024 * 1024:
+        raise AppHttpError(502, "Upstream response exceeds 20 MB")
+    return redirected
 
 
 def _utcnow_iso() -> str:
@@ -922,7 +965,12 @@ class AppTaskService:
             if response.status_code >= 400:
                 raise StepError(f"http pagination page {pages + 1} → {response.status_code}")
             parsed = _parse_body(response, spec.get("responseType"))
-        output: Dict[str, Any] = {"status": 200, "items": all_items, "pages": pages}
+        # "last" = the final page's parsed body — cursor-style APIs put the
+        # continuation token there (Graph delta's @odata.deltaLink appears
+        # only on the last page), which the accumulated items list can't carry
+        output: Dict[str, Any] = {
+            "status": 200, "items": all_items, "pages": pages, "last": parsed,
+        }
         key_by = paginate.get("keyBy")
         if key_by:
             output["map"] = {
@@ -1001,6 +1049,10 @@ class AppTaskService:
                 app_id, method=str(multipart.get("method", "GET")).upper(),
                 url=fetch_url, extra_headers=fetch_headers, **fetch_kwargs,
             )
+            if multipart.get("followRedirect") and upstream.status_code in (
+                301, 302, 303, 307, 308,
+            ):
+                upstream = await follow_upload_redirect(app_id, upstream)
             if upstream.status_code >= 400:
                 raise StepError(
                     f"multipart fetch {fetch_url} → {upstream.status_code}: "
@@ -1230,7 +1282,17 @@ def _parse_multistatus(content: bytes, *, request_url: str) -> List[dict]:
             size = int(prop.findtext("d:getcontentlength", "", _DAV_NS) or 0)
         except ValueError:
             size = 0
-        item = {
+        # fileId: server-provided when available (Nextcloud/ownCloud oc:fileid,
+        # stable across renames); otherwise a deterministic hash of the href —
+        # generic WebDAV servers expose no id, and sync apps need a stable,
+        # storage-key-safe identifier for dedup/docmap keys (hrefs themselves
+        # contain characters storage keys reject)
+        file_id = prop.findtext("oc:fileid", "", _DAV_NS)
+        if not file_id:
+            import hashlib
+
+            file_id = hashlib.sha1(href.encode()).hexdigest()[:16]
+        items.append({
             "href": href,
             "name": href.rstrip("/").rsplit("/", 1)[-1],
             "etag": etag,
@@ -1238,22 +1300,25 @@ def _parse_multistatus(content: bytes, *, request_url: str) -> List[dict]:
             "size": size,
             "contentType": prop.findtext("d:getcontenttype", "", _DAV_NS) or "",
             "isDir": is_dir,
-        }
-        file_id = prop.findtext("oc:fileid", "", _DAV_NS)
-        if file_id:
-            item["fileId"] = file_id
-        items.append(item)
+            "fileId": file_id,
+        })
     return items
 
 
 def _dig(value: Any, path: Optional[str]) -> Any:
-    """Dotted-path lookup into a parsed response body."""
+    """Dotted-path lookup into a parsed response body. A key that itself
+    contains dots (OData's "@odata.nextLink") is matched literally when the
+    remaining path exists as one key at the current level."""
     if not path:
         return None
     current = value
-    for seg in path.split("."):
+    segments = path.split(".")
+    for i, seg in enumerate(segments):
         if isinstance(current, dict):
-            current = current.get(seg)
+            if seg in current:
+                current = current[seg]
+            else:
+                return current.get(".".join(segments[i:]))
         elif isinstance(current, list):
             try:
                 current = current[int(seg)]

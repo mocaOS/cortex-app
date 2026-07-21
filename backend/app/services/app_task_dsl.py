@@ -332,6 +332,8 @@ def _validate_step(
                         )
                     if str(multipart.get("method", "GET")).upper() not in ("GET", "POST"):
                         issues.append(f"{where}: multipart.method must be GET or POST")
+                    if not isinstance(multipart.get("followRedirect", False), bool):
+                        issues.append(f"{where}: multipart.followRedirect must be a boolean")
                     if "headers" in multipart and not (
                         isinstance(multipart["headers"], dict)
                         and all(isinstance(v, str) for v in multipart["headers"].values())
@@ -339,7 +341,7 @@ def _validate_step(
                         issues.append(f"{where}: multipart.headers must map names to strings")
                     issues.extend(_validate_auth(multipart.get("auth"), f"{where}: multipart"))
                     allowed = {"fromUrl", "method", "headers", "auth",
-                               "filename", "field", "contentType"}
+                               "followRedirect", "filename", "field", "contentType"}
                 else:
                     allowed = {"content", "filename", "field", "contentType"}
                 if set(multipart) - allowed:
@@ -544,7 +546,7 @@ def _resolve_path(path: str, ctx: Dict[str, Any]) -> Any:
             f"unknown reference root {root!r} (known: vars, setup, steps, run, "
             f"config, item, chunk, or a step id in scope)"
         )
-    for seg in segments:
+    for i, seg in enumerate(segments):
         if current is None:
             return None
         if isinstance(current, list):
@@ -553,7 +555,12 @@ def _resolve_path(path: str, ctx: Dict[str, Any]) -> Any:
             except (ValueError, IndexError):
                 return None
         elif isinstance(current, dict):
-            current = current.get(seg)
+            if seg in current:
+                current = current[seg]
+            else:
+                # a key containing dots (OData's "@odata.deltaLink") matches
+                # literally when the remaining path exists as one key here
+                return current.get(".".join(segments[i:]))
         else:
             return None
     return current

@@ -895,6 +895,12 @@ class AppService:
                     continue
             header_name, _, header_value = template.partition(":")
             rendered = header_value.strip()
+            # google_sa_token(VAR, scopes) must reach the async minting stage
+            # (execute_app_http) carrying the VAR NAME — shield it from the
+            # substitution below, which would inline the raw key JSON
+            sa_exprs = re.findall(r"google_sa_token\([^()]*\)", rendered)
+            for j, expr in enumerate(sa_exprs):
+                rendered = rendered.replace(expr, f"\x00GSA{j}\x00")
             # longest name first — var names may be prefixes of each other
             for name in sorted(config, key=len, reverse=True):
                 if config.get(name):
@@ -904,8 +910,111 @@ class AppService:
                 lambda m: base64.b64encode(m.group(1).encode()).decode(),
                 rendered,
             )
+            for j, expr in enumerate(sa_exprs):
+                rendered = rendered.replace(f"\x00GSA{j}\x00", expr)
             headers[header_name.strip()] = rendered
         return headers
+
+    # ------------------------------------------------------------------
+    # Google service-account tokens (auth_header transform)
+    # ------------------------------------------------------------------
+
+    _GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+    _sa_token_cache: Dict[tuple, tuple] = {}
+
+    async def resolve_google_sa_tokens(self, app_id: str, header_value: str) -> str:
+        """Resolve every ``google_sa_token(VAR, scope [scope…])`` expression in
+        a rendered auth header to a Bearer token minted from the app's
+        service-account key (a config secret).
+
+        The whole exchange happens server-side: the key never enters task
+        context or the browser, only the short-lived access token goes on the
+        wire — and only to hosts the manifest allowlists. token_uri is pinned
+        to Google's endpoint so a hostile "key" JSON can't steer the platform
+        anywhere else. Tokens are cached until shortly before expiry."""
+
+        async def mint(match: "re.Match[str]") -> str:
+            inner = match.group(1)
+            var_name, _, scopes = inner.partition(",")
+            var_name = var_name.strip()
+            scopes = " ".join(scopes.split())
+            if not scopes:
+                raise ValueError("google_sa_token needs explicit scopes: "
+                                 "google_sa_token(VAR, <scope> [scope…])")
+            cache_key = (app_id, var_name, scopes)
+            cached = self._sa_token_cache.get(cache_key)
+            if cached and time.monotonic() < cached[1]:
+                return cached[0]
+
+            loaded = self._load(app_id)
+            if not loaded:
+                raise ValueError("app not found")
+            config = self._decrypted_config(app_id, loaded[0])
+            raw = config.get(var_name)
+            if not raw:
+                raise ValueError(f"config var {var_name} is not set")
+            try:
+                key_data = json.loads(raw)
+            except ValueError:
+                raise ValueError(f"config var {var_name} is not a service-account JSON key")
+            token_uri = key_data.get("token_uri", self._GOOGLE_TOKEN_URI)
+            if token_uri != self._GOOGLE_TOKEN_URI:
+                raise ValueError("service-account token_uri must be Google's endpoint")
+            client_email = key_data.get("client_email")
+            private_key_pem = key_data.get("private_key")
+            if not client_email or not private_key_pem:
+                raise ValueError(f"{var_name} is missing client_email/private_key")
+
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+
+            def b64url(data: bytes) -> str:
+                return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+            now = int(time.time())
+            segments = [
+                b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()),
+                b64url(json.dumps({
+                    "iss": client_email, "scope": scopes, "aud": token_uri,
+                    "iat": now, "exp": now + 3600,
+                }).encode()),
+            ]
+            signing_input = ".".join(segments).encode()
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode(), password=None
+            )
+            signature = private_key.sign(
+                signing_input, padding.PKCS1v15(), hashes.SHA256()
+            )
+            assertion = f"{signing_input.decode()}.{b64url(signature)}"
+
+            import httpx
+
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(token_uri, data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": assertion,
+                })
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Google token exchange failed ({response.status_code}): "
+                    f"{response.text[:200]}"
+                )
+            body = response.json()
+            token = body.get("access_token", "")
+            if not token:
+                raise ValueError("Google token exchange returned no access_token")
+            expires_in = int(body.get("expires_in", 3600))
+            self._sa_token_cache[cache_key] = (
+                token, time.monotonic() + max(60, expires_in - 300)
+            )
+            return token
+
+        result = header_value
+        for match in re.finditer(r"google_sa_token\(([^()]*)\)", header_value):
+            token = await mint(match)
+            result = result.replace(match.group(0), token)
+        return result
 
     def upstream_api_key(self, app_id: str) -> Optional[str]:
         """The app's minted key, decrypted, for the proxy to attach."""

@@ -1195,3 +1195,141 @@ def test_ext_filter():
     assert interpolate("{vars.b|ext}", ctx) == ""
     assert interpolate("{vars.c|ext}", ctx) == ""      # dotfile, no real ext
     assert interpolate("{vars.d|ext}", ctx) == "gz"
+
+
+# ---------------------------------------------------------------------------
+# Wave-2 extensions: redirect follow, paginate.last, dotted keys, fileId
+# ---------------------------------------------------------------------------
+
+def test_dotted_key_fallback_in_refs_and_dig():
+    """OData keys contain dots (@odata.nextLink) — the remaining path matches
+    literally when it exists as one key at the current level."""
+    from app.services.app_task_dsl import resolve_ref
+    from app.services.app_task_service import _dig
+
+    body = {"value": [1], "@odata.nextLink": "https://g/next",
+            "nested": {"@odata.deltaLink": "https://g/delta"}}
+    assert _dig(body, "@odata.nextLink") == "https://g/next"
+    assert _dig(body, "nested.@odata.deltaLink") == "https://g/delta"
+    assert _dig(body, "missing.@odata.x") is None
+
+    ctx = {"vars": {}, "setup": {"delta": {"last": body}}, "steps": {},
+           "run": {}, "config": {}}
+    assert resolve_ref("$delta.last.@odata.nextLink", ctx) == "https://g/next"
+    assert resolve_ref("$delta.last.nested.@odata.deltaLink", ctx) == "https://g/delta"
+
+
+def test_paginate_exposes_last_page_body(tasks_env, monkeypatch):
+    env = tasks_env
+    pages = [
+        {"value": [{"id": 1}], "@odata.nextLink": "http://paperless.local/page2"},
+        {"value": [{"id": 2}], "@odata.deltaLink": "http://paperless.local/delta?token=T9"},
+    ]
+    calls = {"n": 0}
+
+    async def fake_execute(app_id, *, method, url, body=None, content_type=None,
+                            extra_headers=None, auth_override=None):
+        page = pages[min(calls["n"], 1)]
+        calls["n"] += 1
+        return httpx.Response(200, json=page)
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_execute)
+    result = run_and_wait(env, {
+        "name": "delta-cursor",
+        "setup": [
+            {"id": "delta", "http": {"method": "GET",
+                "url": "http://paperless.local/delta",
+                "paginate": {"items": "value", "next": "@odata.nextLink"}}},
+            {"store": {"put": "cursor", "value": "$delta.last.@odata.deltaLink"}},
+            {"store": {"put": "count", "value": "$delta.items"}},
+        ],
+    })
+    assert result["status"] == "completed", result
+    assert env.storage.get(env.app_id, "cursor") == "http://paperless.local/delta?token=T9"
+    assert env.storage.get(env.app_id, "count") == [{"id": 1}, {"id": 2}]
+
+
+def test_from_url_follow_redirect(tasks_env, monkeypatch):
+    """Graph-style /content 302 → pre-authenticated URL on a foreign host:
+    followed exactly once, NO headers forwarded, https+public only."""
+    env = tasks_env
+    fetched = {}
+    uploads = []
+
+    async def fake_execute(app_id, *, method, url, body=None, content_type=None,
+                            extra_headers=None, auth_override=None):
+        assert auth_override == "Bearer AT"
+        return httpx.Response(302, headers={
+            "location": "https://cdn.example.net/signed/file.pdf"})
+
+    async def fake_get(self, url, **kwargs):
+        fetched["url"] = str(url)
+        fetched["headers_passed"] = "headers" in kwargs and bool(kwargs["headers"])
+        return httpx.Response(200, content=b"%PDF-x",
+                               headers={"content-type": "application/pdf"})
+
+    async def fake_request(self, method, url, **kwargs):
+        if "files" in kwargs:
+            uploads.append(kwargs["files"]["file"])
+            return httpx.Response(200, json={"document_id": "d1", "filename": "x",
+                                              "status": "pending", "message": "",
+                                              "source": "t"})
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_execute)
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    # the SSRF guard resolves DNS; the fake CDN host doesn't exist — the
+    # guard's own rejections are covered by the next test
+    monkeypatch.setattr(
+        "app.services.ssrf_guard.validate_url", lambda url, **kw: None
+    )
+    result = run_and_wait(env, {
+        "name": "redirect-dl",
+        "setup": [
+            {"store": {"put": "t", "value": "AT"}},
+            {"id": "tok", "store": {"get": "t"}},
+        ],
+        "items": [{"vars": {"id": "i1"}}],
+        "steps": [
+            {"cortex": {"method": "POST", "path": "upload",
+                "multipart": {"fromUrl": "http://paperless.local/items/{vars.id}/content",
+                               "auth": {"bearer": "$tok.value"},
+                               "followRedirect": True,
+                               "filename": "f.pdf"}}},
+        ],
+    })
+    assert result["status"] == "completed", result
+    assert fetched["url"] == "https://cdn.example.net/signed/file.pdf"
+    assert not fetched["headers_passed"]  # bearer never leaks to the CDN host
+    assert uploads[0][1] == b"%PDF-x" and uploads[0][2] == "application/pdf"
+
+
+def test_follow_redirect_rejects_http_and_private_targets(tasks_env, monkeypatch):
+    from app.services.app_task_service import AppHttpError, follow_upload_redirect
+
+    async def check(location):
+        response = httpx.Response(302, headers={"location": location})
+        try:
+            await follow_upload_redirect("sync-app", response)
+            return None
+        except AppHttpError as e:
+            return e.detail
+
+    import asyncio as aio
+    assert "https" in aio.run(check("http://cdn.example.net/f"))
+    assert "Blocked redirect" in aio.run(check("https://127.0.0.1/f"))
+
+
+def test_multistatus_file_id_fallback_is_stable():
+    from app.services.app_task_service import _parse_multistatus
+
+    xml = ('<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response>'
+           "<d:href>/dav/files/x/report.pdf</d:href>"
+           "<d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>"
+           '<d:getetag>"e1"</d:getetag><d:resourcetype/>'
+           "</d:prop></d:propstat></d:response></d:multistatus>")
+    a = _parse_multistatus(xml.encode(), request_url="https://s/dav/files/x/")
+    b = _parse_multistatus(xml.encode(), request_url="https://s/dav/files/x/")
+    assert a[0]["fileId"] == b[0]["fileId"]
+    assert len(a[0]["fileId"]) == 16  # deterministic sha1 prefix, key-safe

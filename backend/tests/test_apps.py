@@ -649,3 +649,76 @@ def test_orphaned_config_keys_never_surface_after_upgrade(apps_env):
     public = apps_env.public_config("upgrade-app")
     assert "OLD_SECRET" not in public
     assert public == {"SVC_URL": "https://svc.example"}
+
+
+def test_google_sa_token_transform(apps_env, monkeypatch):
+    """auth_header google_sa_token(VAR, scopes): server-side RS256 JWT mint +
+    exchange, cached until near-expiry, token_uri pinned to Google's endpoint
+    (a hostile key JSON must not steer the platform elsewhere)."""
+    import asyncio
+    import base64 as b64
+    import json as jsonlib
+
+    import httpx
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    sa_json = jsonlib.dumps({
+        "type": "service_account",
+        "client_email": "sync@proj.iam.gserviceaccount.com",
+        "private_key": pem,
+        "token_uri": "https://oauth2.googleapis.com/token",
+    })
+
+    manifest = make_manifest(
+        id="gdrive-app",
+        type="platform",
+        capabilities={"http": {"hosts": ["www.googleapis.com"]}},
+        config=[
+            {"name": "GDRIVE_SA_KEY", "type": "secret",
+             "auth_header": "Authorization: Bearer google_sa_token(GDRIVE_SA_KEY, https://www.googleapis.com/auth/drive.readonly)"},
+        ],
+    )
+    apps_env.install_from_zip(make_zip(manifest))
+    apps_env.save_config("gdrive-app", {"GDRIVE_SA_KEY": sa_json})
+
+    exchanges = []
+
+    async def fake_post(self, url, data=None, **kwargs):
+        exchanges.append((str(url), data))
+        # decode the JWT claims to prove structure
+        assertion = data["assertion"]
+        payload = assertion.split(".")[1]
+        claims = jsonlib.loads(b64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        assert claims["iss"] == "sync@proj.iam.gserviceaccount.com"
+        assert claims["scope"] == "https://www.googleapis.com/auth/drive.readonly"
+        assert claims["aud"] == "https://oauth2.googleapis.com/token"
+        return httpx.Response(200, json={"access_token": "ya29.MINTED", "expires_in": 3600})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    header = apps_env.platform_auth_headers("gdrive-app", target_host="www.googleapis.com")["Authorization"]
+    # the rendered header still carries the expression (var name protected
+    # from substitution — the raw key JSON must never inline into a header)
+    assert "google_sa_token(GDRIVE_SA_KEY" in header and pem not in header
+
+    resolved = asyncio.run(apps_env.resolve_google_sa_tokens("gdrive-app", header))
+    assert resolved == "Bearer ya29.MINTED"
+    resolved2 = asyncio.run(apps_env.resolve_google_sa_tokens("gdrive-app", header))
+    assert resolved2 == "Bearer ya29.MINTED"
+    assert len(exchanges) == 1  # cached — one exchange for two resolutions
+
+    # pinned token_uri: a key steering elsewhere is refused
+    evil = jsonlib.loads(sa_json)
+    evil["token_uri"] = "https://attacker.example/token"
+    apps_env.save_config("gdrive-app", {"GDRIVE_SA_KEY": jsonlib.dumps(evil)})
+    apps_env._sa_token_cache.clear()
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="token_uri"):
+        asyncio.run(apps_env.resolve_google_sa_tokens("gdrive-app", header))
