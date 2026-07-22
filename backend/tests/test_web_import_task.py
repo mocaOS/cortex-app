@@ -131,6 +131,28 @@ async def test_aggregates_one_domain_into_a_single_document(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_submitted_by_adds_community_provenance(monkeypatch, tmp_path):
+    async def crawl(url, content_filter=None, query=None):
+        return {"url": url, "title": "T", "markdown": "b"}
+
+    cap = _patch_common(monkeypatch, tmp_path, crawl)
+
+    await main._run_web_import_task(
+        task_id="web-4",
+        urls=["https://site.com/a", "https://site.com/b"],
+        collection_id=None,
+        content_filter="fit",
+        query=None,
+        submitted_by="0xABCdef",
+    )
+
+    # Provenance keeps crawl:<domain> AND appends community:<lowercased id>,
+    # matching the document-upload path's attribution.
+    assert len(cap["staged"]) == 1
+    assert cap["staged"][0]["source"] == "crawl:site.com community:0xabcdef"
+
+
+@pytest.mark.asyncio
 async def test_groups_multiple_domains_into_one_document_each(monkeypatch, tmp_path):
     async def crawl(url, content_filter=None, query=None):
         return {"url": url, "title": "T", "markdown": "b"}

@@ -6536,6 +6536,7 @@ async def _run_web_import_task(
     collection_id: Optional[str],
     content_filter: Optional[str],
     query: Optional[str],
+    submitted_by: Optional[str] = None,
 ):
     """Background runner: crawl each URL → aggregate per domain → hand off processing.
 
@@ -6622,9 +6623,14 @@ async def _run_web_import_task(
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
                 await f.write(file_content)
             file_size = len(file_content.encode("utf-8"))
+            # Provenance: crawl:<domain>, plus community:<id> when a contributor
+            # is known (mirrors the upload path's community:<addr> attribution).
+            source = f"crawl:{domain}"
+            if submitted_by and submitted_by.strip():
+                source += f" community:{submitted_by.strip().lower()}"
             await processor.store_file_only(
                 file_path, filename, file_size, collection_id,
-                source=f"crawl:{domain}",
+                source=source,
             )
             docs_created += 1
         except Exception as e:  # noqa: BLE001
@@ -6742,7 +6748,8 @@ async def web_import(
 
     task = create_task("web_import")
     _spawn_chain_task(_run_web_import_task(
-        task.task_id, urls, collection_id, request.content_filter, request.query
+        task.task_id, urls, collection_id, request.content_filter, request.query,
+        request.submitted_by,
     ))
     return WebImportResponse(
         task_id=task.task_id,

@@ -484,6 +484,7 @@ class WebImportRequest(BaseModel):
     collection_id: Optional[str] = Field(default=None, description="Collection to add the harvested documents to")
     content_filter: Optional[str] = Field(default=None, description="crawl4ai filter: 'fit' (readability, default), 'raw', or 'bm25'")
     query: Optional[str] = Field(default=None, description="Relevance query (only used by the 'bm25' filter)")
+    submitted_by: Optional[str] = Field(default=None, description="Optional contributor id (e.g. a wallet address); appended to each doc's source as 'community:<id>' for provenance")
 
     class Config:
         json_schema_extra = {
