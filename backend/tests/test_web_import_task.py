@@ -97,11 +97,16 @@ async def test_aggregates_one_domain_into_a_single_document(monkeypatch, tmp_pat
     doc = cap["staged"][0]
     assert doc["collection_id"] == "col-1"
     assert doc["source"] == "crawl:x.com"
+    # Named/titled by the DOMAIN, never a page title (regression: an homepage
+    # whose crawl title fell back to "o.html" produced "o-html.md").
+    assert doc["filename"] == "x.com.md"
     assert len([f for f in os.listdir(tmp_path) if f.endswith(".md")]) == 1
 
-    # The single file contains every page's body + per-page source lines.
+    # The single file is titled by the domain and contains every page's body +
+    # per-page source lines.
     with open(doc["file_path"], encoding="utf-8") as f:
         content = f.read()
+    assert content.startswith("# x.com\n")
     assert "body-of-t" in content  # /about
     assert "body-of-a" in content and "body-of-b" in content
     assert content.count("> Source: https://x.com/") == 3

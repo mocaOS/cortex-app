@@ -6497,18 +6497,20 @@ def _format_crawl_markdown(title: str, url: str, body: str) -> str:
     return f"# {title}\n\n> Source: {url}\n> Extracted: {today}\n\n---\n\n{body}\n"
 
 
-def _format_crawl_site_markdown(site_title: str, domain: str, pages: List[dict]) -> str:
+def _format_crawl_site_markdown(domain: str, pages: List[dict]) -> str:
     """Aggregate all crawled pages of ONE domain into a single markdown document.
 
     Keeping a site's subpages in one document (each as a `##` section with its own
     source line) means the retrieval + knowledge-graph pipeline reads them as one
     related work: e.g. an artist named only on the About page still ties to their
     practice / exhibitions / press pages that never repeat the name. `pages` is a
-    list of `{"url", "title", "markdown"}` in the order they should appear.
+    list of `{"url", "title", "markdown"}` in the order they should appear. The
+    document is titled by its DOMAIN (not a page title) so it reads as one work and
+    its filename/citations are unambiguous.
     """
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [
-        f"# {site_title}",
+        f"# {domain}",
         "",
         f"> Source site: {domain}",
         f"> Pages: {len(pages)}",
@@ -6601,15 +6603,20 @@ async def _run_web_import_task(
     for domain, pages in by_domain.items():
         # Homepage-first, deterministic ordering within the site.
         pages.sort(key=lambda p: (len(urlparse(p["url"]).path.rstrip("/")), p["url"]))
-        site_title = pages[0]["title"] or domain
+        # Name/title the document by its DOMAIN, never a page title — crawl4ai
+        # often falls back to the URL path for a title (e.g. "o.html"), which
+        # would make the filename and every citation read as a random page.
         if len(pages) == 1:
             file_content = _format_crawl_markdown(
-                site_title, pages[0]["url"], pages[0]["markdown"]
+                domain, pages[0]["url"], pages[0]["markdown"]
             )
         else:
-            file_content = _format_crawl_site_markdown(site_title, domain, pages)
+            file_content = _format_crawl_site_markdown(domain, pages)
         doc_id = str(uuid.uuid4())
-        filename = f"{_crawl_slugify(site_title or domain)}.md"
+        # Keep the domain readable in the filename (dots are filesystem-safe),
+        # e.g. "nurecas.com" -> "nurecas.com.md".
+        safe_domain = re.sub(r"[^a-z0-9.-]+", "-", domain.lower()).strip("-.") or "site"
+        filename = f"{safe_domain}.md"
         file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
         try:
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
