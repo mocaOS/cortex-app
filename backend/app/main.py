@@ -6497,6 +6497,37 @@ def _format_crawl_markdown(title: str, url: str, body: str) -> str:
     return f"# {title}\n\n> Source: {url}\n> Extracted: {today}\n\n---\n\n{body}\n"
 
 
+def _format_crawl_site_markdown(site_title: str, domain: str, pages: List[dict]) -> str:
+    """Aggregate all crawled pages of ONE domain into a single markdown document.
+
+    Keeping a site's subpages in one document (each as a `##` section with its own
+    source line) means the retrieval + knowledge-graph pipeline reads them as one
+    related work: e.g. an artist named only on the About page still ties to their
+    practice / exhibitions / press pages that never repeat the name. `pages` is a
+    list of `{"url", "title", "markdown"}` in the order they should appear.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines = [
+        f"# {site_title}",
+        "",
+        f"> Source site: {domain}",
+        f"> Pages: {len(pages)}",
+        f"> Extracted: {today}",
+        "",
+        "---",
+    ]
+    for p in pages:
+        lines += [
+            "",
+            f"## {p['title']}",
+            "",
+            f"> Source: {p['url']}",
+            "",
+            (p["markdown"] or "").strip(),
+        ]
+    return "\n".join(lines) + "\n"
+
+
 async def _run_web_import_task(
     task_id: str,
     urls: List[str],
@@ -6504,10 +6535,15 @@ async def _run_web_import_task(
     content_filter: Optional[str],
     query: Optional[str],
 ):
-    """Background runner: crawl each URL → store as markdown → process pending.
+    """Background runner: crawl each URL → aggregate per domain → hand off processing.
 
-    Mirrors the git connector's two-phase shape: stage every harvested page as
-    a PENDING document, then run the shared processing pass once at the end.
+    Phase 1 crawls every URL, then aggregates each domain's pages into ONE
+    markdown document (a site's subpages read as one related work — see
+    `_format_crawl_site_markdown`) staged as a PENDING document attached to the
+    collection. This task then COMPLETES immediately (the "Import complete" popup
+    fires the moment the documents are added). The extract/embed/KG pass is handed
+    to a separate `batch_processing` task so it can be watched and resumed on the
+    regular Documents page instead of blocking the import.
     """
     usage_meter.set_usage_kind(usage_meter.KIND_PROCESSING)
     from app.services import crawl_client
@@ -6524,24 +6560,19 @@ async def _run_web_import_task(
     counter_lock = asyncio.Lock()
 
     async def harvest_one(url: str):
+        """Crawl one URL; collect its markdown for per-domain aggregation."""
         nonlocal done
         async with sem:
             try:
                 res = await crawl_client.crawl_markdown(
                     url, content_filter=content_filter, query=query
                 )
-                file_content = _format_crawl_markdown(res["title"], url, res["markdown"])
-                doc_id = str(uuid.uuid4())
-                filename = f"{_crawl_slugify(res['title'])}.md"
-                file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
-                async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-                    await f.write(file_content)
-                file_size = len(file_content.encode("utf-8"))
-                await processor.store_file_only(
-                    file_path, filename, file_size, collection_id,
-                    source=f"crawl:{urlparse(url).netloc}",
-                )
-                succeeded.append({"url": url, "title": res["title"]})
+                succeeded.append({
+                    "url": url,
+                    "title": res["title"],
+                    "markdown": res["markdown"],
+                    "netloc": urlparse(url).netloc,
+                })
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"web import failed for {url}: {e}")
                 failed.append({"url": url, "error": str(e)})
@@ -6559,24 +6590,82 @@ async def _run_web_import_task(
         fail_task(task_id, f"All {total} URL(s) failed to crawl")
         return
 
-    # Phase 2: extract/embed the staged pages (shared with uploads/git).
-    def progress(cur, tot, msg):
-        update_task_progress(task_id, cur, tot, f"Processing: {msg}")
+    # Aggregate each domain's crawled pages into ONE PENDING document (dict keeps
+    # first-seen domain order). A single-page domain keeps the plain per-page
+    # header; a multi-page domain becomes a sectioned site document.
+    by_domain: dict = {}
+    for page in succeeded:
+        by_domain.setdefault(page["netloc"], []).append(page)
 
-    try:
-        proc_result = await processor.process_pending_documents(progress_callback=progress)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"web import processing failed: {e}")
-        fail_task(task_id, f"Processing failed: {e}")
+    docs_created = 0
+    for domain, pages in by_domain.items():
+        # Homepage-first, deterministic ordering within the site.
+        pages.sort(key=lambda p: (len(urlparse(p["url"]).path.rstrip("/")), p["url"]))
+        site_title = pages[0]["title"] or domain
+        if len(pages) == 1:
+            file_content = _format_crawl_markdown(
+                site_title, pages[0]["url"], pages[0]["markdown"]
+            )
+        else:
+            file_content = _format_crawl_site_markdown(site_title, domain, pages)
+        doc_id = str(uuid.uuid4())
+        filename = f"{_crawl_slugify(site_title or domain)}.md"
+        file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
+        try:
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                await f.write(file_content)
+            file_size = len(file_content.encode("utf-8"))
+            await processor.store_file_only(
+                file_path, filename, file_size, collection_id,
+                source=f"crawl:{domain}",
+            )
+            docs_created += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"web import: failed to stage aggregated doc for {domain}: {e}")
+            # Keep counts honest: those pages didn't make it in.
+            for p in pages:
+                failed.append({"url": p["url"], "error": f"staging failed: {e}"})
+            succeeded[:] = [s for s in succeeded if s["netloc"] != domain]
+
+    if not succeeded or docs_created == 0:
+        fail_task(task_id, "All crawled pages failed to stage")
         return
+
+    update_task_progress(
+        task_id, total, total,
+        f"Aggregated {len(succeeded)} page(s) into {docs_created} document(s)",
+    )
+
+    # Hand the shared extract/embed pass (same as uploads/git) to its own
+    # `batch_processing` task. That task is what the Documents page renders and
+    # can resume after a restart — so processing is inspectable there while the
+    # import itself reports "complete" as soon as the documents are staged.
+    concurrency = settings.batch_processing_concurrency
+    proc_task_id: Optional[str] = None
+    try:
+        proc_task = create_task("batch_processing", resume_context={
+            "concurrency": concurrency, "chain": None,
+        })
+        proc_task.message = (
+            f"Queued {docs_created} document(s) from {len(succeeded)} page(s) "
+            "for processing..."
+        )
+        proc_task_id = proc_task.task_id
+        _spawn_chain_task(_run_batch_processing_task(proc_task_id, concurrency, None))
+    except Exception as e:  # noqa: BLE001
+        # Staging succeeded; if we somehow can't kick off processing the docs
+        # still sit PENDING and the user can process them from the Documents
+        # page. Don't fail the import for it — just log.
+        logger.error(f"web import: failed to spawn processing task: {e}")
 
     complete_task(task_id, {
         "imported": len(succeeded),
+        "documents": docs_created,
         "failed": len(failed),
         "total": total,
-        "succeeded": succeeded,
+        "succeeded": [{"url": s["url"], "title": s["title"]} for s in succeeded],
         "failures": failed,
-        "processing": proc_result,
+        "processing": {"task_id": proc_task_id, "status": "queued"},
     })
 
 

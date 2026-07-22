@@ -29,6 +29,8 @@ interface WebImportModalProps {
 
 interface WebImportTaskResult {
   imported: number;
+  /** Pages aggregated per domain into this many documents. */
+  documents?: number;
   failed: number;
   total: number;
   succeeded: { url: string; title: string }[];
@@ -229,12 +231,17 @@ export default function WebImportModal({ isOpen, onClose, onImported }: WebImpor
                 <div className="space-y-1">
                   <p className="text-lg font-semibold text-foreground">Import complete</p>
                   <p className="text-sm text-muted-foreground">
-                    Imported {result.imported} of {result.total} page
+                    Added {result.imported} of {result.total} page
                     {result.total !== 1 ? "s" : ""}
+                    {result.documents && result.documents > 0
+                      ? `, grouped by site into ${result.documents} document${result.documents !== 1 ? "s" : ""}`
+                      : ""}
                     {result.failed > 0 ? `, ${result.failed} failed` : ""}.
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    You can close this window — the new documents are now on the Documents page.
+                    You can close this window — the new documents are on the
+                    Documents page and now processing (extracting text and
+                    building the knowledge graph) in the background.
                   </p>
                 </div>
               </div>
