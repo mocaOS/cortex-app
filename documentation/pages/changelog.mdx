@@ -7,6 +7,19 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 22, 2026
+
+Web Import stopped producing a scatter of one-off pages. A crawl now folds every page from the same site into **one document per domain**, completes the moment those documents are staged (processing continues in the background, where you can watch it), and names each document by its domain instead of whatever title the crawler guessed. Crawls driven through a front-end can also carry a contributor tag, so a site imported via the MOCA Library is attributed like any other community submission.
+
+### Web Import: one document per site
+
+- **Per-domain aggregation** — all URLs from the same host in a job become a single markdown document (`example.com.md`, titled `# example.com`) with one `## section` per page, each keeping its own `> Source:` line. Retrieval and the knowledge graph read a site's subpages as one related work — an artist named only on an About page now ties to the exhibition and press pages that never repeat the name. A job spanning several domains produces one document per domain.
+- **Import completes on staging, not on full processing** — the job finishes (and the modal's completion screen appears) as soon as the documents are added, then hands the extract/embed/graph pass to a normal `batch_processing` task. The Documents page shows them processing in the background — no more watching a progress bar through the whole pipeline for a large crawl.
+- **Documents named by domain** — crawl4ai often falls back to the URL path for a page title (e.g. `o.html`), which used to become the document's filename and every citation. The aggregated document is now titled and filed by its domain, so sources read clearly.
+- **Contributor attribution** — `POST /api/web-import` accepts an optional `submitted_by`; when set, each document's `source` becomes `crawl:<domain> community:<id>` (mirroring the upload path's `community:<addr>`), so crawls submitted through a front-end are attributed to the submitter. Omitted, the source stays `crawl:<domain>`.
+
+---
+
 ## July 21, 2026
 
 The app platform learned to speak to cloud storage: the task engine gained WebDAV listings, binary file transfer, and runtime OAuth credentials — the pieces a folder-sync app needs — and the first wave ships with it. [Nextcloud Sync](https://github.com/mocaOS/cortex-app-nextcloud) and [Dropbox Sync](https://github.com/mocaOS/cortex-app-dropbox) are live in the registry (now browseable on the web at [registry.cortex.eco](https://registry.cortex.eco)), and Paperless Sync 0.4.0 switches from re-rendering OCR text to ingesting the actual documents. Shipping these against real accounts also surfaced fixes that land here: a config-masking gap after app upgrades, clipboard access inside the app sandbox, and a Knowledge Graph page that kept offering **Regenerate Graph** while a sync-driven build was already running.

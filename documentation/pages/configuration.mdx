@@ -586,7 +586,7 @@ CRAWL_MAX_URLS_PER_JOB=100
 CRAWL_DISCOVER_MAX_LINKS=200
 ```
 
-Run crawl4ai with `docker run -d -p 11235:11235 --shm-size=1g unclecode/crawl4ai:0.7.4`. It uses a headless browser pool (~4 GB RAM); keep port 11235 on a private network. A single crawl4ai instance can serve many Cortex deployments.
+Run crawl4ai with `docker run -d -p 11235:11235 --shm-size=1g -e CRAWL4AI_API_TOKEN=your-shared-token unclecode/crawl4ai:0.9.0` (the token is required for crawl4ai ≥ 0.9.0 — tokenless it binds `127.0.0.1` only; set the same value as `CRAWL_SERVICE_TOKEN`). It uses a headless browser pool (~4 GB RAM); keep port 11235 on a private network. A single crawl4ai instance can serve many Cortex deployments.
 
 ---
 

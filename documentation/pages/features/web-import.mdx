@@ -3,7 +3,7 @@ title: Web Import (MDHarvest powered by Crawl4ai)
 description: Harvest web pages into clean markdown and ingest them into your knowledge graph, using a self-hosted or shared crawl4ai service
 ---
 
-Web Import turns any web page into a clean markdown document in your knowledge base. Paste a list of URLs (or discover the links on a page and pick which ones to pull), and Cortex crawls each one, extracts the readable content, and ingests it exactly like an uploaded document — chunked, embedded, and run through entity/relationship extraction so it shows up in Search, Ask AI, and the knowledge graph.
+Web Import turns web pages into clean markdown in your knowledge base. Paste a list of URLs (or discover the links on a page and pick which ones to pull), and Cortex crawls each one, extracts the readable content, and ingests it — chunked, embedded, and run through entity/relationship extraction so it shows up in Search, Ask AI, and the knowledge graph. Pages from the **same site are aggregated into one document per domain**, so a site's subpages read as a single related work (e.g. an artist named only on the About page is tied to their exhibitions and press pages that never repeat the name).
 
 The crawling itself is done by [**crawl4ai**](https://github.com/unclecode/crawl4ai), an open-source, LLM-oriented web crawler. Cortex never embeds a browser of its own — it talks to a crawl4ai service over HTTP. That means **you run crawl4ai once** and point Cortex at it.
 
@@ -18,21 +18,27 @@ Enable it with `ENABLE_WEB_CRAWL=true` **and** a `CRAWL_SERVICE_URL`. A **Web Im
    - **Readable** (recommended) — the main article content, stripped of nav/ads/boilerplate.
    - **Full page** — the entire page converted to markdown.
    - **Relevance-ranked** — keeps the passages most relevant to a query you provide.
-5. Click **Import from Web**. A progress bar tracks the crawl and processing.
-6. When it finishes, the modal shows how many pages were imported (and any that failed). Close it — the new documents are already on the Documents page, ready to search and explore.
+5. Click **Import from Web**. A progress bar tracks the crawl.
+6. As soon as the pages are staged, the modal shows how many pages were imported, grouped into how many documents (and any that failed). Close it — the new documents are already on the Documents page, where they keep **processing in the background** (text extraction + knowledge-graph build). You don't have to wait on the modal; watch progress on the Documents page.
 
-Each imported page is saved with a small provenance header so you always know where it came from:
+Each site becomes one document, **titled and filed by its domain** (e.g. `example.com.md`), with a provenance header and one section per page so you always know where each part came from:
 
 ```markdown
-# Page title
+# example.com
 
-> Source: https://example.com/the-page
-> Extracted: 2026-06-22
+> Source site: example.com
+> Pages: 3
+> Extracted: 2026-07-22
 
 ---
 
+## Page title
+> Source: https://example.com/the-page
+
 …clean markdown…
 ```
+
+(A single-page import uses a simpler header — `# example.com` + `> Source: …` — but is still filed by the domain.)
 
 ## Running crawl4ai (self-hosting)
 
@@ -42,7 +48,8 @@ If you self-host Cortex, run your own crawl4ai container and point Cortex at it.
 docker run -d --name crawl4ai \
   -p 11235:11235 \
   --shm-size=1g \
-  unclecode/crawl4ai:0.7.4
+  -e CRAWL4AI_API_TOKEN=your-shared-token \
+  unclecode/crawl4ai:0.9.0
 ```
 
 Then set in your Cortex backend `.env`:
@@ -50,10 +57,10 @@ Then set in your Cortex backend `.env`:
 ```
 ENABLE_WEB_CRAWL=true
 CRAWL_SERVICE_URL=http://crawl4ai:11235     # or http://<host>:11235
-# CRAWL_SERVICE_TOKEN=...                    # only if you enable a token in crawl4ai
+CRAWL_SERVICE_TOKEN=your-shared-token       # required for crawl4ai >= 0.9.0
 ```
 
-`CRAWL_SERVICE_URL` should be reachable from the Cortex backend container — use the service name if they share a Docker network, or the host's IP/port otherwise. If you run crawl4ai with a `security.api_token`, set the same value as `CRAWL_SERVICE_TOKEN` (Cortex sends it as `Authorization: Bearer …`).
+`CRAWL_SERVICE_URL` should be reachable from the Cortex backend container — use the service name if they share a Docker network, or the host's IP/port otherwise. **For crawl4ai ≥ 0.9.0 the token is effectively mandatory**: without `CRAWL4AI_API_TOKEN` crawl4ai binds its API to `127.0.0.1` only (unreachable from the Cortex container). Set the same value as `CRAWL_SERVICE_TOKEN` (Cortex sends it as `Authorization: Bearer …`). If you reach crawl4ai by a bare host IP rather than a Docker service name, add that IP to crawl4ai's `trusted_hosts` (its `TrustedHostMiddleware` returns 400 "Invalid host header" otherwise).
 
 That single crawl4ai instance can serve as many Cortex backends as you like — it's stateless, so you don't need one per Cortex.
 
