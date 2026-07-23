@@ -5,6 +5,8 @@ description: Install web apps into your Cortex instance — sandboxed, served un
 
 Apps let you install small web applications directly into your Cortex instance. An app is a self-contained bundle — installed from a zip by an administrator — that Cortex serves under `/apps/{id}/`, runs inside a locked-down sandbox, and grants scoped, proxied access to your Cortex API. Apps turn Cortex from a knowledge base into a small platform: a custom dashboard, a domain-specific search UI, an integration with another tool, or a purpose-built workflow can live right next to your documents and graph.
 
+This page covers apps hosted *inside* your instance. The ecosystem also includes **standalone apps** — full applications with their own deployment and users that connect via the REST API with scoped keys; the flagship is [Cortex Chat](/features/cortex-chat), the multi-tenant chat frontend.
+
 :::tip{title="Building an app for Cortex"}
 
 This page is about installing apps **into** your instance. To **build** one, start from the [cortex-app-template](https://github.com/mocaOS/cortex-app-template) — it ships the manifest schema, a validator, and a working example bundle. For step-by-step guidance, point your AI coding assistant at the <strong><a href="https://cortexskills.org/builder/SKILL.md">builder skills</a></strong> on [cortexskills.org](https://cortexskills.org): `SKILL.md` files that teach any agent how to scaffold, configure, and package a Cortex app.{/* raw anchor on purpose: Nextra rewrites markdown links ending in .md as internal page refs and strips the extension, 404ing the deployed link */}

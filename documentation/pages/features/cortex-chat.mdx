@@ -1,0 +1,161 @@
+---
+title: Cortex Chat
+description: A standalone, multi-tenant chat frontend for any Cortex instance — provisioned users and groups, scoped collection access, streaming Ask AI with Deep Research and citations, an admin library console, and runtime branding
+---
+
+[**Cortex Chat**](https://github.com/mocaOS/cortex-chat) is a standalone application that gives end users a clean "Ask AI" interface on top of any Cortex instance. It runs as its own deployment with its own user accounts and its own SQLite database, and connects to the Cortex backend exclusively through the REST API with scoped keys — the flagship example of a **standalone app** in the Cortex ecosystem (as opposed to [Apps](/features/apps) hosted *inside* an instance).
+
+The pitch: provision an account for each team member, assign them to a group scoped to the collections they should see, and everyone gets a branded chat experience — streaming answers, Deep Research, inline citations, personal cross-device chat history — without touching Cortex itself or ever seeing an API key. Administrators additionally get a built-in library console, so day-to-day document and pipeline upkeep never requires opening the Cortex workbench.
+
+## Feature overview
+
+### Chat
+
+- **Streaming Ask AI** — token-by-token rendering over SSE, proxied through the app's server to avoid gzip buffering; users can toggle streaming off in the settings panel.
+- **Deep Research mode** — the backend's agentic multi-step RAG, with live thinking steps, sub-question decomposition, and retrieval progress shown while it runs. An admin sets the **default mode** every new conversation starts in (Chat or Deep Research); users can switch per conversation.
+- **Inline citations** — `[src_N]` annotations render as clickable numbered badges; a source modal shows the full chunk with relevance scores.
+- **Collection scoping** — defaults to everything the user's group can read; a settings panel narrows to a single collection. The backend enforces scope via the key, so the UI can never leak other collections.
+- **Conversation memory** — the app round-trips the backend's opaque memory blob each turn for cross-turn recall and citation continuity beyond the history window.
+- **Server-side chat history** — sessions, messages, and auto-generated titles persist per user and follow them across devices, in a slide-in sidebar.
+- **Support link** — an optional, admin-configured button in the chat header (helpdesk, mailto, wiki — any URL).
+- **i18n** — English and German UI, default language set per deployment. Every user has a profile page (username, avatar, password).
+
+### Multi-tenant auth & user management
+
+- **Email/password accounts** with argon2id hashing and DB-backed sessions (opaque cookie, 30-day sliding TTL). Users never need Cortex credentials.
+- **Three roles** — one env-bootstrapped `superadmin`, promotable `admin`s, and `user`s. Each user belongs to exactly one **group**; the group's collection scope defines what its members can search. On first boot the app auto-creates a **"Full Access" group** and assigns the superadmin to it, retrying in the background until the backend is reachable.
+- **Self-registration with approval** — a public `/register` page feeds a pending queue on the admin Users page; approving a registration assigns its group. On by default, disable with `ENABLE_REGISTRATION=false`. Admins can be **notified by email of new registrations**, and pending users who log in get an "awaiting approval" message (only on a correct password — the flow is enumeration-safe).
+- **Password reset via email** — self-service ("Forgot password?", single-use 60-minute links, always-200 responses) and admin-triggered, feature-gated on SMTP configuration. Reset and approval emails reuse the deployment's branding (accent, logo, title). The superadmin's password is env-managed and excluded from email reset.
+- **Bulk user import** — `scripts/import-users.ts` creates users from an `.xlsx` (columns `email`, `benutzername`) against a running deployment via the same admin API the UI uses: dry-run by default, idempotent (existing accounts are never modified), one target group and shared initial password per run. See `scripts/README.md` in the repo.
+
+### Content management
+
+The `/upload` page is a tabbed workspace — tabs appear by permission:
+
+| Tab | Visible to | What it does |
+|---|---|---|
+| **Upload** | Content-role users + admins | Multi-file document upload (up to 200 MB/file) into permitted collections, per-file status, batch summary. Upload is confirmed on receipt; extraction runs in the background and is deliberately not surfaced here. A **Web Import** mode appears automatically when the backend has [Web Import](/features/web-import) enabled — paste URLs or discover same-site links, pick a content filter, watch crawl progress. |
+| **Documents** | Admins | Browse/filter the backend's documents by collection, reprocess one, process all pending, delete. Degraded documents (0 entities or unembedded chunks) and injection-flagged documents get warning badges with reasons. |
+| **Processing** | Admins | A compact mirror of the Cortex [Knowledge Graph pipeline](/features/knowledge-graph): KPI tiles (documents, chunks, entities, relationships, communities, pending tasks, disk free, monthly usage meter) and the 3 pipeline steps — process pending extraction, relationship analysis (run/rebuild), community detection + summarization — plus orphaned-entity cleanup. Running tasks block conflicting actions with an explanation. |
+| **Collections** | Admins | Create, rename, and delete backend collections, with document counts. |
+
+- **Content roles** — an admin grants upload rights per user, choosing which collections the contributor may write into; this mints the user a `manage`-scoped backend key.
+
+### Admin area
+
+Five pages, for admins and the superadmin:
+
+- **Overview** — analytics dashboard: KPIs (active users, logins, messages, uploads) over a selectable window, a time-series chart, and a paginated login-history table.
+- **Users** — create/edit/delete accounts, group assignment, role management (superadmin promotes/demotes admins), send reset emails, and the **Registrations** approval tab.
+- **Groups** — per-group collection scope ("all" or a chosen set); creating a group mints its scoped read key.
+- **Content Roles** — grant/revoke upload rights per user.
+- **Settings** — runtime branding and behavior, applied instantly with no rebuild: app title & description, accent color, logo (upload/remove; reused in emails), default language, default chat mode, support URL & label, registration-notification recipients, and the chat analytics template.
+
+**Chat analytics injection** — an admin-defined `<cortexchatanalytics>` template (with `$userEmail` / `$userName` substitution) is injected server-side into every backend request. It never reaches the browser and is never stored in chat history, but backend [Agent Skills](/features/skills) can read it — e.g. to route chat summaries to a CRM with user identity attached. Empty template = no injection.
+
+### Resilience & observability
+
+No configuration required, but useful to know as an operator:
+
+- **SSE reconnect** — if the backend restarts mid-answer, the stream resubmits transparently (the backend's `event: shutdown` frame) and the answer regenerates clean.
+- **Rate limits & quotas** — burst 429s and monthly-quota 429s are told apart by their `Retry-After` horizon; the quota case shows the reset date instead of a retry timer. Storage-full (507) and oversized-body (413) conditions get friendly messages.
+- **Request correlation** — every user action carries an `X-Request-ID` that all proxy routes forward and the backend echoes, so one ID traces a request across both apps' logs.
+- **Error tracking** — production builds report errors (never traces/replays) to a GlitchTip project via `@sentry/nextjs`. `SENTRY_DISABLED=1` opts out, `SENTRY_DSN` points at your own instance, `SENTRY_ENVIRONMENT` tags the deployment, and a build-time `SENTRY_AUTH_TOKEN` enables source-map upload for readable stack traces.
+
+## The key model
+
+There is exactly **one** privileged credential: an admin-tier Cortex key in the app's environment. It never leaves the server and is used as a factory to mint narrower keys against the backend:
+
+| Key | Permission | Stored | Used for |
+|---|---|---|---|
+| `BACKEND_ADMIN_API_KEY` (env) | `admin` | env only — never in SQLite, never in the browser | Minting the keys below; the admin library console; listing collections; admin uploads |
+| Group chat key | `read`, scoped to the group's collections | AES-256-GCM encrypted in the app's SQLite | Every chat/search request by the group's members |
+| User content key | `manage`, scoped to chosen collections | AES-256-GCM encrypted in the app's SQLite | That user's uploads and web imports |
+
+The browser holds only a session cookie; server routes decrypt the right key and attach it as `X-API-Key` per request. The client bundle contains zero secrets and zero deploy-specific values.
+
+:::caution{title="Keys are bound to one backend"}
+
+Minted keys live in the key store of the backend they were minted against. Re-pointing `CORTEX_API_URL` at a different Cortex instance invalidates all of them (chat returns `401`). Recover by recreating groups — that mints fresh keys — and reassigning users; chat history survives because it is keyed by user, not group.
+
+:::
+
+## Setup
+
+### Prerequisites
+
+- A running Cortex instance
+- An **admin-tier API key** (`moca_admin_...`) from that instance (Settings → API Keys)
+- Docker, or Node.js 18+ to run from source
+
+### Environment reference
+
+All configuration is server-side and runtime — the same image serves any tenant, and boot fails fast with one aggregated error listing every missing or malformed value.
+
+**Required:**
+
+| Variable | Description | Default |
+|---|---|---|
+| `CORTEX_API_URL` | Cortex backend URL. Must be reachable **from inside the app's container** — all traffic flows through the server-side proxy. | `http://localhost:8000` |
+| `BACKEND_ADMIN_API_KEY` | Admin-tier Cortex key used to mint per-group / per-user keys. | — |
+| `SUPERADMIN_EMAIL` | Bootstraps the superadmin on every server start. | — |
+| `SUPERADMIN_PASSWORD` | Re-hashed (argon2id) each boot; rotate by editing env + restart. | — |
+| `APP_ENCRYPTION_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts minted keys at rest. Validated to decode to exactly 32 bytes. | — |
+
+**Optional:**
+
+| Variable | Description | Default |
+|---|---|---|
+| `DATABASE_PATH` | SQLite file path; avatars and branding assets live alongside it. | `./data/cortex-chat.db` |
+| `PORT` | Published port in the shipped Compose file. | `3000` |
+| `ENABLE_REGISTRATION` | Public `/register` page with admin approval. `false`/`0` disables signups (pending rows stay manageable). | `true` |
+| `SMTP_HOST` | SMTP server; unset = all email features off and hidden. | — |
+| `SMTP_PORT` | `465` with `SMTP_SECURE=true` (implicit TLS), `587` with `false` (STARTTLS). Mailpit for local dev: host `localhost`, port `1025`, no auth. | `587` |
+| `SMTP_USER`, `SMTP_PASS` | SMTP credentials; optional (omit for Mailpit). | — |
+| `SMTP_SECURE` | `true` ⇒ implicit TLS; `false` ⇒ STARTTLS. | `false` |
+| `SMTP_FROM` | Sender, e.g. `"Cortex Chat <no-reply@example.com>"`. **Required when `SMTP_HOST` is set.** | — |
+| `APP_BASE_URL` | Absolute public URL used to build email links (never derived from the request Host header). **Required when `SMTP_HOST` is set.** | — |
+| `SENTRY_ENVIRONMENT` | Tags error events per deployment/tenant. | `production` |
+| `SENTRY_DSN` | Overrides the baked-in GlitchTip DSN (server-side, runtime). | built-in |
+| `SENTRY_DISABLED` | `1` = no error reporting at all. | — |
+| `SENTRY_AUTH_TOKEN` | **Build-time only** — enables source-map upload to GlitchTip (Coolify: set as a build variable; the Compose file maps it as a build arg). | — |
+
+Deprecated but still accepted with a boot warning: `LIBRARY_API_URL` and `NEXT_PUBLIC_API_URL` (aliases for `CORTEX_API_URL`), and a legacy `ACCENT_COLOR` / `NEXT_PUBLIC_ACCENT_COLOR`, which is migrated into the settings database once on first boot.
+
+Never prefix any of these with `NEXT_PUBLIC_` — that would compile secrets into the client bundle. Branding is intentionally **not** env config; it is DB-backed and edited at **Admin → Settings**.
+
+### Docker
+
+```bash
+docker run -p 3000:3000 \
+  -e CORTEX_API_URL=https://your-cortex-instance.com \
+  -e BACKEND_ADMIN_API_KEY=moca_admin_your-admin-key \
+  -e SUPERADMIN_EMAIL=admin@example.com \
+  -e SUPERADMIN_PASSWORD=change-me \
+  -e APP_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -v cortex-chat-data:/app/data \
+  cortex-chat
+```
+
+The container listens on `3000` and persists everything (users, groups, keys, chat history, avatars, logo) under `/app/data` — mount a volume there. For **Coolify / Dokploy**, create a Docker Compose resource pointing at the repository, set the required variables (plus any optional ones — the shipped `docker-compose.yml` already maps SMTP, registration, GlitchTip, and `PORT`), and deploy it unchanged. Any platform with Dockerfile builds (Railway, Render, Fly.io) works the same way. From source: `npm install`, copy `.env.example` to `.env.local`, `npm run dev` — migrations apply automatically on every server start.
+
+:::tip{title="Networking gotcha"}
+
+`http://localhost:8000` inside the container points at the container itself, not your host — chat would fail with `502`. If the Cortex backend also runs in Docker, attach Cortex Chat to the backend's network and use the service name (`http://cortex-backend:8000`). The [repository README](https://github.com/mocaOS/cortex-chat) covers all deployment variants — including running the built image locally against a bind-mounted `./data` — in detail.
+
+:::
+
+### First run
+
+1. Log in as the superadmin. On a fresh database the app auto-creates a **"Full Access" group** (read key over all collections) and assigns the superadmin to it, so chat works immediately.
+2. Brand the deployment at **Admin → Settings** — accent, logo, title, description, language, default chat mode, support link.
+3. Create **groups** scoped to the collections each audience should see (this mints each group's read key), then add users — directly, via the bulk import script, or by approving self-registrations.
+4. Optionally grant **content roles** for uploads / Web Import, configure **SMTP** for password resets and notifications, and set a **chat analytics template** for backend skills.
+
+## Related
+
+- [Ask AI](/features/ask-ai) — the retrieval and Deep Research pipeline behind every answer
+- [Knowledge Graph](/features/knowledge-graph) — the pipeline the Processing tab drives
+- [Apps](/features/apps) — in-instance apps, the complementary hosting model
+- [Web Import](/features/web-import) — the backend feature the upload page auto-detects
+- [Authentication guide](/guides/authentication) — Cortex's API key tiers and how admin keys are issued

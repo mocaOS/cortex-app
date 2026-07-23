@@ -41,6 +41,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 22 | [The Cortex Standard](22-the-cortex-standard.md) ★ | `22-the-cortex-standard.md` | Everyone |
 | 23 | [Web Import](23-web-import.md) | `23-web-import.md` | Everyone |
 | 24 | [Apps](24-apps.md) | `24-apps.md` | Everyone |
+| 25 | [Cortex Chat](25-cortex-chat.md) | `25-cortex-chat.md` | Everyone |
 
 ## Quick Links
 
@@ -52,6 +53,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 - **I want to integrate Cortex into my application** — See [Chapter 15: API Reference](15-api-reference.md) and [Chapter 16: Integrations](16-integrations.md)
 - **I want to extend the agent with custom skills** — See [Chapter 18: Agent Skills](18-skills.md)
 - **I want to run a web app inside my instance** — See [Chapter 24: Apps](24-apps.md)
+- **I want to give my team a ready-made chat interface** — See [Chapter 25: Cortex Chat](25-cortex-chat.md)
 - **Something isn't working** — See [Chapter 19: Troubleshooting](19-troubleshooting.md)
 - **I want to understand the philosophy behind Cortex** — Read [Chapter 22: The Cortex Standard](22-the-cortex-standard.md)
 

@@ -30,7 +30,7 @@ Optional context paragraph, then bullets (`- **Bold lead-in** — detail.`).
 - Keep operator-relevant details in bullets: env vars in backticks with defaults, behavior changes and revert flags called out, and a "No API or schema breakage" note (or explicit breakage warning) where relevant.
 
 ### `handbook/` — End-User Handbook
-The handbook contains 21 chapters (`01-introduction.md` through `21-glossary.md`) covering features end-to-end from a user perspective. When adding or changing user-facing features, update the relevant handbook chapter(s):
+The handbook contains 25 chapters (`01-introduction.md` through `25-cortex-chat.md`) covering features end-to-end from a user perspective. When adding or changing user-facing features, update the relevant handbook chapter(s):
 - `07-documents.md` — document upload, management, filtering
 - `08-knowledge-graph.md` — the 3-step extraction pipeline
 - `09-search.md` — search functionality

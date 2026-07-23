@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 23, 2026
+
+Cortex Chat — the standalone multi-tenant chat frontend — now has first-class documentation. Until now it was a single row in the ecosystem table; operators had to read the app's repository to understand what it does and how to deploy it against an instance.
+
+### Documentation: Cortex Chat
+
+- **New docs page** — [Cortex Chat](/features/cortex-chat) explains the app end to end: the chat experience (streaming Ask AI, Deep Research, inline citations, conversation memory, cross-device history, support link, default chat mode), the multi-tenant model (roles, groups, self-registration with approval, password reset over SMTP, bulk xlsx user import, content roles), the admin **library console** (Documents / Processing / Collections tabs that drive the backend's knowledge-graph pipeline from inside the chat app), the analytics dashboard and `<cortexchatanalytics>` injection, the one-admin-key/minted-scoped-keys security design, resilience behaviors, and full setup — a complete environment reference (required, optional SMTP/registration/GlitchTip knobs, deprecated aliases), Docker/Coolify deployment, and a first-run walkthrough.
+- **New handbook chapter** — Chapter 25 covers the same ground for handbook readers, and Chapter 24 (Apps) now distinguishes in-instance apps from **standalone apps** like Cortex Chat that run outside the instance and connect via the REST API with scoped keys.
+- No product changes — documentation only.
+
+---
+
 ## July 22, 2026
 
 Web Import stopped producing a scatter of one-off pages. A crawl now folds every page from the same site into **one document per domain**, completes the moment those documents are staged (processing continues in the background, where you can watch it), and names each document by its domain instead of whatever title the crawler guessed. Crawls driven through a front-end can also carry a contributor tag, so a site imported via the MOCA Library is attributed like any other community submission.

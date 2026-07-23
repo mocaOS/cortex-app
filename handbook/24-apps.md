@@ -4,6 +4,8 @@ Apps let you install small web applications directly into your Cortex instance. 
 
 Apps are a way to extend Cortex without changing Cortex itself. Because the platform hosts them, users don't have to install anything or visit a separate site — the app appears right inside your instance, alongside your documents and graph.
 
+There is also a second, complementary kind of app: **standalone apps**, full applications that run *outside* your instance — with their own deployment and their own users — and connect to it through the REST API with scoped keys. The flagship example is Cortex Chat, the multi-tenant chat frontend, covered in [Chapter 25](25-cortex-chat.md). This chapter is about the in-instance kind.
+
 Apps are **disabled by default**. An administrator turns the whole subsystem on by setting `ENABLE_APPS=true` (see [Chapter 4: Configuration](04-configuration.md)). While it is off, there is no trace of the feature at all: every app-related web address returns "not found", and the Apps section never appears in Settings. Nothing changes for anyone until an administrator deliberately enables it.
 
 ## Where apps come from
