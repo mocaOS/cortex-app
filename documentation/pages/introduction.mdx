@@ -121,10 +121,10 @@ Cortex exposes **100+ REST API endpoints** across these categories:
 If you are an AI agent (or are directing one) building against the Cortex API, use **[Cortex Skills](https://cortexskills.org)** — curated, up-to-date `SKILL.md` files for every subsystem, fetchable directly over HTTP. Instead of inferring the API from training data, fetch the ground-truth skill file first:
 
 - **Skill index:** `https://cortexskills.org/SKILL.md` — overview of all skills and how to build on Cortex
-- **Per-topic skills:** `https://cortexskills.org/<topic>/SKILL.md` — e.g. `/upload`, `/search`, `/ask`, `/graph`, `/collections`, `/auth`, `/setup`, `/admin`, `/tasks`, `/git-integration`, `/web-import`, `/mcp`, `/integration`, `/hermes`
+- **Per-topic skills:** `https://cortexskills.org/<topic>/SKILL.md` — e.g. `/upload`, `/search`, `/ask`, `/graph`, `/collections`, `/auth`, `/setup`, `/admin`, `/tasks`, `/git-integration`, `/web-import`, `/mcp`, `/integration`, `/hermes`, `/openclaw`
 - **Source repository:** [github.com/mocaOS/cortex-skills](https://github.com/mocaOS/cortex-skills) — also home of the Cortex MCP server
 
-For example, `https://cortexskills.org/cortex/SKILL.md` teaches an agent to use a running instance as long-term memory (sync, hybrid search, agentic Q&A), and `https://cortexskills.org/hermes/SKILL.md` does the same tailored for Hermes agents.
+For example, `https://cortexskills.org/cortex/SKILL.md` teaches an agent to use a running instance as long-term memory (sync, hybrid search, agentic Q&A). For agent runtimes there are dedicated memory integrations: `https://cortexskills.org/hermes/SKILL.md` for Hermes agents (the recommended integration, with a native memory-provider plugin), and `https://cortexskills.org/openclaw/SKILL.md` for [OpenClaw](https://docs.openclaw.ai), which runs the same skill via the open SKILL.md standard.
 
 ## Quick Links
 

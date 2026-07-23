@@ -116,7 +116,9 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 
 ## Quick Start
 
-> **🤖 Let your agent do it:** want Claude, Hermes, or any other agent to install and run Cortex for you? Send it **[cortexskills.org](https://cortexskills.org)** — the `setup` skill contains everything an agent needs to self-host a Cortex from scratch (autonomous install, health checks, troubleshooting) and the feature skills teach it to drive the API correctly afterwards.
+> **🤖 Let your agent do it:** want Claude, Hermes, OpenClaw, or any other agent to install and run Cortex for you? Send it **[cortexskills.org](https://cortexskills.org)** — the `setup` skill contains everything an agent needs to self-host a Cortex from scratch (autonomous install, health checks, troubleshooting) and the feature skills teach it to drive the API correctly afterwards.
+>
+> **🧠 Agent long-term memory:** Cortex doubles as a persistent memory backend for agent runtimes. [Hermes](https://nousresearch.com) is the recommended integration ([cortexskills.org/hermes](https://cortexskills.org/hermes/SKILL.md) — includes a native memory-provider plugin for ambient recall); [OpenClaw](https://docs.openclaw.ai) runs the same skill via the open SKILL.md standard ([cortexskills.org/openclaw](https://cortexskills.org/openclaw/SKILL.md)).
 
 ### Prerequisites
 

@@ -309,7 +309,11 @@ docs = retriever.get_relevant_documents("machine learning applications")
 
 ## Agent Memory Pattern
 
-Use Cortex as persistent long-term memory for AI agents:
+Use Cortex as persistent long-term memory for AI agents.
+
+**Off the shelf:** for SKILL.md-capable agent runtimes there's a ready-made memory skill — no code required. [Hermes](https://nousresearch.com) is the recommended integration ([cortexskills.org/hermes/SKILL.md](https://cortexskills.org/hermes/SKILL.md)): "dump your session into your cortex" to save, "check your cortex for X" to recall, plus a native memory-provider plugin for ambient recall. [OpenClaw](https://docs.openclaw.ai) runs the same canonical skill through the open SKILL.md standard — [cortexskills.org/openclaw/SKILL.md](https://cortexskills.org/openclaw/SKILL.md) covers the adapter (install path, env via `openclaw.json`, cron heartbeat). Both follow the multi-memory scoping model: the agent writes to its own collection but recalls across every collection in the instance.
+
+**Roll your own** for any other framework:
 
 ```python
 class AgentMemory:
