@@ -57,6 +57,28 @@ The registry location is configurable (`APP_REGISTRY_URL`) — organizations
 can point their instances at a private fork to curate exactly which apps
 their admins may install.
 
+## The app catalog
+
+Eight first-party apps are published in the registry today, and the set grows over time — browse the live catalog at [registry.cortex.eco](https://registry.cortex.eco). All of them are **platform** apps: once configured, they do their work on the server, on demand or on a schedule, with no browser open anywhere. Each one writes into the collection you choose at install time, remembers what it has already transferred (so re-runs are cheap and nothing is ingested twice), and keeps its credentials encrypted on the server.
+
+### Bringing your documents in
+
+Seven of the apps are sync bridges: they watch a place where your documents already live and keep your knowledge base up to date with it.
+
+- **Paperless Sync** — mirrors a [paperless-ngx](https://docs.paperless-ngx.com/) document archive into Cortex, transferring the full original documents. This is the natural companion for anyone who scans their paperwork: the archive keeps being the archive, and Cortex makes all of it answerable. Needs your paperless server's address and an API token.
+- **Dropbox Sync** — syncs selected Dropbox folders. You sign in to Dropbox through its standard consent screen; the app never needs a Dropbox app secret.
+- **Google Drive Sync** — syncs Google Drive folders with no consent screens at all: you create a Google service account once, then simply *share* the folders you want synced with the service account's email address, like sharing with a colleague.
+- **OneDrive Sync** — syncs OneDrive folders. Sign-in uses Microsoft's device-code flow against a free Entra app registration, and the app tracks changes through Microsoft's delta mechanism, so after the first run only new and changed files transfer.
+- **SharePoint Sync** — syncs SharePoint document libraries for organizations, using app-only access of the most restrictive kind Microsoft offers (`Sites.Selected`): the app can reach exactly the sites an admin has granted, and no user ever signs in.
+- **Nextcloud Sync** — syncs folders from a Nextcloud server, authenticated with an app password rather than your account password.
+- **WebDAV Sync** — the universal fallback: syncs folders from *any* WebDAV server — Synology and QNAP NAS boxes, Koofr, pCloud, GMX/WEB.DE, MagentaCLOUD, HiDrive, Seafile, Hetzner Storage Boxes, and more.
+
+### Turning media into knowledge
+
+- **YT Transcriber** — turns YouTube videos, or whole channels at once, into clean transcripts inside your knowledge graph. Transcription runs through a Venice AI key you provide; the raw transcript is then refined by your instance's own language model before being saved, so what lands in your collections reads like a document, not like subtitles.
+
+Every app in the catalog declares — visibly, in the registry panel, before you install — exactly which Cortex endpoints it may call, which external services it talks to, and what configuration it needs. The sync apps ask for read-and-write access because they upload documents; all of them can be confined to a single collection, which is the recommended setup — one collection per source (e.g. `Paperless`), so each app's documents stay cleanly separated (see [Chapter 11: Collections](11-collections.md)).
+
 ## Using an app (for everyone)
 
 Enabled apps show up in a **launcher grid** — a page inside your instance that lists every app available to you, each with its icon. Click one and it opens in its own sandboxed view. From your point of view it simply works: you interact with the app, and it talks to your Cortex knowledge base in the background. You never have to copy or paste an API key, and nothing you do in the app can reach outside the bounds the administrator set.

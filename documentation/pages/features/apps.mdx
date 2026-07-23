@@ -76,6 +76,23 @@ Publishing your own app is a PR — see the
 [registry README](https://github.com/mocaOS/cortex-registry#publishing-your-app)
 for the release flow.
 
+## First-party apps
+
+The registry currently lists eight first-party apps. All are `platform`-class (capabilities `http` + `storage` + `tasks`; YT Transcriber additionally `llm`), all request a `read_write` key — scope it to a dedicated collection per source at install. Each uses `storage` for delta cursors and per-item dedup, so re-runs transfer only new or changed content, and each can run on a schedule.
+
+| App | What it does | You provide |
+|-----|--------------|-------------|
+| [Paperless Sync](https://github.com/mocaOS/cortex-app-paperless) | Mirrors a paperless-ngx archive into Cortex — full original documents, on demand or scheduled | `PAPERLESS_BASE_URL`, `PAPERLESS_TOKEN` |
+| [Dropbox Sync](https://github.com/mocaOS/cortex-app-dropbox) | Syncs selected Dropbox folders; OAuth PKCE, no app secret anywhere | `DROPBOX_APP_KEY` (a scoped Dropbox app) |
+| [Google Drive Sync](https://github.com/mocaOS/cortex-app-gdrive) | Syncs Drive folders shared with a service account — no OAuth consent screens; short-lived tokens minted server-side | `GDRIVE_SA_KEY` (JSON key, stored encrypted), `GDRIVE_SA_EMAIL` |
+| [OneDrive Sync](https://github.com/mocaOS/cortex-app-onedrive) | Syncs OneDrive folders via Microsoft Graph delta; device-code sign-in, no client secret | `ENTRA_CLIENT_ID` (free Entra app registration, public client flows enabled) |
+| [SharePoint Sync](https://github.com/mocaOS/cortex-app-sharepoint) | Syncs SharePoint document libraries with app-only `Sites.Selected` access — per-site grants, no user sign-in | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` |
+| [Nextcloud Sync](https://github.com/mocaOS/cortex-app-nextcloud) | Syncs Nextcloud folders via WebDAV | `NEXTCLOUD_BASE_URL`, `NEXTCLOUD_USER`, `NEXTCLOUD_APP_PASSWORD` |
+| [WebDAV Sync](https://github.com/mocaOS/cortex-app-webdav) | Syncs folders from any WebDAV server — Synology, QNAP, Koofr, pCloud, GMX/WEB.DE, MagentaCLOUD, HiDrive, Seafile, Hetzner Storage Box, … | `WEBDAV_URL`, `WEBDAV_USERNAME`, `WEBDAV_PASSWORD` |
+| [YT Transcriber](https://github.com/mocaOS/cortex-app-youtube-transcriber) | Turns YouTube videos and whole channels into clean transcripts in the knowledge graph — transcription via Venice, refinement via the instance's own LLM | `VENICE_API_KEY` |
+
+Every listing shows the app's endpoint allowlist, external hosts, and config schema in the Browse Registry panel before install; secrets are encrypted at rest and only ever used server-side.
+
 ## Configuring an app
 
 If an app declares configuration variables in its manifest, it shows up needing setup. Open its configuration to fill in each value through a wizard-style form:
