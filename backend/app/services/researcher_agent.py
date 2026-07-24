@@ -592,8 +592,13 @@ async def _run_researcher_loop(
                 **build_chat_params(llm_config.model, temperature=0.2),
             )
         except Exception as e:
+            # exc_info=True so the traceback reaches the error tracker: this
+            # handler swallows the exception (the agent degrades to answering
+            # with what it has), which previously left errors like "object of
+            # type 'NoneType' has no len()" undiagnosable — no frames, no file.
             logger.error(
-                f"Researcher agent error on iteration {iteration + 1}: {e}"
+                f"Researcher agent error on iteration {iteration + 1}: {e}",
+                exc_info=True,
             )
             yield {
                 "type": "thinking",

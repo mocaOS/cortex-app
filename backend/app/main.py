@@ -6804,6 +6804,21 @@ def _require_git_enabled():
         raise HTTPException(status_code=404, detail="Git integration is disabled")
 
 
+def _git_upstream_http_error(e: Exception) -> HTTPException:
+    """Map a git-provider failure to the HTTP status the *caller* should see.
+
+    An upstream client error — bad PAT (401), no access (403), missing repo
+    (404), or any other provider 4xx — is the caller's problem, so surface it as
+    that same 4xx. Only genuine upstream 5xx / network failures (no status_code)
+    are a 502. This keeps mistyped-token setup attempts out of the 5xx error
+    tracker, where a bad PAT was being reported twice as a server fault.
+    """
+    code = getattr(e, "status_code", None)
+    if code is not None and 400 <= code < 500:
+        return HTTPException(status_code=code, detail=str(e))
+    return HTTPException(status_code=502, detail=str(e))
+
+
 def _mask_pat(pat: Optional[str]) -> str:
     if not pat:
         return "••••"
@@ -6875,8 +6890,10 @@ async def browse_git_repos(
             )
             for r in repos
         ]
-    except (GitProviderError, ValueError) as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    except GitProviderError as e:
+        raise _git_upstream_http_error(e)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/integrations/git/connections", response_model=GitConnectionResponse)
@@ -6897,7 +6914,7 @@ async def create_git_connection(
         if not default_branch:
             raise HTTPException(status_code=404, detail="Repository not found or inaccessible")
     except GitProviderError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise _git_upstream_http_error(e)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

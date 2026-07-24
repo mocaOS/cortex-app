@@ -59,7 +59,17 @@ class GitWriteResult:
 
 
 class GitProviderError(Exception):
-    """Raised on provider API failures, with the PAT already scrubbed."""
+    """Raised on provider API failures, with the PAT already scrubbed.
+
+    ``status_code`` carries the upstream HTTP status when the failure was an
+    HTTP error *response* (None for network / SSRF-block failures). Callers use
+    it to surface a provider client error (bad PAT → 401, no access → 403,
+    missing repo → 404) as the matching 4xx instead of a blanket 502.
+    """
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GitProvider(ABC):
@@ -151,7 +161,8 @@ class GitProvider(ABC):
             if resp.status_code >= 400:
                 raise GitProviderError(
                     self._scrub(f"{self.vendor} {method} {url} → HTTP "
-                                f"{resp.status_code}: {resp.text[:300]}")
+                                f"{resp.status_code}: {resp.text[:300]}"),
+                    status_code=resp.status_code,
                 )
             return resp
         except SSRFError as e:
