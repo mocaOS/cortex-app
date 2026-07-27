@@ -1996,10 +1996,37 @@ rm -f .env.broken
 
 Expected: an error naming `NEO4J_PASSWORD is required`. Confirms the `:?` guards catch an incomplete config before anything starts.
 
+- [ ] **Step 7b: Make the restore runbook enumerate every archived volume**
+
+Task 8 made `backup.sh` archive skills and apps, and Step 1 above mounts them
+`:ro` into the backup sidecar. But `ops/backup/restore.sh:8-14`'s documented
+manual-recovery runbook still lists only `uploads` and `custom_inputs` — it
+never mentioned `chat` either. Because the sidecar mounts those volumes
+read-only, in-container extraction is expected to fail and `restore.sh:73-76`
+sends the operator to exactly that runbook. So an operator following the docs
+verbatim restores neither chat data, skills, nor apps, even though all three
+are sitting in `files.tar.gz`.
+
+Update the runbook comment block at the top of `ops/backup/restore.sh` so its
+`docker run` example enumerates all five archived paths: `uploads`,
+`custom_inputs`, `chat`, `skills`, `apps`. Change only the comment block — do
+not alter the script's logic.
+
+Verify the runbook now matches what is actually archived:
+
+```bash
+# Paths backup.sh archives:
+grep -oE '/data/[a-z_]+' ops/backup/backup.sh | sort -u
+# Paths the restore runbook tells operators to mount:
+sed -n '1,20p' ops/backup/restore.sh | grep -oE '/data/[a-z_]+|[a-z_]+_data' | sort -u
+```
+
+Expected: every path in the first list is represented in the second.
+
 - [ ] **Step 8: Commit**
 
 ```bash
-git add selfhost/docker-compose.yml selfhost/docker-compose.ports.yml selfhost/docker-compose.caddy.yml selfhost/Caddyfile.template selfhost/.env.example .gitignore
+git add selfhost/docker-compose.yml selfhost/docker-compose.ports.yml selfhost/docker-compose.caddy.yml selfhost/Caddyfile.template selfhost/.env.example ops/backup/restore.sh .gitignore
 git commit -m "feat(selfhost): add the self-host compose stack
 
 Static, valid compose files driven entirely by \${VAR} interpolation — no
