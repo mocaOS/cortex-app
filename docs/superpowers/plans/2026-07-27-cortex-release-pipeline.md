@@ -204,7 +204,7 @@ Edit root `package.json` — change `"version": "0.0.1"` to `"version": "1.0.0"`
   "version": "1.0.0",
   "scripts": {
     "test": "cd backend && .venv/bin/python -m pytest",
-    "test:scripts": "node --test scripts/",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "check:versions": "node scripts/check-version-sync.mjs"
   },
 ```
@@ -233,11 +233,31 @@ In `.github/workflows/ci.yml`, add a new job after `frontend`:
           node-version: "20"
 
       - name: Unit tests
-        run: node --test scripts/
+        # Glob the test files, not the directory: on Node >= 22
+        # `node --test scripts/` treats the path as a module entry point and
+        # dies with MODULE_NOT_FOUND. The glob form works on 20, 22 and 24.
+        run: node --test scripts/*.test.mjs
 
       - name: Version sync
         run: node scripts/check-version-sync.mjs
 ```
+
+Note: `.gitignore:55` carries a blanket `scripts/` rule (it ignores the
+untracked `download-documents.ts`). Add a negation for the tooling this plan
+tracks so `git add` works normally here and in Task 5, rather than reaching
+for `git add -f`:
+
+```gitignore
+scripts/
+# Release tooling under scripts/ IS tracked; the blanket rule above exists
+# for local one-off scripts like download-documents.ts.
+!scripts/*.mjs
+!frontend/public/skills/library/scripts/
+```
+
+Verify with `git check-ignore -v scripts/check-version-sync.mjs` (must report
+not ignored) and `git check-ignore -v scripts/download-documents.ts` (must
+still be ignored).
 
 - [ ] **Step 8: Commit**
 
