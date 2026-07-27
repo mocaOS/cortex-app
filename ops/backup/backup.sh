@@ -4,7 +4,8 @@
 # Tier 1 (default, works on Neo4j Community AND Enterprise):
 #   online logical export via APOC (apoc.export.cypher.all) written server-side
 #   into the shared backups volume (the neo4j service mounts it at its import
-#   directory) + tar of the uploads/custom_inputs/chat volumes. No downtime,
+#   directory) + tar of the uploads/custom_inputs/chat/skills/apps volumes.
+#   No downtime,
 #   no quoting round-trip: APOC writes the file itself, byte-exact.
 #   REQUIRES on the neo4j service (see the deploy composes):
 #     - NEO4J_apoc_export_file_enabled=true
@@ -104,12 +105,19 @@ fi
 
 # File volumes (mounted read-only into this container). /data/chat carries
 # the cortex-chat SQLite DB + assets on tenant stacks that run the chat service.
-if [ -d /data/uploads ] || [ -d /data/custom_inputs ] || [ -d /data/chat ]; then
+# /data/skills and /data/apps carry user-installed AgentSkills and apps — these
+# are user-authored content with no other copy, so losing them is real data loss.
+# Every path is existence-guarded, so stacks that do not mount one are
+# unaffected (the Dokploy compose currently mounts neither skills nor apps).
+if [ -d /data/uploads ] || [ -d /data/custom_inputs ] || [ -d /data/chat ] \
+   || [ -d /data/skills ] || [ -d /data/apps ]; then
     rc=0
     tar -czf "$dest/files.tar.gz" \
         $( [ -d /data/uploads ] && echo /data/uploads ) \
         $( [ -d /data/custom_inputs ] && echo /data/custom_inputs ) \
         $( [ -d /data/chat ] && echo /data/chat ) \
+        $( [ -d /data/skills ] && echo /data/skills ) \
+        $( [ -d /data/apps ] && echo /data/apps ) \
         || rc=$?
     # GNU tar exit 1 = "file changed while reading" (live volume) — acceptable;
     # >=2 is a real failure and must not be swallowed.
