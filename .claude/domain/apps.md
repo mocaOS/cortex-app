@@ -1,6 +1,6 @@
 # Apps — In-Instance App Hosting
 
-Static web apps (built from [cortex-app-template](https://github.com/mocaOS/cortex-app-template)) installed from a zip and served by the backend under `/apps/{app_id}/`, sandboxed, with proxied least-privilege API access. Part of the app-ecosystem plan (master doc: `cortex-registry/ECOSYSTEM.md`; builder skills: cortexskills.org/builder). **Gated on `ENABLE_APPS` (default off): every route 404s and the admin UI section hides itself — zero traces when disabled** (same philosophy as x402).
+Static web apps (built from [cortex-app-template](https://github.com/mocaOS/cortex-app-template)) installed from a zip and served by the backend under `/apps/{app_id}/`, sandboxed, with proxied least-privilege API access. Part of the app-ecosystem plan (master doc: `cortex-registry/ECOSYSTEM.md`; builder skills: cortexskills.org/builder). **Gated on `ENABLE_APPS` (backend default off: every route 404s and the admin UI section hides itself — zero traces when disabled)** (same philosophy as x402). **Exception: the `selfhost/` Compose stack flips this default to `true`** (`selfhost/docker-compose.yml`), so a fresh self-host install ships with a working Apps section out of the box — a self-hoster who wants the smaller attack surface of Apps disabled must explicitly set `ENABLE_APPS=false` in their `.env`.
 
 ## Package & storage
 

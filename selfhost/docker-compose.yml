@@ -135,8 +135,15 @@ services:
       - SMTP_PASS=${SMTP_PASS:-}
       - SMTP_SECURE=${SMTP_SECURE:-false}
       - SMTP_FROM=${SMTP_FROM:-}
-      # SENTRY_DISABLED is chat's kill switch — its DSN is baked into the image,
-      # so an env override alone is not enough to keep self-hosters' errors in.
+      # SENTRY_DISABLED only silences chat's SERVER-side GlitchTip reporting.
+      # It is a runtime env var, and Next.js inlines only NEXT_PUBLIC_* vars
+      # into the browser bundle, so this setting cannot reach client-side
+      # error reporting. The client half is disabled separately, at image
+      # build time: cortex-chat's release workflow
+      # (.github/workflows/release.yml) passes NEXT_PUBLIC_SENTRY_DISABLED=1
+      # as a build-arg when publishing the GHCR image this compose file pulls,
+      # so self-hosters' browser errors never reach the maintainers regardless
+      # of what is set here.
       - SENTRY_DISABLED=${CHAT_SENTRY_DISABLED:-1}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
     volumes:

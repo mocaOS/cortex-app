@@ -2,7 +2,14 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # Stable semver only. "v*" would also match a prerelease tag like
+    # v1.0.0-rc.1, and imagetools would then move :latest/:1/:1.0 (plus a junk
+    # :1.0.0-rc tag) and softprops/action-gh-release would publish it as a
+    # full, non-prerelease GitHub Release (it does not auto-detect
+    # prereleases) — selfhost/README.md's installer fetches
+    # releases/latest/download/stack.json, so every new install would get the
+    # RC. Prerelease tags are deliberately excluded here.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: write   # create the GitHub Release

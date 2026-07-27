@@ -14,7 +14,7 @@ services:
     environment:
       - APP_DOMAIN=${APP_DOMAIN:?APP_DOMAIN is required in domain mode}
       - CHAT_DOMAIN=${CHAT_DOMAIN:?CHAT_DOMAIN is required in domain mode}
-      - ACME_EMAIL=${ACME_EMAIL:-}
+      - ACME_EMAIL=${ACME_EMAIL:?ACME_EMAIL is required in domain mode}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

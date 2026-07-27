@@ -14,6 +14,8 @@ to edit.
   packages or Docker Desktop.
 - `git` and `jq` — the install and update commands below use both, and
   neither is guaranteed present on a minimal server image.
+- `openssl` — `.env.example`'s secret-generation commands use it, for the
+  same reason `git`/`jq` are listed here.
 - ~20 GB free disk, ~8 GB RAM.
 - `linux/amd64` or `linux/arm64`.
 - An OpenAI-compatible API key.
@@ -165,6 +167,15 @@ docker compose start backend
 non-TLS origins. The ports overlay sets `SESSION_COOKIE_SECURE=false` for you,
 so check that `COMPOSE_FILE` actually includes `docker-compose.ports.yml` — a
 `.env` listing only the base file hits exactly this symptom.
+
+**Chat login silently fails after changing `BIND_ADDR` to a LAN address.**
+Unlike Cortex's frontend, Cortex Chat has no `SESSION_COOKIE_SECURE`
+equivalent — its session cookie is always `Secure` in the published image.
+That works fine at `http://localhost:3001` (browsers treat `localhost` as a
+trustworthy origin and send `Secure` cookies there even over plain HTTP), but
+if you point `BIND_ADDR` at a LAN IP and reach chat over plain HTTP instead of
+`localhost`, the browser silently drops the cookie and login appears to do
+nothing. Put chat behind TLS (domain mode) if you need LAN/remote access.
 
 **Backend exits at boot with "Insecure configuration for ENVIRONMENT=production".**
 A secret is still a placeholder. Regenerate it with the commands in
