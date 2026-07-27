@@ -77,14 +77,17 @@ jobs:
 
       - name: Assert CPU wheels and no CUDA payload
         run: |
-          torch_version=$(docker run --rm cortex-backend-cpu:ci python -c "import torch; print(torch.__version__)")
+          # docker-entrypoint.sh logs "fixing ownership" lines to stdout on every
+          # start (no volume state carries over between --rm runs), so `tail -1`
+          # isolates the actual command output before comparing it.
+          torch_version=$(docker run --rm cortex-backend-cpu:ci python -c "import torch; print(torch.__version__)" | tail -1)
           echo "torch: $torch_version"
           case "$torch_version" in
             *+cpu) ;;
             *) echo "::error::expected a +cpu torch build, got $torch_version"; exit 1 ;;
           esac
 
-          nvidia_count=$(docker run --rm cortex-backend-cpu:ci sh -c 'pip list --format=freeze | grep -c "^nvidia-" || true')
+          nvidia_count=$(docker run --rm cortex-backend-cpu:ci sh -c 'pip list --format=freeze | grep -c "^nvidia-" || true' | tail -1)
           echo "nvidia packages: $nvidia_count"
           [ "$nvidia_count" = "0" ] || { echo "::error::CUDA wheels leaked into the CPU image"; exit 1; }
 
