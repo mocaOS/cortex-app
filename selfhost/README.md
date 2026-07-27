@@ -12,6 +12,8 @@ to edit.
 - Docker Engine 24+ with the **Compose v2 plugin** (`docker compose version`).
   `apt install docker.io` does *not* include it — use the official Docker
   packages or Docker Desktop.
+- `git` and `jq` — the install and update commands below use both, and
+  neither is guaranteed present on a minimal server image.
 - ~20 GB free disk, ~8 GB RAM.
 - `linux/amd64` or `linux/arm64`.
 - An OpenAI-compatible API key.
@@ -114,11 +116,48 @@ newest verified backup is older than two intervals.
 ```bash
 docker compose exec backup /backup.sh                        # run now
 docker compose exec backup ls /backups                       # list
-docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 ```
 
 Backups live in the `backups` named volume. **Ship them off-host** — a volume
 on the same disk is not disaster recovery.
+
+**Restoring is six steps, not one command** — the graph restore alone leaves
+your uploads, skills, apps and chat data untouched. The authoritative runbook
+is the header comment in `ops/backup/restore.sh`; this is the same procedure:
+
+```bash
+# 1. List available backups and pick a <timestamp>.
+docker compose exec backup ls /backups
+
+# 2. Stop the backend — it's about to have its graph wiped and replayed
+#    underneath it.
+docker compose stop backend
+
+# 3. Restore the graph. RESTORE_WIPE=yes is required: this DETACH DELETEs
+#    the whole graph before replaying the chosen backup's export.
+docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
+
+# 4. Restore the file volumes (uploads, custom_inputs, chat, skills, apps).
+#    The backup sidecar mounts these read-only, so it cannot write them back
+#    itself — this runs in a throwaway container instead. Volume names are
+#    ${COMPOSE_PROJECT_NAME}_<name>; .env.example sets COMPOSE_PROJECT_NAME=cortex,
+#    so a default install uses the cortex_* names below (use your own prefix
+#    if you changed COMPOSE_PROJECT_NAME).
+docker run --rm \
+  -v cortex_uploads_data:/data/uploads \
+  -v cortex_custom_inputs_data:/data/custom_inputs \
+  -v cortex_chat_data:/data/chat \
+  -v cortex_skills_data:/data/skills \
+  -v cortex_apps_data:/data/apps \
+  -v cortex_backups:/backups:ro \
+  alpine tar -xzf /backups/<timestamp>/files.tar.gz -C /
+
+# 5. Start the backend. Startup recreates every constraint/index, including
+#    the vector indexes the logical export does not carry.
+docker compose start backend
+
+# 6. Verify document/entity counts on GET /api/stats.
+```
 
 ## Troubleshooting
 
