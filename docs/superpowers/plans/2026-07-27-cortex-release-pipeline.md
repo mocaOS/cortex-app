@@ -2295,7 +2295,12 @@ Before Plan B starts, confirm on a clean host:
 
 - [ ] `docker pull ghcr.io/mocaos/cortex-backend:1.0.0` succeeds **anonymously** on both amd64 and arm64. (Requires the one-time manual flip of all three GHCR packages to public — see below.)
 - [ ] `curl -fsSL https://github.com/mocaOS/cortex-app/releases/latest/download/stack.json | jq .stack` prints `1.0.0`.
-- [ ] Following `selfhost/README.md` verbatim brings up a healthy stack in localhost mode: `docker compose ps` shows every service healthy.
+- [ ] Following `selfhost/README.md` verbatim brings up a working stack in localhost mode. Only `neo4j`, `backend` and `backup` declare healthchecks, so "every service healthy" is not observable from `docker compose ps` alone — check it this way instead:
+  - `docker compose ps` shows `neo4j` and `backend` **healthy** (`backup` reports healthy only after its first verified run; `start_period` is 2h, so expect `starting` initially).
+  - `frontend`, `chat` and `caddy` have no healthcheck and will show only `running` — verify them over HTTP: `curl -fsS localhost:3000` and `curl -fsS localhost:3001` both return 200.
+  - `curl -fsS localhost:8000/health` returns 200 with `schema_initialized=true`.
+
+  (Adding healthchecks to the three web services is a reasonable follow-up, deliberately out of scope here.)
 - [ ] Admin login works at http://localhost:3000 with the generated credentials.
 - [ ] The same credentials log in at http://localhost:3001 (chat).
 - [ ] A document uploads and finishes processing (entities appear in the graph).
