@@ -66,6 +66,8 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `design-system/**` | `design-system.md` |
 | `documentation/**`, `handbook/**` | `maintenance.md` |
 | `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
+| `selfhost/**`, `scripts/build-stack-json.mjs`, `scripts/check-version-sync.mjs` | `development.md` (self-host section), `environment.md` |
+| `.github/workflows/release.yml` | `development.md` (self-host section) |
 | `bench/**` | `bench.md` |
 | `backend/tests/**`, `qa/**` | `qa.md` |
 

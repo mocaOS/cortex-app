@@ -84,3 +84,28 @@ On a host running **multiple** cortex stacks (Dokploy `dokploy-network`, Coolify
 - **Slim backend image** (helper-backed stacks): `docker build -f backend/Dockerfile.prod --build-arg INSTALL_LOCAL_ML=false` → no torch/docling (~1.2GB vs full). Requires OpenAI embeddings + `RERANKER_SERVICE_URL`/`DOCLING_SERVICE_URL` (recommended `HELPER_STRICT_REMOTE=true`). CI smoke-builds it on every PR. **The Dokploy deploy (`dokploy/docker-compose.dokploy.yml`) defaults the `backend` build to slim** (`INSTALL_LOCAL_ML=${INSTALL_LOCAL_ML:-false}`) since every cloud tenant offloads to `cortex-helper`; override with `INSTALL_LOCAL_ML=true` in the Dokploy env for a stack that runs models locally.
 - **Backups** (opt-in overlay): `docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d` — nightly **server-side** APOC logical export (`graph.cypher.gz`; the overlay/deploy composes set `NEO4J_apoc_export_file_enabled=true` on neo4j and mount the backups volume at its import dir — without both, the export fails loudly) + uploads/custom_inputs tar. Verified before it counts (row-count check vs live DB, SHA256SUMS, `.complete`/`LAST_SUCCESS` markers); retention (`BACKUP_RETENTION_DAYS`) rotates only after a verified success and never deletes the newest complete backup; the sidecar healthcheck goes unhealthy when `LAST_SUCCESS` is older than 2× `BACKUP_INTERVAL_SECONDS`. Manual run: `docker compose exec backup /backup.sh`. Restore: `docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <ts>` (runbook in `ops/backup/restore.sh`; round-trip validated 2026-07-07 incl. adversarial escaping).
 - **Memory caps**: every service (incl. Neo4j and nginx) carries a compose `mem_limit`; tune `CORTEX_NEO4J_MEM_LIMIT`/`CORTEX_NEO4J_HEAP_MAX`/`FRONTEND_MEM_LIMIT` per host (the neo4j caps are deliberately not `NEO4J_`-prefixed — a raw `NEO4J_*` var reaching the neo4j container is parsed as a config setting and rejected by strict_validation under PaaS env injection). `stop_grace_period` + uvicorn `--timeout-graceful-shutdown` drain in-flight requests on restarts; nginx has a dedicated unbuffered `location /api/ask/stream` (1h read timeout) for SSE.
+
+## Self-host (prebuilt images)
+
+`selfhost/` holds a third deployment path alongside `coolify/` and `dokploy/`:
+static Compose files that run **prebuilt GHCR images** rather than building
+from source.
+
+- `docker-compose.yml` — base stack. **Never generate or rewrite this file.**
+  Everything is `${VAR}` interpolation from `.env`.
+- `docker-compose.ports.yml` / `docker-compose.caddy.yml` — mode overlays
+  selected by `COMPOSE_FILE` in `.env`.
+- `stack.template.json` — pins for components not built from this repo
+  (chat, neo4j, caddy). `scripts/build-stack-json.mjs` turns it into the
+  `stack.json` release asset.
+
+Constraints that will silently break the stack if violated:
+
+- The backend service must stay named `backend` — the published frontend
+  image bakes `API_URL=http://backend:8000` into its rewrite manifest.
+- `NEXT_PUBLIC_API_URL` must never be set for the published frontend image.
+- Error-tracking DSNs default to empty here, unlike the Dokploy compose.
+
+Releases are tag-triggered (`.github/workflows/release.yml`) and guarded by
+`scripts/check-version-sync.mjs`. cortex-chat must be released before
+cortex-app, since `stack.json` pins its version and verifies it is pullable.
