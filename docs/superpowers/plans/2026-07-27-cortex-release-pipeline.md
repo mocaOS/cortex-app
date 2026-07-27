@@ -773,12 +773,14 @@ jobs:
 
 Run:
 
+The npm package named `action-validator` ships no `bin`, so `npx action-validator`
+can never resolve — use PyYAML from the backend venv, which the repo already has:
+
 ```bash
-npx --yes action-validator .github/workflows/release.yml 2>/dev/null \
-  || python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml')); print('YAML OK')"
+backend/.venv/bin/python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml')); print('YAML OK')"
 ```
 
-Expected: `YAML OK` (or action-validator reporting no errors).
+Expected: `YAML OK`.
 
 - [ ] **Step 3: Verify the matrix expands to exactly four build jobs**
 
