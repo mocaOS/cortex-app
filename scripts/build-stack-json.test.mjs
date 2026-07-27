@@ -38,13 +38,22 @@ test("notes links to the matching release tag", () => {
   );
 });
 
-test("throws when the template omits a required component", () => {
-  const bad = { components: { chat: "1.0.0" }, minInstaller: "1.0.0" };
-  assert.throws(
-    () => buildStackJson({ version: "1.0.0", template: bad }),
-    /neo4j/
-  );
-});
+// One case per component, not a single shared fixture: buildStackJson's
+// validation loop throws on the FIRST missing key it finds, so a fixture
+// that omits more than one component only ever proves the earliest-checked
+// one. Each case here omits exactly one required component while keeping
+// the other two present, so each is independently proven.
+for (const missing of ["chat", "neo4j", "caddy"]) {
+  test(`throws naming ${missing} when it is the only component missing`, () => {
+    const components = { chat: "1.0.0", neo4j: "5.26-community", caddy: "2-alpine" };
+    delete components[missing];
+    const bad = { components, minInstaller: "1.0.0" };
+    assert.throws(
+      () => buildStackJson({ version: "1.0.0", template: bad }),
+      new RegExp(missing)
+    );
+  });
+}
 
 test("throws when minInstaller is missing", () => {
   const bad = { components: { chat: "1.0.0", neo4j: "5.26-community", caddy: "2-alpine" } };

@@ -147,9 +147,20 @@ jobs:
         run: node scripts/build-stack-json.mjs --out stack.json
 
       - name: Verify every pinned image is actually pullable
-        # A stack.json pointing at a nonexistent image would break every
-        # installer run. cortex-chat must be released BEFORE this repo is
-        # tagged; this step is what enforces that ordering.
+        # Intentionally unauthenticated — no docker/login-action here, unlike
+        # build/manifest. This must see exactly what an anonymous installer
+        # sees; a logged-in check would pass while a package is still private.
+        #
+        # On the very first real tag push this step is EXPECTED to fail, for
+        # one of two reasons:
+        #   (a) cortex-chat was not released before this repo was tagged, so
+        #       ghcr.io/mocaos/cortex-chat:<pinned version> does not exist
+        #       yet — release cortex-chat first, then retry.
+        #   (b) build/manifest, earlier in this same run, just created
+        #       ghcr.io/mocaos/cortex-{backend,frontend} as PRIVATE GHCR
+        #       packages (GHCR's default for a brand-new package). Nobody can
+        #       flip visibility mid-run, so: flip backend, frontend and chat
+        #       to public in GHCR, then re-run this failed job.
         run: |
           set -e
           for entry in \
@@ -160,8 +171,17 @@ jobs:
             "caddy:$(jq -r .components.caddy stack.json)"
           do
             echo "checking $entry"
-            docker buildx imagetools inspect "$entry" > /dev/null \
-              || { echo "::error::$entry is not pullable"; exit 1; }
+            docker buildx imagetools inspect "$entry" > /dev/null || {
+              case "$entry" in
+                ghcr.io/*)
+                  echo "::error::$entry is not pullable anonymously. Two known causes: (a) cortex-chat was not released before cortex-app, so this image does not exist yet -- release cortex-chat first, then retry; or (b) the image exists but its GHCR package is still private -- build/manifest earlier in this run create backend/frontend/chat as private packages by default, so this is EXPECTED on the first tag push. Flip backend, frontend and chat to public in GHCR, then re-run this failed job."
+                  ;;
+                *)
+                  echo "::error::$entry is not pullable. This pin comes from selfhost/stack.template.json -- confirm the tag exists on its registry."
+                  ;;
+              esac
+              exit 1
+            }
           done
 
       - name: Create the release
