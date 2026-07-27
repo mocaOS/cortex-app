@@ -61,6 +61,39 @@ jobs:
             cortex-backend-slim:ci \
             python -c "import app.main; print('slim image imports OK')"
 
+  cpu-torch-image:
+    name: CPU-torch image smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build CPU-torch backend image
+        # PREDOWNLOAD_MODELS=false keeps CI fast; the release build sets it true.
+        run: |
+          docker build -f backend/Dockerfile.prod \
+            --build-arg TORCH_VARIANT=cpu \
+            --build-arg PREDOWNLOAD_MODELS=false \
+            -t cortex-backend-cpu:ci backend/
+
+      - name: Assert CPU wheels and no CUDA payload
+        run: |
+          torch_version=$(docker run --rm cortex-backend-cpu:ci python -c "import torch; print(torch.__version__)")
+          echo "torch: $torch_version"
+          case "$torch_version" in
+            *+cpu) ;;
+            *) echo "::error::expected a +cpu torch build, got $torch_version"; exit 1 ;;
+          esac
+
+          nvidia_count=$(docker run --rm cortex-backend-cpu:ci sh -c 'pip list --format=freeze | grep -c "^nvidia-" || true')
+          echo "nvidia packages: $nvidia_count"
+          [ "$nvidia_count" = "0" ] || { echo "::error::CUDA wheels leaked into the CPU image"; exit 1; }
+
+      - name: Import smoke test
+        run: |
+          docker run --rm -e USE_OPENAI_EMBEDDINGS=true \
+            cortex-backend-cpu:ci \
+            python -c "import app.main; print('cpu image imports OK')"
+
   frontend:
     name: Frontend (typecheck + lint)
     runs-on: ubuntu-latest

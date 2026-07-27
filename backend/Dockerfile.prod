@@ -30,12 +30,29 @@ RUN apt-get update && apt-get install -y \
 ARG INSTALL_LOCAL_ML=true
 ARG PREDOWNLOAD_MODELS=true
 
+# torch flavor for the full image:
+#   cuda (default) — PyPI wheels, bundles ~2.5GB of nvidia-* deps
+#   cpu            — CPU-only wheels, ~2.5GB smaller
+# Nothing in this image installs the CUDA runtime or requests GPU devices, so
+# every containerized deploy already runs the AcceleratorDevice.AUTO paths on
+# CPU. `cpu` is therefore free for Docker deploys and is what the published
+# self-host image uses. Default stays `cuda` so existing builds are unchanged.
+ARG TORCH_VARIANT=cuda
+
 # Copy requirements first for better caching
 COPY requirements.txt requirements-base.txt requirements-ml.txt ./
 
-# Install Python dependencies (base always; ML stack only in the full image)
+# Install Python dependencies (base always; ML stack only in the full image).
+# CPU torch must be installed BEFORE requirements-ml.txt: with --extra-index-url
+# pip resolves the highest version across indexes and would still take the CUDA
+# wheel, so we satisfy the dependency from the CPU-only index up front.
 RUN pip install --no-cache-dir -r requirements-base.txt && \
     if [ "$INSTALL_LOCAL_ML" = "true" ]; then \
+        if [ "$TORCH_VARIANT" = "cpu" ]; then \
+            pip install --no-cache-dir \
+                --index-url https://download.pytorch.org/whl/cpu \
+                torch torchvision; \
+        fi; \
         pip install --no-cache-dir -r requirements-ml.txt; \
     fi
 
