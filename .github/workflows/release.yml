@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # push to GHCR
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: mocaos
+
+jobs:
+  guard:
+    name: Verify tag matches package.json
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Tag must equal root package.json version
+        run: node scripts/check-version-sync.mjs --tag "${GITHUB_REF_NAME}"
+
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.component }} · ${{ matrix.arch }}
+    needs: guard
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two axes → 4 jobs. `include` matches on the arch value and adds the
+        # runner label to each, so amd64 lands on ubuntu-latest and arm64 on
+        # the native Arm runner.
+        component: [backend, frontend]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.component == 'backend' && './backend' || './frontend' }}
+          file: ${{ matrix.component == 'backend' && './backend/Dockerfile.prod' || './frontend/Dockerfile.prod' }}
+          platforms: linux/${{ matrix.arch }}
+          # Backend: full ML image with CPU-only torch (see Dockerfile.prod).
+          # Frontend: NEXT_PUBLIC_API_URL is deliberately NOT passed — it must
+          # stay unset so the browser uses same-origin /api/* and one image
+          # works for every install. API_URL keeps its Dockerfile default of
+          # http://backend:8000, which is why the self-host compose must name
+          # the backend service `backend`.
+          build-args: |
+            ${{ matrix.component == 'backend' && 'INSTALL_LOCAL_ML=true' || '' }}
+            ${{ matrix.component == 'backend' && 'TORCH_VARIANT=cpu' || '' }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.OWNER }}/cortex-${{ matrix.component }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.push.outputs.digest }}" > "/tmp/digests/${{ matrix.component }}-${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.component }}-${{ matrix.arch }}
+          path: /tmp/digests/${{ matrix.component }}-${{ matrix.arch }}
+          retention-days: 1
+
+  manifest:
+    name: Merge ${{ matrix.component }} manifest
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.component }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Create and push the multi-arch manifest
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          IMAGE="${REGISTRY}/${OWNER}/cortex-${{ matrix.component }}"
+          MAJOR="${VERSION%%.*}"
+          MINOR="${VERSION%.*}"
+
+          refs=""
+          for f in /tmp/digests/*; do
+            refs="$refs ${IMAGE}@$(cat "$f")"
+          done
+
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${MINOR}" \
+            -t "${IMAGE}:${MAJOR}" \
+            -t "${IMAGE}:latest" \
+            $refs
+
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
