@@ -875,13 +875,22 @@ test("notes links to the matching release tag", () => {
   );
 });
 
-test("throws when the template omits a required component", () => {
-  const bad = { components: { chat: "1.0.0" }, minInstaller: "1.0.0" };
-  assert.throws(
-    () => buildStackJson({ version: "1.0.0", template: bad }),
-    /neo4j/
-  );
-});
+// One case per component, each omitting exactly one key with the other two
+// present. A single fixture omitting several keys would only ever prove the
+// first branch the validation loop reaches — dropping "caddy" from
+// TEMPLATE_COMPONENTS would then still pass, a false green in exactly the
+// contract validation this exists to guarantee.
+for (const missing of ["chat", "neo4j", "caddy"]) {
+  test(`throws naming ${missing} when it is the only component missing`, () => {
+    const components = { chat: "1.0.0", neo4j: "5.26-community", caddy: "2-alpine" };
+    delete components[missing];
+    const bad = { components, minInstaller: "1.0.0" };
+    assert.throws(
+      () => buildStackJson({ version: "1.0.0", template: bad }),
+      new RegExp(missing)
+    );
+  });
+}
 
 test("throws when minInstaller is missing", () => {
   const bad = { components: { chat: "1.0.0", neo4j: "5.26-community", caddy: "2-alpine" } };
@@ -1023,6 +1032,18 @@ Append to `.github/workflows/release.yml`:
         # A stack.json pointing at a nonexistent image would break every
         # installer run. cortex-chat must be released BEFORE this repo is
         # tagged; this step is what enforces that ordering.
+        #
+        # Deliberately UNAUTHENTICATED (no docker/login-action): this must test
+        # what an anonymous `npx` installer faces. An authenticated check would
+        # pass while packages are still private — exactly the state that breaks
+        # real installs.
+        #
+        # Consequence: build/manifest earlier in this run create the GHCR
+        # packages as PRIVATE, and nothing pauses for a human to flip them, so
+        # this step is EXPECTED to fail on the very first tag push. The
+        # first-release sequence is: tag → build/manifest push → this job fails
+        # → flip all three packages public → re-run this failed job. The error
+        # below names both causes so nobody has to rediscover this.
         run: |
           set -e
           for entry in \
@@ -1033,8 +1054,17 @@ Append to `.github/workflows/release.yml`:
             "caddy:$(jq -r .components.caddy stack.json)"
           do
             echo "checking $entry"
-            docker buildx imagetools inspect "$entry" > /dev/null \
-              || { echo "::error::$entry is not pullable"; exit 1; }
+            docker buildx imagetools inspect "$entry" > /dev/null || {
+              case "$entry" in
+                ghcr.io/*)
+                  echo "::error::$entry is not pullable anonymously. Two known causes: (a) cortex-chat was not released before cortex-app, so this image does not exist yet -- release cortex-chat first, then retry; or (b) the image exists but its GHCR package is still private -- build/manifest earlier in this run create backend/frontend/chat as private packages by default, so this is EXPECTED on the first tag push. Flip backend, frontend and chat to public in GHCR, then re-run this failed job."
+                  ;;
+                *)
+                  echo "::error::$entry is not pullable. This pin comes from selfhost/stack.template.json -- confirm the tag exists on its registry."
+                  ;;
+              esac
+              exit 1
+            }
           done
 
       - name: Create the release
