@@ -402,14 +402,21 @@ In `.github/workflows/ci.yml`, add after the existing `slim-image` job:
 
       - name: Assert CPU wheels and no CUDA payload
         run: |
-          torch_version=$(docker run --rm cortex-backend-cpu:ci python -c "import torch; print(torch.__version__)")
+          # `tail -1` is required, not cosmetic: the image's ENTRYPOINT
+          # (backend/docker-entrypoint.sh) echoes ownership-fix lines to stdout
+          # before exec'ing the command, so a bare capture yields
+          # "entrypoint: ...\n0" and the strict equality below would fail on
+          # every run regardless of the real count. The entrypoint hands off
+          # with exec, so nothing prints after the payload — the last line is
+          # deterministically the value we want.
+          torch_version=$(docker run --rm cortex-backend-cpu:ci python -c "import torch; print(torch.__version__)" | tail -1)
           echo "torch: $torch_version"
           case "$torch_version" in
             *+cpu) ;;
             *) echo "::error::expected a +cpu torch build, got $torch_version"; exit 1 ;;
           esac
 
-          nvidia_count=$(docker run --rm cortex-backend-cpu:ci sh -c 'pip list --format=freeze | grep -c "^nvidia-" || true')
+          nvidia_count=$(docker run --rm cortex-backend-cpu:ci sh -c 'pip list --format=freeze | grep -c "^nvidia-" || true' | tail -1)
           echo "nvidia packages: $nvidia_count"
           [ "$nvidia_count" = "0" ] || { echo "::error::CUDA wheels leaked into the CPU image"; exit 1; }
 
