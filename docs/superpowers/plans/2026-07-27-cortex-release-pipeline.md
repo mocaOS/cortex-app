@@ -2128,8 +2128,11 @@ docker compose ps
 
 ```dotenv
 COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml
-SESSION_COOKIE_SECURE=false
 ```
+
+The session cookie's `Secure` flag is handled for you: the ports overlay sets
+`SESSION_COOKIE_SECURE=false` (browsers drop `Secure` cookies on plain HTTP),
+and domain mode leaves it unset so the app defaults to secure. Nothing to set.
 
 | | |
 |---|---|
@@ -2199,8 +2202,10 @@ on the same disk is not disaster recovery.
 
 ## Troubleshooting
 
-**Admin login silently fails on localhost.** `SESSION_COOKIE_SECURE=false` is
-required over plain HTTP; browsers drop `Secure` cookies on non-TLS origins.
+**Admin login silently fails on localhost.** Browsers drop `Secure` cookies on
+non-TLS origins. The ports overlay sets `SESSION_COOKIE_SECURE=false` for you,
+so check that `COMPOSE_FILE` actually includes `docker-compose.ports.yml` — a
+`.env` listing only the base file hits exactly this symptom.
 
 **Backend exits at boot with "Insecure configuration for ENVIRONMENT=production".**
 A secret is still a placeholder. Regenerate it with the commands in
