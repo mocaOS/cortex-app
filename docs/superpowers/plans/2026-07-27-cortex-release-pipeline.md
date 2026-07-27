@@ -247,11 +247,16 @@ untracked `download-documents.ts`). Add a negation for the tooling this plan
 tracks so `git add` works normally here and in Task 5, rather than reaching
 for `git add -f`:
 
+A bare `scripts/` pattern excludes the directory *node*, and git never
+traverses an excluded directory — so no `!` negation for a path inside it is
+ever evaluated. The rule must ignore the directory's *contents* item-by-item
+instead, which is what makes the negation take effect:
+
 ```gitignore
-scripts/
-# Release tooling under scripts/ IS tracked; the blanket rule above exists
-# for local one-off scripts like download-documents.ts.
-!scripts/*.mjs
+/scripts/*
+# Release tooling under scripts/ IS tracked; the rule above exists for local
+# one-off scripts like download-documents.ts.
+!/scripts/*.mjs
 !frontend/public/skills/library/scripts/
 ```
 
