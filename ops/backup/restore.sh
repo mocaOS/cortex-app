@@ -10,6 +10,9 @@
 #        docker run --rm \
 #          -v <stack>_uploads_data:/data/uploads \
 #          -v <stack>_custom_inputs_data:/data/custom_inputs \
+#          -v <stack>_chat_data:/data/chat \
+#          -v <stack>_skills_data:/data/skills \
+#          -v <stack>_apps_data:/data/apps \
 #          -v <stack>_backups:/backups:ro \
 #          alpine tar -xzf /backups/<timestamp>/files.tar.gz -C /
 #   5. Start the backend:             docker compose start backend

@@ -1,0 +1,187 @@
+# Cortex — self-host stack.
+#
+# This file is a STATIC release artifact. Everything is configured through .env
+# interpolation; nothing here is generated or rewritten by the installer, so
+# your edits survive updates. Local changes belong in docker-compose.override.yml,
+# which Compose merges automatically.
+#
+# Mode is selected by COMPOSE_FILE in .env:
+#   localhost      COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml
+#   public domain  COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+#
+# The backend service MUST stay named `backend`: the published frontend image
+# bakes API_URL=http://backend:8000 into its Next.js rewrite manifest at build
+# time, and renaming this service breaks every browser request.
+
+services:
+  neo4j:
+    image: neo4j:${NEO4J_VERSION:-5.26-community}
+    environment:
+      # Username is hardcoded to 'neo4j' — do not set NEO4J_USER.
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=${CORTEX_NEO4J_HEAP_INITIAL:-512m}
+      - NEO4J_dbms_memory_heap_max__size=${CORTEX_NEO4J_HEAP_MAX:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${CORTEX_NEO4J_PAGECACHE:-512m}
+      - NEO4J_db_transaction_timeout=${CORTEX_NEO4J_TX_TIMEOUT:-300s}
+      # Required by the backup sidecar: APOC writes the export server-side.
+      - NEO4J_apoc_export_file_enabled=true
+    mem_limit: ${CORTEX_NEO4J_MEM_LIMIT:-4g}
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - backups:/var/lib/neo4j/import
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    image: ${CORTEX_BACKEND_IMAGE:?CORTEX_BACKEND_IMAGE is required}
+    environment:
+      - ENVIRONMENT=production
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_MAX_CONTEXT=${OPENAI_MAX_CONTEXT:-}
+      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS:-true}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}
+      - EMBEDDING_SEND_DIMENSIONS=${EMBEDDING_SEND_DIMENSIONS:-true}
+      - EMBEDDING_API_BASE=${EMBEDDING_API_BASE:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
+      - VISION_MODEL=${VISION_MODEL:-}
+      - ENABLE_RERANKING=${ENABLE_RERANKING:-true}
+      - BATCH_PROCESSING_CONCURRENCY=${BATCH_PROCESSING_CONCURRENCY:-2}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?ADMIN_API_KEY is required}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - ENABLE_APPS=${ENABLE_APPS:-true}
+      # Error tracking is OFF by default for self-hosted instances. The no-colon
+      # `-` form means unset => empty => disabled; set a DSN to opt in.
+      # Self-hosters' stack traces must never reach the maintainers uninvited.
+      - SENTRY_DSN=${SENTRY_DSN_BACKEND-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+    volumes:
+      - uploads_data:/app/uploads
+      - custom_inputs_data:/app/custom_inputs
+      - skills_data:/app/.agents/skills
+      - apps_data:/app/.agents/apps
+      - hf_cache:/app/.cache/huggingface
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  frontend:
+    image: ${CORTEX_FRONTEND_IMAGE:?CORTEX_FRONTEND_IMAGE is required}
+    environment:
+      # NEXT_PUBLIC_API_URL is deliberately unset: the browser calls same-origin
+      # /api/* and the Next server proxies to API_URL. That is what makes one
+      # prebuilt image work for localhost and for every domain.
+      - API_URL=http://backend:8000
+      - ACCENT_COLOR=${ACCENT_COLOR:-}
+      - LOGO_URL=${LOGO_URL:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET}
+      # Browsers drop Secure cookies over plain HTTP, so localhost mode must
+      # set this false or admin login fails with no visible error.
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-}
+      - SENTRY_DSN=${SENTRY_DSN_FRONTEND-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEM_LIMIT:-1g}
+
+  chat:
+    image: ${CORTEX_CHAT_IMAGE:?CORTEX_CHAT_IMAGE is required}
+    environment:
+      - CORTEX_API_URL=http://backend:8000
+      # Chat reuses the Cortex admin identity so one login works in both apps.
+      - BACKEND_ADMIN_API_KEY=${ADMIN_API_KEY}
+      - SUPERADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - SUPERADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - APP_ENCRYPTION_KEY=${CHAT_APP_ENCRYPTION_KEY:?CHAT_APP_ENCRYPTION_KEY is required}
+      - ENABLE_REGISTRATION=${ENABLE_REGISTRATION:-}
+      - APP_BASE_URL=${CHAT_BASE_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_SECURE=${SMTP_SECURE:-false}
+      - SMTP_FROM=${SMTP_FROM:-}
+      # SENTRY_DISABLED is chat's kill switch — its DSN is baked into the image,
+      # so an env override alone is not enough to keep self-hosters' errors in.
+      - SENTRY_DISABLED=${CHAT_SENTRY_DISABLED:-1}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+    volumes:
+      - chat_data:/app/data
+    depends_on:
+      - backend
+    restart: unless-stopped
+    mem_limit: ${CHAT_MEM_LIMIT:-1g}
+
+  backup:
+    build:
+      context: ./ops/backup
+      args:
+        - NEO4J_IMAGE=neo4j:${NEO4J_VERSION:-5.26-community}
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      - NEO4J_ADDRESS=neo4j://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_INITIAL_DELAY_SECONDS=${BACKUP_INITIAL_DELAY_SECONDS:-120}
+    volumes:
+      - backups:/backups
+      - uploads_data:/data/uploads:ro
+      - custom_inputs_data:/data/custom_inputs:ro
+      - chat_data:/data/chat:ro
+      - skills_data:/data/skills:ro
+      - apps_data:/data/apps:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /backups/LAST_SUCCESS && [ $$(( $$(date +%s) - $$(cat /backups/LAST_SUCCESS) )) -lt $$(( $${BACKUP_INTERVAL_SECONDS:-86400} * 2 )) ]",
+        ]
+      interval: 15m
+      timeout: 10s
+      retries: 2
+      start_period: 2h
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  uploads_data:
+  custom_inputs_data:
+  skills_data:
+  apps_data:
+  hf_cache:
+  chat_data:
+  backups:

@@ -100,3 +100,7 @@ venice-partner-brief.md
 venice-projection.ods
 HANDOVER-BUILDER.md
 HANDOVER-FINANCE.md
+
+# Created by the selfhost compose verification; the real ops/ is copied in at
+# install time by the installer (or by hand, per selfhost/README.md).
+selfhost/ops

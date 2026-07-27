@@ -1,0 +1,23 @@
+# Localhost mode — publish ports on the loopback interface only.
+#
+# Binding to 127.0.0.1 rather than 0.0.0.0 is deliberate: on a VPS, 0.0.0.0
+# would expose an unauthenticated Neo4j browser and the backend API to the
+# whole internet the moment the stack starts.
+
+services:
+  frontend:
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3000}:3000"
+
+  chat:
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${CHAT_PORT:-3001}:3000"
+
+  backend:
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-8000}:8000"
+
+  neo4j:
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${BIND_ADDR:-127.0.0.1}:${NEO4J_BOLT_PORT:-7687}:7687"

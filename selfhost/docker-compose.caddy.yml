@@ -1,0 +1,28 @@
+# Public-domain mode — Caddy terminates TLS with automatic Let's Encrypt.
+#
+# Only Caddy publishes ports. Nothing else is reachable from outside the
+# Compose network, so the backend API and Neo4j browser stay private.
+
+services:
+  caddy:
+    image: caddy:${CADDY_VERSION:-2-alpine}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - APP_DOMAIN=${APP_DOMAIN:?APP_DOMAIN is required in domain mode}
+      - CHAT_DOMAIN=${CHAT_DOMAIN:?CHAT_DOMAIN is required in domain mode}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - chat
+
+volumes:
+  caddy_data:
+  caddy_config:

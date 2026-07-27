@@ -1,0 +1,19 @@
+# Cortex — Caddy reverse proxy.
+#
+# Caddy substitutes {$VAR} from its container environment at load time, so this
+# file is static and needs no rendering. Copy it to ./Caddyfile as-is.
+#
+# The backend needs no domain of its own: the frontend proxies /api/*, /apps/*
+# and /a/* to it, so the API is reachable at https://{$APP_DOMAIN}/api/...
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	reverse_proxy frontend:3000
+}
+
+{$CHAT_DOMAIN} {
+	reverse_proxy chat:3000
+}
