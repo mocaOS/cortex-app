@@ -1608,9 +1608,15 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
-      # Browsers drop Secure cookies over plain HTTP, so localhost mode must
-      # set this false or admin login fails with no visible error.
-      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-}
+      # SESSION_COOKIE_SECURE is deliberately NOT set here. Leaving it absent
+      # makes frontend/src/lib/session.ts fall back to NODE_ENV=production,
+      # i.e. Secure — so a TLS/domain install is safe by construction with no
+      # operator action possible to get it wrong. The localhost overlay
+      # (docker-compose.ports.yml) sets it false, because browsers drop Secure
+      # cookies over plain HTTP and login would otherwise fail silently.
+      # Do NOT "tidy" this variable back into this file: an explicit false
+      # here would reach domain mode too and strip Secure from the admin
+      # session cookie on a public HTTPS site.
       - SENTRY_DSN=${SENTRY_DSN_FRONTEND-}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
     depends_on:
@@ -1706,6 +1712,12 @@ Create `selfhost/docker-compose.ports.yml`:
 
 services:
   frontend:
+    # Plain HTTP: browsers drop Secure cookies on non-TLS origins, so admin
+    # login would succeed and then silently fail to persist. Set HERE and not
+    # in the base file, so domain mode never sees an explicit false — see the
+    # base file's frontend comment.
+    environment:
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3000}:3000"
 
@@ -1813,8 +1825,15 @@ CHAT_PORT=3001
 API_PORT=8000
 NEO4J_HTTP_PORT=7474
 NEO4J_BOLT_PORT=7687
-# Browsers drop Secure cookies over plain HTTP — required for localhost login.
-SESSION_COOKIE_SECURE=false
+
+# --- Session cookie security --------------------------------------------
+# Not set here on purpose. The loaded overlay decides:
+#   localhost (docker-compose.ports.yml) -> SESSION_COOKIE_SECURE=false,
+#     because browsers drop Secure cookies on plain HTTP and login would
+#     otherwise fail with no visible error.
+#   public domain (docker-compose.caddy.yml) -> left unset, so the app
+#     defaults to Secure. Safe by construction; nothing to remember.
+# Overriding is possible but rarely needed.
 
 # --- Public domain mode -------------------------------------------------
 # Both must already have A records pointing at this host before first start,
