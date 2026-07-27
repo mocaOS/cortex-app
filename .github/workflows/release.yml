@@ -132,3 +132,40 @@ jobs:
             $refs
 
           docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+
+  release:
+    name: Publish GitHub Release
+    needs: [guard, manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Generate stack.json
+        run: node scripts/build-stack-json.mjs --out stack.json
+
+      - name: Verify every pinned image is actually pullable
+        # A stack.json pointing at a nonexistent image would break every
+        # installer run. cortex-chat must be released BEFORE this repo is
+        # tagged; this step is what enforces that ordering.
+        run: |
+          set -e
+          for entry in \
+            "ghcr.io/mocaos/cortex-backend:$(jq -r .components.backend stack.json)" \
+            "ghcr.io/mocaos/cortex-frontend:$(jq -r .components.frontend stack.json)" \
+            "ghcr.io/mocaos/cortex-chat:$(jq -r .components.chat stack.json)" \
+            "neo4j:$(jq -r .components.neo4j stack.json)" \
+            "caddy:$(jq -r .components.caddy stack.json)"
+          do
+            echo "checking $entry"
+            docker buildx imagetools inspect "$entry" > /dev/null \
+              || { echo "::error::$entry is not pullable"; exit 1; }
+          done
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: stack.json
