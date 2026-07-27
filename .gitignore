@@ -52,7 +52,16 @@ docker-compose.override.yml
 # SSL certs
 nginx/ssl/
 
-scripts/
+# A bare `scripts/` (directory-node) pattern would make it impossible for any
+# negation below to re-include individual files — an excluded directory node is
+# never traversed, so per-file `!` rules inside it never get evaluated (a known
+# git gitignore limitation). `/scripts/*` ignores its contents item-by-item
+# instead, which is what lets the .mjs negation below actually take effect.
+/scripts/*
+# Repo-tracked release tooling (e.g. check-version-sync.mjs, build-stack-json.mjs,
+# and their node:test files) is committed on purpose; everything else in scripts/
+# (local one-off scripts like download-documents.ts) stays ignored.
+!/scripts/*.mjs
 !frontend/public/skills/library/scripts/
 
 # Downloaded documents
