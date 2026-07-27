@@ -49,6 +49,13 @@ export default async function RootLayout({
   // so accent colors should use oklch/rgb/hsl format instead of hex.
   const accentColor = process.env.ACCENT_COLOR || "oklch(0.79 0.18 70.67)";
 
+  // Same runtime-read rationale as accentColor above: LOGO_URL (non-NEXT_PUBLIC_)
+  // is read from process.env at request time, so one prebuilt image can be
+  // branded per deployment. NEXT_PUBLIC_LOGO_URL stays supported as a fallback
+  // for existing deploys that bake it at build time.
+  const logoUrl =
+    process.env.LOGO_URL || process.env.NEXT_PUBLIC_LOGO_URL || "/logo.svg";
+
   return (
     <html
       lang="en"
@@ -64,7 +71,7 @@ export default async function RootLayout({
       <body className="font-sans antialiased">
         <div className="min-h-screen bg-background flex flex-col">
           <AuthProvider>
-            <LayoutWrapper>{children}</LayoutWrapper>
+            <LayoutWrapper logoUrl={logoUrl}>{children}</LayoutWrapper>
           </AuthProvider>
         </div>
       </body>

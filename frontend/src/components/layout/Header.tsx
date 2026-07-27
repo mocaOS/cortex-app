@@ -31,7 +31,7 @@ const navItems: NavItem[] = [
   },
 ];
 
-export default function Header() {
+export default function Header({ logoUrl }: { logoUrl?: string }) {
   const pathname = usePathname();
 
   // Check if a nav item is active
@@ -57,7 +57,7 @@ export default function Header() {
                 content-type, so extension-less asset URLs (e.g. /assets/<uuid>) render. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={process.env.NEXT_PUBLIC_LOGO_URL || "/logo.svg"}
+              src={logoUrl || process.env.NEXT_PUBLIC_LOGO_URL || "/logo.svg"}
               alt="Logo"
               width={45}
               height={45}

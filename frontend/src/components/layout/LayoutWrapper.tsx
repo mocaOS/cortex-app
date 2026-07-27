@@ -18,8 +18,10 @@ function SubMenuWithSuspense() {
 
 export default function LayoutWrapper({
   children,
+  logoUrl,
 }: {
   children: React.ReactNode;
+  logoUrl?: string;
 }) {
   const pathname = usePathname();
   const isAuthRoute = authRoutes.some(
@@ -36,7 +38,7 @@ export default function LayoutWrapper({
   // Regular pages get the full layout with header, stats, submenu, and footer
   return (
     <>
-      <Header />
+      <Header logoUrl={logoUrl} />
       {!hideStatsBar && <StatsBar />}
       <SubMenuWithSuspense />
       <main className="max-w-7xl mx-auto px-6 pt-4 pb-4 w-full flex-1">
