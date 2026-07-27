@@ -552,21 +552,53 @@ Expected: both clean, no errors.
 
 This is the actual regression being fixed, so verify it the way it breaks — build **without** any logo build arg, then supply it only at run time.
 
+Two pre-existing gates stand between a bare `docker run` and a rendered header,
+and the verification must get past both:
+
+1. `frontend/src/lib/session.ts:27-50` throws at boot in production when
+   `SESSION_SECRET` is missing or shorter than 32 chars.
+2. `frontend/src/proxy.ts:5-13` lists `/documents` as a protected route and
+   redirects unauthenticated requests to `/login`, whose minimal layout never
+   renders `Header` at all — so an unauthenticated fetch can never show the logo.
+
+So supply `SESSION_SECRET` and present a valid session cookie, signed with the
+app's own scheme (`session.ts:72-78`, HS256 over `SESSION_SECRET`, payload
+`{ isAdmin: true, expiresAt: <future ISO> }`):
+
 ```bash
 docker build -f frontend/Dockerfile.prod -t cortex-frontend-logo:test frontend/
 
+SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
 docker run -d --name logo-test -p 3999:3000 \
+  -e SESSION_SECRET="$SECRET" \
   -e LOGO_URL=https://example.com/custom-logo.png \
   cortex-frontend-logo:test
 
-# Give Next a moment to boot, then check the rendered HTML.
 until curl -sf http://localhost:3999/login >/dev/null 2>&1; do sleep 1; done
-curl -s http://localhost:3999/documents | grep -o 'https://example.com/custom-logo.png' | head -1
+
+# Mint a session cookie with the app's own signing scheme.
+COOKIE=$(cd frontend && SESSION_SECRET="$SECRET" node -e '
+  const { SignJWT } = require("jose");
+  const key = new TextEncoder().encode(process.env.SESSION_SECRET);
+  new SignJWT({ isAdmin: true, expiresAt: new Date(Date.now() + 864e5).toISOString() })
+    .setProtectedHeader({ alg: "HS256" })
+    .sign(key).then(t => console.log(t));
+')
+
+curl -s -H "Cookie: session=$COOKIE" http://localhost:3999/documents \
+  | grep -o 'https://example.com/custom-logo.png' | head -1
 
 docker rm -f logo-test
 ```
 
-Expected: `https://example.com/custom-logo.png` is printed. Before this change it would print nothing, because the value was frozen at build time.
+Expected: `https://example.com/custom-logo.png` is printed. Before this change it
+would print nothing, because the value was frozen at build time.
+
+Also confirm the two fallback branches, including the empty-string shape Task 9
+emits by default (`LOGO_URL=${LOGO_URL:-}`):
+
+- `-e LOGO_URL=""` with no `NEXT_PUBLIC_LOGO_URL` → falls through to `/logo.svg`
+- neither variable set → `/logo.svg`
 
 - [ ] **Step 6: Commit**
 
