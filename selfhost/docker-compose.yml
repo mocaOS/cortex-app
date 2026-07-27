@@ -102,9 +102,15 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
-      # Browsers drop Secure cookies over plain HTTP, so localhost mode must
-      # set this false or admin login fails with no visible error.
-      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-}
+      # SESSION_COOKIE_SECURE is deliberately NOT set in this base file, which
+      # loads in every mode. Its absence here is what makes domain mode
+      # secure by construction: with no value at all, the frontend falls back
+      # to its own NODE_ENV=production => Secure=true default, and no .env
+      # content can weaken that under HTTPS. The localhost overlay
+      # (docker-compose.ports.yml) is the only place that sets this, to
+      # false, so plain-HTTP admin login keeps working there. Do not "tidy"
+      # this back into the base file — that would silently reintroduce a
+      # non-Secure session cookie on every public-domain deployment.
       - SENTRY_DSN=${SENTRY_DSN_FRONTEND-}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
     depends_on:

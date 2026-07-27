@@ -8,6 +8,15 @@ services:
   frontend:
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    environment:
+      # Plain HTTP only in this mode, so the session cookie's Secure flag
+      # must be off or admin login fails with no visible error. Set only in
+      # this overlay: the base compose file deliberately never sets this var
+      # at all, so domain mode (which loads the caddy overlay instead of
+      # this one) falls back to the frontend's own NODE_ENV=production =>
+      # Secure=true default. Do not move this to the base file — see the
+      # comment on the frontend service in docker-compose.yml.
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
 
   chat:
     ports:
