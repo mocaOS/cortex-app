@@ -45,15 +45,35 @@ from app.services.reasoning_config import (
 
 
 def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
-    """Reasoning level for the chat/answer LLM calls.
+    """Reasoning level for the researcher-loop LLM calls.
 
     Speed/chat → DEFAULT_REASONING_MODE (default OFF → Venice disable_thinking,
     snappy first token). Deep-research (quality) → AUTO (provider default;
-    hidden reasoning preserved). See config.default_reasoning_mode.
+    hidden reasoning preserved — the forced-reflection micro-call depends on the
+    model actually thinking). See config.default_reasoning_mode.
+
+    The final writer call uses :func:`_writer_reasoning_mode` instead.
     """
     if mode == "speed":
         return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
     return ReasoningMode.AUTO
+
+
+def _writer_reasoning_mode(mode: str, settings) -> ReasoningMode:
+    """Reasoning level for the final writer call — always OFF.
+
+    The writer only composes prose from context the researcher loop already
+    gathered, so hidden reasoning buys nothing. Worse, on thinking models the
+    reasoning trace is billed against the SAME `max_tokens` budget as the
+    visible answer: measured live on qwen3-6-35b-a3b with 15 sources, the
+    trace ran 2.7k-4.3k tokens against a 4000 cap, so deep-research answers
+    came back cut mid-word — or, when the trace alone exhausted the cap,
+    completely empty. Suppressing it also lands the first token sooner.
+
+    `mode` is accepted for symmetry with :func:`_chat_reasoning_mode` (and so a
+    per-mode override stays a one-line change) but does not currently vary.
+    """
+    return ReasoningMode.OFF
 from app.services.prompt_security import (
     get_anti_injection_instruction,
     get_safe_refusal_message,
@@ -2096,13 +2116,14 @@ async def run_research_pipeline(
 
     try:
         # Writer composes the final answer from already-gathered context — it
-        # never needs hidden reasoning, so suppress it for a snappy first token
-        # (mode-aware: quality stays AUTO). See _chat_reasoning_mode.
+        # never needs hidden reasoning, so suppress it in BOTH modes for a snappy
+        # first token and so the whole token budget goes to the visible answer.
+        # See _writer_reasoning_mode.
         stream = await safe_chat_completion(
             client.chat.completions.create,
             base_url=llm_config.base_url,
             model=llm_config.model,
-            reasoning_mode=_chat_reasoning_mode(mode, settings),
+            reasoning_mode=_writer_reasoning_mode(mode, settings),
             overrides=settings.parsed_reasoning_overrides,
             messages=writer_messages,
             stream=True,
@@ -2116,16 +2137,47 @@ async def run_research_pipeline(
         # over-numbered / no-sources-at-all), preserving the per-turn contract.
         answer_parts: List[str] = []
         citation_filter = _CitationStripper(max_index=len(source_events))
+        finish_reason: Optional[str] = None
         async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                clean = citation_filter.feed(chunk.choices[0].delta.content)
-                if clean:
-                    answer_parts.append(clean)
-                    yield {"content": clean}
+            if chunk.choices:
+                if chunk.choices[0].delta.content:
+                    clean = citation_filter.feed(chunk.choices[0].delta.content)
+                    if clean:
+                        answer_parts.append(clean)
+                        yield {"content": clean}
+                # Captured separately: providers commonly deliver the terminal
+                # finish_reason on a chunk carrying no content.
+                if chunk.choices[0].finish_reason:
+                    finish_reason = chunk.choices[0].finish_reason
         tail = citation_filter.flush()
         if tail:
             answer_parts.append(tail)
             yield {"content": tail}
+
+        # Never let a token-limit cut pass as a finished answer. Without this the
+        # stream simply ends and `done` follows, so a mid-word truncation is
+        # indistinguishable in the UI from a complete response — and silent in
+        # the logs. Both the notice and the warning are the diagnostic.
+        if finish_reason == "length":
+            logger.warning(
+                "Writer hit the output token limit (mode=%s, max_tokens=%d, "
+                "visible_chars=%d) — answer truncated. Raise %s.",
+                mode,
+                writer_max_tokens,
+                sum(len(p) for p in answer_parts),
+                (
+                    "WRITER_MAX_TOKENS_SPEED"
+                    if mode == "speed"
+                    else "WRITER_MAX_TOKENS_QUALITY"
+                ),
+            )
+            notice = (
+                "\n\n_[This answer was cut short because it reached the output "
+                "length limit. Ask a narrower question, or raise the writer "
+                "token limit, to get the full response.]_"
+            )
+            answer_parts.append(notice)
+            yield {"content": notice}
 
     except Exception as e:
         logger.error(f"Writer streaming error: {e}")

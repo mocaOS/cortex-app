@@ -623,8 +623,12 @@ class Settings(BaseSettings):
         default=1200
     )  # Max output tokens for writer in speed mode
     writer_max_tokens_quality: int = Field(
-        default=4000
-    )  # Max output tokens for writer in quality/research mode
+        default=8000
+    )  # Max output tokens for writer in quality/research mode. Deep-research
+    #   reports run long (measured: ~1.3k tokens of prose over 15 sources), and
+    #   on providers that ignore the writer's disable-thinking flag the reasoning
+    #   trace is billed against this same budget — at 4000 that combination
+    #   truncated answers mid-word. 8000 leaves headroom for both.
     researcher_wall_clock_seconds: int = Field(
         default=120
     )  # Wall-clock budget for the researcher loop (0 = unlimited). On expiry

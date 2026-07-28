@@ -264,7 +264,7 @@ RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Research: up to 8 iterations
 
 # Writer output limits
 WRITER_MAX_TOKENS_SPEED=1200     # Chat answers
-WRITER_MAX_TOKENS_QUALITY=4000   # Research answers
+WRITER_MAX_TOKENS_QUALITY=8000   # Research answers
 
 # Loop efficiency (all default true)
 RESEARCHER_SPEED_EARLY_WRITE=true     # Chat: skip the final confirmation LLM call
@@ -287,10 +287,17 @@ KEYWORD_WEIGHT=0.3
 GRAPH_WEIGHT=0.2
 
 # Reasoning control + visibility
-DEFAULT_REASONING_MODE=off       # Chat: suppress hidden thinking → snappy, no empty answers (deep-research stays AUTO)
+DEFAULT_REASONING_MODE=off       # Chat: suppress hidden thinking → snappy, no empty answers
+                                 # (the deep-research *researcher loop* stays AUTO; the final
+                                 #  writer always runs with reasoning off in both modes, so the
+                                 #  whole token budget goes to the visible answer)
 STREAM_REASONING_STEPS=true      # Show researcher steps in stream
 SHOW_RETRIEVAL_STATS=true        # Show retrieval stats
 
 # Security
 PROMPT_SECURITY=true             # Injection protection in prompts
 ```
+
+### If an answer looks cut off
+
+Answers are capped by the writer limits above. When a response reaches its cap, Cortex ends it with a visible note saying it was cut short — so a truncated answer is never presented as a complete one — and logs a warning naming the limit to raise. If you see that note regularly on Deep Research, either ask narrower questions or raise `WRITER_MAX_TOKENS_QUALITY`. An answer that stops mid-sentence *without* that note is a different problem (usually a network or proxy timeout), not the token limit.

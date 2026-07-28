@@ -9,7 +9,7 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## July 28, 2026
 
-Deep Research quality no longer depends on the answer model volunteering to reflect between search rounds. Models that skip that step used to degrade into repetitive query volleys — burning every iteration, drifting off-topic, and answering from a diluted context — while models that reflect naturally converged in a few targeted rounds. The researcher loop now enforces the reflect-then-search rhythm structurally and stops searching once results converge, which brings weaker-reflecting models (measured on Qwen 3.6 35B A3B) up to the research quality previously seen only from naturally reflective ones (Gemma 4 26B), at roughly half the wall-clock. A new default time budget also guarantees the answer starts writing even when the LLM provider is having a slow moment.
+Deep Research quality no longer depends on the answer model volunteering to reflect between search rounds. Models that skip that step used to degrade into repetitive query volleys — burning every iteration, drifting off-topic, and answering from a diluted context — while models that reflect naturally converged in a few targeted rounds. The researcher loop now enforces the reflect-then-search rhythm structurally and stops searching once results converge, which brings weaker-reflecting models (measured on Qwen 3.6 35B A3B) up to the research quality previously seen only from naturally reflective ones (Gemma 4 26B), at roughly half the wall-clock. A new default time budget also guarantees the answer starts writing even when the LLM provider is having a slow moment. And once the research was good, the write-up itself had to survive: Deep Research answers on thinking models were being cut off mid-sentence — sometimes coming back empty — because the model's hidden reasoning was spending the very token budget meant for the answer. That budget now goes to the answer alone, and a truncated answer can no longer pass itself off as a finished one.
 
 ### Deep Research: enforced reflection & convergence
 
@@ -25,6 +25,16 @@ Deep Research quality no longer depends on the answer model volunteering to refl
 - **Honest streaming status** — a `Planning the next research step` status event now precedes each researcher LLM call, so during a slow provider call the UI no longer shows a stale "Searching the knowledge base" from the previous round.
 
 Measured on the same knowledge graph before/after (Qwen 3.6 35B A3B, hardest test question): 13 search calls → 8, first answer token 92s → 56s, and the answer went from a generic non-answer to a specific, fully cited list — matching the Gemma 4 baseline at half its total wall-clock. No API or schema breakage: all events are additive, and every behavior change is env-gated with the flags above.
+
+### Deep Research: answers no longer cut off mid-sentence
+
+On thinking models, the hidden reasoning trace is billed against the same output-token budget as the visible answer. The Deep Research writer ran with reasoning enabled, so a long report could spend most of its 4,000-token allowance thinking and then stop mid-word — with no error, no warning, and a completed-looking response in the UI. Measured on Qwen 3.6 35B A3B with a 15-source research context, the trace ran 2,700-4,300 tokens against that cap; in the worst case it consumed the entire budget and the user received an empty answer.
+
+- **Writer reasoning suppressed** — the final writer call now runs with reasoning off in Deep Research too (it already did in chat). The writer only composes prose from context the researcher already gathered, so hidden reasoning bought nothing while consuming the answer's budget. The same 15-source report now completes in ~1,300 output tokens — a 3× margin under the cap — and the first token lands sooner. The researcher loop is unchanged and still reasons in Deep Research; only the write-up step changed.
+- **Larger answer budget** — `WRITER_MAX_TOKENS_QUALITY` default `4000` → `8000`, giving long reports room and protecting against providers that ignore the disable-thinking flag. `WRITER_MAX_TOKENS_SPEED` is unchanged at `1200`.
+- **Truncation is never silent** — if an answer does hit the output limit, the response now ends with a visible note saying it was cut short, and the backend logs a warning naming the mode, the cap, and which env var to raise. Previously the stream simply ended and the turn was marked complete, making a mid-word cut indistinguishable from a finished answer in both the UI and the logs.
+
+Verified end-to-end against a live instance: the question that previously broke off mid-sentence now returns a complete, fully cited answer over 15 sources, and an artificially lowered cap produces the labeled-truncation path instead of a silent cut. No API or schema breakage — the truncation note arrives as ordinary answer content, and both limits stay env-overridable.
 
 ---
 

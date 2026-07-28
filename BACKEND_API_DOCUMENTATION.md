@@ -1062,7 +1062,7 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 - `RESEARCHER_MAX_ITERATIONS_SPEED`: Max agent iterations for chat (default: `3`)
 - `RESEARCHER_MAX_ITERATIONS_QUALITY`: Max agent iterations for deep research (default: `8`)
 - `WRITER_MAX_TOKENS_SPEED`: Max output tokens for chat answers (default: `1200`)
-- `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `4000`)
+- `WRITER_MAX_TOKENS_QUALITY`: Max output tokens for deep research answers (default: `8000`)
 
 #### Relationship Analysis
 - `PARALLEL_RELATIONSHIP_BATCHES`: Batches to process in parallel, 0 = auto (default: `0`)

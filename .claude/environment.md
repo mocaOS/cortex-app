@@ -217,7 +217,7 @@ All crawl HTTP goes through `services/crawl_client.py`: shared connection, 3 ret
 ## Agent Configuration
 
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3), `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8) — agent loop iteration caps
-- `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 4000) — writer output token limits
+- `WRITER_MAX_TOKENS_SPEED` (default: 1200), `WRITER_MAX_TOKENS_QUALITY` (default: 8000) — writer output token limits. The writer always runs with reasoning suppressed (`_writer_reasoning_mode`), so the whole budget goes to visible prose; on thinking models a shared budget truncated answers mid-word.
 - `MAX_CONVERSATION_HISTORY` (default: 6) — legacy message-count cap; used only when no `conversation_memory` blob is sent
 - `RESEARCHER_SPEED_EARLY_WRITE` (default: true) — speed mode breaks straight to the writer after a search iteration that produced sources (and no skill/git tool ran), skipping the model's `done` confirmation round-trip (whose summary the speed writer never reads). One full LLM call saved per plain chat turn.
 - `RESEARCHER_PARALLEL_TOOL_CALLS` (default: true) — read-only tool calls (`knowledge_search`/`community_search`/`entity_lookup`) emitted in one assistant message execute concurrently via `asyncio.gather`; side-effecting tools (`http_request`, `git_repo`, skill tools) stay sequential. Big quality-mode win (the prompt encourages several searches per turn).

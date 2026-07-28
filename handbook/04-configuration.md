@@ -218,7 +218,7 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations for Chat mode (speed). |
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations for Deep Research (quality). |
 | `WRITER_MAX_TOKENS_SPEED` | `1200` | Max output tokens for Chat answers. |
-| `WRITER_MAX_TOKENS_QUALITY` | `4000` | Max output tokens for Deep Research answers. |
+| `WRITER_MAX_TOKENS_QUALITY` | `8000` | Max output tokens for Deep Research answers. |
 | `RESEARCHER_SPEED_EARLY_WRITE` | `true` | Chat mode skips the agent's final "research complete" confirmation call once a search has produced sources (and no skill/git action ran) — one full LLM round-trip less per chat turn. |
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | `true` | Run read-only tool calls (knowledge/community/entity searches) issued in one agent turn concurrently instead of one after another. Skill and git actions always stay sequential. |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | `true` | Let the agent pass entity names directly on its search calls, skipping the separate query entity-extraction LLM call. |
