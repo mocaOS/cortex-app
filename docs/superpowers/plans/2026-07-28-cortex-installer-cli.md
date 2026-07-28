@@ -3476,11 +3476,29 @@ export async function run(ctx: { flags: Record<string, string | boolean> }): Pro
   const env = readEnv(dir);
   const lines: string[] = [];
 
-  const pre = await runPreflight({});
-  for (const c of pre.checks) lines.push(`${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`);
+  // Every section is individually guarded. A diagnostic tool that aborts on its
+  // first failure is useless precisely when it is needed: `docker compose ps`
+  // rejects when the daemon is down, which is the most likely reason someone
+  // runs `doctor` at all — and an unguarded throw would discard the preflight
+  // lines that already explain the problem.
+  try {
+    const pre = await runPreflight({});
+    for (const c of pre.checks) lines.push(`${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`);
+  } catch {
+    lines.push("warn could not run environment checks");
+  }
 
-  const rows = await ps(dir);
-  lines.push("", ...formatStatusTable(rows, state));
+  try {
+    const rows = await ps(dir);
+    lines.push(
+      "",
+      ...(rows.length
+        ? formatStatusTable(rows, state)
+        : ["no containers — run `cortex start`"])
+    );
+  } catch {
+    lines.push("", "warn could not query container status — is Docker running?");
+  }
 
   // LLM key still valid?
   if (env.OPENAI_API_KEY && env.OPENAI_API_BASE && env.OPENAI_MODEL) {
@@ -3490,7 +3508,18 @@ export async function run(ctx: { flags: Record<string, string | boolean> }): Pro
       model: env.OPENAI_MODEL,
       timeoutMs: 15_000,
     });
-    lines.push("", r.ok ? `ok   LLM reachable (${r.ms} ms)` : `FAIL LLM: ${r.status ?? ""} ${r.body ?? ""}`);
+    // Redact the key before showing a provider's response body: this block is
+    // explicitly meant to be pasted when asking for help, and an arbitrary
+    // OpenAI-compatible gateway may echo request or auth detail back in a
+    // verbose error.
+    const redact = (t: string) =>
+      env.OPENAI_API_KEY ? t.split(env.OPENAI_API_KEY).join("***") : t;
+    lines.push(
+      "",
+      r.ok
+        ? `ok   LLM reachable (${r.ms} ms)`
+        : `FAIL LLM: ${r.status ?? ""} ${redact(r.body ?? "")}`
+    );
   }
 
   // Backup freshness
