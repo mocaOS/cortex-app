@@ -4225,11 +4225,18 @@ so a prerelease tag can never take the npm \`latest\` dist-tag."
 
 - [ ] **Step 1: Add the LICENSE file**
 
-`package.json` declares `"license": "MIT"` but no `LICENSE` file exists, which
-license-scanning tools flag and which leaves the published package's terms
-unstated. Add a standard MIT `LICENSE` at the repo root, copyright the same
-holder the sibling repos use (check `mocaOS/cortex-app`'s `LICENSE`), so the
-three repos agree.
+The family's licensing is inconsistent — cortex-app has a real Apache-2.0
+`LICENSE`, cortex-chat declares `ISC` with no `LICENSE` (npm's `init` default),
+and this repo declares `MIT` with no `LICENSE`. The human partner has chosen
+**Apache-2.0** to match cortex-app, which is the only deliberate-looking one and
+carries an explicit patent grant that matters for a published tool.
+
+So:
+1. Copy cortex-app's `LICENSE` verbatim to this repo's root (it is the stock
+   Apache-2.0 text; do not retype it).
+2. Change `package.json`'s `"license"` from `"MIT"` to `"Apache-2.0"`.
+3. Do **not** modify cortex-app or cortex-chat — their inconsistencies are
+   recorded for the human partner to address separately.
 
 - [ ] **Step 2: Write the installer repo README**
 
