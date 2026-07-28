@@ -42,10 +42,12 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 23 | [Web Import](23-web-import.md) | `23-web-import.md` | Everyone |
 | 24 | [Apps](24-apps.md) | `24-apps.md` | Everyone |
 | 25 | [Cortex Chat](25-cortex-chat.md) | `25-cortex-chat.md` | Everyone |
+| 26 | [Self-Hosting](26-self-hosting.md) | `26-self-hosting.md` | Administrators |
 
 ## Quick Links
 
 - **I want to deploy Cortex** — Start with [Chapter 3: Getting Started](03-getting-started.md)
+- **I want to self-host with prebuilt images and one command** — See [Chapter 26: Self-Hosting](26-self-hosting.md)
 - **I want to upload documents and build a knowledge graph** — Start with [Chapter 7: Documents](07-documents.md), then [Chapter 8: Knowledge Graph](08-knowledge-graph.md)
 - **I want to ask questions about my documents** — See [Chapter 10: Ask AI](10-ask-ai.md)
 - **I want to connect a GitHub/GitLab/Gitea repository** — See [Chapter 21: Git Integration](21-git-integration.md)

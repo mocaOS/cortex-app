@@ -34,6 +34,18 @@ The beauty? Your data isn't trapped. When a hot new agent framework drops next m
 
 > **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
 
+## Self-hosting
+
+```bash
+npx @mocaos/cortex
+```
+
+Interactive installer — checks your environment, validates your LLM
+credentials before writing anything, then pulls pinned images and starts the
+stack. Docker with Compose v2 is the only prerequisite.
+See [handbook/26-self-hosting.md](handbook/26-self-hosting.md), or
+[selfhost/README.md](selfhost/README.md) for the manual path.
+
 ## The Cortex Ecosystem
 
 This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on its REST API:

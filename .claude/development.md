@@ -109,3 +109,27 @@ Constraints that will silently break the stack if violated:
 Releases are tag-triggered (`.github/workflows/release.yml`) and guarded by
 `scripts/check-version-sync.mjs`. cortex-chat must be released before
 cortex-app, since `stack.json` pins its version and verifies it is pullable.
+
+### The installer
+
+`npx @mocaos/cortex` (repo: `mocaOS/cortex-installer`) automates the manual
+`selfhost/README.md` path. It reads `stack.json` from the latest release,
+fetches that tag's `selfhost/` + `ops/` from the release tarball, and writes
+only `.env`.
+
+Consequences for anyone changing `selfhost/`:
+
+- Adding a `${VAR:?}` to a compose file is a **breaking change for the
+  installer** — it must also be added to the installer's `env.ts`
+  (`REQUIRED_VARS`), or every new install fails the moment Compose
+  interpolates the file (at `pull`, the first `docker compose` call
+  `install.ts` makes), despite every earlier installer step reporting
+  success. `env.ts`'s `REQUIRED_VARS` is a hand-maintained mirror of every
+  `${VAR:?}` across the selfhost compose files (12, as of this writing);
+  `env.test.ts` only checks that `renderEnv()` fills everything currently
+  listed there — it does not diff against the live compose files, so keeping
+  the two in sync is a manual step, not something CI enforces automatically.
+- Renaming or removing a compose file breaks `fetchArtifacts`'s
+  `ARTIFACT_FILES` check.
+- The installer never edits compose files, so their `${VAR}` interpolation is
+  the whole configuration contract.
