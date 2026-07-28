@@ -6,7 +6,7 @@
 
 **Architecture:** A small ESM TypeScript CLI. It reads `stack.json` from the latest cortex-app GitHub release to learn which component versions form a tested stack, fetches that tag's `selfhost/` compose files and `ops/` directory from the release tarball, runs an interactive wizard that validates the user's LLM provider with live probes before writing anything, generates `.env` (the only file it authors), then drives `docker compose`. Day-2 verbs wrap Compose with the right project and directory.
 
-**Tech Stack:** Node ≥18, ESM, TypeScript, `@clack/prompts` 1.7, `picocolors` 1.1, `semver` 7.8. Tests use `node:test` (built in). No bundler — publish compiled JS via `tsc`.
+**Tech Stack:** Node ≥20.12, ESM, TypeScript, `@clack/prompts` 1.7, `picocolors` 1.1, `semver` 7.8. Tests use `node:test` (built in). No bundler — publish compiled JS via `tsc`.
 
 **Repo:** new `mocaOS/cortex-installer` → npm `@mocaos/cortex`.
 
@@ -29,7 +29,11 @@
 
 ## Global Constraints
 
-- **Node ≥ 18.** `package.json` sets `"engines": { "node": ">=18" }` and `"type": "module"`.
+- **Node ≥ 20.12.** `package.json` sets `"engines": { "node": ">=20.12.0" }` and
+  `"type": "module"`. The floor is set by `@clack/prompts` and `@clack/core`, which
+  both declare `">= 20.12.0"` from 1.3.0 onward — verified against the registry.
+  Node 18 reached EOL in April 2025, so matching the dependency is preferable to
+  pinning the prompt library a year back to support a dead runtime.
 - **npm package `@mocaos/cortex`**, single `bin` named `cortex`. The `mocaos` npm org exists; the name is free.
 - **The installer authors exactly one file: `.env`.** Compose files, `Caddyfile.template` and `ops/` are fetched release artifacts, copied verbatim, never edited or generated. This is what makes user edits survive updates.
 - **Mode is selected by `COMPOSE_FILE` in `.env`**, using Compose's native overlay mechanism:
@@ -148,6 +152,14 @@ test("a flag before the verb still parses and the verb is still found", () => {
   assert.equal(r.verb, "update");
   assert.equal(r.flags.yes, true);
 });
+
+test("rejects an unknown verb instead of silently installing", () => {
+  assert.throws(() => parseArgs(["staus"]), /Unknown command "staus"/);
+});
+
+test("still defaults to install when no verb is given at all", () => {
+  assert.equal(parseArgs(["--yes"]).verb, "install");
+});
 ```
 
 - [ ] **Step 3: Run the test to verify it fails**
@@ -166,13 +178,14 @@ Expected: FAIL — cannot find `../src/cli.js`
   "description": "Interactive installer for self-hosted Cortex",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=20.12.0" },
   "bin": { "cortex": "dist/cli.js" },
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit && node --test --import tsx test/*.test.ts",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -305,7 +318,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  const verb = rest.length && VERBS.has(rest[0]) ? rest.shift()! : "install";
+  // Default to `install` only when NO verb was given. A token that is present
+  // but unrecognised is a typo and must be rejected — silently falling back
+  // would make `cortex staus` launch the whole interactive installer.
+  if (rest.length && !VERBS.has(rest[0])) {
+    throw new Error(
+      `Unknown command "${rest[0]}". Run \`npx @mocaos/cortex --help\` for the list.`
+    );
+  }
+  const verb = rest.length ? rest.shift()! : "install";
   return { verb, flags, positionals: rest };
 }
 
@@ -356,7 +377,7 @@ if (process.argv[1] && process.argv[1].endsWith("cli.js")) {
 - [ ] **Step 8: Run the test, build, and check the version**
 
 Run: `npm test`
-Expected: PASS — 7 tests, typecheck clean
+Expected: PASS — 9 tests, typecheck clean
 
 Then prove the published entrypoint works, which is where `version.ts`'s path
 resolution from `dist/` is easy to get wrong:
@@ -3907,8 +3928,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 18 is the floor declared in engines; 22 is what most users' npx runs.
-        node: ["18", "20", "22"]
+        # 20 is the floor declared in engines (20.12 via @clack); 22 and 24 are
+        # what most users' npx will actually run.
+        node: ["20", "22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
