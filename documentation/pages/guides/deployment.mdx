@@ -7,10 +7,82 @@ This guide covers deploying Cortex to production environments using Docker Compo
 
 ## Prerequisites
 
-- A server with Docker and Docker Compose installed
+- A server with Docker Engine 24+ and the Docker Compose **v2 plugin** (`docker compose version` — `apt install docker.io` does not include it)
 - At least 4GB RAM (8GB+ recommended for production)
+- `git`, `jq`, and `openssl` on the host — the release-stack commands below use all three, and a minimal server image ships none of them
 - Domain name with DNS configured (for HTTPS)
 - OpenAI API key (or alternative LLM provider)
+
+## Self-host from the release stack (recommended)
+
+Since **v1.0.0** you don't have to build Cortex to run it. Each release publishes multi-arch images to GHCR plus a static Compose stack under `selfhost/` that is configured entirely through `.env` — you never edit the Compose files, so updates never conflict with local changes.
+
+`stack.json`, attached to every GitHub release, is the version manifest: it pins the stack version and the component versions that were tested together.
+
+```bash
+curl -fsSL https://github.com/mocaOS/cortex-app/releases/latest/download/stack.json -o stack.json
+# {"stack":"1.0.0","components":{"backend":"1.0.0","frontend":"1.0.0","chat":"1.0.0",
+#  "neo4j":"5.26-community","caddy":"2-alpine"},"minInstaller":"1.0.0", ... }
+
+git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
+  https://github.com/mocaOS/cortex-app.git /tmp/cortex-src
+
+mkdir -p cortex && cd cortex
+cp -r /tmp/cortex-src/selfhost/. .
+cp -r /tmp/cortex-src/ops ./ops
+cp Caddyfile.template Caddyfile
+cp .env.example .env
+chmod 600 .env
+```
+
+Fill in at least the secrets block and the LLM block in `.env` (the comments there carry ready-to-run `openssl` commands), then:
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+The stack runs Cortex **and Cortex Chat**. Both share one identity — `ADMIN_EMAIL` + `ADMIN_PASSWORD` — and Chat mints its own scoped backend keys using `ADMIN_API_KEY`.
+
+### Choosing a mode
+
+`COMPOSE_FILE` in `.env` selects the topology. Each mode also sets the URL and cookie flags correctly for you, which is what makes the LAN/HTTPS foot-guns below a non-issue here.
+
+```dotenv
+# Localhost — ports published on BIND_ADDR (127.0.0.1) only
+COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml
+```
+
+```dotenv
+# Public domain — Caddy with automatic HTTPS
+COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+APP_DOMAIN=cortex.example.com
+CHAT_DOMAIN=chat.example.com
+ACME_EMAIL=you@example.com
+CHAT_BASE_URL=https://chat.example.com
+CORS_ALLOWED_ORIGINS=https://cortex.example.com,https://chat.example.com
+```
+
+Point both A records at the host **before** the first `up` — Let's Encrypt issuance fails otherwise. In domain mode only Caddy publishes ports; the API and the Neo4j browser stay private on the Compose network, and the API remains reachable at `https://cortex.example.com/api/...` because the frontend proxies it.
+
+The ports overlay sets `SESSION_COOKIE_SECURE=false` (browsers drop `Secure` cookies on plain HTTP) while domain mode leaves it unset so it defaults to secure — nothing to configure either way. Note that Cortex Chat has no equivalent switch: its cookie is always `Secure`, which works at `http://localhost:3001` but silently fails to log in if you point `BIND_ADDR` at a LAN IP over plain HTTP. Use domain mode for remote access.
+
+### Rules and updates
+
+- Put local changes in `docker-compose.override.yml` — Compose merges it automatically and updates never touch it. Do not edit `docker-compose.yml`.
+- **Never rename the `backend` service.** The published frontend image bakes `API_URL=http://backend:8000` into its Next.js rewrite manifest at build time.
+- Apps are **enabled by default** in this stack (the backend's own default is off). Set `ENABLE_APPS=false` if you want the smaller attack surface.
+- Error tracking is **off** here: `SENTRY_DSN_BACKEND` / `SENTRY_DSN_FRONTEND` default to empty rather than to the project's GlitchTip, so a self-hoster's stack traces never leave their box unless they opt in with their own DSN.
+
+To update, re-fetch `stack.json`, set the three `CORTEX_*_IMAGE` lines in `.env` to its component versions, then:
+
+```bash
+docker compose exec backup /backup.sh   # back up first
+docker compose pull
+docker compose up -d
+```
+
+An interactive installer (`npx @mocaos/cortex`) is planned; `selfhost/README.md` in the repo is the authoritative manual runbook it will automate.
 
 ## Docker Compose Deployment
 
@@ -319,16 +391,20 @@ neo4j:
 
 ### The backup sidecar (recommended)
 
-The Dokploy and Coolify composes include the backup sidecar; on the standalone
-prod stack add the overlay:
+The self-host, Dokploy, and Coolify composes include the backup sidecar; on the
+standalone prod stack add the overlay:
 
 ```bash
 docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d
 ```
 
 Nightly (`BACKUP_INTERVAL_SECONDS`), online and verified: a server-side APOC
-logical export of the graph (`graph.cypher.gz`) plus a tar of the file
-volumes, with checksums and a `.complete` marker. Retention
+logical export of the graph (`graph.cypher.gz`) plus a tar of the file volumes —
+uploads, custom inputs, chat data, **installed skills, and installed apps** —
+with checksums and a `.complete` marker. Skills and apps were added in v1.0.0;
+before that they were silently excluded, and since they are user-authored with
+no other copy, verify that any older backup you are relying on actually
+contains them. Retention
 (`BACKUP_RETENTION_DAYS`, default 7) only rotates after a verified success and
 never removes the newest complete backup. The sidecar's healthcheck goes
 unhealthy when the newest verified backup is older than twice the interval, so
