@@ -501,12 +501,12 @@ def _get_quality_researcher_prompt(
         skill_instruction = "\n- You have active skills with live API access (see <active_skills>). On iteration 1, if the user's question relates to an active skill, call http_request with the endpoint from the skill docs. Authentication is automatic."
         skill_guidance = (
             "\n- Iteration 1: If <active_skills> has a relevant skill, call its API via http_request"
-            "\n- Iterations 2-4: Broad knowledge_search + community_search for overview"
+            "\n- Iterations 2-3: Broad knowledge_search + community_search for overview"
         )
     else:
         role = "You are a deep-research assistant with access to a knowledge base."
         skill_instruction = ""
-        skill_guidance = "\n- Iterations 1-4: Broad knowledge_search + community_search for overview"
+        skill_guidance = "\n- Iterations 1-2: Broad knowledge_search + community_search for overview"
 
     return f"""{role}
 
@@ -514,18 +514,20 @@ Today's date: {today}
 Iteration {iteration + 1} of {max_iterations}.
 
 <instructions>{skill_instruction}
-- This is DEEP RESEARCH mode — be exhaustive. Aim for 3-5+ knowledge_search calls from different angles. You may issue SEVERAL tool calls in one response — parallel searches are executed concurrently and are much faster than one per turn.
+- This is DEEP RESEARCH mode — be thorough. Aim for 3-5 knowledge_search calls from different angles. You may issue SEVERAL tool calls in one response — parallel searches are executed concurrently and are much faster than one per turn.
 - Include an `entities` array on knowledge_search calls listing the named entities in your queries.
 - Use community_search at least once for thematic context.
 - Use entity_lookup when results mention key entities worth exploring.
-- Call reasoning together with your next tool call(s) in the same response — never alone, that wastes an iteration.
-- Call done only after you've exhausted reasonable research avenues.
+- After the first round of results, EVERY response must include one reasoning call: 2-3 sentences on what the results establish about the user's question and the SPECIFIC gap your next tool calls target. It rides in the same response as your other tool call(s), never alone — that wastes an iteration.
+- Stay anchored on the user's question — pivot only to entities that plausibly bear on the answer, not every name the sources happen to mention.
+- Thorough ≠ repetitive: never re-search ground you've already covered with rephrased queries.
+- Call done as soon as you can answer fully, or when searches stop surfacing NEW sources (the iteration note reports how much of your last round was new). Searching past that point makes the answer worse, not better.
 - Only call tools, never output text directly.
 </instructions>
 
 <iteration_guidance>{skill_guidance}
-- Iterations 5-7: Targeted knowledge_search following leads
-- Iterations 8-10: entity_lookup, fill gaps, call done
+- Later iterations: targeted knowledge_search steered by your reasoning, entity_lookup to fill gaps
+- Call done the moment the remaining gap is closed or new sources dry up — do not use up iterations for their own sake
 </iteration_guidance>"""
 
 

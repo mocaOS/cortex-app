@@ -198,3 +198,129 @@ def test_grounding_guard_respects_flag():
         researcher_force_grounding = False
 
     assert _needs_grounding_guard(False, _result(), _Off()) is False
+
+
+# --- Reflection gate + novelty convergence -----------------------------------
+
+class _ToolCall:
+    def __init__(self, name):
+        class _Fn:
+            pass
+        self.function = _Fn()
+        self.function.name = name
+
+
+def test_searches_without_reflection_detects_shotgun_volley():
+    from app.services.researcher_agent import _searches_without_reflection
+
+    assert _searches_without_reflection(
+        [_ToolCall("knowledge_search"), _ToolCall("knowledge_search")]
+    ) is True
+    assert _searches_without_reflection([_ToolCall("entity_lookup")]) is True
+
+
+def test_searches_without_reflection_passes_compliant_and_terminal():
+    from app.services.researcher_agent import _searches_without_reflection
+
+    # reasoning alongside searches = the gemma-style steered round
+    assert _searches_without_reflection(
+        [_ToolCall("reasoning"), _ToolCall("knowledge_search")]
+    ) is False
+    # done anywhere in the volley means the model is wrapping up
+    assert _searches_without_reflection(
+        [_ToolCall("knowledge_search"), _ToolCall("done")]
+    ) is False
+    # non-retrieval tools (skills, git) are not gated
+    assert _searches_without_reflection([_ToolCall("http_request")]) is False
+    assert _searches_without_reflection([]) is False
+    assert _searches_without_reflection(None) is False
+
+
+def _srcs(*cids):
+    return [{"chunk_id": c} for c in cids]
+
+
+def test_novelty_tracker_stops_after_consecutive_stale_rounds():
+    from app.services.researcher_agent import _NoveltyTracker
+
+    t = _NoveltyTracker(min_new_ratio=0.2, stale_limit=2)
+    t.begin_round()
+    t.observe(_srcs("a", "b", "c"))
+    assert t.end_round() is False  # 100% new
+
+    t.begin_round()
+    t.observe(_srcs("a", "b", "c"))  # 0% new — stale #1
+    assert t.end_round() is False
+
+    t.begin_round()
+    t.observe(_srcs("b", "c"))  # stale #2 → stop
+    assert t.end_round() is True
+
+
+def test_novelty_tracker_fresh_round_resets_stale_count():
+    from app.services.researcher_agent import _NoveltyTracker
+
+    t = _NoveltyTracker(min_new_ratio=0.2, stale_limit=2)
+    t.begin_round(); t.observe(_srcs("a", "b")); t.end_round()
+    t.begin_round(); t.observe(_srcs("a", "b")); assert t.end_round() is False
+    t.begin_round(); t.observe(_srcs("x", "y"))  # fresh ground
+    assert t.end_round() is False
+    assert t.stale_rounds == 0
+
+
+def test_novelty_tracker_dedup_hit_and_empty_rounds():
+    from app.services.researcher_agent import _NoveltyTracker
+
+    t = _NoveltyTracker(min_new_ratio=0.2, stale_limit=2)
+    t.begin_round(); t.observe_dedup_hit()  # exact repeat = fully stale
+    assert t.end_round() is False
+    t.begin_round(); t.observe([])  # searched, zero results = stale
+    assert t.end_round() is True
+    # rounds without any search never count toward staleness
+    t2 = _NoveltyTracker(min_new_ratio=0.2, stale_limit=1)
+    t2.begin_round()
+    assert t2.end_round() is False
+
+
+def test_novelty_tracker_disabled_by_zero_knobs():
+    from app.services.researcher_agent import _NoveltyTracker
+
+    for t in (
+        _NoveltyTracker(min_new_ratio=0, stale_limit=2),
+        _NoveltyTracker(min_new_ratio=0.2, stale_limit=0),
+    ):
+        for _ in range(5):
+            t.begin_round(); t.observe(_srcs("a")); 
+            assert t.end_round() is False
+
+
+def test_novelty_tracker_ignores_sources_without_chunk_id():
+    from app.services.researcher_agent import _NoveltyTracker
+
+    t = _NoveltyTracker(min_new_ratio=0.2, stale_limit=2)
+    t.begin_round()
+    t.observe([{"content": "skill api response"}])  # no chunk_id
+    assert t.round_total == 0
+    assert "no new sources" in t.note_line()
+
+
+def test_quality_iteration_directive_shapes():
+    from app.services.researcher_agent import (
+        _NoveltyTracker,
+        _quality_iteration_directive,
+    )
+
+    t = _NoveltyTracker(min_new_ratio=0.2, stale_limit=2)
+    # iteration 0: nothing to reflect on yet
+    assert _quality_iteration_directive(0, t, True) == ""
+    # iteration 1+, no search round yet: directive only, no novelty line
+    d = _quality_iteration_directive(1, t, True)
+    assert "reasoning call" in d and "%" not in d
+    # after a round, the novelty percentage is reported
+    t.begin_round(); t.observe(_srcs("a", "b", "c", "d")); t.end_round()
+    t.begin_round(); t.observe(_srcs("a", "b", "c", "x")); t.end_round()
+    d = _quality_iteration_directive(2, t, True)
+    assert "25% new" in d
+    # force_reflection off: novelty still reported, directive absent
+    d = _quality_iteration_directive(2, t, False)
+    assert "25% new" in d and "reasoning call" not in d

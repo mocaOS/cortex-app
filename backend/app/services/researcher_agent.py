@@ -121,6 +121,120 @@ def _needs_grounding_guard(
     )
 
 
+# Read-only retrieval tools; used by the reflection gate to detect a response
+# that keeps searching without pausing to reason about prior results.
+_RETRIEVAL_TOOLS = ("knowledge_search", "community_search", "entity_lookup")
+
+
+def _searches_without_reflection(tool_calls) -> bool:
+    """True when a response issues retrieval calls with no `reasoning` (and no
+    `done`) alongside them.
+
+    Models like gemma follow the prompt's "call reasoning together with your
+    next tool call(s)" on their own — their searches converge because each
+    round is steered by an explicit reflection. Models that skip it (observed
+    live on qwen3.6-a3b) degrade into shotgun query volleys, so the loop
+    enforces the same structure for everyone.
+    """
+    names = [tc.function.name for tc in (tool_calls or [])]
+    return (
+        any(n in _RETRIEVAL_TOOLS for n in names)
+        and "reasoning" not in names
+        and "done" not in names
+    )
+
+
+@dataclass
+class _NoveltyTracker:
+    """Per-run convergence signal: how many previously-unseen chunks each
+    search round returns.
+
+    A "round" is one loop iteration's worth of knowledge_search results.
+    When `stale_limit` consecutive rounds fall below `min_new_ratio` new
+    chunks (an exact-repeat dedup hit counts as a fully stale search), the
+    loop breaks to the writer instead of burning the remaining iterations —
+    every extra round past convergence dilutes the writer context with
+    off-target sources. Disabled when either knob is 0.
+    """
+
+    min_new_ratio: float
+    stale_limit: int
+    seen: set = field(default_factory=set)
+    stale_rounds: int = 0
+    round_new: int = 0
+    round_total: int = 0
+    round_searched: bool = False
+    had_search_round: bool = False
+
+    @property
+    def enabled(self) -> bool:
+        return self.min_new_ratio > 0 and self.stale_limit > 0
+
+    def begin_round(self) -> None:
+        self.round_new = 0
+        self.round_total = 0
+        self.round_searched = False
+
+    def observe(self, sources: list) -> None:
+        self.round_searched = True
+        self.had_search_round = True
+        for s in sources:
+            cid = s.get("chunk_id")
+            if not cid:
+                continue
+            self.round_total += 1
+            if cid not in self.seen:
+                self.seen.add(cid)
+                self.round_new += 1
+
+    def observe_dedup_hit(self) -> None:
+        # Repeating an exact earlier search adds nothing by definition.
+        self.round_searched = True
+        self.had_search_round = True
+
+    def end_round(self) -> bool:
+        """Close the round; True when the loop should stop searching."""
+        if not self.round_searched:
+            return False
+        ratio = (self.round_new / self.round_total) if self.round_total else 0.0
+        if ratio < self.min_new_ratio:
+            self.stale_rounds += 1
+        else:
+            self.stale_rounds = 0
+        return self.enabled and self.stale_rounds >= self.stale_limit
+
+    def note_line(self) -> str:
+        """One-sentence novelty report for the per-iteration system note."""
+        if not self.had_search_round:
+            return ""
+        if not self.round_total:
+            return "Your last search round returned no new sources."
+        pct = round(100 * self.round_new / self.round_total)
+        return (
+            f"Your last search round returned {pct}% new (previously unseen) "
+            "sources."
+        )
+
+
+def _quality_iteration_directive(
+    iteration: int, novelty: _NoveltyTracker, force_reflection: bool
+) -> str:
+    """Extra lines for the quality-mode per-iteration system note."""
+    lines = []
+    if iteration >= 1:
+        nl = novelty.note_line()
+        if nl:
+            lines.append(nl)
+        if force_reflection:
+            lines.append(
+                "Include one reasoning call (what the results establish + the "
+                "specific gap your next searches target) alongside your next "
+                "tool calls. If the gap is closed or new sources have dried "
+                "up, call done instead of searching again."
+            )
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Context Merging & Deduplication
 # =============================================================================
@@ -525,6 +639,18 @@ async def _run_researcher_loop(
     # formatted tool text. A repeat returns instantly with a nudge to try a
     # different angle instead of paying the full retrieval pipeline again.
     _search_cache: dict = {}
+    _novelty = _NoveltyTracker(
+        min_new_ratio=getattr(settings, "researcher_novelty_min_new_ratio", 0.2),
+        stale_limit=getattr(settings, "researcher_novelty_stale_rounds", 2),
+    )
+    _force_reflection = (
+        mode == "quality"
+        and getattr(settings, "researcher_force_reflection", True)
+    )
+    # Disarmed for the run when the provider rejects a named tool_choice
+    # (some backends 4xx/5xx on it) — the iteration-note directive still asks
+    # for reflection, it just can't be guaranteed.
+    _forced_reflection_armed = True
 
     # Wall-clock budget: on expiry we stop gathering and let the writer
     # synthesize from accumulated results (same path as iteration exhaustion).
@@ -550,9 +676,16 @@ async def _run_researcher_loop(
             # a trailing system note so the prefix stays cache-hot. The note
             # is rebuilt per call (not appended to `messages`), keeping the
             # persistent list append-only.
+            _note = f"Iteration {iteration + 1} of {max_iterations}."
+            if mode == "quality":
+                _extra = _quality_iteration_directive(
+                    iteration, _novelty, _force_reflection
+                )
+                if _extra:
+                    _note += "\n" + _extra
             call_messages = messages + [{
                 "role": "system",
-                "content": f"Iteration {iteration + 1} of {max_iterations}.",
+                "content": _note,
             }]
         else:
             # Legacy: rebuild system prompt + tools each iteration
@@ -578,6 +711,19 @@ async def _run_researcher_loop(
             call_messages = apply_cache_control(
                 call_messages, llm_config.base_url, llm_config.model
             )
+
+        # Status honesty: without this, the UI keeps showing the previous
+        # round's "Searching the knowledge base" for the whole researcher LLM
+        # call — which under provider queue spikes can be a minute-long
+        # silent stall that reads as a hung search.
+        if iteration > 0 and settings.stream_reasoning_steps:
+            yield {
+                "type": "status",
+                "status": {
+                    "stage": "analyzing",
+                    "message": "Planning the next research step",
+                },
+            }
 
         try:
             response = await safe_chat_completion(
@@ -686,6 +832,20 @@ async def _run_researcher_loop(
                     result.summary = assistant_message.content
                 break
 
+        # Reflection detection: some models reflect via the `reasoning` tool
+        # (gemma), some as prose content alongside their tool calls, some not
+        # at all (qwen3.6-a3b). Unreflected search rounds get a forced
+        # reflection micro-call after their tools execute (below); prose
+        # reflection is surfaced to the stream like a reasoning thought.
+        _round_unreflected = _searches_without_reflection(
+            assistant_message.tool_calls
+        ) and not (assistant_message.content or "").strip()
+        if assistant_message.tool_calls and (assistant_message.content or "").strip():
+            yield {
+                "type": "thinking",
+                "content": assistant_message.content.strip()[:600],
+            }
+
         # Add assistant message to conversation
         messages.append(assistant_message)
 
@@ -702,6 +862,7 @@ async def _run_researcher_loop(
         )
 
         done_called = False
+        _novelty.begin_round()
 
         # Precompute read-only tool calls concurrently. knowledge_search /
         # community_search / entity_lookup are independent reads — running
@@ -826,6 +987,7 @@ async def _run_researcher_loop(
                         logger.info(
                             f"knowledge_search dedup hit: {list(queries)}"
                         )
+                        _novelty.observe_dedup_hit()
                         messages.append(
                             {
                                 "role": "tool",
@@ -863,6 +1025,7 @@ async def _run_researcher_loop(
                     result.sources.extend(sources)
                     result.total_sources_considered += len(sources)
                     result.search_count += 1
+                    _novelty.observe(sources)
                     _merge_graph_context(result.graph_context, graph_ctx)
 
                     yield {
@@ -1460,6 +1623,93 @@ async def _run_researcher_loop(
 
         if done_called:
             break
+
+        # Novelty stop: consecutive search rounds that mostly re-surface
+        # already-seen chunks mean retrieval has converged — further rounds
+        # only dilute the writer context (observed live: iterations 4-8 of a
+        # non-reflecting model re-fetched the same ground with drifting
+        # queries). Synthesize from what we have.
+        _novelty_stop = _novelty.end_round()
+        if _novelty.round_searched:
+            logger.info(
+                "Researcher round %d novelty: %d/%d new chunks (stale=%d)",
+                iteration + 1, _novelty.round_new, _novelty.round_total,
+                _novelty.stale_rounds,
+            )
+        if _novelty_stop:
+            yield {
+                "type": "thinking",
+                "content": (
+                    "Additional searches are returning already-seen sources — "
+                    "synthesizing the answer from what I've gathered..."
+                ),
+            }
+            break
+
+        # Forced reflection: the round searched without any reasoning (tool
+        # or prose). Asking nicely does not work on every model (a corrective
+        # retry was tried and ignored live on qwen3.6-a3b), so make it
+        # deterministic: one micro-call with tool_choice pinned to
+        # `reasoning`, whose thought lands in the message history and steers
+        # the next round. ~1s on fast providers; skipped when this was the
+        # final iteration.
+        if (
+            _force_reflection
+            and _forced_reflection_armed
+            and _round_unreflected
+            and iteration + 1 < max_iterations
+            # Skip the extra call when the wall-clock budget is nearly spent —
+            # under provider queue spikes it could alone blow the deadline.
+            and (_deadline is None or time.monotonic() < _deadline - 20)
+        ):
+            try:
+                _reflect_response = await safe_chat_completion(
+                    client.chat.completions.create,
+                    base_url=llm_config.base_url,
+                    model=llm_config.model,
+                    reasoning_mode=_chat_reasoning_mode(mode, settings),
+                    overrides=settings.parsed_reasoning_overrides,
+                    messages=messages + [{
+                        "role": "system",
+                        "content": (
+                            "Call reasoning now: 2-3 sentences — what do the "
+                            "results so far establish about the user's "
+                            "question, and what SPECIFIC gap should the next "
+                            "searches target? If the gap is closed, say so "
+                            "and call done next."
+                        ),
+                    }],
+                    tools=tools,
+                    tool_choice={
+                        "type": "function",
+                        "function": {"name": "reasoning"},
+                    },
+                    **build_chat_params(llm_config.model, temperature=0.2),
+                )
+                _reflect_msg = _reflect_response.choices[0].message
+                if _reflect_msg.tool_calls:
+                    messages.append(_reflect_msg)
+                    for _rtc in _reflect_msg.tool_calls:
+                        try:
+                            _thought = json.loads(
+                                _rtc.function.arguments
+                            ).get("thought", "")
+                        except json.JSONDecodeError:
+                            _thought = ""
+                        if _thought:
+                            yield {"type": "thinking", "content": _thought}
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": _rtc.id,
+                            "content": json.dumps({"status": "ok"}),
+                        })
+                else:
+                    _forced_reflection_armed = False
+            except Exception as e:
+                logger.warning(
+                    f"Forced reflection unsupported/failed, disarming: {e}"
+                )
+                _forced_reflection_armed = False
 
         # Speed early-write: once a search iteration produced sources (and no
         # side-effecting tool ran, whose researcher-only output the writer

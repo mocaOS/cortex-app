@@ -626,9 +626,34 @@ class Settings(BaseSettings):
         default=4000
     )  # Max output tokens for writer in quality/research mode
     researcher_wall_clock_seconds: int = Field(
-        default=0
+        default=120
     )  # Wall-clock budget for the researcher loop (0 = unlimited). On expiry
     #   the loop stops gathering and the writer synthesizes from what it has.
+    #   Default 120s: healthy deep-research runs finish gathering in 30-60s;
+    #   the budget exists for provider queue spikes (measured live on Venice:
+    #   a 2-token completion taking 107s), where it guarantees the writer
+    #   still starts instead of the user watching a 3-minute silent stall.
+    #   Checked between iterations, so one in-flight call may overshoot it.
+    #   Raise (or 0) for slow self-hosted inference.
+    researcher_force_reflection: bool = Field(
+        default=True
+    )  # Quality mode: after a search round with no reflection (neither a
+    #   `reasoning` call nor prose alongside the tool calls), run one
+    #   micro-call with tool_choice pinned to `reasoning` so the model's
+    #   analysis of the results lands in the history and steers the next
+    #   round. Models that already reflect (e.g. gemma4) never trigger it;
+    #   disarmed for the run if the provider rejects named tool_choice.
+    researcher_novelty_min_new_ratio: float = Field(
+        default=0.35
+    )  # Convergence stop: a search round returning fewer than this ratio of
+    #   previously-unseen chunks counts as stale (0 disables the stop).
+    #   Tuned live: converged rounds trail off at 27-33% new (hybrid search
+    #   always pulls some fresh tail chunks), productive rounds run 73-100%.
+    researcher_novelty_stale_rounds: int = Field(
+        default=2
+    )  # Consecutive stale search rounds before the loop breaks to the writer
+    #   (0 disables). Past convergence, extra rounds only dilute the writer
+    #   context with off-target sources.
     researcher_speed_early_write: bool = Field(
         default=True
     )  # Speed mode: after a knowledge_search iteration that produced sources

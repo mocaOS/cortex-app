@@ -469,6 +469,12 @@ ENABLE_AGENT_CHAT=true
 # RESEARCHER_TOOL_ENTITY_HINTS=true      # Agent supplies entities on search calls (skips extraction call)
 # RESEARCHER_SEARCH_DEDUP=true           # Identical repeat searches served from a per-question cache
 # EMIT_DONE_BEFORE_MEMORY=true           # SSE `done` before memory compaction (memory_update follows)
+
+# Deep research: reflection & convergence (all default on)
+# RESEARCHER_FORCE_REFLECTION=true       # Force a reasoning step after search rounds the model didn't reflect on
+# RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35  # Search round below this share of previously-unseen sources counts as stale
+# RESEARCHER_NOVELTY_STALE_ROUNDS=2      # Consecutive stale rounds before the answer is written from gathered results
+# RESEARCHER_WALL_CLOCK_SECONDS=120      # Research time budget; on expiry the writer starts (0 = unlimited)
 ```
 
 ### Reasoning Visibility
@@ -876,6 +882,9 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | No | `true` | Read-only searches from one agent turn run concurrently |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | No | `true` | Agent passes entities on search calls, skipping the extraction LLM call |
 | `RESEARCHER_SEARCH_DEDUP` | No | `true` | Identical repeat searches served from a per-question cache |
+| `RESEARCHER_FORCE_REFLECTION` | No | `true` | Deep research: force a reasoning step after search rounds the model didn't reflect on, steering the next round |
+| `RESEARCHER_NOVELTY_MIN_NEW_RATIO` | No | `0.35` | Deep research: a search round below this share of previously-unseen sources counts as stale (0 disables) |
+| `RESEARCHER_NOVELTY_STALE_ROUNDS` | No | `2` | Consecutive stale rounds before research stops and the answer is written (0 disables) |
 | `EMIT_DONE_BEFORE_MEMORY` | No | `true` | SSE `done` (with `pending_memory: true`) precedes memory compaction; `memory_update` follows |
 | `ENABLE_COMMUNITY_DETECTION` | No | `true` | Enable communities |
 | `PROMPT_SECURITY` | No | `true` | Master switch for prompt-injection detection, output filtering, and untrusted-content fencing |
@@ -954,7 +963,7 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `ENABLE_AUDIT_LOG` | `false` | Append-only JSONL audit trail: auth failures, key-attributed mutating requests, search/ask activity. Metadata only — never document content or query text. |
 | `AUDIT_LOG_PATH` | `./logs/audit.log` | Audit trail location; rotates at 50 MB keeping one `.1` generation. |
 | `CORTEX_NEO4J_TX_TIMEOUT` | `300s` | (Compose-level) server-side Neo4j transaction timeout — kills runaway queries so they can't pin connections forever. |
-| `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `120` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. Guards against provider queue spikes so the answer always starts; raise or disable for slow self-hosted inference. |
 | `RERANK_TOP_K` | `15` | Candidates kept/reranked per knowledge search. |
 | `HELPER_STRICT_REMOTE` | `false` | With `DOCLING_SERVICE_URL` set: conversion failure marks the document failed instead of falling back to local docling. |
 | `DOCLING_CONVERSION_TIMEOUT` | `600` | Hard ceiling (seconds) on a single local docling subprocess conversion. On timeout the worker is killed and the document is marked failed instead of hanging in `processing` on a large/corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path. |

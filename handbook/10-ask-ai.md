@@ -48,6 +48,8 @@ An LLM-driven agent iteratively gathers information using function-calling tools
 
 Read-only searches the agent issues in a single turn run **concurrently**, and an identical repeated search is answered from a per-question cache with a nudge to try a different angle — both keep long research runs from wasting wall-clock (see the loop-efficiency flags in [Chapter 4](04-configuration.md#agent-research-pipeline)).
 
+The reflect-between-rounds rhythm (step 3) is **enforced by the loop**, not left to the model's goodwill: a search round the model didn't reason about triggers a forced reflection step whose analysis steers the next round (`RESEARCHER_FORCE_REFLECTION`), and research ends early once consecutive rounds mostly re-surface already-seen sources (`RESEARCHER_NOVELTY_*`) or the time budget runs out (`RESEARCHER_WALL_CLOCK_SECONDS`, default 120s) — the writer then synthesizes from what was gathered, so an answer always arrives even when the LLM provider is slow. Models that reflect on their own never trigger the forced step.
+
 ### Research Tools
 
 **`knowledge_search`** — Primary information gathering tool
@@ -270,6 +272,12 @@ RESEARCHER_PARALLEL_TOOL_CALLS=true   # Concurrent read-only searches per agent 
 RESEARCHER_TOOL_ENTITY_HINTS=true     # Agent-supplied entities skip the extraction call
 RESEARCHER_SEARCH_DEDUP=true          # Repeat searches served from cache
 EMIT_DONE_BEFORE_MEMORY=true          # SSE done before memory compaction
+
+# Deep research: reflection & convergence (all default on)
+RESEARCHER_FORCE_REFLECTION=true      # Force a reasoning step after unreflected search rounds
+RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35 # Round below this share of new sources counts as stale
+RESEARCHER_NOVELTY_STALE_ROUNDS=2     # Consecutive stale rounds before the answer is written
+RESEARCHER_WALL_CLOCK_SECONDS=120     # Research time budget (0 = unlimited)
 
 # Search configuration
 ENABLE_HYBRID_SEARCH=true

@@ -156,6 +156,8 @@ data: {"done": true}
 
 For complex questions requiring multi-angle investigation. The researcher agent iteratively searches, explores communities, looks up entities, and cross-references information before handing off to the writer for a comprehensive answer (up to 4000 tokens).
 
+The reflect-then-search rhythm is enforced by the loop, not left to the model: a search round the model didn't reason about triggers a forced reflection step (`RESEARCHER_FORCE_REFLECTION`), consecutive rounds that mostly re-surface already-seen sources end research early (`RESEARCHER_NOVELTY_MIN_NEW_RATIO` / `RESEARCHER_NOVELTY_STALE_ROUNDS`), and a wall-clock budget (`RESEARCHER_WALL_CLOCK_SECONDS`, default 120s) guarantees the answer starts even when the LLM provider is queueing. Answer quality is consistent across tool-calling models — including ones that don't reflect on their own.
+
 Requires `ENABLE_AGENTIC_RAG=true` and `ENABLE_AGENT_RESEARCH=true` on the server.
 
 ```bash
@@ -525,9 +527,15 @@ ENABLE_AGENTIC_RAG=true          # Enable deep research mode
 ENABLE_AGENT_RESEARCH=true       # Use agent pipeline for deep research (set false for legacy)
 ENABLE_AGENT_CHAT=true           # Use agent pipeline for standard chat (required for skills)
 # RESEARCHER_MAX_ITERATIONS_SPEED=3    # Agent iterations for chat mode
-# RESEARCHER_MAX_ITERATIONS_QUALITY=10 # Agent iterations for deep research
+# RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Agent iterations for deep research
 # WRITER_MAX_TOKENS_SPEED=1200         # Max output tokens for chat
 # WRITER_MAX_TOKENS_QUALITY=4000       # Max output tokens for deep research
+
+# Deep research: reflection & convergence (all default on)
+# RESEARCHER_FORCE_REFLECTION=true       # Force a reasoning step after unreflected search rounds
+# RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35  # Search round below this share of new sources counts as stale
+# RESEARCHER_NOVELTY_STALE_ROUNDS=2      # Consecutive stale rounds before the answer is written
+# RESEARCHER_WALL_CLOCK_SECONDS=120      # Research time budget; on expiry the writer starts (0 = unlimited)
 
 # Conversation
 MAX_CONVERSATION_HISTORY=6       # Messages to keep for context

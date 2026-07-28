@@ -223,6 +223,9 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | `true` | Run read-only tool calls (knowledge/community/entity searches) issued in one agent turn concurrently instead of one after another. Skill and git actions always stay sequential. |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | `true` | Let the agent pass entity names directly on its search calls, skipping the separate query entity-extraction LLM call. |
 | `RESEARCHER_SEARCH_DEDUP` | `true` | Answer an identical repeated search from a per-question cache (with a nudge to try a different angle) instead of re-running retrieval. |
+| `RESEARCHER_FORCE_REFLECTION` | `true` | Deep Research: when a search round arrives without a reasoning step, force one — the model's analysis of what it found (and the gap to target next) steers the following round. Models that reflect on their own never trigger it. |
+| `RESEARCHER_NOVELTY_MIN_NEW_RATIO` | `0.35` | Deep Research: a search round returning less than this share of previously-unseen sources counts as stale (0 disables). |
+| `RESEARCHER_NOVELTY_STALE_ROUNDS` | `2` | Consecutive stale rounds before research stops and the writer answers from what was gathered (0 disables). |
 | `EMIT_DONE_BEFORE_MEMORY` | `true` | Emit the SSE `done` event (with `pending_memory: true`) before the post-answer memory compaction, so the UI finalizes 1–4 s earlier; `memory_update` follows before the stream closes. Set `false` for clients that stop reading at `done`. |
 
 **Agent vs. Legacy pipeline comparison:**
@@ -476,7 +479,7 @@ Hardening & operations:
 | `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | Resume a pipeline run killed by a restart (quota-guarded) — stranded documents, a queued batch that never started, or an interrupted Step 2/3; the Generate Graph chain is persisted, so a resumed Step 1 still continues into Steps 2 and 3. |
 | `AUTO_RESUME_IMAGE_ANALYSIS` | `true` | Resume image analysis killed by a restart. A restart leaves completed documents with unfinished image analysis stuck forever (the counters freeze at `current < total`); on boot Cortex re-extracts their images via local Docling re-conversion (no LLM cost) and analyzes **only** the images not yet stored — already-analyzed images are never re-paid for. Set `false` to require a manual reprocess instead. |
 | `ENABLE_AUDIT_LOG` / `AUDIT_LOG_PATH` | `false` / `./logs/audit.log` | Append-only JSONL audit trail (metadata only, never content). |
-| `RESEARCHER_WALL_CLOCK_SECONDS` | `0` | Time budget for deep research (0 = unlimited). |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `120` | Time budget for deep research (0 = unlimited); on expiry the writer synthesizes from what was gathered, so an answer always starts even when the LLM provider is queueing. |
 | `RERANK_TOP_K` | `15` | Rerank candidate pool size. |
 | `HELPER_STRICT_REMOTE` | `false` | Never fall back to local docling when the shared helper is configured. |
 | `INSTANCE_ID` | hostname | Tenant identity for helper fair-queuing. |

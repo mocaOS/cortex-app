@@ -7,6 +7,27 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 28, 2026
+
+Deep Research quality no longer depends on the answer model volunteering to reflect between search rounds. Models that skip that step used to degrade into repetitive query volleys — burning every iteration, drifting off-topic, and answering from a diluted context — while models that reflect naturally converged in a few targeted rounds. The researcher loop now enforces the reflect-then-search rhythm structurally and stops searching once results converge, which brings weaker-reflecting models (measured on Qwen 3.6 35B A3B) up to the research quality previously seen only from naturally reflective ones (Gemma 4 26B), at roughly half the wall-clock. A new default time budget also guarantees the answer starts writing even when the LLM provider is having a slow moment.
+
+### Deep Research: enforced reflection & convergence
+
+- **Forced reflection** — `RESEARCHER_FORCE_REFLECTION` (default `true`): a search round that arrives without a reasoning step (neither a `reasoning` tool call nor prose alongside the tool calls) is followed by one forced micro-call pinned to the `reasoning` tool. The model's analysis of what it found — and the specific gap to target next — lands in the conversation and steers the following round. Models that already reflect never trigger it; providers that reject a named `tool_choice` disarm it gracefully for the run.
+- **Convergence stop** — `RESEARCHER_NOVELTY_MIN_NEW_RATIO` (default `0.35`) + `RESEARCHER_NOVELTY_STALE_ROUNDS` (default `2`): the loop tracks how many previously-unseen sources each search round returns; consecutive stale rounds end research early instead of burning the remaining iterations on re-fetched ground (which dilutes the writer context). Set either to `0` to disable.
+- **Novelty-aware iteration notes** — each round, the agent is told what share of its last round's sources were new, with a standing directive to reason about the gap or call `done` — so a well-behaved model stops on its own before the hard stop fires.
+- **Evidence-based stopping criterion** — the Deep Research prompt now says to finish as soon as searches stop surfacing new sources (instead of "exhaust all research avenues"), and warns against pivoting to entities that merely appear in results rather than bearing on the question.
+- **Prose reflections stream** — models that reflect as text alongside their tool calls (instead of the `reasoning` tool) now have those thoughts surfaced as `thinking` events too.
+
+### Deep Research: latency guardrails
+
+- **Research time budget on by default** — `RESEARCHER_WALL_CLOCK_SECONDS` default changed `0` → `120`. Healthy gathering finishes in 30-60s; the budget exists for provider queue spikes (measured live: a 2-token completion taking 107s), where it breaks to the writer so the answer always starts instead of stalling silently for minutes. The forced reflection call is skipped when less than 20s of budget remain. Raise the value — or set `0` to restore unlimited — for slow self-hosted inference.
+- **Honest streaming status** — a `Planning the next research step` status event now precedes each researcher LLM call, so during a slow provider call the UI no longer shows a stale "Searching the knowledge base" from the previous round.
+
+Measured on the same knowledge graph before/after (Qwen 3.6 35B A3B, hardest test question): 13 search calls → 8, first answer token 92s → 56s, and the answer went from a generic non-answer to a specific, fully cited list — matching the Gemma 4 baseline at half its total wall-clock. No API or schema breakage: all events are additive, and every behavior change is env-gated with the flags above.
+
+---
+
 ## July 23, 2026
 
 Cortex Chat — the standalone multi-tenant chat frontend — now has first-class documentation. Until now it was a single row in the ecosystem table; operators had to read the app's repository to understand what it does and how to deploy it against an instance.

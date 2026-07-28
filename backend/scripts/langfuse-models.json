@@ -1,0 +1,30 @@
+{
+  "_comment": "Versioned model price catalog for Langfuse cost tracking. Prices are USD per 1,000,000 tokens (as shown on the provider's pricing page); the seeder converts to Langfuse's per-token inputPrice/outputPrice. Embeddings: output_per_1m=0 (no output tokens). Keep this as the single source of truth and re-run scripts/seed_langfuse_models.py after edits. See .claude/domain/observability.md.",
+  "unit": "TOKENS",
+  "sources": {
+    "venice": "https://docs.venice.ai/overview/pricing (captured 2026-06-24)",
+    "workers-ai": "https://developers.cloudflare.com/workers-ai/models/ (captured 2026-06-30)",
+    "openrouter": "https://openrouter.ai/google/gemma-4-26b-a4b-it (captured 2026-07-04)"
+  },
+  "models": [
+    {"model": "google/gemma-4-26b-a4b-it", "provider": "openrouter", "input_per_1m": 0.15, "output_per_1m": 0.60, "match_pattern": "(?i)^google/gemma-4-26b-a4b-it(-\\d{8})?(:nitro)?$", "_note": "FALLBACK ONLY. Primary cost for OpenRouter is the gateway-reported usage.cost (usage accounting, enabled in llm_config) — the only correct source for :nitro, whose provider/price varies per request. This static entry is a floor-price safety net used only if usage.cost is ever absent. Pattern tolerates the dated slug OpenRouter actually echoes in response.model (verified 2026-07-04: 'google/gemma-4-26b-a4b-it-20260403') and an optional :nitro suffix."},
+    {"model": "@cf/google/gemma-4-26b-a4b-it", "provider": "workers-ai", "input_per_1m": 0.10, "output_per_1m": 0.30, "_note": "Cloudflare AI Gateway records the model WITHOUT the workers-ai/ request prefix"},
+    {"model": "google-gemma-4-26b-a4b-it", "provider": "venice", "input_per_1m": 0.16, "output_per_1m": 0.50},
+    {"model": "google-gemma-4-31b-it", "provider": "venice", "input_per_1m": 0.12, "output_per_1m": 0.36},
+    {"model": "google-gemma-3-27b-it", "provider": "venice", "input_per_1m": 0.12, "output_per_1m": 0.20},
+    {"model": "qwen3-6-27b", "provider": "venice", "input_per_1m": 0.33, "output_per_1m": 3.25},
+    {"model": "text-embedding-qwen3-8b", "provider": "venice", "input_per_1m": 0.01, "output_per_1m": 0.0},
+    {"model": "minimax-m3-preview", "provider": "venice", "input_per_1m": 0.30, "output_per_1m": 1.20},
+    {"model": "qwen3-235b-a22b-instruct-2507", "provider": "venice", "input_per_1m": 0.15, "output_per_1m": 0.75},
+    {"model": "qwen3-235b-a22b-thinking-2507", "provider": "venice", "input_per_1m": 0.45, "output_per_1m": 3.50},
+    {"model": "qwen3-coder-480b-a35b-instruct-turbo", "provider": "venice", "input_per_1m": 0.35, "output_per_1m": 1.50},
+    {"model": "qwen3-next-80b", "provider": "venice", "input_per_1m": 0.35, "output_per_1m": 1.90},
+    {"model": "qwen3-5-35b-a3b", "provider": "venice", "input_per_1m": 0.31, "output_per_1m": 1.25},
+    {"model": "qwen3-5-397b-a17b", "provider": "venice", "input_per_1m": 0.75, "output_per_1m": 4.50},
+    {"model": "qwen3-5-9b", "provider": "venice", "input_per_1m": 0.10, "output_per_1m": 0.15},
+    {"model": "qwen3-vl-235b-a22b", "provider": "venice", "input_per_1m": 0.25, "output_per_1m": 1.50},
+    {"model": "llama-3.3-70b", "provider": "venice", "input_per_1m": 0.70, "output_per_1m": 2.80},
+    {"model": "llama-3.2-3b", "provider": "venice", "input_per_1m": 0.15, "output_per_1m": 0.60},
+    {"model": "venice-uncensored-1-2", "provider": "venice", "input_per_1m": 0.20, "output_per_1m": 0.90}
+  ]
+}
