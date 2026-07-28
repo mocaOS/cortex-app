@@ -2320,8 +2320,19 @@ export function composeArgs(dir: string): string[] {
   return ["compose", "--project-directory", dir];
 }
 
+/**
+ * Real `docker compose pull` output (verified against v5.1.3) is THREE tokens:
+ *   Image ghcr.io/mocaos/cortex-chat:1.0.0 Pulled
+ * plus, for a service built rather than pulled:
+ *   backup Skipped No image to be pulled
+ * An earlier two-token regex never matched, so the progress counter sat at 0
+ * for the whole multi-minute pull — the only feedback the user gets. Both the
+ * `Image <ref> <state>` and bare `<name> <state>` shapes are accepted.
+ */
 export function parsePullProgress(line: string): { image: string; done: boolean } | null {
-  const m = line.trim().match(/^(\S+)\s+(Pulled|Pulling)$/);
+  const t = line.trim();
+  if (/\bSkipped\b/.test(t)) return null;
+  const m = t.match(/^(?:Image\s+)?(\S+)\s+(Pulled|Pulling)\b/);
   if (!m) return null;
   return { image: m[1], done: m[2] === "Pulled" };
 }
