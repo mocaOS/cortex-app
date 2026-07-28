@@ -3715,11 +3715,10 @@ export async function run(ctx: {
   const typed = await p.text({ message: `Type "restore" to confirm`, validate: (v) => (v === "restore" ? undefined : "Type restore to continue") });
   if (p.isCancel(typed)) { p.cancel("Cancelled."); return; }
 
-  const s = p.spinner();
-  s.start("Stopping the backend");
-  await execIn(dir, "backup", ["sh", "-c", "true"]); // sidecar reachable check
-  s.stop("Ready");
-
+  // No spinner and no partial execution here on purpose: step 3 of the runbook
+  // needs host-level `docker run` to write volumes the sidecar mounts
+  // read-only, so wrapping only some steps would leave the operator with a
+  // half-restored instance and no signal about it. Print the whole runbook.
   p.log.warn(
     `Now run these from ${dir} — they need host-level docker access that this\n` +
       `CLI deliberately does not wrap, because step 2 writes to volumes the\n` +
