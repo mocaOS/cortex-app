@@ -4067,10 +4067,24 @@ Create `scripts/check-version-sync.mjs`:
 import { readFileSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8")).version;
-const tagArg = process.argv[process.argv.indexOf("--tag") + 1];
-const tag = tagArg?.startsWith("v") ? tagArg.slice(1) : tagArg;
 
-if (tag && tag !== pkg) {
+// Fail loudly rather than open. This script is the only gate before an
+// irreversible `npm publish`, so a missing or blank --tag must not sail
+// through: `if (tag && ...)` would silently pass on an empty value, and an
+// absent --tag makes indexOf return -1, which reads argv[0] (the node binary).
+const i = process.argv.indexOf("--tag");
+if (i === -1) {
+  console.error("check-version-sync: --tag is required");
+  process.exit(1);
+}
+const tagArg = process.argv[i + 1];
+if (!tagArg) {
+  console.error("check-version-sync: --tag was given no value");
+  process.exit(1);
+}
+const tag = tagArg.startsWith("v") ? tagArg.slice(1) : tagArg;
+
+if (tag !== pkg) {
   console.error(`tag ${tagArg} does not match package.json version ${pkg}`);
   process.exit(1);
 }
@@ -4202,14 +4216,22 @@ so a prerelease tag can never take the npm \`latest\` dist-tag."
 ## Task 13: Documentation
 
 **Files:**
-- Create: `README.md` (installer repo)
+- Create: `README.md`, `LICENSE` (installer repo)
 - Modify (cortex-app): `handbook/26-self-hosting.md` (new), `handbook/README.md`, `README.md`, `.claude/development.md`, `CLAUDE.md`
 
 **Interfaces:**
 - Consumes: the finished CLI.
 - Produces: the docs a user finds before running anything.
 
-- [ ] **Step 1: Write the installer repo README**
+- [ ] **Step 1: Add the LICENSE file**
+
+`package.json` declares `"license": "MIT"` but no `LICENSE` file exists, which
+license-scanning tools flag and which leaves the published package's terms
+unstated. Add a standard MIT `LICENSE` at the repo root, copyright the same
+holder the sibling repos use (check `mocaOS/cortex-app`'s `LICENSE`), so the
+three repos agree.
+
+- [ ] **Step 2: Write the installer repo README**
 
 Create `README.md` in `cortex-installer`:
 
