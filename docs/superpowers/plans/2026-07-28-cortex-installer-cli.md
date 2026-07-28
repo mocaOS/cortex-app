@@ -2309,8 +2309,12 @@ export interface ServiceStatus {
 }
 
 /**
- * --project-directory makes every verb independent of the caller's cwd.
- * COMPOSE_FILE in the install's .env selects the overlays, so no -f is needed.
+ * --project-directory sets the project identity, but it does NOT resolve the
+ * relative paths in COMPOSE_FILE — Compose resolves those against the CURRENT
+ * WORKING DIRECTORY. Verified: `docker compose --project-directory <dir> config`
+ * run from elsewhere fails with `stat /elsewhere/docker-compose.yml: no such
+ * file`. So every child process must also be given `cwd: dir`. That is what
+ * makes the day-2 verbs work from anywhere without mutating this process's cwd.
  */
 export function composeArgs(dir: string): string[] {
   return ["compose", "--project-directory", dir];
@@ -2360,6 +2364,7 @@ export function parseHealth(psJson: string): ServiceStatus[] {
  */
 async function run(dir: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const { stdout, stderr } = await exec("docker", [...composeArgs(dir), ...args], {
+    cwd: dir,
     maxBuffer: 32 * 1024 * 1024,
   });
   return { stdout, stderr };
@@ -2371,7 +2376,10 @@ export function pull(
   onProgress: (p: { image: string; done: boolean }) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("docker", [...composeArgs(dir), "pull"], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", [...composeArgs(dir), "pull"], {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const handle = (buf: Buffer) => {
       for (const line of buf.toString().split("\n")) {
         const p = parsePullProgress(line);
@@ -2411,7 +2419,7 @@ export function logs(dir: string, service?: string): Promise<number> {
   return new Promise((resolve) => {
     const args = [...composeArgs(dir), "logs", "-f", "--tail", "200"];
     if (service) args.push(service);
-    const child = spawn("docker", args, { stdio: "inherit" });
+    const child = spawn("docker", args, { cwd: dir, stdio: "inherit" });
     child.on("close", (code) => resolve(code ?? 0));
   });
 }
