@@ -764,6 +764,24 @@ export function checkArch(arch: string): { ok: boolean; message?: string } {
   };
 }
 
+/**
+ * Docker volumes are namespaced by COMPOSE PROJECT NAME and are global to the
+ * daemon — they are NOT scoped to the install directory. Neo4j only honours
+ * NEO4J_AUTH when its data volume is first created, so installing with a fresh
+ * random password on top of a pre-existing `<project>_neo4j_data` leaves the
+ * old credentials in place and the backend can never authenticate. It surfaces
+ * as `Neo.ClientError.Security.AuthenticationRateLimit`, which points nowhere
+ * near the real cause. Observed for real: a five-month-old `cortex_neo4j_data`
+ * from unrelated local development broke a clean install.
+ */
+export async function existingProjectVolumes(projectName: string): Promise<string[]> {
+  const out = await tryExec("docker", ["volume", "ls", "--format", "{{.Name}}"]);
+  return out.output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith(`${projectName}_`));
+}
+
 export function checkPort(port: number, host = "127.0.0.1"): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = createServer();
@@ -2588,7 +2606,7 @@ import { prompts as p } from "./ui.js";
 import { PROVIDERS, providerById } from "./providers.js";
 import { generateSecrets, validateSecret, type GeneratedSecrets } from "./secrets.js";
 import { listModels, probeChat, probeEmbedding } from "./validate.js";
-import { checkPort } from "./preflight.js";
+import { checkPort, existingProjectVolumes } from "./preflight.js";
 import type { InstallConfig } from "./env.js";
 import type { Stack } from "./stack.js";
 
@@ -2768,6 +2786,44 @@ export async function runWizard(opts: { stack: Stack; dir: string }): Promise<In
       initialValue: true,
     });
     if (p.isCancel(dnsOk) || !dnsOk) bail("Cancelled. Nothing was written.");
+  }
+
+  // Volume collision — see existingProjectVolumes()'s comment. Checked here,
+  // before any credential is generated, because the remedy is to pick a
+  // different project name and that changes what gets written.
+  let projectName = "cortex";
+  for (;;) {
+    const clash = await existingProjectVolumes(projectName);
+    if (clash.length === 0) break;
+    p.log.warn(
+      `Docker already has ${clash.length} volume(s) named ${projectName}_* from a ` +
+        `previous or unrelated stack:\n  ${clash.join("\n  ")}\n` +
+        `Reusing them would keep their old Neo4j password, and the backend could ` +
+        `never authenticate.`
+    );
+    const choice = await p.select({
+      message: "How should we handle that?",
+      options: [
+        { value: "rename", label: "Use a different project name", hint: "keeps the existing data untouched" },
+        { value: "reuse", label: `Reuse the existing ${projectName}_* data`, hint: "only if this IS your Cortex install" },
+        { value: "abort", label: "Stop, let me clean up myself" },
+      ],
+    });
+    if (p.isCancel(choice) || choice === "abort") bail("Cancelled. Nothing was written.");
+    if (choice === "reuse") {
+      p.log.warn(
+        "Reusing existing volumes. If Neo4j rejects the generated password, put " +
+          "the ORIGINAL NEO4J_PASSWORD back into .env and run `cortex restart`."
+      );
+      break;
+    }
+    const next = await p.text({
+      message: "Project name",
+      initialValue: `${projectName}-2`,
+      validate: (v) => (/^[a-z0-9][a-z0-9_-]*$/.test(String(v ?? "")) ? undefined : "Lowercase letters, digits, - and _ only"),
+    });
+    if (p.isCancel(next)) bail("Cancelled.");
+    projectName = String(next);
   }
 
   const depth = await p.select({
@@ -2957,7 +3013,7 @@ export async function runWizard(opts: { stack: Stack; dir: string }): Promise<In
   return {
     mode,
     dir: opts.dir,
-    projectName: "cortex",
+    projectName,
     stack: opts.stack,
     secrets,
     adminEmail: String(adminEmail),
