@@ -88,15 +88,26 @@ Install directory the CLI produces:
 ## Task 1: Repo scaffold, CLI entrypoint, `--version`/`--help`
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `.gitignore`, `README.md`
+- Create: `package.json`, `tsconfig.json`, `.gitignore`
 - Create: `src/cli.ts`, `src/ui.ts`, `src/version.ts`
 - Test: `test/cli.test.ts`
+
+(`README.md` is Task 13's, not this task's.)
 
 **Interfaces:**
 - Consumes: nothing.
 - Produces: `parseArgs(argv: string[]) => { verb: string, flags: Record<string, string|boolean>, positionals: string[] }`. Every later task's command module is dispatched from `src/cli.ts` by verb name. `src/ui.ts` exports `banner()`, `noteBox(title: string, lines: string[])`, `colorEnabled(): boolean`. **`src/version.ts` exports `installerVersion(): string`** — it lives in its own module, not in `cli.ts`, because every command module needs it and importing it from `cli.ts` would create a cycle (`cli` → `commands/*` → `cli`).
 
-- [ ] **Step 1: Write the failing test**
+This task's TDD cycle needs the package manifest and dependencies in place
+before a test can run at all, so the scaffold comes first and the RED step
+follows it.
+
+- [ ] **Step 1: Create the package manifest and install**
+
+Create `package.json`, `tsconfig.json` and `.gitignore` exactly as given in
+Step 4 below, then run `npm install`. Commit nothing yet.
+
+- [ ] **Step 2: Write the failing test**
 
 Create `test/cli.test.ts`:
 
@@ -139,14 +150,14 @@ test("a flag before the verb still parses and the verb is still found", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Run the test to verify it fails**
 
 Run: `npm test`
 Expected: FAIL — cannot find `../src/cli.js`
 
-- [ ] **Step 3: Create the package manifest**
+- [ ] **Step 4: The file contents referenced by Step 1**
 
-Create `package.json`:
+`package.json`:
 
 ```json
 {
@@ -206,7 +217,7 @@ dist/
 .DS_Store
 ```
 
-- [ ] **Step 4: Write `src/version.ts`**
+- [ ] **Step 5: Write `src/version.ts`**
 
 Its own module on purpose: every command needs the version, and importing it
 from `cli.ts` would make `cli` → `commands/*` → `cli` a cycle.
@@ -223,7 +234,7 @@ export function installerVersion(): string {
 }
 ```
 
-- [ ] **Step 5: Write `src/ui.ts`**
+- [ ] **Step 6: Write `src/ui.ts`**
 
 ```typescript
 import pc from "picocolors";
@@ -251,7 +262,7 @@ export function noteBox(title: string, lines: string[]): void {
 export { p as prompts };
 ```
 
-- [ ] **Step 6: Write `src/cli.ts`**
+- [ ] **Step 7: Write `src/cli.ts`**
 
 ```typescript
 #!/usr/bin/env node
@@ -342,12 +353,18 @@ if (process.argv[1] && process.argv[1].endsWith("cli.js")) {
 }
 ```
 
-- [ ] **Step 7: Install deps and run the test**
+- [ ] **Step 8: Run the test, build, and check the version**
 
-Run: `npm install && npm test`
+Run: `npm test`
 Expected: PASS — 7 tests, typecheck clean
 
-- [ ] **Step 8: Commit**
+Then prove the published entrypoint works, which is where `version.ts`'s path
+resolution from `dist/` is easy to get wrong:
+
+Run: `npm run build && node dist/cli.js --version`
+Expected: the package version, e.g. `1.0.0`
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add package.json tsconfig.json .gitignore src/cli.ts src/ui.ts src/version.ts test/cli.test.ts
