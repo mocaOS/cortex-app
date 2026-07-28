@@ -71,9 +71,11 @@ If the branch was force-pushed or you change the filters, sync self-heals via a 
 
 When a connection is **read/write**, the research agent gains a `git_repo` tool with three actions:
 
-- **read_file** — fetch a file's current contents.
+- **read_file** — fetch a file's current contents (used before editing it).
 - **propose_change** — open a pull request with edits.
 - **comment** — comment on an existing pull request.
+
+This is a tool for *changing* the repository, not for reading it. Questions about a connected repo's code or docs are answered from the knowledge base, which already holds its ingested files and returns them as citable sources — so a **read-only** connection deliberately gets no `git_repo` tool at all. Administrators can override that with `RESEARCHER_GIT_TOOL` (`auto` by default, `always`, or `off`).
 
 Safety is enforced in code, not just by prompt: every write creates a new `cortex/agent-…` branch and opens a **pull request for human review** — the agent never pushes to your default branch. On read-only connections, write actions are refused server-side.
 

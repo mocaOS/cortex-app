@@ -36,6 +36,16 @@ On thinking models, the hidden reasoning trace is billed against the same output
 
 Verified end-to-end against a live instance: the question that previously broke off mid-sentence now returns a complete, fully cited answer over 15 sources, and an artificially lowered cap produces the labeled-truncation path instead of a silent cut. No API or schema breakage — the truncation note arrives as ordinary answer content, and both limits stay env-overridable.
 
+### The agent no longer reads a connected repo it has already ingested
+
+On instances with a git repository connected, the research agent was being handed its `git_repo` tool on *every* question — including read-only connections, whose entire purpose is to ingest the repo into the knowledge base. The result, seen live during an ordinary capability question: four consecutive `read_file` calls guessing at paths in the connected repo. The tool has no way to list or browse files, so a path the agent hasn't read somewhere is a guess; each guess costs a research iteration and usually returns an error, and even a successful read can't be cited in the answer — while the same content was already sitting in the knowledge base as a citable source.
+
+- **`RESEARCHER_GIT_TOOL`** (default `auto`) — the tool is now offered only when a repository is connected **read/write**, which is when its reason to exist (proposing pull requests) actually applies. This matches what the documentation has always described. Set `always` for the previous behavior on read-only connections, or `off` to withhold it entirely; repository *ingestion* is unaffected in every case.
+- **The repository is named and scoped in the prompt** — when the tool is offered, the agent is told which repository is connected, that its files are already indexed and searchable, that browsing via `git_repo` is not possible, and the two cases that justify using it: proposing a change, or re-reading one file whose exact path it already knows. The tool's own description carries the same framing.
+- **Read-only instances get the latency back** — a repo read also disabled the fast chat path (its output never reaches the writer) and ran sequentially, outside the parallel-search batch. Removing the spurious calls removes both costs.
+
+Answering from the graph was always the better path for this: it returns the same file contents with a citation, in one search, alongside everything else the question touches.
+
 ---
 
 ## July 23, 2026

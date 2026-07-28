@@ -169,10 +169,15 @@ GIT_REPO_TOOL = {
     "function": {
         "name": "git_repo",
         "description": (
-            "Read from or act on the connected git repository. "
-            "Actions: 'read_file' fetches a file's current contents; "
-            "'propose_change' opens a pull request with your edits; "
-            "'comment' adds a comment to an existing pull request. "
+            "Act on the connected git repository. NOT a research tool: the "
+            "repository's files are already ingested into the knowledge base, so "
+            "use knowledge_search to read or research their contents — it returns "
+            "citable sources, this tool does not. There is no way to list or "
+            "search paths here, so never guess one. "
+            "Actions: 'read_file' fetches ONE file's exact current contents, and "
+            "only when you already know its path and need the live version (e.g. "
+            "before editing it); 'propose_change' opens a pull request with your "
+            "edits; 'comment' adds a comment to an existing pull request. "
             "Writes ALWAYS go onto a new branch and open a pull request for human "
             "review — they never push to the default branch. Write actions are only "
             "available when the connection is configured for read/write access. "
@@ -415,6 +420,61 @@ The following skills are active and connected to live external systems. When the
 
 {cleaned}
 </active_skills>"""
+
+
+def build_git_repo_block(connection: Optional[dict]) -> str:
+    """Scope the `git_repo` tool for the system prompt.
+
+    Without this, a model that merely sees a repository in its tool list treats
+    `read_file` as a research move and burns iterations guessing paths — the
+    tool has no list/search action, and its output goes only into the
+    researcher's own messages, never to the writer, so it can't be cited. The
+    repo's files are already in the knowledge base (the connector ingests
+    them), so retrieval is the read path and this tool is for writes.
+
+    Stable per configuration (repo identity, not per request), so it does not
+    disturb ``researcher_stable_prompt`` prefix caching.
+    """
+    if not connection:
+        return ""
+    owner = connection.get("repo_owner") or ""
+    repo = connection.get("repo_name") or ""
+    if not owner or not repo:
+        return ""
+    branch = (
+        connection.get("branch")
+        or connection.get("default_branch")
+        or "the default branch"
+    )
+    can_write = connection.get("access_level") == "read_write"
+
+    uses = [
+        "- The user asks you to CHANGE the repository: read the specific file "
+        "you need to edit, then propose_change (which opens a pull request "
+        "for human review).",
+    ] if can_write else []
+    uses.append(
+        "- The answer genuinely depends on the live file rather than the "
+        "indexed copy, AND you already know its exact path (usually from a "
+        "knowledge-base result's filename) — read that ONE file."
+    )
+
+    return f"""
+
+<connected_repository>
+Repository {owner}/{repo} (branch: {branch}) is connected via the git_repo tool.
+
+Its files are ALREADY INGESTED into the knowledge base. Questions about this
+repository, its code, or its documentation are answered with knowledge_search —
+that returns the same content as citable sources, which git_repo cannot.
+
+Never use git_repo to explore, browse, or research. It cannot list or search
+paths, so a path you did not read somewhere is a guess: it wastes an iteration,
+usually errors, and even on success its output never reaches the written answer.
+
+Use git_repo only when:
+{chr(10).join(uses)}
+</connected_repository>"""
 
 
 # =============================================================================

@@ -14,6 +14,7 @@ from datetime import date
 from app.services.prompt_security import get_anti_injection_instruction
 from app.services.research_prompts import (
     build_activated_skills_block,
+    build_git_repo_block,
     build_skill_catalog_block,
     get_researcher_prompt,
     get_tools_with_skill_activation,
@@ -129,6 +130,87 @@ class TestToolAssembly:
         )
         assert names[0] == "reasoning"
         assert names.index("http_request") == 1
+
+    def test_git_tool_description_steers_reads_to_the_knowledge_base(self):
+        from app.services.research_prompts import GIT_REPO_TOOL
+
+        desc = GIT_REPO_TOOL["function"]["description"].lower()
+        # The repo is already ingested; git_repo must not read as a research tool.
+        assert "knowledge_search" in desc
+        assert "already ingested" in desc
+
+
+# ---------------------------------------------------------------------------
+# Connected-repository block
+# ---------------------------------------------------------------------------
+
+class TestGitRepoBlock:
+    RW = {
+        "repo_owner": "mocaOS",
+        "repo_name": "cortex-skills",
+        "branch": "main",
+        "access_level": "read_write",
+    }
+
+    def test_empty_without_a_connection(self):
+        assert build_git_repo_block(None) == ""
+        assert build_git_repo_block({}) == ""
+
+    def test_omits_block_when_repo_identity_is_incomplete(self):
+        assert build_git_repo_block({"repo_owner": "mocaOS"}) == ""
+
+    def test_names_the_repo_and_points_reads_at_the_graph(self):
+        block = build_git_repo_block(self.RW)
+        assert "mocaOS/cortex-skills" in block
+        assert "main" in block
+        assert "ALREADY INGESTED" in block
+        assert "knowledge_search" in block
+        # The failure mode this block exists to prevent.
+        assert "Never use git_repo to explore" in block
+
+    def test_read_only_connection_gets_no_write_guidance(self):
+        block = build_git_repo_block({**self.RW, "access_level": "read"})
+        assert "propose_change" not in block
+        assert "mocaOS/cortex-skills" in block
+
+    def test_read_write_connection_gets_write_guidance(self):
+        assert "propose_change" in build_git_repo_block(self.RW)
+
+    def test_stable_across_calls(self):
+        # researcher_stable_prompt requires a byte-stable system prefix.
+        assert build_git_repo_block(self.RW) == build_git_repo_block(self.RW)
+
+
+# ---------------------------------------------------------------------------
+# git_repo exposure gating (RESEARCHER_GIT_TOOL)
+# ---------------------------------------------------------------------------
+
+class TestGitConnectionSelection:
+    RO = {"id": "a", "access_level": "read"}
+    RW = {"id": "b", "access_level": "read_write"}
+
+    def test_auto_hides_tool_for_read_only_connections(self):
+        from app.services.researcher_agent import _select_git_connection
+
+        assert _select_git_connection([self.RO], "auto") is None
+
+    def test_auto_exposes_the_read_write_connection(self):
+        from app.services.researcher_agent import _select_git_connection
+
+        assert _select_git_connection([self.RO, self.RW], "auto") == self.RW
+
+    def test_always_exposes_any_connection_read_write_first(self):
+        from app.services.researcher_agent import _select_git_connection
+
+        assert _select_git_connection([self.RO], "always") == self.RO
+        assert _select_git_connection([self.RO, self.RW], "always") == self.RW
+
+    def test_off_and_empty_hide_the_tool(self):
+        from app.services.researcher_agent import _select_git_connection
+
+        assert _select_git_connection([self.RW], "off") is None
+        assert _select_git_connection([], "auto") is None
+        assert _select_git_connection(None, "auto") is None
 
 
 # ---------------------------------------------------------------------------

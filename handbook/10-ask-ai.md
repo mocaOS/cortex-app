@@ -271,6 +271,7 @@ RESEARCHER_SPEED_EARLY_WRITE=true     # Chat: skip the final confirmation LLM ca
 RESEARCHER_PARALLEL_TOOL_CALLS=true   # Concurrent read-only searches per agent turn
 RESEARCHER_TOOL_ENTITY_HINTS=true     # Agent-supplied entities skip the extraction call
 RESEARCHER_SEARCH_DEDUP=true          # Repeat searches served from cache
+RESEARCHER_GIT_TOOL=auto              # git_repo tool only for read/write repos (auto | always | off)
 EMIT_DONE_BEFORE_MEMORY=true          # SSE done before memory compaction
 
 # Deep research: reflection & convergence (all default on)

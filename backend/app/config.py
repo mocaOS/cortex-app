@@ -679,6 +679,17 @@ class Settings(BaseSettings):
     )  # Return a cached tool result (with a "try a different angle" nudge)
     #   when the researcher re-issues an identical knowledge_search within one
     #   run, instead of paying the full retrieval pipeline again.
+    researcher_git_tool: str = Field(
+        default="auto"
+    )  # When to expose the `git_repo` tool to the researcher agent:
+    #   "auto" (default) — only when a read_write connection exists, i.e. when
+    #     writes (propose_change/comment) are actually possible. A read-only
+    #     connection exists purely to ingest the repo INTO the graph, so
+    #     knowledge_search already covers its contents with citations; exposing
+    #     read_file there only invites blind path-guessing (the tool has no
+    #     list/search action) whose output the writer never even sees.
+    #   "always" — expose it for any connection (legacy behaviour).
+    #   "off" — never expose it; ingestion is unaffected.
     researcher_force_grounding: bool = Field(
         default=True
     )  # When the researcher loop ends with ZERO searches performed and zero

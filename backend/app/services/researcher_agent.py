@@ -36,6 +36,7 @@ from app.services.research_prompts import (
     get_tools_with_skill_activation,
     build_skill_catalog_block,
     build_activated_skills_block,
+    build_git_repo_block,
 )
 from app.services.reasoning_config import (
     apply_cache_control,
@@ -551,6 +552,29 @@ def _merge_activation_state(activated_skills: dict) -> tuple:
     return activated_instructions, activated_tool_defs, activated_tool_map
 
 
+def _select_git_connection(
+    connections: Optional[list], tool_mode: str
+) -> Optional[dict]:
+    """Pick the connection the `git_repo` tool acts on, or None to hide the tool.
+
+    ``tool_mode`` is RESEARCHER_GIT_TOOL:
+    - "auto" (default): only a read_write connection, where the write actions
+      the tool exists for are actually possible. Read-only connections are
+      ingestion pipelines — their files are in the graph, so knowledge_search
+      is the read path and exposing `read_file` only invites path-guessing.
+    - "always": any connection (legacy behaviour), read_write preferred.
+    - "off": never (handled by the caller, honoured here too).
+    """
+    if not connections or tool_mode == "off":
+        return None
+    read_write = next(
+        (c for c in connections if c.get("access_level") == "read_write"), None
+    )
+    if tool_mode == "always":
+        return read_write or connections[0]
+    return read_write
+
+
 async def _run_researcher_loop(
     question: str,
     mode: Literal["speed", "quality"],
@@ -598,18 +622,22 @@ async def _run_researcher_loop(
 
     # Git integration: load the primary connection (if any) so the git_repo tool
     # is available. Writes are gated server-side on the connection's access_level.
+    #
+    # RESEARCHER_GIT_TOOL decides exposure. Under "auto" (default) only a
+    # read_write connection gets the tool: a read-only connection exists to
+    # ingest the repo INTO the graph, so knowledge_search already serves its
+    # contents as citable sources, whereas git_repo can only read one guessed
+    # path at a time into messages the writer never sees.
     git_connection = None
-    if getattr(settings, "enable_git_integration", False):
+    _git_tool_mode = (
+        getattr(settings, "researcher_git_tool", "auto") or "auto"
+    ).strip().lower()
+    if getattr(settings, "enable_git_integration", False) and _git_tool_mode != "off":
         try:
             from app.services.neo4j_service import get_neo4j_service as _get_neo4j
             # Sync neo4j driver — offload so it doesn't block the event loop.
             _conns = await asyncio.to_thread(_get_neo4j().list_git_connections)
-            if _conns:
-                # Prefer a read/write connection so write actions are possible.
-                git_connection = next(
-                    (c for c in _conns if c.get("access_level") == "read_write"),
-                    _conns[0],
-                )
+            git_connection = _select_git_connection(_conns, _git_tool_mode)
         except Exception as e:
             logger.warning(f"Failed to load git connections: {e}")
 
@@ -638,6 +666,7 @@ async def _run_researcher_loop(
         )
         + build_skill_catalog_block(skill_catalog)
         + build_activated_skills_block(activated_instructions, max_chars=_skill_budget_chars)
+        + build_git_repo_block(git_connection)
         + get_anti_injection_instruction(enabled=settings.prompt_security)
     )
 
@@ -717,6 +746,7 @@ async def _run_researcher_loop(
                 + build_activated_skills_block(
                     activated_instructions, max_chars=_skill_budget_chars
                 )
+                + build_git_repo_block(git_connection)
                 + get_anti_injection_instruction(enabled=settings.prompt_security)
             )
             tools = get_tools_with_skill_activation(

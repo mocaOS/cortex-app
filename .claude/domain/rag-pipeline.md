@@ -12,7 +12,7 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 - `entity_lookup` — find specific entities
 - `reasoning` — available in quality mode always, or speed mode when skills are active
 - `http_request` — built-in tool, auth injected server-side from skill configs (no headers param). See [`.claude/domain/skills.md`](skills.md#http-request-tool)
-- `git_repo` — read/act on the connected git repo (read_file / propose_change / comment). Added only when a git connection exists (`has_git`), gated like `http_request`; writes always open a PR on a new branch and are rejected on read-only connections. See [`.claude/domain/git-integration.md`](git-integration.md#write-tool-git_repo-researcher-agent)
+- `git_repo` — act on the connected git repo (read_file / propose_change / comment). Exposure is gated by `RESEARCHER_GIT_TOOL` (default `auto` = read_write connections only, since a read-only connection's files are already in the graph); writes always open a PR on a new branch and are rejected on read-only connections. When exposed, a `<connected_repository>` prompt block scopes it to writes/known paths. See [`.claude/domain/git-integration.md`](git-integration.md#write-tool-git_repo-researcher-agent)
 - `done` — signal completion
 
 ### Speed Mode (Chat)

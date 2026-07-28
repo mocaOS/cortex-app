@@ -57,12 +57,19 @@ Relationships carry `source_document_id` but previously survived reprocess/delet
 
 ## Write tool (`git_repo`, researcher agent)
 
-Defined in `research_prompts.py` (`GIT_REPO_TOOL`), appended by `get_tools_with_skill_activation(..., has_git=True)` only when a connection exists. Executed in `researcher_agent.py` (mirrors the `http_request` block). Actions:
+Defined in `research_prompts.py` (`GIT_REPO_TOOL`), appended by `get_tools_with_skill_activation(..., has_git=True)`. Executed in `researcher_agent.py` (mirrors the `http_request` block). Actions:
 - `read_file` (any access level) — live file contents via `get_file_content`.
 - `propose_change` (read_write only) — **always** creates a fresh `cortex/agent-{id}` branch off the default branch, commits the files, and opens a PR/MR. Never pushes to the default branch.
 - `comment` (read_write only) — comment on an existing PR/MR.
 
 Read-only enforcement is server-side: write actions on a `read` connection return an error tool message. The agent loads the primary connection (prefers a `read_write` one) at loop start.
+
+**Exposure gating (`RESEARCHER_GIT_TOOL`, `_select_git_connection`)** — the tool is a *write* tool, not a retrieval path. The connector already ingests the repo (all of `RAW_TEXT_EXTENSIONS`, i.e. docs *and* code) into the graph, so `knowledge_search` returns the same content as citable sources, while `git_repo` can only fetch one path at a time into researcher-only `messages` the writer never sees (and it sets `_side_effect_called`, disabling speed early-write). With no `list`/`search` action the model can only *guess* paths — observed live: four consecutive `read_file` guesses on a read-only connection during an unrelated capability question.
+
+- `auto` (default) — exposed only when a `read_write` connection exists, matching what the public docs have always described. Read-only connections get no tool.
+- `always` — legacy: any connection. `off` — never (ingestion unaffected).
+
+When exposed, `build_git_repo_block(connection)` adds a `<connected_repository>` block naming `owner/repo` + branch, stating the files are already indexed, forbidding exploratory use, and listing the two legitimate uses (propose a change; re-read one known path). It's stable per configuration, so `researcher_stable_prompt` prefix caching still holds. Tool description carries the same framing for models that read schemas over prompts.
 
 ## Scheduled polling
 

@@ -94,9 +94,11 @@ Because deletions are flagged rather than auto-applied, expand a connection to s
 
 When a connection is set to **read/write**, the research agent (in Chat and Deep Research — see [Chapter 10: Ask AI](10-ask-ai.md)) gains a `git_repo` tool that can:
 
-- **Read** a file's current contents.
+- **Read** a file's current contents — to see the live version of a file it's about to edit.
 - **Propose a change** by opening a pull request.
 - **Comment** on an existing pull request.
+
+The tool exists for *changing* the repository. Reading it is the knowledge base's job: a synced repo's files are already ingested, so questions about its code or documentation are answered from the graph, with citations back to the files. That's why a **read-only** connection gives the agent no `git_repo` tool at all — there'd be nothing for it to do that search doesn't already do better. An administrator can change this with `RESEARCHER_GIT_TOOL` (see [Chapter 4: Configuration](04-configuration.md)).
 
 The safety model is strict and enforced in code:
 

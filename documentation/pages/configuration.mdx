@@ -470,6 +470,8 @@ ENABLE_AGENT_CHAT=true
 # RESEARCHER_SEARCH_DEDUP=true           # Identical repeat searches served from a per-question cache
 # EMIT_DONE_BEFORE_MEMORY=true           # SSE `done` before memory compaction (memory_update follows)
 
+# RESEARCHER_GIT_TOOL=auto               # git_repo tool exposure: auto (read/write connections only) | always | off
+
 # Deep research: reflection & convergence (all default on)
 # RESEARCHER_FORCE_REFLECTION=true       # Force a reasoning step after search rounds the model didn't reflect on
 # RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35  # Search round below this share of previously-unseen sources counts as stale
@@ -882,6 +884,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | No | `true` | Read-only searches from one agent turn run concurrently |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | No | `true` | Agent passes entities on search calls, skipping the extraction LLM call |
 | `RESEARCHER_SEARCH_DEDUP` | No | `true` | Identical repeat searches served from a per-question cache |
+| `RESEARCHER_GIT_TOOL` | No | `auto` | When the agent gets the `git_repo` tool: `auto` (only when a repo is connected read/write — read-only repos are already ingested and answered from the knowledge base), `always`, or `off` |
 | `RESEARCHER_FORCE_REFLECTION` | No | `true` | Deep research: force a reasoning step after search rounds the model didn't reflect on, steering the next round |
 | `RESEARCHER_NOVELTY_MIN_NEW_RATIO` | No | `0.35` | Deep research: a search round below this share of previously-unseen sources counts as stale (0 disables) |
 | `RESEARCHER_NOVELTY_STALE_ROUNDS` | No | `2` | Consecutive stale rounds before research stops and the answer is written (0 disables) |
