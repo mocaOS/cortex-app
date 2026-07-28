@@ -127,6 +127,12 @@ Congratulations — you have a working Cortex Library instance!
 
 ## Deployment Options
 
+### Option 0: Prebuilt release images — see [Chapter 26: Self-Hosting](26-self-hosting.md)
+
+Every option below **builds Cortex from source** — the right choice for development, or for tracking `main`. Since **v1.0.0** there is also a release track that skips the build entirely: versioned multi-arch images on GHCR plus a static Compose stack in `selfhost/` that you configure only through `.env`, running Cortex, Cortex Chat, Neo4j, and the backup sidecar together (with Caddy for automatic HTTPS in domain mode).
+
+That path — including the two topology modes, the release manifest (`stack.json`), updates, and restores — is [Chapter 26](26-self-hosting.md). Choose it if you want a production instance rather than a working copy of the code.
+
 ### Option 1: Docker Compose — Development
 
 Best for local development and testing. Includes hot reload for both frontend and backend.

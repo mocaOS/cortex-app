@@ -418,15 +418,41 @@ docker compose exec backup ls /backups
 
 ### Restore
 
+Restoring is a six-step procedure, not one command: `restore.sh` replays the
+**graph only**, leaving uploads, skills, apps, and chat data untouched.
+
 ```bash
+# 1. Pick a <timestamp>
+docker compose exec backup ls /backups
+
+# 2. Stop the backend — its graph is about to be wiped and replayed underneath it
 docker compose stop backend
+
+# 3. Restore the graph. RESTORE_WIPE=yes is required: it DETACH DELETEs the
+#    whole graph before replaying the chosen export.
 docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
-docker compose start backend   # startup recreates all indexes (incl. vector)
+
+# 4. Restore the file volumes. The sidecar mounts them read-only, so this runs
+#    in a throwaway container. Volume names are ${COMPOSE_PROJECT_NAME}_<name>
+#    (the self-host .env.example sets COMPOSE_PROJECT_NAME=cortex).
+docker run --rm \
+  -v cortex_uploads_data:/data/uploads \
+  -v cortex_custom_inputs_data:/data/custom_inputs \
+  -v cortex_chat_data:/data/chat \
+  -v cortex_skills_data:/data/skills \
+  -v cortex_apps_data:/data/apps \
+  -v cortex_backups:/backups:ro \
+  alpine tar -xzf /backups/<timestamp>/files.tar.gz -C /
+
+# 5. Start the backend — startup recreates every constraint and index,
+#    including the vector indexes the logical export does not carry
+docker compose start backend
+
+# 6. Verify document/entity counts on GET /api/stats
 ```
 
-File volumes are mounted read-only in the sidecar — restore them from the host
-with a throwaway container (full runbook in `ops/backup/restore.sh`). Backups
-live in the `backups` volume **on the same host**; ship them off-host
+The authoritative runbook is the header comment in `ops/backup/restore.sh`.
+Backups live in the `backups` volume **on the same host**; ship them off-host
 (restic/rclone) for disaster recovery.
 
 ### Manual physical dump (alternative, requires downtime)
