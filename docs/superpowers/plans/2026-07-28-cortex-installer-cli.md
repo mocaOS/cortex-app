@@ -737,6 +737,7 @@ export interface PreflightReport {
   checks: Check[];
 }
 
+const MIN_NODE = "20.12.0";   // set by @clack/prompts + @clack/core
 const MIN_COMPOSE = "2.20.0";
 const MIN_DISK_GB = 20;
 const HARD_DISK_GB = 10;
@@ -810,11 +811,13 @@ export async function runPreflight(opts: {
   const checks: Check[] = [];
 
   // Node
-  const nodeOk = semver.gte(process.versions.node, "18.0.0");
+  const nodeOk = semver.gte(process.versions.node, MIN_NODE);
   checks.push({
     name: "Node",
     ok: nodeOk,
-    detail: nodeOk ? `v${process.versions.node}` : `v${process.versions.node} — need >= 18`,
+    detail: nodeOk
+      ? `v${process.versions.node}`
+      : `v${process.versions.node} — need >= ${MIN_NODE}`,
     fatal: true,
   });
 
