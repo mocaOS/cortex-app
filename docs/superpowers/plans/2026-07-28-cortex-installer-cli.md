@@ -4017,8 +4017,8 @@ Expected: only `dist/**`, `package.json`, `README.md`, `LICENSE`. No `src/`, no 
 git add .github/workflows scripts/check-version-sync.mjs
 git commit -m "ci: test matrix, and npm publish on a stable semver tag
 
-Tests run on Node 18, 20 and 22 — 18 is the engines floor and 22 is what most
-users' npx will actually use. The release trigger accepts stable semver only,
+Tests run on Node 20, 22 and 24 — 20.12 is the engines floor (set by @clack)
+and 22/24 are what most users' npx will actually use. The release trigger accepts stable semver only,
 so a prerelease tag can never take the npm \`latest\` dist-tag."
 ```
 
