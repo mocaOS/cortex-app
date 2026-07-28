@@ -2727,20 +2727,53 @@ export async function runWizard(opts: { stack: Stack; dir: string }): Promise<In
   const models = await listModels({ baseUrl, apiKey, model: "" });
   s.stop(models.length ? `${models.length} models from ${new URL(baseUrl).host}` : "Model list unavailable — enter names manually");
 
-  const pickModel = async (message: string, filter?: (m: string) => boolean): Promise<string> => {
-    if (!models.length) {
-      const v = await p.text({ message, validate: (x) => (x ? undefined : "Required") });
+  /**
+   * Falls back to free text in TWO cases, both real: the endpoint has no
+   * /v1/models at all, and the endpoint lists models but none match the filter.
+   * The second case is not hypothetical — OpenRouter serves embeddings happily
+   * but lists zero embedding models, so filtering its 341 entries for /embed/
+   * yields nothing. Showing the unfiltered list there would ask the user to
+   * pick an embedding model from 341 chat models, none of which is valid.
+   */
+  const pickModel = async (
+    message: string,
+    filter: (m: string) => boolean,
+    placeholder: string
+  ): Promise<string> => {
+    const matches = models.filter(filter);
+    if (matches.length) {
+      const v = await p.select({
+        message,
+        options: matches.map((m) => ({ value: m, label: m })),
+      });
       if (p.isCancel(v)) bail("Cancelled.");
       return String(v);
     }
-    const opts = (filter ? models.filter(filter) : models).map((m) => ({ value: m, label: m }));
-    const v = await p.select({ message, options: opts.length ? opts : models.map((m) => ({ value: m, label: m })) });
+    if (models.length) {
+      p.log.info(
+        `This endpoint lists ${models.length} models but none look like a match ` +
+          `for "${message.toLowerCase()}" — enter the name yourself.`
+      );
+    }
+    const v = await p.text({
+      message,
+      placeholder,
+      validate: (x) => (x ? undefined : "Required"),
+    });
     if (p.isCancel(v)) bail("Cancelled.");
     return String(v);
   };
 
-  const chatModel = await pickModel("Chat model", (m) => !/embed/i.test(m));
-  const embeddingModel = await pickModel("Embedding model", (m) => /embed/i.test(m));
+  const chatModel = await pickModel(
+    "Chat model",
+    (m) => !/embed/i.test(m),
+    "gpt-5.2"
+  );
+  const embeddingModel = await pickModel(
+    "Embedding model",
+    (m) => /embed/i.test(m),
+    "text-embedding-3-small"
+  );
 
   // --- probes: nothing is written until these pass -------------------------
   s.start("Testing chat completion");
