@@ -2310,8 +2310,15 @@ export function parseHealth(psJson: string): ServiceStatus[] {
 
   const rows: any[] = [];
   if (text.startsWith("[")) {
-    try { rows.push(...JSON.parse(text)); } catch { /* fall through */ }
-  } else {
+    try {
+      rows.push(...JSON.parse(text));
+    } catch {
+      // Genuinely fall through to the per-line splitter rather than giving up:
+      // one unparseable blob must not turn into "zero services", which would
+      // make waitHealthy spin for its whole timeout on a healthy stack.
+    }
+  }
+  if (rows.length === 0) {
     for (const line of text.split("\n")) {
       const t = line.trim();
       if (!t) continue;
@@ -2326,11 +2333,18 @@ export function parseHealth(psJson: string): ServiceStatus[] {
   }));
 }
 
-async function run(dir: string, args: string[]): Promise<string> {
+/**
+ * Returns stdout and stderr separately. Do NOT concatenate them for anything
+ * that gets parsed: `docker compose ps` writes warnings to stderr even on
+ * success (verified: an unconfigured project emits "no configuration file
+ * provided" with empty stdout), and appending that to JSON makes a
+ * whole-string JSON.parse throw — which silently yielded zero services.
+ */
+async function run(dir: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const { stdout, stderr } = await exec("docker", [...composeArgs(dir), ...args], {
     maxBuffer: 32 * 1024 * 1024,
   });
-  return `${stdout}${stderr}`;
+  return { stdout, stderr };
 }
 
 /** Streams pull progress; onProgress fires once per service transition. */
@@ -2364,11 +2378,14 @@ export async function down(dir: string, volumes = false): Promise<void> {
 }
 
 export async function ps(dir: string): Promise<ServiceStatus[]> {
-  return parseHealth(await run(dir, ["ps", "--format", "json"]));
+  // stdout only — see run()'s comment.
+  return parseHealth((await run(dir, ["ps", "--format", "json"])).stdout);
 }
 
+/** Combined output is intentional here: callers show it to a human. */
 export async function execIn(dir: string, service: string, cmd: string[]): Promise<string> {
-  return run(dir, ["exec", "-T", service, ...cmd]);
+  const { stdout, stderr } = await run(dir, ["exec", "-T", service, ...cmd]);
+  return `${stdout}${stderr}`;
 }
 
 /** Attaches `docker compose logs -f` to this process's stdio. */
@@ -2402,6 +2419,16 @@ export async function waitHealthy(
       return s.state === "running";
     });
     if (ready) return true;
+
+    // Fail fast on a terminal state instead of waiting out the full timeout:
+    // an exited or dead container is never going to become ready, and making
+    // the operator sit through five minutes of spinner teaches them nothing.
+    const doomed = services
+      .map((name) => status.find((x) => x.service === name))
+      .filter((s): s is ServiceStatus => Boolean(s))
+      .filter((s) => s.state === "exited" || s.state === "dead");
+    if (doomed.length) return false;
+
     if (Date.now() > deadline) return false;
     await new Promise((r) => setTimeout(r, 3000));
   }
