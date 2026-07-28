@@ -3708,9 +3708,14 @@ export function rewriteImagePins(envText: string, components: Components): strin
     .map((line) => {
       const eq = line.indexOf("=");
       if (eq <= 0 || line.trimStart().startsWith("#")) return line;
-      const key = line.slice(0, eq);
+      // Trim the key so an indented pin line is still matched rather than
+      // silently skipped, and preserve a CRLF terminator so an update does not
+      // leave LF pin lines mixed into an otherwise CRLF file.
+      const key = line.slice(0, eq).trim();
       const build = IMAGE_LINES[key];
-      return build ? `${key}=${build(components)}` : line;
+      if (!build) return line;
+      const eol = line.endsWith("\r") ? "\r" : "";
+      return `${key}=${build(components)}${eol}`;
     })
     .join("\n");
 }
@@ -3804,10 +3809,20 @@ export async function run(ctx: { flags: Record<string, string | boolean> }): Pro
   });
 
   if (!ok) {
+    // Point at cortex.json rather than describing values inline. The pin set is
+    // five keys, and neo4j/caddy do NOT use the stack's semver (they are e.g.
+    // 5.26-community and 2-alpine) — so "set the CORTEX_*_IMAGE lines to
+    // <stack>" is both incomplete and wrong for the two most likely to have
+    // caused a health failure.
+    const prev = state.components;
     p.log.error(
-      `Health check timed out. Previous pins are recorded in cortex.json.\n` +
-        `  To roll back: edit the CORTEX_*_IMAGE lines in .env back to ${state.stack}, ` +
-        `then run \`cortex start\`.`
+      `Health check timed out. Roll back by restoring these five lines in .env ` +
+        `(also recorded as \`previous\` in cortex.json), then \`cortex start\`:\n` +
+        `  CORTEX_BACKEND_IMAGE=ghcr.io/mocaos/cortex-backend:${prev.backend}\n` +
+        `  CORTEX_FRONTEND_IMAGE=ghcr.io/mocaos/cortex-frontend:${prev.frontend}\n` +
+        `  CORTEX_CHAT_IMAGE=ghcr.io/mocaos/cortex-chat:${prev.chat}\n` +
+        `  NEO4J_VERSION=${prev.neo4j}\n` +
+        `  CADDY_VERSION=${prev.caddy}`
     );
   }
   p.outro(ok ? `Now on Cortex ${latest.stack}.` : "Update finished with warnings.");
@@ -3879,7 +3894,14 @@ export async function run(ctx: {
   banner(installerVersion());
   const { dir, state } = resolveInstall(ctx.flags);
 
-  const listing = await execIn(dir, "backup", ["sh", "-c", "ls -1 /backups | grep -v LAST_SUCCESS || true"]);
+  // Exclude LAST_SUCCESS and the `latest` symlink backup.sh maintains — the
+  // latter would otherwise appear as a selectable entry that sorts ahead of
+  // every real timestamp, duplicating whichever backup it points at.
+  const listing = await execIn(dir, "backup", [
+    "sh",
+    "-c",
+    "ls -1 /backups | grep -vE '^(LAST_SUCCESS|latest)$' || true",
+  ]);
   const stamps = listing.trim().split("\n").filter(Boolean);
   if (!stamps.length) { p.cancel("No backups found."); return; }
 
