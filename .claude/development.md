@@ -117,7 +117,7 @@ cortex-app, since `stack.json` pins its version and verifies it is pullable.
 fetches that tag's `selfhost/` + `ops/` from the release tarball, and writes
 only `.env`.
 
-Two things bite when testing a just-published release:
+Three things bite when testing a just-published release:
 
 - `npm` config `min-release-age` (a supply-chain cooldown, and a sane thing to
   have set) hides every version published inside its window, so `npx` answers
@@ -128,6 +128,12 @@ Two things bite when testing a just-published release:
   reaches an existing install because `up` passes `--build` (installer
   ≥ 1.0.2). Raise `minInstaller` in `selfhost/stack.template.json` whenever a
   stack fix depends on newer installer behaviour like that.
+- The `chat` service sits behind `profiles: ["chat"]`. Two non-obvious
+  consequences: Compose interpolates `${VAR:?}` **before** filtering profiles,
+  so `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` must stay set in `.env`
+  even with chat off; and anything with `depends_on: chat` needs the long form
+  with `required: false` or Compose rejects the whole project. Both are asserted
+  by `selfhost/verify-contract.sh`, which CI runs.
 
 The manual runbook has to keep parity with what `update` actually does, and
 until v1.0.1 it did not: `selfhost/README.md` and the deployment guide told

@@ -45,6 +45,13 @@ Cortex can now be installed and operated without cloning anything: `npx @mocaos/
 - **`could not determine executable to run`** — there is no `install` subcommand. `npx` already means "fetch and run", so `npx install @mocaos/cortex` asks npm to run a package literally named `install`. The command is `npx @mocaos/cortex`.
 - **`ENOVERSIONS — No versions available`** — the package is public and fine. An `.npmrc` with `min-release-age` set (increasingly common after the npm supply-chain compromises of recent months) hides every version published inside that window, so a release that is hours old has none left. Keep the setting — it is real protection — and override it for the single command: `npx --min-release-age=0 @mocaos/cortex`. npm has no way to exempt one package, so it is the flag or the wait.
 
+### Cortex Chat is now optional
+
+- **Off by default.** The installer asks whether to include Cortex Chat and defaults to no. Nothing in Cortex references it, so a knowledge base no longer arrives with a second web app attached. `--yes` opts in with `CORTEX_ENABLE_CHAT=true`.
+- **One line to change your mind.** The chat service sits behind a Compose profile, so `COMPOSE_PROFILES=chat` in `.env` plus a restart is the whole switch in localhost mode — the chat port and encryption key are written either way for exactly this reason. Domain mode additionally needs a chat domain and the `Caddyfile.chat.template` variant, because a Caddy site block with an unset address makes Caddy refuse to load at all.
+- **Existing installs keep their chat.** An install that predates the option was running chat, so `update` treats it as enabled and writes the profile line for you. `minInstaller` rises to 1.2.2 so an older installer cannot apply this stack and silently drop the service.
+- Requires installer **1.2.2**: `npx @mocaos/cortex`.
+
 See [Self-hosting](/guides/deployment) and handbook chapter 26 for the full picture.
 
 ---

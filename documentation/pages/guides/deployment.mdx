@@ -19,13 +19,13 @@ This guide covers deploying Cortex to production — with the `npx @mocaos/corte
 npx @mocaos/cortex
 ```
 
-One command brings up the whole stack — Cortex, Cortex Chat, Neo4j, a nightly backup sidecar, and Caddy for automatic HTTPS if you deploy on a domain — from prebuilt, version-pinned images. Nothing to clone, nothing to build, no Compose file to edit.
+One command brings up the whole stack — Cortex, Neo4j, a nightly backup sidecar, and Caddy for automatic HTTPS if you deploy on a domain — from prebuilt, version-pinned images. Cortex Chat is offered as an opt-in extra, off by default. Nothing to clone, nothing to build, no Compose file to edit.
 
 It runs in this order, and stops at the first thing that would waste your time:
 
 1. **Environment preflight** — Docker daemon, Compose v2, architecture, free disk, RAM, and the ports it is about to bind. The fatal ones stop the install with a plain reason.
 2. **Live credential validation** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.7 GB pull. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
-3. **Interactive configuration** — localhost or a public domain, your provider and models (embeddings may come from a different provider), your admin identity, and secrets, which are generated for you unless you'd rather set them.
+3. **Interactive configuration** — localhost or a public domain, whether to install Cortex Chat (default no), your provider and models (embeddings may come from a different provider), your admin identity, and secrets, which are generated for you unless you'd rather set them.
 4. **Pull, start, verify** — writes `.env` at mode `0600`, fetches that release's Compose files, pulls the pinned images, and waits for every service to report healthy before printing your login.
 
 It also owns the instance afterwards, so you rarely touch Compose directly:
@@ -74,7 +74,7 @@ git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
 mkdir -p cortex && cd cortex
 cp -r /tmp/cortex-src/selfhost/. .
 cp -r /tmp/cortex-src/ops ./ops
-cp Caddyfile.template Caddyfile
+cp Caddyfile.template Caddyfile        # or Caddyfile.chat.template, with chat
 cp .env.example .env
 chmod 600 .env
 ```
@@ -86,7 +86,7 @@ docker compose up -d
 docker compose ps
 ```
 
-The stack runs Cortex **and Cortex Chat**. Both share one identity — `ADMIN_EMAIL` + `ADMIN_PASSWORD` — and Chat mints its own scoped backend keys using `ADMIN_API_KEY`.
+The stack runs Cortex. Cortex Chat is optional — set `COMPOSE_PROFILES=chat` in `.env` to include it. With chat installed the two share one identity — `ADMIN_EMAIL` + `ADMIN_PASSWORD` — and Chat mints its own scoped backend keys using `ADMIN_API_KEY`.
 
 ### Choosing a mode
 
@@ -101,8 +101,10 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.ports.yml
 # Public domain — Caddy with automatic HTTPS
 COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
 APP_DOMAIN=cortex.example.com
-CHAT_DOMAIN=chat.example.com
 ACME_EMAIL=you@example.com
+# with chat only:
+COMPOSE_PROFILES=chat
+CHAT_DOMAIN=chat.example.com
 CHAT_BASE_URL=https://chat.example.com
 CORS_ALLOWED_ORIGINS=https://cortex.example.com,https://chat.example.com
 ```
@@ -133,7 +135,7 @@ docker compose pull
 docker compose up -d --build
 ```
 
-Your `.env`, your `Caddyfile` and any `docker-compose.override.yml` survive that copy: the release ships `.env.example` and `Caddyfile.template` and carries no override file. If you never hand-edited `Caddyfile`, re-copy it from the refreshed template so template changes land too.
+Your `.env`, your `Caddyfile` and any `docker-compose.override.yml` survive that copy: the release ships `.env.example` and both Caddyfile templates and carries no override file. If you never hand-edited `Caddyfile`, re-copy it from the refreshed template so template changes land too — `Caddyfile.template` without chat, `Caddyfile.chat.template` with it.
 
 **`--build` is not optional here.** The `backup` sidecar is built from `ops/backup` rather than pulled — it has no `image:`, so `docker compose pull` skips it — and Compose will not rebuild an existing image just because its build context changed. Without `--build`, a release shipping a corrected `backup.sh` or `restore.sh` writes it to disk and keeps running the old one. That is precisely how the v1.0.1 graph-restore fix fails to reach an install that already has a sidecar image built. `npx @mocaos/cortex update` passes it for you, and `stack.json`'s `minInstaller` requires an installer version that does.
 
