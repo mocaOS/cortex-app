@@ -1766,8 +1766,8 @@ Expected: Release `completed/success`, `latest: 1.2.0`. The registry can lag a m
 - Modify: `cortex-app/package.json`, `cortex-app/frontend/package.json`, `cortex-app/selfhost/.env.example`, `cortex-app/backend/app/main.py`
 
 **Interfaces:**
-- Consumes: `@mocaos/cortex@1.2.0` from Task 10.
-- Produces: stack 1.1.0 with `minInstaller: 1.2.0`.
+- Consumes: `@mocaos/cortex@1.2.2` from Task 10 (1.2.0 and 1.2.1 shipped with defects found in review).
+- Produces: stack 1.1.0 with `minInstaller: 1.2.2`.
 
 - [ ] **Step 1: Raise minInstaller**
 
@@ -1839,7 +1839,7 @@ In `README.md`, in the Quick Start `### Install (recommended)` paragraph, add a 
 
 - **Off by default.** The installer asks whether to include Cortex Chat and defaults to no. Nothing in Cortex references it, so a knowledge base no longer arrives with a second web app attached. `--yes` opts in with `CORTEX_ENABLE_CHAT=true`.
 - **One line to change your mind.** The chat service sits behind a Compose profile, so `COMPOSE_PROFILES=chat` in `.env` plus a restart is the whole switch in localhost mode — the chat port and encryption key are written either way for exactly this reason. Domain mode additionally needs a chat domain and the `Caddyfile.chat.template` variant, because a Caddy site block with an unset address makes Caddy refuse to load at all.
-- **Existing installs keep their chat.** An install that predates the option was running chat, so `update` treats it as enabled and writes the profile line for you. `minInstaller` rises to 1.2.0 so an older installer cannot apply this stack and silently drop the service.
+- **Existing installs keep their chat.** An install that predates the option was running chat, so `update` treats it as enabled and writes the profile line for you. `minInstaller` rises to 1.2.2 so an older installer cannot apply this stack and silently drop the service.
 - Requires installer **1.2.2**: `npx @mocaos/cortex`.
 ```
 
@@ -1879,7 +1879,7 @@ cd /Volumes/WD_BLACK/PROJECTS/CORTEX/cortex
 git add -A
 git commit -m "feat(selfhost): Cortex Chat becomes optional (1.1.0)
 
-Raises minInstaller to 1.2.0 — an older installer never writes
+Raises minInstaller to 1.2.2 — an older installer never writes
 COMPOSE_PROFILES, so it would install this stack with chat silently absent
 and then wait for it to become healthy until it timed out.
 
@@ -1898,7 +1898,7 @@ gh run watch "$(gh run list --repo mocaOS/cortex-app --workflow release.yml --li
 gh release download v1.1.0 --repo mocaOS/cortex-app --pattern stack.json --output -
 ```
 
-Expected: the run succeeds and `stack.json` shows `"stack":"1.1.0"`, backend/frontend `1.1.0`, `chat` still `1.0.0`, and `"minInstaller":"1.2.0"`.
+Expected: the run succeeds and `stack.json` shows `"stack":"1.1.0"`, backend/frontend `1.1.0`, `chat` still `1.0.0`, and `"minInstaller":"1.2.2"`.
 
 ---
 
