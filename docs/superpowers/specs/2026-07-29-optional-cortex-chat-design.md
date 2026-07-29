@@ -77,7 +77,7 @@ A `p.confirm` with `initialValue: false`, placed **immediately after the mode qu
 
 > `Also install Cortex Chat? (a separate chat front end)` — default **No**
 
-When off it also suppresses the chat-only prompts: `CHAT_DOMAIN` in domain mode, and — in Advanced — `Configure SMTP for chat password reset?` and the registration question. Those configure chat and nothing else.
+When off it also suppresses the chat-only prompts: `CHAT_DOMAIN` in domain mode, and — in Advanced — `Configure SMTP for chat password reset?`. Those configure chat and nothing else. (There is no registration prompt to suppress: `ENABLE_REGISTRATION` has zero references in the installer and is never written, so the chat image's own default applies.)
 
 `buildConfigNonInteractive` reads `CORTEX_ENABLE_CHAT`; anything other than `"true"` means off, matching how `CORTEX_ERROR_REPORTING` already behaves.
 
