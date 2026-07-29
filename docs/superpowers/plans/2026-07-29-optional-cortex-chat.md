@@ -426,7 +426,8 @@ cp selfhost/docker-compose.caddy.yml /tmp/caddy.bak
 python3 - <<'PY'
 import re, pathlib
 p = pathlib.Path("selfhost/docker-compose.caddy.yml")
-s = p.read_text().replace("          required: false\n", "")
+s = p.read_text().replace("        required: false\n", "")
+assert "required: false" not in s, "break did not apply — check the indentation"
 p.write_text(s)
 PY
 ./selfhost/verify-contract.sh; echo "exit=$?"
