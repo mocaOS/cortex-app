@@ -1,8 +1,8 @@
 # Self-hosting Cortex
 
-Runs Cortex and Cortex Chat from prebuilt images. Everything is configured
-through `.env`; the Compose files are static release artifacts you never need
-to edit.
+Runs Cortex from prebuilt images, with Cortex Chat as an opt-in extra.
+Everything is configured through `.env`; the Compose files are static release
+artifacts you never need to edit.
 
 > An interactive installer does all of this for you: `npx @mocaos/cortex`
 > (no `install` subcommand — `npx` already fetches and runs). These are the
@@ -37,7 +37,7 @@ git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
 mkdir -p cortex && cd cortex
 cp -r /tmp/cortex-src/selfhost/. .
 cp -r /tmp/cortex-src/ops ./ops
-cp Caddyfile.template Caddyfile
+cp Caddyfile.template Caddyfile        # or Caddyfile.chat.template, with chat
 cp .env.example .env
 chmod 600 .env
 ```
@@ -49,6 +49,30 @@ with the commands in the comments there. Then:
 docker compose up -d
 docker compose ps
 ```
+
+## Cortex Chat (optional)
+
+Chat is **off by default**. To run it, set this in `.env` and `docker compose up -d`:
+
+```dotenv
+COMPOSE_PROFILES=chat
+```
+
+In domain mode also set `CHAT_DOMAIN` and `CHAT_BASE_URL`, add the chat origin
+to `CORS_ALLOWED_ORIGINS`, and use the other Caddy template:
+
+```bash
+cp Caddyfile.chat.template Caddyfile
+```
+
+To turn chat off again, remove the `COMPOSE_PROFILES` line and run
+`docker compose up -d --remove-orphans` — without `--remove-orphans` the
+already-running chat container is left behind. Its data stays in the
+`chat_data` volume either way.
+
+`CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` stay set even with chat off:
+Compose interpolates variables before it filters profiles, so an unset value
+aborts the whole project.
 
 ## Modes
 
@@ -67,7 +91,7 @@ and domain mode leaves it unset so the app defaults to secure. Nothing to set.
 | | |
 |---|---|
 | Cortex | http://localhost:3000 |
-| Chat | http://localhost:3001 |
+| Chat | http://localhost:3001 (only with `COMPOSE_PROFILES=chat`) |
 | API | http://localhost:8000 |
 | Neo4j | http://localhost:7474 |
 
@@ -89,8 +113,8 @@ private on the Compose network. The API is still reachable at
 
 ## Logging in
 
-Cortex and Chat share one identity: `ADMIN_EMAIL` + `ADMIN_PASSWORD`. Chat
-mints its scoped backend keys with `ADMIN_API_KEY`.
+Cortex and Chat share one identity (when chat is installed): `ADMIN_EMAIL` +
+`ADMIN_PASSWORD`. Chat mints its scoped backend keys with `ADMIN_API_KEY`.
 
 ## Customizing
 
