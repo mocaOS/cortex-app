@@ -65,8 +65,8 @@ Since **v1.0.0** you don't have to build Cortex to run it. Each release publishe
 
 ```bash
 curl -fsSL https://github.com/mocaOS/cortex-app/releases/latest/download/stack.json -o stack.json
-# {"stack":"1.0.0","components":{"backend":"1.0.0","frontend":"1.0.0","chat":"1.0.0",
-#  "neo4j":"5.26-community","caddy":"2-alpine"},"minInstaller":"1.0.0", ... }
+# {"stack":"1.0.1","components":{"backend":"1.0.1","frontend":"1.0.1","chat":"1.0.0",
+#  "neo4j":"5.26-community","caddy":"2-alpine"},"minInstaller":"1.0.2", ... }
 
 git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
   https://github.com/mocaOS/cortex-app.git /tmp/cortex-src
@@ -118,13 +118,24 @@ The ports overlay sets `SESSION_COOKIE_SECURE=false` (browsers drop `Secure` coo
 - Apps are **enabled by default** in this stack (the backend's own default is off). Set `ENABLE_APPS=false` if you want the smaller attack surface.
 - Error tracking is **off** here: `SENTRY_DSN_BACKEND` / `SENTRY_DSN_FRONTEND` default to empty rather than to the project's GlitchTip, so a self-hoster's stack traces never leave their box unless they opt in with their own DSN.
 
-To update, re-fetch `stack.json`, set the three `CORTEX_*_IMAGE` lines in `.env` to its component versions, then:
+To update, re-fetch `stack.json` and set the three `CORTEX_*_IMAGE` lines in `.env` to its component versions — then re-fetch that release's stack files too. **New image tags alone are not an update:** the Compose files and the `ops/` scripts change between releases, and a fix that lives in a shell script arrives no other way.
 
 ```bash
 docker compose exec backup /backup.sh   # back up first
+
+rm -rf /tmp/cortex-src
+git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
+  https://github.com/mocaOS/cortex-app.git /tmp/cortex-src
+cp -r /tmp/cortex-src/selfhost/. .
+cp -r /tmp/cortex-src/ops ./ops
+
 docker compose pull
-docker compose up -d
+docker compose up -d --build
 ```
+
+Your `.env`, your `Caddyfile` and any `docker-compose.override.yml` survive that copy: the release ships `.env.example` and `Caddyfile.template` and carries no override file. If you never hand-edited `Caddyfile`, re-copy it from the refreshed template so template changes land too.
+
+**`--build` is not optional here.** The `backup` sidecar is built from `ops/backup` rather than pulled — it has no `image:`, so `docker compose pull` skips it — and Compose will not rebuild an existing image just because its build context changed. Without `--build`, a release shipping a corrected `backup.sh` or `restore.sh` writes it to disk and keeps running the old one. That is precisely how the v1.0.1 graph-restore fix fails to reach an install that already has a sidecar image built. `npx @mocaos/cortex update` passes it for you, and `stack.json`'s `minInstaller` requires an installer version that does.
 
 ## Docker Compose Deployment
 

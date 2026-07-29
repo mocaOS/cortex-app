@@ -129,6 +129,15 @@ Two things bite when testing a just-published release:
   ≥ 1.0.2). Raise `minInstaller` in `selfhost/stack.template.json` whenever a
   stack fix depends on newer installer behaviour like that.
 
+The manual runbook has to keep parity with what `update` actually does, and
+until v1.0.1 it did not: `selfhost/README.md` and the deployment guide told
+you to bump the image tags and run `pull && up -d`, which re-pulls nothing for
+the build-only `backup` service and never re-fetches `selfhost/` + `ops/` at
+all. Both now clone the tag and pass `--build`. Any change to what `update`
+does needs the same edit in both documents — a manual updater following a
+stale runbook gets a silently half-applied release, with the pieces that live
+in scripts left behind.
+
 Consequences for anyone changing `selfhost/`:
 
 - Adding a `${VAR:?}` to a compose file is a **breaking change for the

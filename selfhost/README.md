@@ -107,13 +107,38 @@ curl -fsSL https://github.com/mocaOS/cortex-app/releases/latest/download/stack.j
 ```
 
 Update the three `CORTEX_*_IMAGE` lines in `.env` to the versions in
-`stack.json`, then:
+`stack.json`, then re-fetch that release's stack files as well. **New image
+tags are not enough**: the Compose files and `ops/` scripts change between
+releases too, and a fix that lives in a shell script arrives only this way.
 
 ```bash
 docker compose exec backup /backup.sh   # back up first
+
+rm -rf /tmp/cortex-src
+git clone --depth 1 --branch "v$(jq -r .stack stack.json)" \
+  https://github.com/mocaOS/cortex-app.git /tmp/cortex-src
+cp -r /tmp/cortex-src/selfhost/. .
+cp -r /tmp/cortex-src/ops ./ops
+
 docker compose pull
-docker compose up -d
+docker compose up -d --build
 ```
+
+Your `.env`, your `Caddyfile`, and any `docker-compose.override.yml` survive
+that copy — the release ships `.env.example` and `Caddyfile.template`, and
+carries no override file. In domain mode, if you never hand-edited
+`Caddyfile`, re-copy it (`cp Caddyfile.template Caddyfile`) so changes to the
+template land as well.
+
+**`--build` is not optional.** The `backup` sidecar is built here from
+`ops/backup` rather than pulled (it has no `image:`, so `pull` skips it
+entirely), and Compose does not rebuild an existing image just because its
+build context changed. Without `--build`, a release that ships a corrected
+`backup.sh` or `restore.sh` writes it to disk and keeps running the old one —
+which is exactly how the v1.0.1 restore fix would fail to reach an install
+that already had a sidecar image. `npx @mocaos/cortex update` passes it for
+you, and `stack.json`'s `minInstaller` is raised to require an installer that
+does.
 
 ## Backups
 
