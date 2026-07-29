@@ -20,7 +20,7 @@ Cortex can now be installed and operated without cloning anything: `npx @mocaos/
 
 ### Self-hosting: `npx @mocaos/cortex`
 
-- **One command installs the stack** — environment preflight (Docker, Compose v2, architecture, disk, RAM, ports), then two live LLM calls to validate your credentials *before* anything is written to disk or pulled, then pinned images and a health-gated start. A bad key fails in seconds rather than after a 1.7 GB pull.
+- **One command installs the stack** — environment preflight (Docker, Compose v2, architecture, disk, RAM, ports), then two live LLM calls to validate your credentials *before* anything is written to disk or pulled, then pinned images and a health-gated start. A bad key fails in seconds rather than after a 1.6 GB pull.
 - **Twelve verbs, not just install** — `status`, `logs`, `doctor`, `start`/`stop`/`restart`, `backup`, `restore`, `update`, `config`, `uninstall`. `doctor` prints one pasteable diagnostic block.
 - **Releases are pinned as a tested set** — each release publishes a `stack.json` naming the exact backend, frontend, chat, Neo4j and Caddy versions that were tested together, plus the minimum installer those versions require. Images are multi-arch (`linux/amd64` and `linux/arm64`).
 - **It never touches data it did not create** — the default project name is `cortex`, and if Docker already holds `cortex_*` volumes from an earlier install the wizard stops and offers rename, reuse or abort. Neo4j only applies `NEO4J_AUTH` when its volume is first created, so silently reusing a project name would write a password Neo4j never adopts. `uninstall` removes containers, and deletes volumes only behind a confirmation plus a typed phrase.

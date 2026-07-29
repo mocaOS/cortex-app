@@ -24,7 +24,7 @@ One command brings up the whole stack — Cortex, Neo4j, a nightly backup sideca
 It runs in this order, and stops at the first thing that would waste your time:
 
 1. **Environment preflight** — Docker daemon, Compose v2, architecture, free disk, RAM, and the ports it is about to bind. The fatal ones stop the install with a plain reason.
-2. **Live credential validation** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.7 GB pull. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
+2. **Live credential validation** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.6 GB pull. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
 3. **Interactive configuration** — localhost or a public domain, whether to install Cortex Chat (default no), your provider and models (embeddings may come from a different provider), your admin identity, and secrets, which are generated for you unless you'd rather set them.
 4. **Pull, start, verify** — writes `.env` at mode `0600`, fetches that release's Compose files, pulls the pinned images, and waits for every service to report healthy before printing your login.
 

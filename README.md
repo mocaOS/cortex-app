@@ -144,7 +144,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 npx @mocaos/cortex
 ```
 
-That's the whole thing. The interactive installer runs from prebuilt, version-pinned images — nothing to clone and nothing to build. Cortex Chat — a separate chat front end — is offered as an opt-in during setup and is off by default. It checks your environment, then validates your LLM credentials with a real chat completion and a real embedding call **before** it writes anything or pulls a single image, so a wrong key costs you seconds rather than a 1.7 GB download. Then it configures, pulls, starts, and waits for every service to report healthy before printing your login.
+That's the whole thing. The interactive installer runs from prebuilt, version-pinned images — nothing to clone and nothing to build. Cortex Chat — a separate chat front end — is offered as an opt-in during setup and is off by default. It checks your environment, then validates your LLM credentials with a real chat completion and a real embedding call **before** it writes anything or pulls a single image, so a wrong key costs you seconds rather than a 1.6 GB download. Then it configures, pulls, starts, and waits for every service to report healthy before printing your login.
 
 It manages the instance afterwards too — `status`, `doctor`, `logs`, `backup`, `restore`, `update`, `start`/`stop`/`restart`, `uninstall` — so you rarely touch Compose directly. Full walkthrough in [handbook/26-self-hosting.md](handbook/26-self-hosting.md).
 
