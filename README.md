@@ -254,6 +254,47 @@ CORTEX_E2E_API_KEY=<key> .qa-venv/bin/python -m pytest tests/test_live_e2e_authe
 
 The canonical QA feature/defect inventory lives in [`qa/cortex_qa_master.ods`](qa/) with a written summary in [`qa/QA_REPORT.md`](qa/QA_REPORT.md); see [`.claude/qa.md`](.claude/qa.md) for the full harness reference.
 
+## Releasing
+
+Three repositories ship independently, and all of them release the same way: **push a `vX.Y.Z` tag, nothing else**. Each workflow triggers only on `tags: ["v[0-9]+.[0-9]+.[0-9]+"]`, so a prerelease tag can never publish by accident, and each verifies the tag against its own `package.json` before doing anything irreversible.
+
+| Repo | A tag produces | How users get it |
+|---|---|---|
+| [`cortex-installer`](https://github.com/mocaOS/cortex-installer) | `npm publish` with provenance + GitHub release | `npx @mocaos/cortex` immediately |
+| `cortex-app` (this repo) | multi-arch backend + frontend images on GHCR, release with `stack.json` | `npx @mocaos/cortex update` |
+| [`cortex-chat`](https://github.com/mocaOS/cortex-chat) | chat image on GHCR | only through a `cortex-app` release that re-pins it |
+
+### Installer patch
+
+```bash
+npm version patch        # bumps package.json, commits, tags
+git push --follow-tags
+```
+
+The workflow re-runs typecheck, tests and build before publishing.
+
+### This repo's patch
+
+The root `package.json` version is the source of truth, and **four files must move together**: `frontend/package.json`, both `CORTEX_*_IMAGE` tags in `selfhost/.env.example`, and `CORTEX_VERSION` in `backend/app/main.py` (what `GET /health` reports). `scripts/check-version-sync.mjs` enforces it — in CI on every push, and again in the release workflow as the last gate before an irreversible publish.
+
+```bash
+npm version patch --no-git-tag-version              # bumps the root only
+# bump the other three to match, then:
+node scripts/check-version-sync.mjs --tag v1.0.2    # must print "Versions in sync."
+git commit -am "chore: v1.0.2" && git tag -a v1.0.2 -m v1.0.2
+git push --follow-tags
+```
+
+`npm version` does not propagate to the other three, so that middle step is manual today; the guard is what stops a half-bumped release reaching users.
+
+### Three rules that aren't obvious
+
+- **Release cortex-chat before cortex-app.** `stack.json` pins the chat version and verifies the image is pullable. Chat is pinned in [`selfhost/stack.template.json`](selfhost/stack.template.json) rather than derived from this repo's version, so a chat-only patch ships without rebuilding the ~1.2 GB backend — bump `components.chat` there, then release here.
+- **Raise `minInstaller`** in the same file whenever a stack fix only takes effect with newer installer behaviour. It sits at `1.0.2` because the corrected `ops/backup/restore.sh` reaches the backup sidecar only on an installer that passes `--build` to `compose up` — the sidecar is built locally, and Compose will not rebuild an existing image just because its build context changed. Get this wrong and the fix ships but never applies.
+- **A just-published release is invisible to `npx` if you run a publish cooldown.** An `.npmrc` with `min-release-age` set hides every version inside that window, so verifying your own release needs `npx --min-release-age=0 @mocaos/cortex@<version>`. See [handbook/26-self-hosting.md](handbook/26-self-hosting.md#when-npx-itself-wont-run-it).
+
+See [`.claude/development.md`](.claude/development.md) for the full self-host and release reference.
+
 ## Tech Stack
 
 ### Frontend
