@@ -47,6 +47,8 @@ CORTEX_EMBEDDING_DIMENSION=1536 \
 npx @mocaos/cortex --yes
 ```
 
+Embeddings come from the chat provider unless you say otherwise. Plenty of providers serve one but not the other — Groq has no embedding endpoint, and Venice is a common pairing — so set `CORTEX_EMBEDDING_API_BASE` and `CORTEX_EMBEDDING_API_KEY` together to point them elsewhere. Both or neither: a base URL on its own would send the chat provider's key to a different vendor, so it's rejected rather than guessed at. The wizard asks the same question, and either way the embedding dimension comes from a live probe of whichever endpoint serves them — it's baked into the Neo4j vector index, so it's never assumed.
+
 Add `CORTEX_MODE=domain` with `CORTEX_APP_DOMAIN`, `CORTEX_CHAT_DOMAIN`, and `CORTEX_ACME_EMAIL` for a public deployment. Secrets are generated unless you supply `CORTEX_ADMIN_PASSWORD`, `CORTEX_NEO4J_PASSWORD`, `CORTEX_ADMIN_API_KEY`, `CORTEX_SESSION_SECRET`, or `CORTEX_CHAT_ENCRYPTION_KEY`. The same LLM probes and the same project-name collision check both run here too — a collision under a project name you didn't set explicitly is a hard failure (since `--yes` can't prompt for rename/reuse/abort); setting `CORTEX_PROJECT_NAME` yourself is treated as deliberate reuse.
 
 ## The two modes
