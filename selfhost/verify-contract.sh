@@ -31,34 +31,35 @@ APP_DOMAIN=cortex.example.com
 ACME_EMAIL=ops@example.com
 EOF
 
-# The backend service also references these without a `${VAR:?}` guard or a
-# default, so they never block `docker compose config` — but left absent, it
-# still logs a "variable is not set" warning on stderr for each one. `services()`
-# below deliberately keeps stderr merged into the comparison (so a real Compose
-# error is visible in `actual` on FAIL), which means these benign warnings would
-# otherwise sort themselves right into the services string and desync every
-# check. Blank placeholders silence the warnings without touching that merge.
-cat >> "$work/.env" <<'EOF'
-OPENAI_API_BASE=
-OPENAI_MODEL=
-EMBEDDING_MODEL=
-EMBEDDING_DIMENSION=
-EOF
-
 fail=0
 check() {
   if [ "$2" = "$3" ]; then
     printf '  ok    %s\n' "$1"
   else
     printf '  FAIL  %s\n          expected: %s\n          actual:   %s\n' "$1" "$2" "$3"
+    # Only the compose checks pass a 4th arg (see services()/compose_stderr()
+    # below) — surfaced here, and only here, so a real failure is still
+    # debuggable without it ever being able to affect the comparison itself.
+    [ -n "${4:-}" ] && printf '          stderr:   %s\n' "$4"
     fail=1
   fi
 }
 
+# Captures Compose's stdout and stderr separately: stdout (the actual service
+# list) is the only thing any check compares against; stderr — e.g. the
+# warning `docker compose config` logs for an undefaulted ${VAR} such as
+# OPENAI_API_BASE — goes to $work/services.err and is surfaced only in a FAIL
+# diagnostic via compose_stderr(). This is deliberate: an earlier version of
+# this script merged the two streams (2>&1) before comparing, so any future
+# addition of a new bare ${VAR} to docker-compose.yml (or a Compose/Docker
+# version that adds a new stderr notice) would reproduce that exact
+# false-FAIL. Separating the streams removes the coupling entirely — the
+# services list is compared as Compose actually resolved it, full stop.
 services() {
   ( cd "$work" && COMPOSE_FILE="$1" COMPOSE_PROFILES="${2:-}" \
-      docker compose config --services 2>&1 | sort | tr '\n' ' ' | sed 's/ *$//' )
+      docker compose config --services 2>"$work/services.err" | sort | tr '\n' ' ' | sed 's/ *$//' )
 }
+compose_stderr() { cat "$work/services.err" 2>/dev/null; }
 
 PORTS=docker-compose.yml:docker-compose.ports.yml
 CADDY=docker-compose.yml:docker-compose.caddy.yml
@@ -66,10 +67,16 @@ CADDY=docker-compose.yml:docker-compose.caddy.yml
 echo "Compose: chat excluded by default, included with the profile"
 # Note CHAT_DOMAIN is absent from .env above: domain mode must resolve without
 # it, which is what relaxing caddy's guard to ${CHAT_DOMAIN:-} buys.
-check "localhost, chat off" "backend backup frontend neo4j"             "$(services "$PORTS")"
-check "localhost, chat on"  "backend backup chat frontend neo4j"        "$(services "$PORTS" chat)"
-check "domain, chat off"    "backend backup caddy frontend neo4j"       "$(services "$CADDY")"
-check "domain, chat on"     "backend backup caddy chat frontend neo4j"  "$(services "$CADDY" chat)"
+#
+# `|| true` matches the same guard caddyv() is called with below: a real
+# regression (e.g. a broken depends_on) makes `docker compose config` itself
+# exit non-zero, and under `set -e` an unguarded assignment would abort the
+# whole script right there — losing the FAIL line, the diagnostic, and every
+# later check. `|| true` keeps that failure inside check()'s reporting.
+actual="$(services "$PORTS" || true)";      check "localhost, chat off" "backend backup frontend neo4j"             "$actual" "$(compose_stderr)"
+actual="$(services "$PORTS" chat || true)"; check "localhost, chat on"  "backend backup chat frontend neo4j"        "$actual" "$(compose_stderr)"
+actual="$(services "$CADDY" || true)";      check "domain, chat off"    "backend backup caddy frontend neo4j"       "$actual" "$(compose_stderr)"
+actual="$(services "$CADDY" chat || true)"; check "domain, chat on"     "backend backup caddy chat frontend neo4j"  "$actual" "$(compose_stderr)"
 
 echo
 echo "Caddy: both templates adapt"
