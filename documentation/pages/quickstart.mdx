@@ -1,19 +1,88 @@
 ---
 title: Quick Start
-description: Get Cortex running in 5 minutes with Docker
+description: Get Cortex running in one command, or build it from source
 ---
 
-Get Cortex running locally in just a few minutes using Docker Compose.
+There are two ways in, and they end at the same place — a stack on `http://localhost:3000` with the API on `:8000`:
 
-## Prerequisites
+- **[One command](#install-in-one-command)** — `npx @mocaos/cortex` runs prebuilt, version-pinned images. Nothing to clone, nothing to build. Use this unless you have a reason not to.
+- **[Build from source](#build-from-source)** — clone the repo and `docker compose up`. For development, for tracking `main`, or when you want to modify the code.
 
-Before you begin, make sure you have:
+## Install in one command
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose installed
-- [Git](https://git-scm.com/) for cloning the repository
-- An **OpenAI API key** (or Anthropic/local LLM)
+```bash
+npx @mocaos/cortex
+```
 
-## Installation
+That is the entire installation. There is no `install` subcommand — `npx` already means "fetch and run".
+
+### Prerequisites
+
+- **[Docker](https://docs.docker.com/get-docker/) with the Compose v2 plugin** — check with `docker compose version`. On Linux, `apt install docker.io` does *not* include it; use Docker's official packages or Docker Desktop.
+- `curl` and `tar` on the host.
+- **~20 GB free disk, ~8 GB RAM**, `linux/amd64` or `linux/arm64`. Images pull ~1.7 GB in total.
+- An **OpenAI-compatible API key** — OpenAI, OpenRouter, Venice, Groq, a local Ollama, anything that speaks `/v1/chat/completions`. Embeddings need `/v1/embeddings`, but not necessarily from the same provider: Groq has no embedding endpoint at all, so the installer lets you point embeddings somewhere else.
+- `npx` brings its own Node. If one is already on your `PATH` it must be **20.12 or newer**.
+
+### What it does
+
+It stops at the first thing that would waste your time:
+
+1. **Checks your environment** — Docker daemon, Compose v2, architecture, disk, RAM, and the ports it is about to bind.
+2. **Validates your credentials with two live calls** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.7 GB download. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
+3. **Asks how you want it set up** — localhost or a public domain (with automatic HTTPS via Caddy), your provider and models, your admin identity, and secrets, which are generated for you unless you would rather set them.
+4. **Pulls, starts, and verifies** — writes `.env` at mode `0600`, fetches that release's Compose files, pulls the pinned images, and waits for every service to report healthy before printing your login.
+
+Then it prints your URLs and credentials, and you can go straight to [First Steps](#first-steps).
+
+The stack it brings up is Cortex, **Cortex Chat**, Neo4j, and a nightly backup sidecar — plus Caddy in domain mode. Cortex and Chat share one identity, so the admin email and password log you into both.
+
+### Managing the instance
+
+The same command owns the instance afterwards, so you rarely touch Compose directly:
+
+```bash
+npx @mocaos/cortex status     # service state, health, URLs
+npx @mocaos/cortex doctor     # one pasteable diagnostic block
+npx @mocaos/cortex logs       # follow logs
+npx @mocaos/cortex backup     # verified backup now
+npx @mocaos/cortex update     # move to the latest tested stack
+```
+
+`start`, `stop`, `restart`, `config`, `restore` and `uninstall` round it out. Your data lives in Docker volumes, so `stop` and `uninstall` never touch it — removing volumes takes a confirmation *and* a typed phrase.
+
+### If `npx` itself won't run
+
+Two failures happen before the installer starts, and neither message points at its cause:
+
+- **`could not determine executable to run`** — you typed `npx install @mocaos/cortex`. There is no `install` subcommand; that asks npm to run a package literally named `install`. Drop the word.
+- **`ENOVERSIONS — No versions available`** — the package is public and fine; npm is hiding it from you. An `.npmrc` with `min-release-age` set filters out every version published inside that window, so a release that is hours old has none left. Keep the setting — it is real protection against supply-chain attacks — and override it for the one command:
+
+```bash
+npx --min-release-age=0 @mocaos/cortex
+```
+
+### Unattended installs
+
+`--yes` runs the identical sequence, including both credential probes, from environment variables instead of prompts:
+
+```bash
+CORTEX_ADMIN_EMAIL=you@example.com \
+CORTEX_OPENAI_API_KEY=sk-... \
+CORTEX_OPENAI_API_BASE=https://api.venice.ai/api/v1 \
+CORTEX_OPENAI_MODEL=google-gemma-4-26b-a4b-it \
+CORTEX_EMBEDDING_MODEL=text-embedding-3-small \
+CORTEX_EMBEDDING_DIMENSION=1536 \
+npx @mocaos/cortex --yes
+```
+
+`CORTEX_OPENAI_API_BASE` is optional and defaults to OpenAI's endpoint. Secrets are generated unless you supply them (`CORTEX_ADMIN_PASSWORD`, `CORTEX_NEO4J_PASSWORD`, `CORTEX_ADMIN_API_KEY`, `CORTEX_SESSION_SECRET`, `CORTEX_CHAT_ENCRYPTION_KEY`). Embeddings follow the chat provider unless you set `CORTEX_EMBEDDING_API_BASE` **and** `CORTEX_EMBEDDING_API_KEY` — both or neither, since a base URL on its own would send one vendor's key to another vendor's endpoint. Add `CORTEX_MODE=domain` with `CORTEX_APP_DOMAIN`, `CORTEX_CHAT_DOMAIN` and `CORTEX_ACME_EMAIL` for a public deployment.
+
+The [deployment guide](/guides/deployment) covers domain mode, the manual equivalent of every step above, and the backup and restore runbook.
+
+## Build from source
+
+Use this path for development, for tracking `main`, or when you want to run modified code. It compiles the frontend and a torch-bearing backend locally, which takes a while on a small machine. You will also need [Git](https://git-scm.com/) on top of the prerequisites above.
 
 ### Step 1: Clone the Repository
 
@@ -49,6 +118,8 @@ OPENAI_API_KEY=your-venice-api-key
 > `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
 #### LLM Configuration
+
+The installer asks for the same choices and writes them into `.env` for you — this section is what it is choosing between, and where to look for the knobs it doesn't ask about.
 
 Cortex speaks the OpenAI protocol everywhere, so **any model from any OpenAI-compatible API works** — Venice, OpenRouter, OpenAI, or self-hosted vLLM/Ollama. Five model slots (primary, extraction, relationship, vision, embeddings) are independently configurable, and every slot inherits the primary's API base + key unless overridden.
 
@@ -182,6 +253,8 @@ Expected response:
 }
 ```
 
+A degraded instance — Neo4j unreachable, or the schema not yet confirmed — answers **503** with `"status": "degraded"`, so key your own checks off the status code. Don't read `version` as the release you are running: it was a hardcoded `1.0.0` through v1.0.1 and only reports the real release after that. `docker compose images` (or `npx @mocaos/cortex status`) tells you what is actually running.
+
 ### Step 5: Access the Web Interface
 
 Open http://localhost:3000 in your browser and log in with your admin credentials.
@@ -204,6 +277,8 @@ Open http://localhost:3000 in your browser and log in with your admin credential
 
 ## Common Commands
 
+From a source checkout. On an installer-managed instance use the verbs instead — `npx @mocaos/cortex start` / `stop` / `restart` / `logs` — since they run Compose in the right directory with the right file set.
+
 ```bash
 # Start all services
 docker compose up -d
@@ -225,6 +300,8 @@ docker compose up -d --build
 ```
 
 ## Troubleshooting
+
+On an installer-managed instance, start with `npx @mocaos/cortex doctor` — it prints one pasteable block covering the environment checks plus service state and health.
 
 ### Container won't start
 
@@ -257,5 +334,5 @@ curl https://api.openai.com/v1/models \
 
 - [Configuration Reference](/configuration) - All 50+ environment variables
 - [Document Upload Guide](/features/document-upload) - Supported formats and options
-- [Deployment Guide](/guides/deployment) - Production deployment with Coolify
+- [Deployment Guide](/guides/deployment) - The installer in depth, public domains with HTTPS, the manual release stack, backups and restore
 - [API Reference](/api) - Full API documentation
