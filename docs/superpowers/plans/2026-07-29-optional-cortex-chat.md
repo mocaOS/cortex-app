@@ -1996,13 +1996,20 @@ Tear down as in Step 3, substituting the `cortex-chaton_` prefix.
 
 This is the highest-risk path in the whole change. Install the **previous** stack with the **previous** installer, then update.
 
+Note the `--stack 1.0.1` below: it is required, not optional. Installer 1.1.0 with no
+`--stack` would fetch the *latest* manifest, which is now 1.1.0 — and that manifest sets
+`minInstaller` to 1.2.2, so `assertInstallerSupported` would refuse and the install would
+abort before creating anything. Stack 1.0.1 sets `minInstaller` 1.0.2, which 1.1.0
+satisfies, and it is also the faithful shape of a real pre-migration install: an older
+stack whose compose runs chat unconditionally.
+
 ```bash
 cd /tmp && rm -rf mig && mkdir mig && cd mig
 CORTEX_ADMIN_EMAIL=qa@example.invalid \
 CORTEX_OPENAI_API_KEY="$OPENAI_API_KEY" CORTEX_OPENAI_API_BASE="$OPENAI_API_BASE" \
 CORTEX_OPENAI_MODEL=openai/gpt-4o-mini CORTEX_EMBEDDING_MODEL=text-embedding-3-small \
 CORTEX_EMBEDDING_DIMENSION=1536 CORTEX_PROJECT_NAME=cortex-mig \
-npx --min-release-age=0 @mocaos/cortex@1.1.0 --dir /tmp/mig/cortex --yes --no-color install
+npx --min-release-age=0 @mocaos/cortex@1.1.0 --dir /tmp/mig/cortex --stack 1.0.1 --yes --no-color install
 
 cd /tmp/mig/cortex
 docker compose ps --format '{{.Service}}' | grep -c '^chat$'                       # expect 1
@@ -2019,7 +2026,7 @@ python3 -c "import json;d=json.load(open('cortex.json'));print('stack',d['stack'
 curl -s -o /dev/null -w 'chat %{http_code}\n' http://localhost:3001
 ```
 
-Expected: chat still running, `COMPOSE_PROFILES=chat` now present, state `stack 1.1.0 chat True`. If chat is gone, **stop** — the back-fill in Task 9 is broken and this is the data-visible failure the whole task exists to prevent.
+Expected: chat still running, `COMPOSE_PROFILES=chat` now present, state `stack 1.1.0 chat True` (the update moved it from the pinned 1.0.1 to 1.1.0). If chat is gone, **stop** — the back-fill in Task 9 is broken and this is the data-visible failure the whole task exists to prevent.
 
 - [ ] **Step 7: Tear down and confirm the maintainer's volumes are untouched**
 
