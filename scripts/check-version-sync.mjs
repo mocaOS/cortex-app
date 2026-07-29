@@ -29,9 +29,26 @@ export function imageTag(ref) {
   return idx === -1 ? ref : ref.slice(idx + 1);
 }
 
+// Pulls `CORTEX_VERSION = "x.y.z"` out of the backend's main.py — the version
+// GET /health reports, and the backend's only declaration of which release it
+// is. Throws rather than returning null if the constant is gone: this guard is
+// the last gate before an irreversible publish, so a renamed constant must fail
+// loudly instead of quietly disabling the check it exists to perform.
+export function extractPyVersion(source) {
+  const match = source.match(/^CORTEX_VERSION\s*=\s*["']([^"']+)["']/m);
+  if (!match) {
+    throw new Error(
+      "backend/app/main.py has no top-level CORTEX_VERSION assignment — " +
+        "the /health version can no longer be checked for drift"
+    );
+  }
+  return match[1];
+}
+
 export function checkVersionSync({
   rootVersion,
   frontendVersion,
+  backendVersion,
   tag,
   envPins,
   templatePins,
@@ -41,6 +58,14 @@ export function checkVersionSync({
   if (rootVersion !== frontendVersion) {
     problems.push(
       `frontend/package.json is ${frontendVersion} but root package.json is ${rootVersion}`
+    );
+  }
+
+  // backendVersion is optional for the same reason envPins is: callers that
+  // only compare root/frontend/tag stay unaffected.
+  if (backendVersion != null && backendVersion !== rootVersion) {
+    problems.push(
+      `backend/app/main.py CORTEX_VERSION is ${backendVersion} but root package.json is ${rootVersion}`
     );
   }
 
@@ -110,9 +135,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     caddy: extractEnvValue(envContent, "CADDY_VERSION"),
   };
 
+  // The backend has no package.json, so its release version is a module
+  // constant. A missing or renamed constant must fail rather than silently skip
+  // the check, so extractPyVersion throws.
+  const backendVersion = extractPyVersion(
+    readFileSync(join(repoRoot, "backend/app/main.py"), "utf8")
+  );
+
   const result = checkVersionSync({
     rootVersion: read("package.json"),
     frontendVersion: read("frontend/package.json"),
+    backendVersion,
     tag,
     envPins,
     templatePins: template.components,

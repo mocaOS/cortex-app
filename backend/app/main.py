@@ -803,6 +803,13 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown complete")
 
 
+# The release this build is part of, reported by GET /health. It is the only
+# thing an operator can query to confirm which release is actually running, so
+# it must never drift: scripts/check-version-sync.mjs compares it to the root
+# package.json and fails the release if they disagree. Distinct from the FastAPI
+# `version` below, which is the API contract's version, not the product's.
+CORTEX_VERSION = "1.0.1"
+
 # Interactive docs are disabled in production by default (EXPOSE_API_DOCS=auto)
 # so a directly-exposed backend doesn't leak its full API schema to anonymous
 # callers. Set EXPOSE_API_DOCS=true to force them on.
@@ -1873,7 +1880,7 @@ async def health_check(response: Response):
         status="healthy" if healthy else "degraded",
         neo4j_connected=connected,
         schema_initialized=_schema_initialized,
-        version="1.0.0"
+        version=CORTEX_VERSION
     )
 
 

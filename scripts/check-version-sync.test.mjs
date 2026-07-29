@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkVersionSync, extractEnvValue, imageTag } from "./check-version-sync.mjs";
+import { checkVersionSync, extractEnvValue, imageTag, extractPyVersion } from "./check-version-sync.mjs";
 
 test("passes when root and frontend agree and no tag is given", () => {
   const r = checkVersionSync({ rootVersion: "1.0.0", frontendVersion: "1.0.0", tag: null });
@@ -166,4 +166,36 @@ test("imageTag returns the whole value when there is no colon", () => {
 
 test("imageTag returns null for null input", () => {
   assert.equal(imageTag(null), null);
+});
+
+test("extractPyVersion reads the backend's CORTEX_VERSION constant", () => {
+  assert.equal(extractPyVersion('CORTEX_VERSION = "1.2.3"\n'), "1.2.3");
+  assert.equal(extractPyVersion("CORTEX_VERSION = '1.2.3'\n"), "1.2.3");
+});
+
+test("extractPyVersion ignores an indented or commented assignment", () => {
+  // Only a top-level constant is the release version; a local variable inside a
+  // function, or a commented-out line, must not satisfy the guard.
+  assert.throws(() => extractPyVersion('    CORTEX_VERSION = "9.9.9"\n'), /no top-level CORTEX_VERSION/);
+  assert.throws(() => extractPyVersion('# CORTEX_VERSION = "9.9.9"\n'), /no top-level CORTEX_VERSION/);
+});
+
+test("extractPyVersion throws when the constant is gone, rather than skipping the check", () => {
+  assert.throws(() => extractPyVersion("app = FastAPI()\n"), /no top-level CORTEX_VERSION/);
+});
+
+test("a drifted backend CORTEX_VERSION is reported", () => {
+  const r = checkVersionSync({
+    rootVersion: "1.0.1",
+    frontendVersion: "1.0.1",
+    backendVersion: "1.0.0",
+    tag: null,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.problems.join("\n"), /CORTEX_VERSION is 1\.0\.0 but root package\.json is 1\.0\.1/);
+});
+
+test("an absent backendVersion leaves other callers unaffected", () => {
+  const r = checkVersionSync({ rootVersion: "1.0.1", frontendVersion: "1.0.1", tag: null });
+  assert.equal(r.ok, true);
 });
