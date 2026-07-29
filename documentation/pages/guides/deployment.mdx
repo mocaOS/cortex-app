@@ -9,11 +9,55 @@ This guide covers deploying Cortex to production environments using Docker Compo
 
 - A server with Docker Engine 24+ and the Docker Compose **v2 plugin** (`docker compose version` — `apt install docker.io` does not include it)
 - At least 4GB RAM (8GB+ recommended for production)
-- `git`, `jq`, and `openssl` on the host — the release-stack commands below use all three, and a minimal server image ships none of them
+- `curl` and `tar` for the installer; `git`, `jq`, and `openssl` as well if you follow the manual release-stack path, whose commands use all three (a minimal server image ships none of them)
 - Domain name with DNS configured (for HTTPS)
 - OpenAI API key (or alternative LLM provider)
 
-## Self-host from the release stack (recommended)
+## Install with the installer (recommended)
+
+```bash
+npx @mocaos/cortex
+```
+
+One command brings up the whole stack — Cortex, Cortex Chat, Neo4j, a nightly backup sidecar, and Caddy for automatic HTTPS if you deploy on a domain — from prebuilt, version-pinned images. Nothing to clone, nothing to build, no Compose file to edit.
+
+It runs in this order, and stops at the first thing that would waste your time:
+
+1. **Environment preflight** — Docker daemon, Compose v2, architecture, free disk, RAM, and the ports it is about to bind. The fatal ones stop the install with a plain reason.
+2. **Live credential validation** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.7 GB pull. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
+3. **Interactive configuration** — localhost or a public domain, your provider and models (embeddings may come from a different provider), your admin identity, and secrets, which are generated for you unless you'd rather set them.
+4. **Pull, start, verify** — writes `.env` at mode `0600`, fetches that release's Compose files, pulls the pinned images, and waits for every service to report healthy before printing your login.
+
+It also owns the instance afterwards, so you rarely touch Compose directly:
+
+```bash
+npx @mocaos/cortex status     # service state, health, URLs
+npx @mocaos/cortex doctor     # one pasteable diagnostic block
+npx @mocaos/cortex backup     # verified backup now
+npx @mocaos/cortex update     # move to the latest tested stack
+npx @mocaos/cortex logs       # follow logs
+```
+
+`start`, `stop`, `restart`, `config`, `restore` and `uninstall` round it out. Your data lives in Docker volumes, so `stop` and `uninstall` never touch it — removing volumes needs a confirmation *and* a typed phrase. And if a project name already owns volumes on that machine, the installer stops and offers to rename rather than adopting data that might not be yours.
+
+**Requirements:** Docker with the Compose v2 plugin, plus `curl` and `tar` (both present on macOS and virtually every Linux desktop; Debian's minimal images ship `wget` instead, and preflight names whichever is missing). `npx` brings its own Node, but if one is already on your `PATH` it must be **20.12 or newer**.
+
+### Two `npx` failures worth knowing
+
+Neither message points at its real cause:
+
+- **`could not determine executable to run`** — there is no `install` subcommand. `npx` already means "fetch and run", so `npx install @mocaos/cortex` asks npm to run a package literally named `install`. The command is just `npx @mocaos/cortex`.
+- **`ENOVERSIONS — No versions available for @mocaos/cortex`** — the package is public and fine; npm is hiding it from you. An `.npmrc` with `min-release-age` set (increasingly common after the npm supply-chain compromises of recent months, and worth keeping) filters out every version published inside that window, so a release that is hours old has none left. Override it for the single command rather than disabling the policy:
+
+```bash
+npx --min-release-age=0 @mocaos/cortex
+```
+
+The flag works on any verb, and once the release is older than your window plain `npx @mocaos/cortex` resolves normally. npm has no way to exempt a single package, so it is the flag or the wait.
+
+## Self-host from the release stack (manual)
+
+Everything the installer does, done by hand. Use this if you want to see each step, script it yourself, or manage the stack with existing tooling — the two are kept in sync, so this document also describes the files the installer created.
 
 Since **v1.0.0** you don't have to build Cortex to run it. Each release publishes multi-arch images to GHCR plus a static Compose stack under `selfhost/` that is configured entirely through `.env` — you never edit the Compose files, so updates never conflict with local changes.
 
@@ -81,21 +125,6 @@ docker compose exec backup /backup.sh   # back up first
 docker compose pull
 docker compose up -d
 ```
-
-### Letting the installer do it
-
-`npx @mocaos/cortex` performs everything above for you — the same artifacts, the same pinned versions — plus an environment preflight and live validation of your LLM credentials before anything is written or pulled. It also owns the lifecycle afterwards: `status`, `logs`, `doctor`, `backup`, `restore`, `update`, `uninstall`. The manual steps in this section remain accurate and are kept in sync with it, for when you want to step outside it.
-
-Two `npx` failures are worth knowing, because neither message points at its cause:
-
-- **`could not determine executable to run`** — there is no `install` subcommand. `npx` already means "fetch and run", so `npx install @mocaos/cortex` asks npm to run a package literally named `install`. The command is `npx @mocaos/cortex`.
-- **`ENOVERSIONS — No versions available for @mocaos/cortex`** — the package is public and fine; npm is hiding it. An `.npmrc` with `min-release-age` set (increasingly common after the npm supply-chain compromises of recent months, and worth keeping) filters out every version published inside that window, so a release that is hours old has none left. Override it for the single command rather than disabling the policy:
-
-```bash
-npx --min-release-age=0 @mocaos/cortex
-```
-
-The flag works on any verb, and once the release is older than your window plain `npx @mocaos/cortex` resolves normally. npm has no way to exempt one package, so it is the flag or the wait.
 
 ## Docker Compose Deployment
 
