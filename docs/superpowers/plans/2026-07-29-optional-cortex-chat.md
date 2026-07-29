@@ -16,7 +16,7 @@
 - **Compose interpolates `${VAR:?}` BEFORE it filters profiles.** A required var referenced by the profiled `chat` service still aborts the whole project when the profile is off. `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` must therefore always be written to `.env`. Do not "clean these up".
 - **`CHAT_PORT` is `${CHAT_PORT:-3001}`** in the ports overlay — it has a default, so it is retained purely to make enabling chat later a one-line edit, not because Compose needs it.
 - Default is **off**: `initialValue: false`, and `CORTEX_ENABLE_CHAT` must be exactly `"true"` to enable.
-- Version targets: `cortex-app` 1.0.1 → **1.1.0**; `cortex-installer` 1.1.0 → **1.2.0**; `minInstaller` 1.0.2 → **1.2.0**; `CHAT_OPTIONAL_SINCE = "1.1.0"`.
+- Version targets: `cortex-app` 1.0.1 → **1.1.0**; `cortex-installer` 1.1.0 → **1.2.2** (1.2.0 and 1.2.1 shipped with defects found in review); `minInstaller` 1.0.2 → **1.2.2**; `CHAT_OPTIONAL_SINCE = "1.1.0"`.
 - Never write a shell script under `cortex-app/scripts/` — `.gitignore` has `/scripts/*` with only `!/scripts/*.mjs` negated, so a `.sh` there is silently untracked.
 - Installer tests: `npm test` (which typechecks first). cortex-app script tests: `node --test scripts/*.test.mjs`.
 - Do not touch `status`, `doctor`, `formatStatusTable` or `uninstall`. They are driven by `docker compose ps` output and volume prefixes, so an absent chat service already produces the right result.
@@ -990,7 +990,7 @@ In `renderEnv`, in the `section("Mode")` block, after the `COMPOSE_PROJECT_NAME`
 ```ts
   if (cfg.chat) {
     L.push("# Cortex Chat is installed. Remove this line and run `npx @mocaos/cortex restart`");
-    L.push("# to drop it (installer >= 1.2.0: `down` names the chat profile so it really does");
+    L.push("# to drop it (installer >= 1.2.2: `down` names the chat profile so it really does");
     L.push("# remove the container — plain `compose down` is profile-filtered and does not).");
     put("COMPOSE_PROFILES", "chat");
   } else {
@@ -1750,7 +1750,7 @@ curl -s https://registry.npmjs.org/@mocaos%2fcortex \
   | python3 -c 'import json,sys;print("latest:",json.load(sys.stdin)["dist-tags"]["latest"])'
 ```
 
-Expected: Release `completed/success`, `latest: 1.2.0`. The registry can lag a minute; retry rather than assuming failure. Note that `npx @mocaos/cortex` will not resolve a release this fresh on a machine with `min-release-age` set — use `npx --min-release-age=0 @mocaos/cortex@1.2.0` to smoke-test it.
+Expected: Release `completed/success`, `latest: 1.2.0`. The registry can lag a minute; retry rather than assuming failure. Note that `npx @mocaos/cortex` will not resolve a release this fresh on a machine with `min-release-age` set — use `npx --min-release-age=0 @mocaos/cortex@1.2.2` to smoke-test it.
 
 ---
 
@@ -1771,12 +1771,15 @@ Expected: Release `completed/success`, `latest: 1.2.0`. The registry can lag a m
 
 - [ ] **Step 1: Raise minInstaller**
 
-In `selfhost/stack.template.json`, set `"minInstaller": "1.2.0"` and extend the `_comment` with:
+In `selfhost/stack.template.json`, set `"minInstaller": "1.2.2"` and extend the `_comment` with:
 
 ```
-1.2.0 is required because the chat service moved behind a Compose profile: an
-older installer never writes COMPOSE_PROFILES, so it would install a stack with
-chat silently missing and then wait for it to become healthy until it timed out.
+1.2.2 is required because the chat service moved behind a Compose profile. An
+older installer never writes COMPOSE_PROFILES at all, so it would install this
+stack with chat silently missing and then wait for it to become healthy until it
+timed out. 1.2.0 and 1.2.1 are excluded too, for defects found in review: 1.2.0
+silently re-enables a hand-disabled chat on the next update, and 1.2.1 hangs for
+the full health timeout after the documented disable step.
 ```
 
 - [ ] **Step 2: Correct the handbook**
@@ -1793,7 +1796,7 @@ In `handbook/26-self-hosting.md`:
 
 Set or comment out `COMPOSE_PROFILES=chat` in `.env` and run `npx @mocaos/cortex restart`. In localhost mode that's the whole change — the chat port and encryption key are written either way, precisely so this is one line. In domain mode you also need `CHAT_DOMAIN`, `CHAT_BASE_URL`, the chat origin added to `CORS_ALLOWED_ORIGINS`, and `cp Caddyfile.chat.template Caddyfile`.
 
-Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. Turning it off needs the container actually removed, which `npx @mocaos/cortex restart` does from installer 1.2.0 on. That took a deliberate fix: Compose filters by profile on the way *down* as well as up, so a plain `docker compose down` issued with chat already switched off leaves the running container untouched — and `--remove-orphans` does not help either, because a profile-gated service is still *defined*, merely inactive. The installer therefore names the profile when it tears down, so `down` addresses every container the project owns. If you drive Compose yourself, use `docker compose stop chat && docker compose rm -f chat`.
+Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. Turning it off needs the container actually removed, which `npx @mocaos/cortex restart` does from installer 1.2.2 on. That took a deliberate fix: Compose filters by profile on the way *down* as well as up, so a plain `docker compose down` issued with chat already switched off leaves the running container untouched — and `--remove-orphans` does not help either, because a profile-gated service is still *defined*, merely inactive. The installer therefore names the profile when it tears down, so `down` addresses every container the project owns. If you drive Compose yourself, use `docker compose stop chat && docker compose rm -f chat`.
 ```
 
 - [ ] **Step 3: Correct the deployment guide**
@@ -1837,7 +1840,7 @@ In `README.md`, in the Quick Start `### Install (recommended)` paragraph, add a 
 - **Off by default.** The installer asks whether to include Cortex Chat and defaults to no. Nothing in Cortex references it, so a knowledge base no longer arrives with a second web app attached. `--yes` opts in with `CORTEX_ENABLE_CHAT=true`.
 - **One line to change your mind.** The chat service sits behind a Compose profile, so `COMPOSE_PROFILES=chat` in `.env` plus a restart is the whole switch in localhost mode — the chat port and encryption key are written either way for exactly this reason. Domain mode additionally needs a chat domain and the `Caddyfile.chat.template` variant, because a Caddy site block with an unset address makes Caddy refuse to load at all.
 - **Existing installs keep their chat.** An install that predates the option was running chat, so `update` treats it as enabled and writes the profile line for you. `minInstaller` rises to 1.2.0 so an older installer cannot apply this stack and silently drop the service.
-- Requires installer **1.2.0**: `npx @mocaos/cortex`.
+- Requires installer **1.2.2**: `npx @mocaos/cortex`.
 ```
 
 - [ ] **Step 6: Note the mechanism for maintainers**
@@ -1916,7 +1919,7 @@ CORTEX_ADMIN_EMAIL=qa@example.invalid \
 CORTEX_OPENAI_API_KEY="$OPENAI_API_KEY" CORTEX_OPENAI_API_BASE="$OPENAI_API_BASE" \
 CORTEX_OPENAI_MODEL=openai/gpt-4o-mini CORTEX_EMBEDDING_MODEL=text-embedding-3-small \
 CORTEX_EMBEDDING_DIMENSION=1536 CORTEX_PROJECT_NAME=cortex-chatoff \
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/chatoff/cortex --yes --no-color install
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/chatoff/cortex --yes --no-color install
 ```
 
 Then:
@@ -1938,7 +1941,7 @@ The install must reach "Cortex is running" without a 300-second health stall, an
 ```bash
 cd /tmp/chatoff/cortex
 printf 'COMPOSE_PROFILES=chat\n' >> .env
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/chatoff/cortex restart
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/chatoff/cortex restart
 docker compose ps --format '{{.Service}}' | sort | tr '\n' ' '   # expect chat present
 curl -s -o /dev/null -w 'chat %{http_code}\n' http://localhost:3001   # expect 200 or 307
 ```
@@ -1958,7 +1961,7 @@ container is genuinely gone, not merely stopped:
 cd /tmp/chatoff/cortex
 # Comment the profile line back out, exactly as the docs instruct.
 perl -pi -e 's/^COMPOSE_PROFILES=chat$/# COMPOSE_PROFILES=chat/' .env
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/chatoff/cortex restart
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/chatoff/cortex restart
 docker compose ps -a --format '{{.Service}}' | sort | tr '\n' ' '
 ```
 
@@ -1970,7 +1973,7 @@ containers, so a merely-stopped chat would still show. If `chat` appears, the
 
 ```bash
 cd /tmp/chatoff/cortex
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/chatoff/cortex uninstall < /dev/null
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/chatoff/cortex uninstall < /dev/null
 docker volume ls --format '{{.Name}}' | grep '^cortex-chatoff_' | xargs -r -n1 docker volume rm
 docker volume ls --format '{{.Name}}' | grep -c '^cortex_'   # must still be 9 — never remove these
 cd /tmp && rm -rf chatoff
@@ -2009,7 +2012,7 @@ python3 -c "import json;print('chat field:',json.load(open('cortex.json')).get('
 Then update with the new installer:
 
 ```bash
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/mig/cortex --yes update
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/mig/cortex --yes update
 docker compose ps --format '{{.Service}}' | grep -c '^chat$'   # MUST still be 1
 grep '^COMPOSE_PROFILES' .env                                  # expect COMPOSE_PROFILES=chat
 python3 -c "import json;d=json.load(open('cortex.json'));print('stack',d['stack'],'chat',d['chat'])"
@@ -2022,7 +2025,7 @@ Expected: chat still running, `COMPOSE_PROFILES=chat` now present, state `stack 
 
 ```bash
 cd /tmp/mig/cortex
-npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/mig/cortex uninstall < /dev/null
+npx --min-release-age=0 @mocaos/cortex@1.2.2 --dir /tmp/mig/cortex uninstall < /dev/null
 docker volume ls --format '{{.Name}}' | grep '^cortex-mig_' | xargs -r -n1 docker volume rm
 docker volume ls --format '{{.Name}}' | grep '^cortex_' | sort   # expect the same 9 as before
 cd /tmp && rm -rf mig
@@ -2038,6 +2041,6 @@ Summarise: services present in each of the four combinations, whether the chat-o
 
 **The one thing most likely to go wrong.** Removing chat's `${VAR:?}` guards, or stopping `.env` from setting `CORTEX_CHAT_IMAGE`, looks like the obvious tidy-up and breaks every chat-off install with `error while interpolating services.chat.image`. Compose interpolates before it filters profiles. `selfhost/verify-contract.sh` catches it; run it after any compose edit.
 
-**Task order matters in two places.** Task 10 (installer 1.2.0) must land before Task 11, because Task 11 sets `minInstaller` to the version Task 10 publishes. And Task 12's migration check needs both releases live.
+**Task order matters in two places.** Task 10 (installer 1.2.2) must land before Task 11, because Task 11 sets `minInstaller` to the version Task 10 publishes. And Task 12's migration check needs both releases live.
 
 **Domain mode cannot be fully verified here.** `verify-contract.sh` and `caddy validate` cover config correctness; certificate issuance needs a public A record. Do not claim domain mode is tested end to end.
