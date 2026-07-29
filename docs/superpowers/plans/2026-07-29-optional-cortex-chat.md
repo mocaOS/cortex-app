@@ -563,10 +563,20 @@ to `CORS_ALLOWED_ORIGINS`, and use the other Caddy template:
 cp Caddyfile.chat.template Caddyfile
 ```
 
-To turn chat off again, remove the `COMPOSE_PROFILES` line and run
-`docker compose up -d --remove-orphans` — without `--remove-orphans` the
-already-running chat container is left behind. Its data stays in the
-`chat_data` volume either way.
+To turn chat off again, remove the `COMPOSE_PROFILES` line, then stop and
+remove the container explicitly:
+
+```bash
+docker compose stop chat && docker compose rm -f chat
+```
+
+`--remove-orphans` does **not** do this. It removes containers for services no
+longer *defined* in the Compose file, and a profile-gated service is still
+defined — merely inactive. (`npx @mocaos/cortex restart` does drop it, because
+it runs `docker compose down` first, which removes every container; the
+following `up` then recreates only what the active profiles select.)
+
+Chat's data stays in the `chat_data` volume either way.
 
 `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` stay set even with chat off:
 Compose interpolates variables before it filters profiles, so an unset value
@@ -604,8 +614,9 @@ extras spelled out, and both CORTEX_CHAT_IMAGE and CHAT_APP_ENCRYPTION_KEY
 now explain why they stay set with chat off.
 
 The README gains a Cortex Chat section covering both directions, including
-that turning chat back off needs --remove-orphans or the running container
-is left behind."
+that turning chat back off needs the container stopped and removed by name:
+--remove-orphans does not touch it, because a profile-gated service is still
+defined in the file and so is never an orphan."
 ```
 
 ---
@@ -978,7 +989,8 @@ In `renderEnv`, in the `section("Mode")` block, after the `COMPOSE_PROJECT_NAME`
 
 ```ts
   if (cfg.chat) {
-    L.push("# Cortex Chat is installed. Remove this line and re-run `up -d --remove-orphans` to drop it.");
+    L.push("# Cortex Chat is installed. Remove this line and run `npx @mocaos/cortex restart`");
+    L.push("# to drop it — restart runs `compose down` first, which is what removes the container.");
     put("COMPOSE_PROFILES", "chat");
   } else {
     L.push(
@@ -1726,7 +1738,7 @@ In `handbook/26-self-hosting.md`:
 
 Set or comment out `COMPOSE_PROFILES=chat` in `.env` and run `npx @mocaos/cortex restart`. In localhost mode that's the whole change — the chat port and encryption key are written either way, precisely so this is one line. In domain mode you also need `CHAT_DOMAIN`, `CHAT_BASE_URL`, the chat origin added to `CORS_ALLOWED_ORIGINS`, and `cp Caddyfile.chat.template Caddyfile`.
 
-Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. When turning it off, `docker compose up -d --remove-orphans` (which `restart` does for you) is what actually removes the container.
+Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. Turning it off needs the container removed, which `npx @mocaos/cortex restart` does for you — it runs `docker compose down` first, so the following `up` recreates only the services the active profiles select. If you drive Compose yourself, `docker compose stop chat && docker compose rm -f chat`; `--remove-orphans` will not do it, because a profile-gated service is still defined in the file and therefore never an orphan.
 ```
 
 - [ ] **Step 3: Correct the deployment guide**
