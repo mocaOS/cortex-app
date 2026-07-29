@@ -13,15 +13,26 @@ services:
       - "443:443/udp"
     environment:
       - APP_DOMAIN=${APP_DOMAIN:?APP_DOMAIN is required in domain mode}
-      - CHAT_DOMAIN=${CHAT_DOMAIN:?CHAT_DOMAIN is required in domain mode}
+      # Not `:?` — chat is optional, and with it off there is no chat domain to
+      # require. The app-only Caddyfile never references this, so it is simply
+      # unused then. Losing the Compose-level error is deliberate: Compose
+      # cannot express "required only when a profile is active", and the
+      # installer always writes it when chat is on.
+      - CHAT_DOMAIN=${CHAT_DOMAIN:-}
       - ACME_EMAIL=${ACME_EMAIL:?ACME_EMAIL is required in domain mode}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - frontend
-      - chat
+      frontend:
+        condition: service_started
+      # required: false — chat may be excluded by its profile. The short list
+      # form makes Compose reject the whole project with "depends on undefined
+      # service chat" when that happens.
+      chat:
+        condition: service_started
+        required: false
 
 volumes:
   caddy_data:

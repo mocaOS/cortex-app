@@ -120,6 +120,16 @@ services:
 
   chat:
     image: ${CORTEX_CHAT_IMAGE:?CORTEX_CHAT_IMAGE is required}
+    # Cortex Chat is optional and OFF by default: it is a separate front end,
+    # and nothing in the backend or frontend references it. `COMPOSE_PROFILES=chat`
+    # in .env is the entire switch.
+    #
+    # NOTE: this does NOT stop Compose interpolating the variables below.
+    # Interpolation runs before profile filtering, so CORTEX_CHAT_IMAGE and
+    # CHAT_APP_ENCRYPTION_KEY must still be set in .env even with chat off —
+    # `${CORTEX_CHAT_IMAGE:?}` aborts the whole project otherwise. The installer
+    # always writes both for exactly this reason.
+    profiles: ["chat"]
     environment:
       - CORTEX_API_URL=http://backend:8000
       # Chat reuses the Cortex admin identity so one login works in both apps.
