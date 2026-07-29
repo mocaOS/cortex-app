@@ -36,6 +36,9 @@ ENDPOINT_CATEGORIES = {
     # Search endpoints
     "/api/search": "search",
     "/api/graph/search": "search",
+
+    # Raw LLM completion passthrough (admin-gated)
+    "/api/llm": "llm",
     
     # Upload/Document management
     "/api/upload": "upload",

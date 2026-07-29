@@ -468,6 +468,17 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 
 ---
 
+### LLM Completions
+
+#### `POST /api/llm/completions`
+**Description**: Raw chat completion on the instance's primary model — no retrieval, no prompt security, the caller owns the full prompt. Built for trusted first-party services (e.g. cortex-chat's personality generator) so operators keep one model configuration. Admin-gated precisely because prompt security is bypassed.
+**Authentication**: `require_admin`
+**Request Body**: `LLMCompletionRequest` — `{messages: [{role: system|user|assistant, content}] (1–50), temperature? (0–2), max_tokens? (≤16000), stream: bool = true}`
+**Response**: streaming (default) — OpenAI-compatible chat chunks as SSE `data:` frames terminated by `data: [DONE]`, with heartbeat comments and a terminal `event: shutdown` on restart; errors stream as sanitized `data: {"error": ...}` frames. Non-streaming — `{"content": str, "model": str}`.
+**Quota/metering**: gated by `MAX_QUERIES_PER_MONTH` (429 + Retry-After when exhausted); completions are unit-metered and Langfuse-traced via the client factory like every other completion. Subject to `RATE_LIMIT_QPM`.
+
+---
+
 ### System Configuration
 
 #### `GET /api/admin/config`

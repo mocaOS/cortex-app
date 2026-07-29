@@ -13,6 +13,29 @@ class ProcessingStatus(str, Enum):
 
 
 # =============================================================================
+# LLM Completion Models — raw completion passthrough (admin-gated)
+# =============================================================================
+
+class LLMCompletionMessage(BaseModel):
+    """One chat message for the raw completion endpoint."""
+    role: str = Field(..., pattern="^(system|user|assistant)$")
+    content: str = Field(..., max_length=200_000)
+
+
+class LLMCompletionRequest(BaseModel):
+    """Request for POST /api/llm/completions (admin-only).
+
+    A raw chat completion on the instance's primary model — no retrieval, no
+    prompt security, the caller owns the full prompt. Built for trusted
+    first-party services (e.g. cortex-chat's personality generator).
+    """
+    messages: List[LLMCompletionMessage] = Field(..., min_length=1, max_length=50)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=16_000)
+    stream: bool = True
+
+
+# =============================================================================
 # GraphRAG Models - Entity and Relationship Extraction
 # =============================================================================
 

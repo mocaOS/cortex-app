@@ -58,6 +58,8 @@ from app.models import (
     CustomInputCreate,
     CustomInputResponse,
     CustomInputType,
+    # LLM completion models
+    LLMCompletionRequest,
     # API Key models
     APIKeyPermission,
     CollectionScope,
@@ -306,6 +308,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global _api_executor
     settings = get_settings()
+
+    # A previous in-process shutdown (TestClient teardown, embedded reload)
+    # leaves the module-level event set — every SSE stream would then emit a
+    # terminal `event: shutdown` immediately. Real restarts recreate the
+    # module, so this only matters for in-process restarts, but there it
+    # silently kills all streaming.
+    SHUTTING_DOWN.clear()
 
     # Dedicated thread pool for API endpoint handlers (asyncio.to_thread).
     # Kept separate from the document processing executor so blocking DB
@@ -1011,6 +1020,87 @@ async def enforce_processing_quota() -> None:
             f"(max: {settings.max_queries_per_month} LLM completions). "
             f"Document processing is paused until next month or a plan upgrade."
         )
+
+
+# =============================================================================
+# LLM Completions — raw completion passthrough (admin-gated)
+# =============================================================================
+
+@app.post("/api/llm/completions")
+async def llm_completions(
+    request_body: LLMCompletionRequest,
+    _auth: AuthResult = Depends(require_admin),
+    _rate: None = Depends(enforce_rate_limit),
+):
+    """Raw chat completion on the instance's primary model (admin-only).
+
+    Bypasses the RAG pipeline entirely — no retrieval, no prompt security, no
+    sources; the caller owns the full prompt. Built for trusted first-party
+    services (e.g. cortex-chat's personality generator) so operators keep ONE
+    model configuration; the app-facing variant on the roadmap can extend this
+    with app-token auth later (see .claude/domain/apps.md). Admin-gated
+    precisely BECAUSE prompt security is bypassed: minted read/manage keys and
+    monetized public keys must never reach an unfiltered completion surface.
+
+    Metering/tracing come from the client factory (`make_async_openai_client`
+    wraps `completions.create` with `usage_meter.record_completion()` +
+    Langfuse), so completions here draw from MAX_QUERIES_PER_MONTH like every
+    other completion. NEVER close the factory's client — it's cached
+    backend-wide (closing poisons ask too).
+
+    Streaming responses are OpenAI-compatible chunk frames terminated by
+    `data: [DONE]`, wrapped in the SSE heartbeat (`: ping` comments, terminal
+    `event: shutdown` on restart). Errors stream as `data: {"error": ...}`
+    frames, sanitized via sse_error_frame.
+    """
+    await enforce_query_quota()
+
+    config = get_llm_config()
+    client = make_async_openai_client(api_key=config.api_key, base_url=config.base_url)
+    params = build_chat_params(
+        config.model,
+        max_tokens=request_body.max_tokens or 4000,
+        temperature=request_body.temperature,
+    )
+    messages = [{"role": m.role, "content": m.content} for m in request_body.messages]
+
+    if not request_body.stream:
+        try:
+            completion = await client.chat.completions.create(
+                model=config.model, messages=messages, **params
+            )
+        except Exception as e:
+            logger.error(f"LLM completion failed: {e}")
+            raise HTTPException(status_code=502, detail="LLM completion failed")
+        return {
+            "content": (completion.choices[0].message.content or "") if completion.choices else "",
+            "model": config.model,
+        }
+
+    async def generate():
+        try:
+            stream = await client.chat.completions.create(
+                model=config.model,
+                messages=messages,
+                stream=True,
+                **stream_usage_kwargs(),
+                **params,
+            )
+            async for chunk in stream:
+                yield f"data: {chunk.model_dump_json()}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"LLM completion stream failed: {e}", exc_info=True)
+            yield sse_error_frame(e, context="completion")
+
+    return StreamingResponse(
+        with_sse_heartbeat(generate()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # =============================================================================
