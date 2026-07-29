@@ -1,6 +1,6 @@
 # Chapter 26: Self-Hosting
 
-The [Getting Started](03-getting-started.md) chapter builds Cortex from source — the right path for development, or for tracking `main` directly. **This chapter covers the other path**: running Cortex and Cortex Chat together from prebuilt, versioned images, for anyone who wants a production instance without cloning a repository or building anything.
+The [Getting Started](03-getting-started.md) chapter builds Cortex from source — the right path for development, or for tracking `main` directly. **This chapter covers the other path**: running Cortex — and, if you want it, Cortex Chat — from prebuilt, versioned images, for anyone who wants a production instance without cloning a repository or building anything.
 
 Two ways to get there:
 
@@ -16,7 +16,7 @@ Both produce the identical stack: Cortex, Neo4j, a nightly backup sidecar, optio
 - **~20 GB free disk, ~8 GB RAM**, `linux/amd64` or `linux/arm64`.
 - **An OpenAI-compatible API key** — OpenAI, OpenRouter, Venice, Groq, a local Ollama, or any other endpoint that implements `/v1/chat/completions`. Embeddings need `/v1/embeddings` too, but not necessarily from the same place: plenty of providers serve one and not the other (Groq has no embedding endpoint at all), so the installer lets you point embeddings at a second provider.
 
-Images pull about **1.7 GB total**: the backend is the largest at ~1.2 GB, Neo4j is ~340 MB, and the frontend and chat images are ~70–75 MB each. Public-domain mode also pulls Caddy (~23 MB). None of this is downloaded until your LLM credentials have already been verified — see below.
+Images pull about **1.6 GB total** without Cortex Chat: the backend is the largest at ~1.2 GB, Neo4j is ~340 MB, and the frontend is ~70–75 MB. Installing Cortex Chat pulls one more ~70–75 MB image; public-domain mode also pulls Caddy (~23 MB). None of this is downloaded until your LLM credentials have already been verified — see below.
 
 ## Installing
 
@@ -79,7 +79,7 @@ Chat's data lives in the `chat_data` volume and survives being turned off, so th
 | | Localhost | Public domain |
 |---|---|---|
 | Cortex | `http://localhost:3000` | `https://<your app domain>` |
-| Cortex Chat | `http://localhost:3001` | `https://<your chat domain>` |
+| Cortex Chat (if installed) | `http://localhost:3001` | `https://<your chat domain>` |
 | Backend API | `http://localhost:8000` | proxied through the frontend at `/api/...` |
 | Neo4j Browser | `http://localhost:7474` | not published |
 | TLS | none — ports are bound to `127.0.0.1` only | automatic, via Caddy |
@@ -88,7 +88,7 @@ Public-domain mode needs **both** A records pointing at the host *before* the st
 
 ## Logging in
 
-Cortex and Cortex Chat share one identity: the admin email and password you set during install. Chat mints its own scoped backend key from the admin API key behind the scenes, so the same credentials that open `http://localhost:3000` also open `http://localhost:3001` — there's nothing separate to configure.
+If you installed Cortex Chat, it shares Cortex's identity: the admin email and password you set during install. Chat mints its own scoped backend key from the admin API key behind the scenes, so the same credentials that open `http://localhost:3000` also open `http://localhost:3001` — there's nothing separate to configure.
 
 ## Day-to-day commands
 

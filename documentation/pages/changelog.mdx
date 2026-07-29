@@ -9,7 +9,7 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## July 29, 2026
 
-Cortex can now be installed and operated without cloning anything: `npx @mocaos/cortex` brings up the full stack — Cortex, Cortex Chat, Neo4j, a nightly backup sidecar, and Caddy for automatic HTTPS in domain mode — from prebuilt, version-pinned images, and owns the lifecycle afterwards. This entry also carries a **data-loss fix in graph restore that everyone self-hosting should read**: restoring a backup wiped the graph and then failed to replay it, on every instance that had ever been started. Restore was verified end to end against a live stack for the first time as part of this work, which is how the bug surfaced.
+Cortex can now be installed and operated without cloning anything: `npx @mocaos/cortex` brings up the full stack — Cortex, Neo4j, a nightly backup sidecar, optionally Cortex Chat, and Caddy for automatic HTTPS in domain mode — from prebuilt, version-pinned images, and owns the lifecycle afterwards. This entry also carries a **data-loss fix in graph restore that everyone self-hosting should read**: restoring a backup wiped the graph and then failed to replay it, on every instance that had ever been started. Restore was verified end to end against a live stack for the first time as part of this work, which is how the bug surfaced.
 
 ### Graph restore no longer destroys the graph it was restoring
 
