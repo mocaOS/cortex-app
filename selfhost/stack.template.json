@@ -1,9 +1,9 @@
 {
-  "_comment": "Pins for components NOT built from this repo. backend and frontend always track this repo's root package.json version and are injected by scripts/build-stack-json.mjs. Bump `chat` here when a new cortex-chat release should become part of the stack — the image must already exist on GHCR before this repo is tagged.",
+  "_comment": "Pins for components NOT built from this repo. backend and frontend always track this repo's root package.json version and are injected by scripts/build-stack-json.mjs. Bump `chat` here when a new cortex-chat release should become part of the stack — the image must already exist on GHCR before this repo is tagged. Raise `minInstaller` whenever a stack ships a fix that only takes effect with newer installer behaviour: 1.0.2 is required because the corrected ops/backup/restore.sh only reaches the sidecar container on an installer that passes --build to `compose up`.",
   "components": {
     "chat": "1.0.0",
     "neo4j": "5.26-community",
     "caddy": "2-alpine"
   },
-  "minInstaller": "1.0.0"
+  "minInstaller": "1.0.2"
 }

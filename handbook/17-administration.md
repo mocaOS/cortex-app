@@ -227,7 +227,13 @@ curl http://localhost:8000/api/stats -H "X-API-Key: your-admin-key"
 
 `restore.sh` verifies the backup's checksums before touching anything and
 refuses incomplete backups. `RESTORE_WIPE=yes` is required because step 2
-deletes the entire existing graph first.
+deletes the entire existing graph first — nodes, relationships, and the
+constraints and indexes over them, all of which the replay recreates. Vector
+indexes are the one exception: the logical export doesn't carry them, the
+backend rebuilds them at startup, and dropping them would force every chunk to
+be re-embedded. If the replay itself fails, the script says so explicitly and
+tells you the graph is empty; the backup is untouched, so re-running the same
+command after fixing the cause completes the restore.
 
 ### Manual physical dump (alternative, requires downtime)
 

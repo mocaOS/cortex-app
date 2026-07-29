@@ -429,7 +429,10 @@ docker compose exec backup ls /backups
 docker compose stop backend
 
 # 3. Restore the graph. RESTORE_WIPE=yes is required: it DETACH DELETEs the
-#    whole graph before replaying the chosen export.
+#    whole graph and drops its constraints and indexes before replaying the
+#    chosen export, which recreates them. Vector indexes are left in place —
+#    the export doesn't carry them, the backend rebuilds them at startup, and
+#    dropping them would force a pointless re-embed of every chunk.
 docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 
 # 4. Restore the file volumes. The sidecar mounts them read-only, so this runs

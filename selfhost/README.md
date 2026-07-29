@@ -135,8 +135,11 @@ docker compose exec backup ls /backups
 #    underneath it.
 docker compose stop backend
 
-# 3. Restore the graph. RESTORE_WIPE=yes is required: this DETACH DELETEs
-#    the whole graph before replaying the chosen backup's export.
+# 3. Restore the graph. RESTORE_WIPE=yes is required: this DETACH DELETEs the
+#    whole graph — and drops its constraints and indexes, which the replay
+#    recreates — before replaying the chosen backup's export. Vector indexes
+#    are left in place; the export doesn't carry them and the backend rebuilds
+#    them at startup, so dropping them would force a pointless re-embed.
 docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 
 # 4. Restore the file volumes (uploads, custom_inputs, chat, skills, apps).

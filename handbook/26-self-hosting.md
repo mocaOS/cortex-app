@@ -95,7 +95,7 @@ A backup sidecar runs nightly: a verified APOC graph export plus a tar of upload
 
 1. List available backups and pick a timestamp — `cortex restore` prompts you with the last 20 if you don't pass one.
 2. Stop the backend, since it's about to have its graph wiped and replayed underneath it.
-3. Restore the graph (`RESTORE_WIPE=yes`, which `DETACH DELETE`s the whole graph before replaying the chosen export).
+3. Restore the graph (`RESTORE_WIPE=yes`, which `DETACH DELETE`s the whole graph and drops its constraints and indexes — the replay recreates them — before replaying the chosen export). Vector indexes are deliberately left alone: the export doesn't carry them, the backend rebuilds them at startup, and dropping them would force every chunk to be re-embedded.
 4. Restore the file volumes (uploads, custom inputs, chat, skills, apps) — this runs in a throwaway container instead of the sidecar, for the read-only reason above.
 5. Start the backend, so it recreates every constraint and vector index the logical export doesn't carry.
 6. Verify document and entity counts on `GET /api/stats`.
