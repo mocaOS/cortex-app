@@ -42,15 +42,10 @@ npx @mocaos/cortex
 
 Interactive installer — checks your environment, validates your LLM
 credentials before writing anything, then pulls pinned images and starts the
-stack. Docker with Compose v2 is the only prerequisite.
-See [handbook/26-self-hosting.md](handbook/26-self-hosting.md), or
-[selfhost/README.md](selfhost/README.md) for the manual path.
-
-There's no `install` subcommand — `npx` already fetches and runs. And if npm
-answers `ENOVERSIONS`, an `.npmrc` with `min-release-age` is hiding the fresh
-release; use `npx --min-release-age=0 @mocaos/cortex` for that one command
-rather than dropping the policy. Both are covered in
-[the handbook](handbook/26-self-hosting.md#when-npx-itself-wont-run-it).
+stack. Docker with Compose v2 is the only prerequisite. See
+[Quick Start](#quick-start) below for what it does and the two `npx` gotchas,
+[handbook/26-self-hosting.md](handbook/26-self-hosting.md) for the full
+walkthrough, or [selfhost/README.md](selfhost/README.md) for the manual path.
 
 ## The Cortex Ecosystem
 
@@ -140,10 +135,24 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 
 ### Prerequisites
 
-- Docker & Docker Compose
-- An LLM API key (any OpenAI-compatible provider — Venice, OpenRouter, OpenAI, self-hosted vLLM/Ollama)
+- Docker with the Compose **v2 plugin** (`docker compose version` — `apt install docker.io` does not include it)
+- An LLM API key (any OpenAI-compatible provider — Venice, OpenRouter, OpenAI, self-hosted vLLM/Ollama). Embeddings can come from a second provider if yours doesn't serve them.
 
-### Setup
+### Install (recommended)
+
+```bash
+npx @mocaos/cortex
+```
+
+That's the whole thing. The interactive installer runs from prebuilt, version-pinned images — nothing to clone and nothing to build. It checks your environment, then validates your LLM credentials with a real chat completion and a real embedding call **before** it writes anything or pulls a single image, so a wrong key costs you seconds rather than a 1.7 GB download. Then it configures, pulls, starts, and waits for every service to report healthy before printing your login.
+
+It manages the instance afterwards too — `status`, `doctor`, `logs`, `backup`, `restore`, `update`, `start`/`stop`/`restart`, `uninstall` — so you rarely touch Compose directly. Full walkthrough in [handbook/26-self-hosting.md](handbook/26-self-hosting.md).
+
+> There's no `install` subcommand — `npx` already fetches and runs. If npm answers `ENOVERSIONS`, an `.npmrc` with `min-release-age` is hiding the fresh release; use `npx --min-release-age=0 @mocaos/cortex`. Both are explained [in the handbook](handbook/26-self-hosting.md#when-npx-itself-wont-run-it).
+
+### Build from source
+
+For development, for tracking `main`, or when you want to modify the code:
 
 ```bash
 git clone https://github.com/mocaOS/cortex-app.git
@@ -158,11 +167,15 @@ docker compose up -d
 
 `.env.recommended` ships the bench-validated model stack — **Gemma4 26B A4B** as the primary agent model, **Qwen3.6 27B** for knowledge-graph generation and vision, `text-embedding-3-small` embeddings — and leaves everything else on production-tuned code defaults. Set `ENCRYPTION_KEY` so git tokens and skill secrets are encrypted at rest (guidance is in the file). Every other knob is documented in the [Configuration Reference](https://docs.cortex.eco/configuration).
 
+### Either way
+
 | Service | URL |
 |---------|-----|
 | Frontend | http://localhost:3000 |
 | Backend API | http://localhost:8000 |
 | Neo4j Browser | http://localhost:7474 |
+
+The installer prints these when it finishes, and can also put Cortex on a public domain with automatic HTTPS via Caddy instead of localhost.
 
 **Using another provider or your own GPUs?** The [LLM Deployment Templates](https://docs.cortex.eco/llm-templates) have a tested stack for Venice, OpenRouter, and self-hosted setups — including fallback model recommendations and hardware-specific concurrency tuning.
 
