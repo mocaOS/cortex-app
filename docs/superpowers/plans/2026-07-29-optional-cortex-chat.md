@@ -990,7 +990,8 @@ In `renderEnv`, in the `section("Mode")` block, after the `COMPOSE_PROJECT_NAME`
 ```ts
   if (cfg.chat) {
     L.push("# Cortex Chat is installed. Remove this line and run `npx @mocaos/cortex restart`");
-    L.push("# to drop it — restart runs `compose down` first, which is what removes the container.");
+    L.push("# to drop it (installer >= 1.2.0: `down` names the chat profile so it really does");
+    L.push("# remove the container — plain `compose down` is profile-filtered and does not).");
     put("COMPOSE_PROFILES", "chat");
   } else {
     L.push(
@@ -1249,7 +1250,61 @@ value it back-fills:
 
 Import `chatEnabledFor` from `../state.js` in both files.
 
-- [ ] **Step 6: Fix the ports preflight**
+- [ ] **Step 6: Make `down` act on the whole project, not just the active profile**
+
+`docker compose down` is profile-filtered too. Verified live: with the chat
+profile inactive, a running chat container survives `down`, survives
+`down --remove-orphans`, and therefore survives `stop`, `restart` and
+**`uninstall`** — which would leave a container behind after the user asked for
+the install to be removed. Only `down` with the profile active clears it.
+
+In `src/docker.ts`, export the env overlay and use it in `down`:
+
+```ts
+/** Env overlay for `down` — see the comment on `down` for why chat is named. */
+export const DOWN_ENV = { COMPOSE_PROFILES: "chat" } as const;
+
+/**
+ * `COMPOSE_PROFILES=chat` is set unconditionally here, and it is not a bug.
+ *
+ * Compose filters by profile on the way DOWN as well as up, so a `down` issued
+ * while the chat profile is inactive leaves a running chat container untouched —
+ * verified live, and `--remove-orphans` does not help, because a profile-gated
+ * service is still *defined*, merely inactive. That would make `stop` and
+ * `restart` silently incomplete, and `uninstall` leave a container behind after
+ * the user asked for the whole install to be removed.
+ *
+ * Naming the profile here means `down` always addresses every container the
+ * project owns, whatever `.env` currently selects. It is also what makes
+ * turning chat off a `.env` edit plus `restart`, rather than a manual
+ * `docker compose rm`.
+ */
+export async function down(dir: string, volumes = false): Promise<void> {
+  await run(dir, volumes ? ["down", "-v"] : ["down"], DOWN_ENV);
+}
+```
+
+`run()` does not currently take an env overlay. Add one — an optional third
+parameter merged over `process.env` for the child process only — rather than
+mutating `process.env`, which would leak into every later Compose call in this
+process. Read `run`'s existing signature and spawn options first, and keep the
+`cwd: dir` argument it already passes (see the comment on `composeArgs`).
+
+- [ ] **Step 7: Prove the `down` fix with a test**
+
+Append to `test/docker.test.ts` (add `DOWN_ENV` to its existing `../src/docker.js` import):
+
+```ts
+test("down runs with the chat profile so it removes every container the project owns", () => {
+  // Compose filters by profile on the way down too: with chat inactive, a
+  // running chat container survives `down` AND `down --remove-orphans`. Without
+  // this, `uninstall` leaves a container behind after the user asked for the
+  // install to be removed, and turning chat off via `restart` silently fails.
+  assert.equal(DOWN_ENV.COMPOSE_PROFILES, "chat");
+});
+```
+
+- [ ] **Step 8: Fix the ports preflight**
 
 In `src/commands/install.ts`, replace the `portsToCheck` assignment:
 
@@ -1263,7 +1318,7 @@ In `src/commands/install.ts`, replace the `portsToCheck` assignment:
       const portsToCheck = cfg.mode === "domain" ? [80, 443] : localhostPorts;
 ```
 
-- [ ] **Step 7: Fix the closing URL box**
+- [ ] **Step 9: Fix the closing URL box**
 
 In `src/commands/install.ts`, replace the `urls` assignment:
 
@@ -1280,11 +1335,11 @@ In `src/commands/install.ts`, replace the `urls` assignment:
           ];
 ```
 
-- [ ] **Step 8: Persist the choice**
+- [ ] **Step 10: Persist the choice**
 
 Find the `writeState(` call in `src/commands/install.ts` and add `chat: cfg.chat,` to the object it writes, next to `mode`.
 
-- [ ] **Step 9: Run the tests**
+- [ ] **Step 11: Run the tests**
 
 ```bash
 cd /Volumes/WD_BLACK/PROJECTS/CORTEX/cortex-installer
@@ -1293,7 +1348,7 @@ npm test 2>&1 | grep -E "^# (tests|pass|fail)"
 
 Expected: all pass, and `tsc` clean — the typecheck is what proves all three call sites were updated.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 cd /Volumes/WD_BLACK/PROJECTS/CORTEX/cortex-installer
@@ -1738,7 +1793,7 @@ In `handbook/26-self-hosting.md`:
 
 Set or comment out `COMPOSE_PROFILES=chat` in `.env` and run `npx @mocaos/cortex restart`. In localhost mode that's the whole change — the chat port and encryption key are written either way, precisely so this is one line. In domain mode you also need `CHAT_DOMAIN`, `CHAT_BASE_URL`, the chat origin added to `CORS_ALLOWED_ORIGINS`, and `cp Caddyfile.chat.template Caddyfile`.
 
-Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. Turning it off needs the container removed, which `npx @mocaos/cortex restart` does for you — it runs `docker compose down` first, so the following `up` recreates only the services the active profiles select. If you drive Compose yourself, `docker compose stop chat && docker compose rm -f chat`; `--remove-orphans` will not do it, because a profile-gated service is still defined in the file and therefore never an orphan.
+Chat's data lives in the `chat_data` volume and survives being turned off, so this is reversible in both directions. Turning it off needs the container actually removed, which `npx @mocaos/cortex restart` does from installer 1.2.0 on. That took a deliberate fix: Compose filters by profile on the way *down* as well as up, so a plain `docker compose down` issued with chat already switched off leaves the running container untouched — and `--remove-orphans` does not help either, because a profile-gated service is still *defined*, merely inactive. The installer therefore names the profile when it tears down, so `down` addresses every container the project owns. If you drive Compose yourself, use `docker compose stop chat && docker compose rm -f chat`.
 ```
 
 - [ ] **Step 3: Correct the deployment guide**
