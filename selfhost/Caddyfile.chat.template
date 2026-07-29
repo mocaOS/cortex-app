@@ -1,9 +1,7 @@
-# Cortex — Caddy reverse proxy.
+# Cortex — Caddy reverse proxy, with Cortex Chat.
 #
-# This is the app-only config, used when Cortex Chat is not installed (the
-# default). With chat, Caddyfile.chat.template is used instead — a site block
-# for an unset {$CHAT_DOMAIN} does not just warn, it makes Caddy refuse to
-# adapt the whole config, so the two cases need separate files.
+# Used when chat is installed. The app-only equivalent is Caddyfile.template;
+# `npx @mocaos/cortex` copies whichever matches your install to ./Caddyfile.
 #
 # Caddy substitutes {$VAR} from its container environment at load time, so this
 # file is static and needs no rendering.
@@ -16,4 +14,8 @@
 
 {$APP_DOMAIN} {
 	reverse_proxy frontend:3000
+}
+
+{$CHAT_DOMAIN} {
+	reverse_proxy chat:3000
 }
