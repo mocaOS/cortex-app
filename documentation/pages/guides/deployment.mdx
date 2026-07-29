@@ -82,7 +82,20 @@ docker compose pull
 docker compose up -d
 ```
 
-An interactive installer (`npx @mocaos/cortex`) is planned; `selfhost/README.md` in the repo is the authoritative manual runbook it will automate.
+### Letting the installer do it
+
+`npx @mocaos/cortex` performs everything above for you — the same artifacts, the same pinned versions — plus an environment preflight and live validation of your LLM credentials before anything is written or pulled. It also owns the lifecycle afterwards: `status`, `logs`, `doctor`, `backup`, `restore`, `update`, `uninstall`. The manual steps in this section remain accurate and are kept in sync with it, for when you want to step outside it.
+
+Two `npx` failures are worth knowing, because neither message points at its cause:
+
+- **`could not determine executable to run`** — there is no `install` subcommand. `npx` already means "fetch and run", so `npx install @mocaos/cortex` asks npm to run a package literally named `install`. The command is `npx @mocaos/cortex`.
+- **`ENOVERSIONS — No versions available for @mocaos/cortex`** — the package is public and fine; npm is hiding it. An `.npmrc` with `min-release-age` set (increasingly common after the npm supply-chain compromises of recent months, and worth keeping) filters out every version published inside that window, so a release that is hours old has none left. Override it for the single command rather than disabling the policy:
+
+```bash
+npx --min-release-age=0 @mocaos/cortex
+```
+
+The flag works on any verb, and once the release is older than your window plain `npx @mocaos/cortex` resolves normally. npm has no way to exempt one package, so it is the flag or the wait.
 
 ## Docker Compose Deployment
 

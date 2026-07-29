@@ -117,6 +117,18 @@ cortex-app, since `stack.json` pins its version and verifies it is pullable.
 fetches that tag's `selfhost/` + `ops/` from the release tarball, and writes
 only `.env`.
 
+Two things bite when testing a just-published release:
+
+- `npm` config `min-release-age` (a supply-chain cooldown, and a sane thing to
+  have set) hides every version published inside its window, so `npx` answers
+  `ENOVERSIONS — No versions available` for a release that is hours old. Use
+  `npx --min-release-age=0 @mocaos/cortex` to test one; there is no
+  per-package exemption in npm.
+- `ops/backup/*` ships as a **locally built** image, so a change there only
+  reaches an existing install because `up` passes `--build` (installer
+  ≥ 1.0.2). Raise `minInstaller` in `selfhost/stack.template.json` whenever a
+  stack fix depends on newer installer behaviour like that.
+
 Consequences for anyone changing `selfhost/`:
 
 - Adding a `${VAR:?}` to a compose file is a **breaking change for the

@@ -4,8 +4,14 @@ Runs Cortex and Cortex Chat from prebuilt images. Everything is configured
 through `.env`; the Compose files are static release artifacts you never need
 to edit.
 
-> An interactive installer that does all of this for you is coming as
-> `npx @mocaos/cortex`. These are the manual instructions it automates.
+> An interactive installer does all of this for you: `npx @mocaos/cortex`
+> (no `install` subcommand — `npx` already fetches and runs). These are the
+> manual instructions it automates, kept in sync with it.
+>
+> If npm answers `ENOVERSIONS`, an `.npmrc` with `min-release-age` set is
+> filtering out the fresh release; run
+> `npx --min-release-age=0 @mocaos/cortex` for that one command rather than
+> disabling the policy.
 
 ## Requirements
 

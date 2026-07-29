@@ -14,7 +14,7 @@ Both produce the identical stack: Cortex, Cortex Chat, Neo4j, a nightly backup s
 - **Docker with the Compose v2 plugin** (`docker compose version`). On Linux, `apt install docker.io` does **not** include Compose v2 — install Docker's official packages or Docker Desktop instead. This is the only thing you install yourself; `npx` brings its own Node.
 - If you already have a Node on your `PATH`, it needs to be **20.12 or newer**. This floor comes from the installer's prompt library, not from Cortex itself — an older Node, including 18, is rejected by the installer's first check, before anything is written or pulled.
 - **~20 GB free disk, ~8 GB RAM**, `linux/amd64` or `linux/arm64`.
-- **An OpenAI-compatible API key** — OpenAI, OpenRouter, Venice, Groq, a local Ollama, or any other endpoint that implements `/v1/chat/completions` and `/v1/embeddings`.
+- **An OpenAI-compatible API key** — OpenAI, OpenRouter, Venice, Groq, a local Ollama, or any other endpoint that implements `/v1/chat/completions`. Embeddings need `/v1/embeddings` too, but not necessarily from the same place: plenty of providers serve one and not the other (Groq has no embedding endpoint at all), so the installer lets you point embeddings at a second provider.
 
 Images pull about **1.7 GB total**: the backend is the largest at ~1.2 GB, Neo4j is ~340 MB, and the frontend and chat images are ~70–75 MB each. Public-domain mode also pulls Caddy (~23 MB). None of this is downloaded until your LLM credentials have already been verified — see below.
 
@@ -27,12 +27,28 @@ Images pull about **1.7 GB total**: the backend is the largest at ~1.2 GB, Neo4j
 3. **Asks how you'll reach Cortex** — localhost or a public domain — and, in domain mode, resolves both hostnames and warns if either doesn't point at this host yet (Let's Encrypt validates over HTTP, so a domain that can't resolve can't get a certificate).
 4. **Picks a project name**, defaulting to `cortex`. If Docker already has volumes from an earlier project of that name on this machine, the wizard stops and offers **rename** (recommended — leaves the existing data alone), **reuse** (only if you know that data is yours), or **abort**. This matters because Neo4j only applies `NEO4J_AUTH` the first time its data volume is created — silently reusing a project name that already owns a Neo4j volume would write a freshly generated password that Neo4j never adopts, and the backend would then retry the wrong credentials until Neo4j rate-limits it.
 5. **Asks your setup depth** — Quick (one provider, sensible defaults) or Advanced (override the graph-extraction and vision models separately from the main chat model, and optionally configure SMTP for chat password resets).
-6. **Picks a provider and models**, offering the real model list from the endpoint's `/v1/models` when it has one, and free-text entry otherwise.
+6. **Picks a provider and models**, offering the real model list from the endpoint's `/v1/models` when it has one, and free-text entry otherwise. It then asks whether embeddings come from that same provider; if they don't, it collects a second base URL and key, and everything embedding-related — the model list, the probe below, the `.env` it writes — follows that second endpoint. A provider that serves chat but no embeddings is perfectly normal, and the two credentials are always collected as a pair so one vendor's key is never sent to another's endpoint.
 7. **Verifies your LLM credentials with two live calls** — a chat completion and an embedding call — before anything else happens. This is true on every path, interactive or `--yes`: nothing is written to disk and no image is pulled until both probes succeed. A bad key or an unreachable endpoint fails here, not after a multi-minute image pull.
 8. **Records the embedding dimension** the probe reports, and warns you up front: this dimension is baked into the Neo4j vector index on first use, and changing it later requires re-embedding the corpus.
 9. **Collects your admin identity and secrets** — Cortex and Cortex Chat share one identity (see [Logging in](#logging-in)) — generating all five secrets automatically unless you choose to set them yourself.
 10. **Asks one privacy question**: "Send anonymous crash reports to the Cortex maintainers?" (see [Privacy and error reporting](#privacy-and-error-reporting) — it's narrower than it sounds).
 11. **Writes `.env`**, fetches the matching release's Compose files, pulls images, starts the stack, and waits for every service to report healthy before printing your login.
+
+### When `npx` itself won't run it
+
+Two failures happen before the installer gets a chance to start, and neither error message points at the real cause.
+
+**`could not determine executable to run`** — there's no `install` subcommand. `npx` already means "fetch and run", so `npx install @mocaos/cortex` asks npm to run a package literally named `install` (one exists, and it has no executable). The command is just `npx @mocaos/cortex`.
+
+**`ENOVERSIONS — No versions available for @mocaos/cortex`** — the package is public and fine; npm is hiding it from you. If your `.npmrc` sets `min-release-age`, npm filters out every version published inside that window, so a release that's a few hours old has no eligible versions at all. That setting has become common since the npm supply-chain compromises of recent months, and it's worth keeping — a cooldown is real protection against exactly those attacks.
+
+Confirm it with `npm config get min-release-age`, then override it for the single command rather than turning it off globally:
+
+```bash
+npx --min-release-age=0 @mocaos/cortex
+```
+
+The flag works on any verb (`npx --min-release-age=0 @mocaos/cortex status`), and once the release is older than your window, plain `npx @mocaos/cortex` resolves normally. npm currently has no way to exempt one package from the cooldown, so it's the flag or the wait.
 
 ### Non-interactive installs
 

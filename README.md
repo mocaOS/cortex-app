@@ -46,6 +46,12 @@ stack. Docker with Compose v2 is the only prerequisite.
 See [handbook/26-self-hosting.md](handbook/26-self-hosting.md), or
 [selfhost/README.md](selfhost/README.md) for the manual path.
 
+There's no `install` subcommand — `npx` already fetches and runs. And if npm
+answers `ENOVERSIONS`, an `.npmrc` with `min-release-age` is hiding the fresh
+release; use `npx --min-release-age=0 @mocaos/cortex` for that one command
+rather than dropping the policy. Both are covered in
+[the handbook](handbook/26-self-hosting.md#when-npx-itself-wont-run-it).
+
 ## The Cortex Ecosystem
 
 This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on its REST API:
