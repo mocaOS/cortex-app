@@ -20,7 +20,7 @@ That is the entire installation. There is no `install` subcommand — `npx` alre
 
 - **[Docker](https://docs.docker.com/get-docker/) with the Compose v2 plugin** — check with `docker compose version`. On Linux, `apt install docker.io` does *not* include it; use Docker's official packages or Docker Desktop.
 - `curl` and `tar` on the host.
-- **~20 GB free disk, ~8 GB RAM**, `linux/amd64` or `linux/arm64`. Images pull ~1.7 GB in total.
+- **~20 GB free disk, ~8 GB RAM**, `linux/amd64` or `linux/arm64`. Images pull ~1.6 GB in total.
 - An **OpenAI-compatible API key** — OpenAI, OpenRouter, Venice, Groq, a local Ollama, anything that speaks `/v1/chat/completions`. Embeddings need `/v1/embeddings`, but not necessarily from the same provider: Groq has no embedding endpoint at all, so the installer lets you point embeddings somewhere else.
 - `npx` brings its own Node. If one is already on your `PATH` it must be **20.12 or newer**.
 
@@ -29,13 +29,13 @@ That is the entire installation. There is no `install` subcommand — `npx` alre
 It stops at the first thing that would waste your time:
 
 1. **Checks your environment** — Docker daemon, Compose v2, architecture, disk, RAM, and the ports it is about to bind.
-2. **Validates your credentials with two live calls** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.7 GB download. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
+2. **Validates your credentials with two live calls** — a real chat completion and a real embedding call. Nothing is written to disk and no image is pulled until both succeed, so a wrong key costs you seconds instead of a 1.6 GB download. The embedding dimension is measured here rather than assumed, because it gets baked into the Neo4j vector index on first use.
 3. **Asks how you want it set up** — localhost or a public domain (with automatic HTTPS via Caddy), your provider and models, your admin identity, and secrets, which are generated for you unless you would rather set them.
 4. **Pulls, starts, and verifies** — writes `.env` at mode `0600`, fetches that release's Compose files, pulls the pinned images, and waits for every service to report healthy before printing your login.
 
 Then it prints your URLs and credentials, and you can go straight to [First Steps](#first-steps).
 
-The stack it brings up is Cortex, **Cortex Chat**, Neo4j, and a nightly backup sidecar — plus Caddy in domain mode. Cortex and Chat share one identity, so the admin email and password log you into both.
+The stack it brings up is Cortex, Neo4j, a nightly backup sidecar, and optionally Cortex Chat — plus Caddy in domain mode. Cortex and Chat share one identity when chat is installed, so the admin email and password log you into both.
 
 ### Managing the instance
 
