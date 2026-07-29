@@ -58,17 +58,29 @@ Chat is **off by default**. To run it, set this in `.env` and `docker compose up
 COMPOSE_PROFILES=chat
 ```
 
-In domain mode also set `CHAT_DOMAIN` and `CHAT_BASE_URL`, add the chat origin
-to `CORS_ALLOWED_ORIGINS`, and use the other Caddy template:
+In domain mode, `CHAT_DOMAIN` needs its own A record pointing at this host
+before you start Caddy — same as `APP_DOMAIN`, or Let's Encrypt issuance fails.
+Then set `CHAT_DOMAIN` and `CHAT_BASE_URL`, add the chat origin to
+`CORS_ALLOWED_ORIGINS`, and use the other Caddy template:
 
 ```bash
 cp Caddyfile.chat.template Caddyfile
 ```
 
-To turn chat off again, remove the `COMPOSE_PROFILES` line and run
-`docker compose up -d --remove-orphans` — without `--remove-orphans` the
-already-running chat container is left behind. Its data stays in the
-`chat_data` volume either way.
+To turn chat off again, remove the `COMPOSE_PROFILES` line, then stop and
+remove the container explicitly:
+
+```bash
+docker compose stop chat && docker compose rm -f chat
+```
+
+`--remove-orphans` does **not** do this. It removes containers for services no
+longer *defined* in the Compose file, and a profile-gated service is still
+defined — merely inactive. (`npx @mocaos/cortex restart` does drop it, because
+it runs `docker compose down` first, which removes every container; the
+following `up` then recreates only what the active profiles select.)
+
+Chat's data stays in the `chat_data` volume either way.
 
 `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` stay set even with chat off:
 Compose interpolates variables before it filters profiles, so an unset value
@@ -95,14 +107,20 @@ and domain mode leaves it unset so the app defaults to secure. Nothing to set.
 | API | http://localhost:8000 |
 | Neo4j | http://localhost:7474 |
 
-**Public domain** — Caddy with automatic HTTPS. Point both A records at this
-host *first*, or Let's Encrypt issuance fails:
+**Public domain** — Caddy with automatic HTTPS. Point `APP_DOMAIN`'s A record
+at this host *first*, or Let's Encrypt issuance fails:
 
 ```dotenv
 COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
 APP_DOMAIN=cortex.example.com
-CHAT_DOMAIN=chat.example.com
 ACME_EMAIL=you@example.com
+```
+
+With chat on, also add — see Cortex Chat (optional) above for the second A
+record it needs:
+
+```dotenv
+CHAT_DOMAIN=chat.example.com
 CHAT_BASE_URL=https://chat.example.com
 CORS_ALLOWED_ORIGINS=https://cortex.example.com,https://chat.example.com
 ```
