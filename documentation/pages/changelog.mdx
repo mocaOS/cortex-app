@@ -7,6 +7,57 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 30, 2026
+
+Cortex Chat grows from a chat frontend into a collaborative AI workspace. This release adds **personalities** — portable SOUL.md personas, including a generator that researches your knowledge base and writes one for you — **shared projects** where teams converse in the same threads and watch each other's answers stream in live, **voice** in and out, and a broad chat-UX pass (message actions, feedback, pinning, search, exports, deep links). On the Cortex side it ships one new endpoint, `POST /api/llm/completions`, so every LLM call the chat makes — including persona writing — runs through the instance's single model configuration, metered and traced like everything else. All Cortex Chat changes are additive; existing deployments migrate their database automatically on first boot.
+
+### Cortex Chat: personalities (SOUL.md)
+
+Assistant personas layered over the same retrieval engine — each one **is** a portable [SOUL.md](https://soul.md) file (identity, purpose, voice, behavioral directives, boundaries), injected server-side on every turn and never exposed to the browser or stored in chat history.
+
+- **Three tiers** — built-ins ship with the app (Research Analyst, Support Assistant, Sales Companion; admins can remove or restore them, and releases can add more), admins curate global or per-group personalities, and every user keeps up to 20 personal ones.
+- **One-click picker** on the empty chat screen; each personality brings its own starter questions and optional default collection. The choice is fixed per conversation and survives reloads.
+- **Portability is the point** — export any personality as its verbatim `SOUL.md`; import by pasting, uploading, or from a URL. Files signed by soulweaver are **EIP-191 signature-verified** on import and carry a verified-signer badge.
+
+### Cortex Chat: the personality generator
+
+Describe the assistant you need in one paragraph and the app writes the SOUL.md — grounded in what your knowledge base actually contains.
+
+- **Research first, write second.** The generator runs hybrid searches and plain questions against the knowledge base — every step visible in a live research log, exactly like Deep Research's thinking panel — then writes the file with the instance's own primary model, findings inlined. Drafts stream in, are hand-editable, and support refine rounds ("less slang, more formal") that visibly land.
+- **The architecture is a hard-won lesson**: the first implementation sent the entire author meta-prompt as a Deep Research question. On instances with prompt security enabled, the injection classifier — correctly — deflected it with a canned response, every time. The generator now never sends instruction-shaped text as a query: Cortex answers benign research questions, and the writing happens through the new raw completion endpoint. Research asks additionally ride the streaming ask path (the one every chat exercises daily), and the research log reports real failure modes — an HTTP error, a refused answer with a preview, an empty answer — instead of a mysterious "skipped".
+
+### Cortex Chat: shared projects & multi-user conversations
+
+A **project** groups conversations and carries defaults every chat inside it inherits: an optional personality, a collection scope, and **instructions** — an invisible briefing sent with every question in the project.
+
+- **Sharing is one modal** — a single search field over groups *and* individual people. Members see every conversation in the project; moving an existing chat into a shared project asks for confirmation first, because it exposes that chat's full history.
+- **Conversations are multi-user by default.** Any member continues any project thread; every message is attributed to its author (server-stamped — clients cannot forge it), editing and regenerating are limited to your own turns, and chat administration stays with the creator.
+- **It's live.** When a teammate asks a question in a chat you have open, their question appears immediately and the answer **streams into your view in real time** — opening a chat mid-answer replays what you missed and picks up the live tokens. New chats, moves, deletions, and shares reach every member's sidebar within a second. All of it is Server-Sent Events through the app's own server — no websockets, no external broker, nothing to deploy.
+- Chats **drag & drop** between the personal list and project folders, and the active chat now lives in the URL (`/?chat=<id>`) — refresh keeps your place, back/forward walk your conversations, and chat links are shareable.
+
+### Cortex Chat: voice
+
+- **Dictation and read-aloud**, each gated on a pair of env vars pointing at **any OpenAI-compatible audio API** (a self-hosted speaches/LiteLLM router, Venice, OpenAI). Unset = the buttons don't exist; provider keys stay server-side behind proxy routes.
+- Read-aloud strips markdown, citations, and tables before synthesis. Dictation records in the browser and transcribes server-side.
+- **A fix worth confessing**: the app's own baseline security headers shipped `Permissions-Policy: microphone=()` — an explicit "this app never uses the microphone" that made every browser refuse dictation *silently*, with no permission prompt, regardless of user settings. The policy now allows same-origin microphone use, and the mic button explains the remaining real-world failure modes (insecure origin, OS-level block, no device) instead of doing nothing.
+
+### Cortex Chat: everyday chat quality
+
+- **Message actions** on hover: copy, regenerate the last answer, edit & resend (forks the conversation at that point), and **thumbs up/down feedback** — persisted per message and rolled up as a KPI on the admin dashboard.
+- **Regeneration respects conversation memory**: the app snapshots the memory blob each turn and replays the pre-turn state, so a regenerated answer doesn't "remember" the answer it replaces.
+- **Sidebar**: title search, pinned chats (their own group on top, never reordered by pinning), and per-chat Markdown export with numbered source footnotes.
+- **Starter prompts** — admin-curated suggested questions as clickable cards on the empty screen, combined with the selected personality's own starters.
+- **Deep Research is now the default mode** for new conversations (admin-overridable, and users still switch per conversation), and a new-chat button lives in the header — no sidebar trip required.
+
+### Cortex: raw completion endpoint
+
+- **`POST /api/llm/completions`** — a raw chat completion on the instance's primary model: no retrieval, no prompt security, the caller owns the full prompt. **Admin-key-gated precisely because prompt security is bypassed** — minted read/manage keys and monetized public keys can never reach it. Streaming responses are OpenAI-compatible chunks over SSE with heartbeats; completions draw from the monthly quota and are unit-metered and Langfuse-traced through the same client factory as every other call. Built for trusted first-party services — Cortex Chat's personality generator is the first consumer — and the base for the app-platform completion capability on the roadmap.
+- **SSE streams survive in-process restarts** — the internal shutdown flag that ends active streams gracefully was never cleared on startup, so any in-process restart (test harnesses, embedded reloads) instantly terminated every subsequent stream with a shutdown frame. Real deployments were unaffected; it is fixed at the source regardless.
+
+Verified end to end against a live instance: persona generation grounded in real knowledge-base content through the new endpoint, two-account realtime collaboration (live question + streaming answer on the watching side, mid-stream join with replay), and the full multi-user attribution model. No API or schema breakage anywhere: all chat SSE events are additive, the new endpoint is new surface, and Cortex Chat's SQLite migrations apply automatically on boot. The personality generator requires a Cortex release with the completion endpoint — older backends get a clear message naming the fix, and everything else keeps working.
+
+---
+
 ## July 29, 2026
 
 Cortex can now be installed and operated without cloning anything: `npx @mocaos/cortex` brings up the full stack — Cortex, Neo4j, a nightly backup sidecar, optionally Cortex Chat, and Caddy for automatic HTTPS in domain mode — from prebuilt, version-pinned images, and owns the lifecycle afterwards. This entry also carries a **data-loss fix in graph restore that everyone self-hosting should read**: restoring a backup wiped the graph and then failed to replay it, on every instance that had ever been started. Restore was verified end to end against a live stack for the first time as part of this work, which is how the bug surfaced.

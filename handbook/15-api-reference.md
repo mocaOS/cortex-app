@@ -79,6 +79,27 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 }
 ```
 
+## LLM Completions
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/llm/completions` | **Admin** | Raw chat completion on the instance's primary model — no retrieval, no prompt security. Body: `LLMCompletionRequest` |
+
+Built for trusted first-party services (Cortex Chat's personality generator) so operators keep one model configuration. Admin-gated precisely because prompt security is bypassed; completions draw from the monthly quota and are metered/traced like every other completion.
+
+**LLMCompletionRequest body:**
+
+```json
+{
+  "messages": [{"role": "system|user|assistant", "content": "..."}],
+  "temperature": 0.85,
+  "max_tokens": 4000,
+  "stream": true
+}
+```
+
+Streaming responses are OpenAI-compatible chat chunks as SSE `data:` frames terminated by `data: [DONE]`; non-streaming returns `{"content": "...", "model": "..."}`.
+
 ## Knowledge Graph
 
 | Method | Endpoint | Auth | Description |

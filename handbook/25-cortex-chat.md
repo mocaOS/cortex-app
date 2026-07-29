@@ -23,15 +23,44 @@ A few things make this more than a thin wrapper around the Ask AI endpoint:
 The heart of the app is a single-purpose chat page backed by your instance's [Ask AI](10-ask-ai.md) pipeline:
 
 - **Streaming answers.** Responses render token by token over Server-Sent Events, so the answer starts appearing immediately. Users can turn streaming off in the settings panel if they prefer complete answers.
-- **Chat and Deep Research modes.** A toggle switches between standard chat and the agentic Deep Research mode. In Deep Research, users watch live **thinking steps**, sub-question decomposition, and retrieval progress in an auto-expanding panel while the agent works. An administrator chooses which mode every new conversation *starts* in (the **default chat mode** setting); users can still switch per conversation.
+- **Chat and Deep Research modes.** A toggle switches between standard chat and the agentic Deep Research mode. In Deep Research, users watch live **thinking steps**, sub-question decomposition, and retrieval progress in an auto-expanding panel while the agent works. New conversations start in **Deep Research by default**; an administrator can change the default (the **default chat mode** setting), and users can still switch per conversation.
 - **Inline citations.** `[src_N]` annotations in answers render as clickable numbered badges. Clicking one — or any source chip — opens a **source explorer** modal showing the full document chunk with relevance scores, so every claim can be checked against the underlying document.
+- **Message actions.** Hovering a message reveals its actions: copy, **regenerate** the last answer, **edit & resend** one of your questions (which forks the conversation at that point), and **thumbs up/down feedback** that rolls up into the admin analytics. When voice is configured, every answer also gets a **read-aloud** button.
+- **Starter prompts.** Administrators can curate suggested questions that appear as clickable cards on the empty chat screen — combined with the starters a selected personality brings along.
 - **Collection scoping.** By default a chat searches *all* collections the user's group has access to. The settings panel (gear icon) lets the user narrow to a single collection; the scope indicator in the input bar always shows what is being searched.
 - **Conversation memory.** The app round-trips the backend's conversation-memory blob on every turn, so multi-turn conversations keep recall and citation continuity even beyond the backend's history window.
-- **Server-side chat history.** Sessions, messages, and auto-generated titles are stored per user in the app's database. A user can start a conversation on a laptop and continue it on a phone; history appears in a slide-in sidebar.
+- **Server-side chat history.** Sessions, messages, and auto-generated titles are stored per user in the app's database. A user can start a conversation on a laptop and continue it on a phone; history appears in a slide-in sidebar with **title search**, **pinned chats**, and per-chat **Markdown export**.
+- **Deep links.** The open conversation lives in the URL, so refreshing the page keeps your place, the browser's back/forward buttons walk through conversations, and a link to a specific chat can be shared with anyone who has access to it.
 - **Support link.** If configured, a support button appears in the chat header pointing wherever you like — a helpdesk, a mailto link, an internal wiki.
 - **Multilingual UI.** The interface ships in English and German, with the default language chosen per deployment.
 
 Every user also gets a **profile page** to change their username, avatar, and password.
+
+## Personalities
+
+Personalities are assistant personas layered over the same retrieval pipeline. Under the hood each one **is** a portable **SOUL.md** file — a markdown identity document with sections for identity, purpose, voice, behavioral directives, and boundaries — which the app injects server-side on every turn. The persona text never reaches the browser and is never written into chat history.
+
+Three tiers exist side by side. **Built-in** personalities ship with the app (a Research Analyst, a Support Assistant, and a Sales Companion); administrators can remove or restore them, and new releases can add more. **Admin-curated** personalities are created on the admin Personalities page and made visible to everyone or to a single group. And every user can keep up to twenty **personal** personalities of their own.
+
+Picking one is a single click on the empty chat screen: pill chips show "Cortex" (no persona) plus every personality the user can see, each bringing its own suggested starter questions and, optionally, a default collection scope. The choice is fixed per conversation.
+
+The standout is **Generate**: describe the assistant you need in plain language — *"a friendly guide for newcomers that always cites sources and ends with next steps"* — and the app builds the SOUL.md for you. It first researches your knowledge base (hybrid searches plus plain questions, each step visible in a live research log), then writes the file using **your instance's own primary model** through the backend's raw completion endpoint. The draft streams in, can be edited by hand, and supports refine rounds ("less slang, more formal") before saving. Because the persona is grounded in real research, it comes out speaking your organization's actual language.
+
+Personalities round-trip as files: export any of them as verbatim `SOUL.md`, and import by pasting, uploading, or fetching from a URL. Files signed by soulweaver are signature-verified (EIP-191) on import and carry a verified badge.
+
+## Projects — working together in one place
+
+A **project** is a shared workspace: a folder of conversations that carries defaults every chat inside it inherits — an optional personality, a collection scope, and **instructions**, an invisible briefing sent along with every question in the project ("answers relate to the 2026 relaunch; prefer the latest concept documents").
+
+Sharing is deliberately simple: one modal with one search field that matches both **groups and individual people**. Members see every conversation in the project. Because that means exposing a chat's full history, moving an existing conversation into a shared project asks for confirmation first.
+
+Project chats are **multi-user by default**. Any member can continue any thread; every message shows its author, so a conversation reads like the team effort it is. Editing or regenerating is limited to your own turns, and only a chat's creator can rename, move, or delete it.
+
+It behaves like a live space, too: when a teammate asks a question in a chat you have open, their question appears immediately and the answer **streams into your view in real time** — joining mid-answer replays what you missed. New chats, moves, and shares show up on everyone's sidebar within a second, with no additional infrastructure (it's all Server-Sent Events through the app's own server). Chats can be dragged between your personal list and project folders.
+
+## Voice
+
+With a pair of environment variables, the chat grows a voice: a **microphone button** in the composer for dictation (recorded in the browser, transcribed server-side, inserted as text) and a **read-aloud button** on every answer (synthesized speech with markdown and citations stripped). Both point at **any OpenAI-compatible audio API** — a self-hosted speaches/LiteLLM router, Venice, or OpenAI — and both are invisible until configured. Provider keys stay on the server behind proxy routes, like every other credential in the app. Dictation requires a secure origin (HTTPS or localhost); the UI says so when it isn't.
 
 ## Users, groups, and roles
 
@@ -111,16 +140,18 @@ Create, rename, and delete collections on the backend, with document counts — 
 
 ## The admin area
 
-Admins and the superadmin get a separate admin area with five pages:
+Admins and the superadmin get a separate admin area with six pages:
 
-- **Overview** — the analytics dashboard: KPI tiles (active users, logins, messages, uploads) over a selectable time window, a time-series activity chart, and a paginated login-history table.
+- **Overview** — the analytics dashboard: KPI tiles (active users, logins, messages, uploads, and **answer feedback** — the running thumbs up/down counts) over a selectable time window, a time-series activity chart, and a paginated login-history table.
 - **Users** — create, edit, and delete accounts; assign groups; set roles (the superadmin can promote admins); send password-reset emails; and the **Registrations** tab for approving or declining self-service signups.
 - **Groups** — create and edit groups, choosing per-group collection access ("all collections" or a specific set). Creating a group mints its scoped read key behind the scenes.
 - **Content Roles** — grant or revoke upload rights per user, choosing which collections each contributor may write into.
+- **Personalities** — the shared persona library: enable, disable, remove, or restore built-ins; create global or per-group personalities by pasting, uploading, importing from a URL, or generating; export any of them as `SOUL.md`.
 - **Settings** — everything brandable and behavioral, applied instantly with no rebuild:
   - App **title** and **description** (shown on the chat empty state)
   - **Accent color** and **logo** (upload or remove; the logo is also reused in system emails)
-  - Default **language** (English/German) and default **chat mode** (Chat or Deep Research)
+  - Default **language** (English/German) and default **chat mode** (Deep Research or Chat)
+  - **Starter prompts** — the suggested-question cards on the empty chat screen
   - **Support link** URL and label for the chat header
   - **Registration notification** email addresses
   - The **chat analytics template** (below)
@@ -137,7 +168,7 @@ Worth knowing as an operator, even though none of it needs configuration: Cortex
 
 ### Prerequisites
 
-- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md))
+- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working.
 - An **admin-tier API key** (`moca_admin_...`) generated in that instance — see [Chapter 17: Administration](17-administration.md)
 - Node.js 18+ if running from source, or Docker
 
@@ -162,6 +193,8 @@ Optional:
 | `ENABLE_REGISTRATION` | Self-registration with admin approval. On by default; set `false` to disable. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `SMTP_FROM` | Outbound email for password resets, approval notices, and registration notifications. Unset `SMTP_HOST` = no email features, links hidden. `SMTP_SECURE=true` means implicit TLS (port 465); `false` means STARTTLS (587). For local testing, Mailpit on port 1025 works with no auth. |
 | `APP_BASE_URL` | The app's public URL, used to build links in emails. Required when SMTP is configured; reset links never trust the request's Host header. |
+| `VOICE_STT_BASE_URL`, `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Speech-to-text for the dictation mic — any OpenAI-compatible audio API (`{base}/audio/transcriptions`). Unset base URL = mic hidden; the model is required when the base URL is set. |
+| `VOICE_TTS_BASE_URL`, `VOICE_TTS_API_KEY`, `VOICE_TTS_MODEL`, `VOICE_TTS_VOICE` | Text-to-speech for read-aloud (`{base}/audio/speech`). Same gating; some backends require a voice name. |
 | `SENTRY_ENVIRONMENT`, `SENTRY_DSN`, `SENTRY_DISABLED` | Error-tracking knobs: tag events per deployment, override the built-in GlitchTip DSN, or switch reporting off. `SENTRY_AUTH_TOKEN` is a *build-time* variable that enables source-map upload so stack traces show real file names. |
 
 The app validates its configuration at boot and refuses to start with a single error listing every problem — a missing key, a malformed encryption key, SMTP configured without `SMTP_FROM` or `APP_BASE_URL` — so a misconfigured deployment fails loudly instead of half-working. Never prefix any of these with `NEXT_PUBLIC_` — that would bake them into the client bundle.

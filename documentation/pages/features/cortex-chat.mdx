@@ -1,6 +1,6 @@
 ---
 title: Cortex Chat
-description: A standalone, multi-tenant chat frontend for any Cortex instance — provisioned users and groups, scoped collection access, streaming Ask AI with Deep Research and citations, an admin library console, and runtime branding
+description: A standalone, multi-tenant chat frontend for any Cortex instance — provisioned users and groups, scoped collection access, streaming Ask AI with Deep Research and citations, AI personalities, shared team projects with realtime collaboration, voice, an admin library console, and runtime branding
 ---
 
 [**Cortex Chat**](https://github.com/mocaOS/cortex-chat) is a standalone application that gives end users a clean "Ask AI" interface on top of any Cortex instance. It runs as its own deployment with its own user accounts and its own SQLite database, and connects to the Cortex backend exclusively through the REST API with scoped keys — the flagship example of a **standalone app** in the Cortex ecosystem (as opposed to [Apps](/features/apps) hosted *inside* an instance).
@@ -12,13 +12,42 @@ The pitch: provision an account for each team member, assign them to a group sco
 ### Chat
 
 - **Streaming Ask AI** — token-by-token rendering over SSE, proxied through the app's server to avoid gzip buffering; users can toggle streaming off in the settings panel.
-- **Deep Research mode** — the backend's agentic multi-step RAG, with live thinking steps, sub-question decomposition, and retrieval progress shown while it runs. An admin sets the **default mode** every new conversation starts in (Chat or Deep Research); users can switch per conversation.
+- **Deep Research mode** — the backend's agentic multi-step RAG, with live thinking steps, sub-question decomposition, and retrieval progress shown while it runs. **Deep Research is the default mode** every new conversation starts in; an admin can switch the default to Chat, and users can switch per conversation.
 - **Inline citations** — `[src_N]` annotations render as clickable numbered badges; a source modal shows the full chunk with relevance scores.
+- **Message actions** — hover any message for copy, **regenerate** (last answer), **edit & resend** (forks the conversation at that point), and **👍/👎 feedback** that feeds the admin analytics. With [voice](#voice) configured, every answer also gets a **read-aloud** button.
+- **Starter prompts** — admin-curated suggested questions render as clickable cards on the empty chat screen, combined with the selected personality's own starters.
 - **Collection scoping** — defaults to everything the user's group can read; a settings panel narrows to a single collection. The backend enforces scope via the key, so the UI can never leak other collections.
 - **Conversation memory** — the app round-trips the backend's opaque memory blob each turn for cross-turn recall and citation continuity beyond the history window.
-- **Server-side chat history** — sessions, messages, and auto-generated titles persist per user and follow them across devices, in a slide-in sidebar.
+- **Server-side chat history** — sessions, messages, and auto-generated titles persist per user and follow them across devices, in a slide-in sidebar with **title search**, **pinning**, and per-chat **Markdown export**.
+- **Deep links** — the active chat rides in the URL (`/?chat=<id>`), so a refresh stays in place, back/forward walk between conversations, and a chat link can be shared with anyone who has access to it.
 - **Support link** — an optional, admin-configured button in the chat header (helpdesk, mailto, wiki — any URL).
 - **i18n** — English and German UI, default language set per deployment. Every user has a profile page (username, avatar, password).
+
+### Personalities (SOUL.md)
+
+Assistant personas layered over the same retrieval engine. Each personality **is** a portable [SOUL.md](https://soul.md) file — a markdown identity document (Identity, Purpose & Expertise, Voice & Style, Behavioral Directives, Boundaries) with optional frontmatter (`name`, `description`, `starters`, `collection`). The persona is injected server-side on every turn; it never reaches the browser and is never stored in chat history.
+
+- **Three tiers** — *built-in* personalities ship with the app (Research Analyst, Support Assistant, Sales Companion; removable and restorable by an admin, and new releases add new ones), *admin-curated* personalities are visible globally or per group, and every user can keep up to 20 *personal* ones.
+- **Picker** — pill chips on the empty chat screen ("Cortex" default + available personalities); each brings its own starter questions and optional default collection. The personality is fixed per conversation.
+- **Generate** — describe the assistant you need in one paragraph and Cortex builds the SOUL.md for you: the app first **researches the knowledge base** (hybrid searches + plain questions, every step visible in a live research log), then writes the file with the instance's own primary model via the backend's `POST /api/llm/completions`. The draft streams in, is hand-editable, and supports a refine loop ("make the tone more formal") before saving. Generated personalities speak your organization's actual language — real product names, real document types.
+- **Portability** — export any personality as its verbatim `SOUL.md`; import by pasting, uploading a file, or from a URL. Files signed by [soulweaver](https://github.com/mocaOS/soulweaver) are **EIP-191 signature-verified** on import and show a verified-signer badge.
+
+### Projects — shared team workspaces
+
+A project groups conversations and carries defaults every chat inside it inherits: an optional personality, a collection scope, and **instructions** — an invisible briefing injected with every question in the project.
+
+- **Sharing** — one modal, one search field over groups *and* individual people. Members see all chats in the project; a warning asks for confirmation before an existing chat is moved into a shared project.
+- **Multi-user conversations** — any member can continue any project chat. Every message is attributed to its author (name chips on teammates' messages); editing and regenerating are limited to your own turns; renaming/moving/deleting a chat stays with its creator.
+- **Realtime** — teammates' turns appear live: when someone asks in a chat you have open, their question pops in and the answer **streams in real time** in your view (joining mid-answer replays what you missed). New chats, moves, and shares update everyone's sidebar within a second. No extra infrastructure — SSE over the app's own server.
+- **Organization** — collapsible project folders in the sidebar; drag & drop chats between your personal list and projects.
+
+### Voice
+
+Optional speech-to-text dictation and text-to-speech read-aloud, configured with environment variables against **any OpenAI-compatible audio API** — a self-hosted [speaches](https://speaches.ai/) / LiteLLM router, [Venice](https://venice.ai), or OpenAI. Unset = the buttons don't exist.
+
+- **Dictation** — a mic button in the composer records (browser `MediaRecorder`), transcribes server-side, and inserts the text. Requires a secure origin (HTTPS or localhost) — the UI explains when it isn't.
+- **Read-aloud** — a speaker button on every answer synthesizes and plays it (markdown, citations, and tables are stripped for speech).
+- Provider keys stay server-side behind `/api/voice/*` proxies, like every other credential in the app.
 
 ### Multi-tenant auth & user management
 
@@ -43,13 +72,14 @@ The `/upload` page is a tabbed workspace — tabs appear by permission:
 
 ### Admin area
 
-Five pages, for admins and the superadmin:
+Six pages, for admins and the superadmin:
 
-- **Overview** — analytics dashboard: KPIs (active users, logins, messages, uploads) over a selectable window, a time-series chart, and a paginated login-history table.
+- **Overview** — analytics dashboard: KPIs (active users, logins, messages, uploads, **answer feedback +/−**) over a selectable window, a time-series chart, and a paginated login-history table.
 - **Users** — create/edit/delete accounts, group assignment, role management (superadmin promotes/demotes admins), send reset emails, and the **Registrations** approval tab.
 - **Groups** — per-group collection scope ("all" or a chosen set); creating a group mints its scoped read key.
 - **Content Roles** — grant/revoke upload rights per user.
-- **Settings** — runtime branding and behavior, applied instantly with no rebuild: app title & description, accent color, logo (upload/remove; reused in emails), default language, default chat mode, support URL & label, registration-notification recipients, and the chat analytics template.
+- **Personalities** — manage the shared persona library: enable/disable or remove/restore built-ins, create global or per-group personalities (paste, upload, URL import, or Generate), export any as `SOUL.md`.
+- **Settings** — runtime branding and behavior, applied instantly with no rebuild: app title & description, accent color, logo (upload/remove; reused in emails), default language, default chat mode, **starter prompts**, support URL & label, registration-notification recipients, and the chat analytics template.
 
 **Chat analytics injection** — an admin-defined `<cortexchatanalytics>` template (with `$userEmail` / `$userName` substitution) is injected server-side into every backend request. It never reaches the browser and is never stored in chat history, but backend [Agent Skills](/features/skills) can read it — e.g. to route chat summaries to a CRM with user identity attached. Empty template = no injection.
 
@@ -68,7 +98,7 @@ There is exactly **one** privileged credential: an admin-tier Cortex key in the 
 
 | Key | Permission | Stored | Used for |
 |---|---|---|---|
-| `BACKEND_ADMIN_API_KEY` (env) | `admin` | env only — never in SQLite, never in the browser | Minting the keys below; the admin library console; listing collections; admin uploads |
+| `BACKEND_ADMIN_API_KEY` (env) | `admin` | env only — never in SQLite, never in the browser | Minting the keys below; the admin library console; listing collections; admin uploads; personality generation via the backend's `POST /api/llm/completions` |
 | Group chat key | `read`, scoped to the group's collections | AES-256-GCM encrypted in the app's SQLite | Every chat/search request by the group's members |
 | User content key | `manage`, scoped to chosen collections | AES-256-GCM encrypted in the app's SQLite | That user's uploads and web imports |
 
@@ -84,7 +114,7 @@ Minted keys live in the key store of the backend they were minted against. Re-po
 
 ### Prerequisites
 
-- A running Cortex instance
+- A running Cortex instance (personality **Generate** additionally needs a Cortex release that ships `POST /api/llm/completions` — older backends show a clear message)
 - An **admin-tier API key** (`moca_admin_...`) from that instance (Settings → API Keys)
 - Docker, or Node.js 18+ to run from source
 
@@ -115,6 +145,10 @@ All configuration is server-side and runtime — the same image serves any tenan
 | `SMTP_SECURE` | `true` ⇒ implicit TLS; `false` ⇒ STARTTLS. | `false` |
 | `SMTP_FROM` | Sender, e.g. `"Cortex Chat <no-reply@example.com>"`. **Required when `SMTP_HOST` is set.** | — |
 | `APP_BASE_URL` | Absolute public URL used to build email links (never derived from the request Host header). **Required when `SMTP_HOST` is set.** | — |
+| `VOICE_STT_BASE_URL` | OpenAI-compatible audio API for dictation; unset = mic hidden. Endpoints used: `{base}/audio/transcriptions`. | — |
+| `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Credentials + model for STT (e.g. `faster-whisper-large-v3`, `whisper-large-v3`). Model required when the base URL is set. | — |
+| `VOICE_TTS_BASE_URL` | OpenAI-compatible audio API for read-aloud; unset = speaker buttons hidden. Endpoints used: `{base}/audio/speech`. | — |
+| `VOICE_TTS_API_KEY`, `VOICE_TTS_MODEL`, `VOICE_TTS_VOICE` | Credentials, model (e.g. `kokoro-82m`, `tts-kokoro`), and voice (e.g. `af_heart`); some backends require a voice. | — |
 | `SENTRY_ENVIRONMENT` | Tags error events per deployment/tenant. | `production` |
 | `SENTRY_DSN` | Overrides the baked-in GlitchTip DSN (server-side, runtime). | built-in |
 | `SENTRY_DISABLED` | `1` = no error reporting at all. | — |
