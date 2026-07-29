@@ -1244,13 +1244,10 @@ In `src/commands/install.ts`, replace the `portsToCheck` assignment:
       // Omit the chat port when chat is not installed: nothing will bind it, and
       // under --yes an occupied port is fatal, so checking it could abort an
       // install over a conflict that cannot occur.
-      const { chat: chatPort, ...otherPorts } = cfg.ports;
-      const portsToCheck =
-        cfg.mode === "domain"
-          ? [80, 443]
-          : cfg.chat
-            ? Object.values(cfg.ports)
-            : Object.values(otherPorts);
+      const localhostPorts = cfg.chat
+        ? Object.values(cfg.ports)
+        : [cfg.ports.app, cfg.ports.api, cfg.ports.neo4jHttp, cfg.ports.neo4jBolt];
+      const portsToCheck = cfg.mode === "domain" ? [80, 443] : localhostPorts;
 ```
 
 - [ ] **Step 7: Fix the closing URL box**
@@ -1450,14 +1447,21 @@ test("ensureChatProfile comments the line out when disabling", () => {
   assert.match(out, /^# COMPOSE_PROFILES=chat$/m);
 });
 
-test("ensureChatProfile preserves every other line untouched", () => {
-  // This runs over the file holding the only copy of NEO4J_PASSWORD.
+test("disabling when no profile line exists is a byte-for-byte no-op", () => {
+  // This function rewrites the file holding the only copy of NEO4J_PASSWORD, so
+  // it must never touch a line it was not asked to change.
   const input = "NEO4J_PASSWORD=s3cret\nCOMPOSE_FILE=a.yml\nOPENAI_API_KEY=k\n";
-  assert.equal(ensureChatProfile(input, false), input.replace(/$/, ""));
+  assert.equal(ensureChatProfile(input, false), input);
 });
-```
 
-For that last test: disabling on a file with no profile line must be a no-op. If the trailing-newline handling makes the assertion awkward, assert `ensureChatProfile(input, false).split("\n").filter(Boolean)` deep-equals `input.split("\n").filter(Boolean)` instead — the requirement is that no other line changes.
+test("enabling changes exactly one line and preserves the rest", () => {
+  const input = "NEO4J_PASSWORD=s3cret\n# COMPOSE_PROFILES=chat\nOPENAI_API_KEY=k\n";
+  const out = ensureChatProfile(input, true);
+  assert.equal(out.split("\n").length, input.split("\n").length, "line count must not change");
+  assert.match(out, /^NEO4J_PASSWORD=s3cret$/m);
+  assert.match(out, /^OPENAI_API_KEY=k$/m);
+  assert.match(out, /^COMPOSE_PROFILES=chat$/m);
+});```
 
 - [ ] **Step 2: Run them and watch them fail**
 
