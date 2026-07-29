@@ -1943,7 +1943,30 @@ docker compose ps --format '{{.Service}}' | sort | tr '\n' ' '   # expect chat p
 curl -s -o /dev/null -w 'chat %{http_code}\n' http://localhost:3001   # expect 200 or 307
 ```
 
-- [ ] **Step 3: Tear it down safely**
+- [ ] **Step 3: Turn chat back OFF via the documented switch — the `down` fix's only live test**
+
+Task 7's `down()` profile fix has no automated coverage: the installer repo has
+no Compose file of its own, so nothing there can exercise it. This is the only
+place it gets tested, and three commands depend on it — `stop`, `restart` and
+`uninstall`. Before Task 7, Compose's profile filtering meant a running chat
+container survived all three.
+
+Chat is currently ON from Step 2. Turn it off the documented way and confirm the
+container is genuinely gone, not merely stopped:
+
+```bash
+cd /tmp/chatoff/cortex
+# Comment the profile line back out, exactly as the docs instruct.
+perl -pi -e 's/^COMPOSE_PROFILES=chat$/# COMPOSE_PROFILES=chat/' .env
+npx --min-release-age=0 @mocaos/cortex@1.2.0 --dir /tmp/chatoff/cortex restart
+docker compose ps -a --format '{{.Service}}' | sort | tr '\n' ' '
+```
+
+Expected: no `chat` in the list — and note `ps -a`, which includes stopped
+containers, so a merely-stopped chat would still show. If `chat` appears, the
+`down()` fix is not working and this is exactly the defect it was written for.
+
+- [ ] **Step 4: Tear it down safely**
 
 ```bash
 cd /tmp/chatoff/cortex
@@ -1953,7 +1976,7 @@ docker volume ls --format '{{.Name}}' | grep -c '^cortex_'   # must still be 9 �
 cd /tmp && rm -rf chatoff
 ```
 
-- [ ] **Step 4: Install with chat on and confirm six services**
+- [ ] **Step 5: Install with chat on and confirm six services**
 
 Repeat Step 1 with `CORTEX_ENABLE_CHAT=true` and `CORTEX_PROJECT_NAME=cortex-chaton` into `/tmp/chaton/cortex`, then:
 
@@ -1966,7 +1989,7 @@ curl -s -o /dev/null -w 'chat %{http_code}\n' http://localhost:3001
 
 Tear down as in Step 3, substituting the `cortex-chaton_` prefix.
 
-- [ ] **Step 5: Verify the migration — a pre-option install must keep its chat**
+- [ ] **Step 6: Verify the migration — a pre-option install must keep its chat**
 
 This is the highest-risk path in the whole change. Install the **previous** stack with the **previous** installer, then update.
 
@@ -1995,7 +2018,7 @@ curl -s -o /dev/null -w 'chat %{http_code}\n' http://localhost:3001
 
 Expected: chat still running, `COMPOSE_PROFILES=chat` now present, state `stack 1.1.0 chat True`. If chat is gone, **stop** — the back-fill in Task 9 is broken and this is the data-visible failure the whole task exists to prevent.
 
-- [ ] **Step 6: Tear down and confirm the maintainer's volumes are untouched**
+- [ ] **Step 7: Tear down and confirm the maintainer's volumes are untouched**
 
 ```bash
 cd /tmp/mig/cortex
@@ -2005,7 +2028,7 @@ docker volume ls --format '{{.Name}}' | grep '^cortex_' | sort   # expect the sa
 cd /tmp && rm -rf mig
 ```
 
-- [ ] **Step 7: Report**
+- [ ] **Step 8: Report**
 
 Summarise: services present in each of the four combinations, whether the chat-off install avoided the health stall, and the migration result. Note explicitly that domain mode was verified only by `verify-contract.sh` and `caddy validate` — real ACME issuance needs public DNS and is out of scope here.
 
