@@ -74,11 +74,11 @@ remove the container explicitly:
 docker compose stop chat && docker compose rm -f chat
 ```
 
-`--remove-orphans` does **not** do this. It removes containers for services no
-longer *defined* in the Compose file, and a profile-gated service is still
-defined — merely inactive. (`npx @mocaos/cortex restart` does drop it, because
-it runs `docker compose down` first, which removes every container; the
-following `up` then recreates only what the active profiles select.)
+`--remove-orphans` does **not** do this, and neither does `docker compose down`:
+Compose filters by profile on the way down as well as up, so with chat already
+switched off in `.env` a running chat container is simply not in the set either
+command acts on. (`npx @mocaos/cortex restart` does remove it, from installer
+1.2.0 on — it names the profile when tearing down for exactly this reason.)
 
 Chat's data stays in the `chat_data` volume either way.
 
