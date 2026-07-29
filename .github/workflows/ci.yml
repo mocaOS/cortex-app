@@ -136,3 +136,16 @@ jobs:
 
       - name: Version sync
         run: node scripts/check-version-sync.mjs
+
+  selfhost-contract:
+    name: Selfhost compose contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify optional-chat contract
+        # Asserts the chat service is excluded by default and included with
+        # COMPOSE_PROFILES=chat, in both modes, and that both Caddyfile
+        # templates adapt. These are Compose/Caddy behaviours that no unit
+        # test can see.
+        run: ./selfhost/verify-contract.sh
