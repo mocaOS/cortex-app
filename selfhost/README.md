@@ -80,6 +80,22 @@ switched off in `.env` a running chat container is simply not in the set either
 command acts on. (`npx @mocaos/cortex restart` does remove it, from installer
 1.2.0 on — it names the profile when tearing down for exactly this reason.)
 
+**Single Sign-On (optional).** Chat can authenticate against any OpenID
+Connect IdP — Entra ID, Okta, Keycloak, Authentik, … Register a client at the
+IdP with redirect URI `{CHAT_BASE_URL}/api/auth/oidc/callback`, then:
+
+```dotenv
+OIDC_ISSUER_URL=https://id.example.com/realms/yourrealm
+OIDC_CLIENT_ID=cortex-chat
+OIDC_CLIENT_SECRET=...
+# optional: OIDC_BUTTON_LABEL, OIDC_DEFAULT_GROUP (group for first-login
+# auto-provisioning), OIDC_ONLY=true (disable password login), OIDC_SCOPES
+```
+
+`CHAT_BASE_URL` must be set for SSO (it already is in domain mode). Unset
+`OIDC_ISSUER_URL` = the feature is invisible. The chat superadmin
+(`ADMIN_EMAIL`) always keeps its password login as break-glass access.
+
 Chat's data stays in the `chat_data` volume either way.
 
 `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` stay set even with chat off:

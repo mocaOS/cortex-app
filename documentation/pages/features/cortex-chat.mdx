@@ -52,6 +52,7 @@ Optional speech-to-text dictation and text-to-speech read-aloud, configured with
 ### Multi-tenant auth & user management
 
 - **Email/password accounts** with argon2id hashing and DB-backed sessions (opaque cookie, 30-day sliding TTL). Users never need Cortex credentials.
+- **Single Sign-On (OIDC)** — vendor-agnostic SSO against any OpenID Connect IdP with discovery: Entra ID / Azure AD, ADFS 2016+, Okta, Auth0, Google Workspace, Keycloak, Authentik, Authelia, Zitadel, PocketID. Three env vars enable it (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`); the flow is Authorization Code + PKCE, terminating into the same session model as password login. First-time users are **JIT-provisioned** into an optional default group (`OIDC_DEFAULT_GROUP`); an existing account with the same email is linked automatically — but only when the IdP asserts the email as **verified** (the account-takeover guard). `OIDC_ONLY=true` removes password login and self-registration entirely; the superadmin is excluded from SSO and keeps a break-glass password login (`/login?password=1`). Legacy LDAP-only or SAML-only stacks: put a thin bridging IdP (Authentik or Dex) in front and point the issuer URL at it.
 - **Three roles** — one env-bootstrapped `superadmin`, promotable `admin`s, and `user`s. Each user belongs to exactly one **group**; the group's collection scope defines what its members can search. On first boot the app auto-creates a **"Full Access" group** and assigns the superadmin to it, retrying in the background until the backend is reachable.
 - **Self-registration with approval** — a public `/register` page feeds a pending queue on the admin Users page; approving a registration assigns its group. On by default, disable with `ENABLE_REGISTRATION=false`. Admins can be **notified by email of new registrations**, and pending users who log in get an "awaiting approval" message (only on a correct password — the flow is enumeration-safe).
 - **Password reset via email** — self-service ("Forgot password?", single-use 60-minute links, always-200 responses) and admin-triggered, feature-gated on SMTP configuration. Reset and approval emails reuse the deployment's branding (accent, logo, title). The superadmin's password is env-managed and excluded from email reset.
@@ -144,7 +145,13 @@ All configuration is server-side and runtime — the same image serves any tenan
 | `SMTP_USER`, `SMTP_PASS` | SMTP credentials; optional (omit for Mailpit). | — |
 | `SMTP_SECURE` | `true` ⇒ implicit TLS; `false` ⇒ STARTTLS. | `false` |
 | `SMTP_FROM` | Sender, e.g. `"Cortex Chat <no-reply@example.com>"`. **Required when `SMTP_HOST` is set.** | — |
-| `APP_BASE_URL` | Absolute public URL used to build email links (never derived from the request Host header). **Required when `SMTP_HOST` is set.** | — |
+| `APP_BASE_URL` | Absolute public URL used to build email links and the SSO redirect URI (never derived from the request Host header). **Required when `SMTP_HOST` or `OIDC_ISSUER_URL` is set.** | — |
+| `OIDC_ISSUER_URL` | OIDC issuer URL of your IdP; discovery (`/.well-known/openid-configuration`) is derived from it. Unset = SSO off and invisible. Must be `https://` (plain `http` allowed for localhost dev only). | — |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | OAuth client registered at the IdP with redirect URI `{APP_BASE_URL}/api/auth/oidc/callback`. **Both required when the issuer is set.** | — |
+| `OIDC_SCOPES` | Scopes requested from the IdP. | `openid profile email` |
+| `OIDC_BUTTON_LABEL` | Login-button text, e.g. `"Sign in with Entra ID"`. | localized "Single Sign-On" |
+| `OIDC_DEFAULT_GROUP` | Name of the chat group first-time SSO users join (resolved at login time). Unset = new SSO users land group-less and can't chat until an admin assigns a group. | — |
+| `OIDC_ONLY` | `true` hides the password form and disables password login + self-registration. The env-managed superadmin keeps a password backdoor at `/login?password=1`. | `false` |
 | `VOICE_STT_BASE_URL` | OpenAI-compatible audio API for dictation; unset = mic hidden. Endpoints used: `{base}/audio/transcriptions`. | — |
 | `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Credentials + model for STT (e.g. `faster-whisper-large-v3`, `whisper-large-v3`). Model required when the base URL is set. | — |
 | `VOICE_TTS_BASE_URL` | OpenAI-compatible audio API for read-aloud; unset = speaker buttons hidden. Endpoints used: `{base}/audio/speech`. | — |

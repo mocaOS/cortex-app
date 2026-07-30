@@ -145,6 +145,17 @@ services:
       - SMTP_PASS=${SMTP_PASS:-}
       - SMTP_SECURE=${SMTP_SECURE:-false}
       - SMTP_FROM=${SMTP_FROM:-}
+      # SSO via OpenID Connect — optional; unset OIDC_ISSUER_URL keeps it off
+      # entirely (no login button, endpoints answer 404). When the issuer is
+      # set, OIDC_CLIENT_ID + OIDC_CLIENT_SECRET and CHAT_BASE_URL (the
+      # redirect URI base) are required — chat validates this at boot.
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-}
+      - OIDC_BUTTON_LABEL=${OIDC_BUTTON_LABEL:-}
+      - OIDC_DEFAULT_GROUP=${OIDC_DEFAULT_GROUP:-}
+      - OIDC_ONLY=${OIDC_ONLY:-}
       # SENTRY_DISABLED only silences chat's SERVER-side GlitchTip reporting.
       # It is a runtime env var, and Next.js inlines only NEXT_PUBLIC_* vars
       # into the browser bundle, so this setting cannot reach client-side

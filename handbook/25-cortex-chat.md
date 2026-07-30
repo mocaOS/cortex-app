@@ -78,11 +78,12 @@ On the very first boot with a fresh database, the app automatically creates a **
 
 ### How accounts are created
 
-There are three paths:
+There are four paths:
 
 1. **Provisioned by an admin.** An admin creates the user at **Admin → Users** with an email and initial password, and assigns them to a group.
 2. **Self-registration with approval.** A public `/register` page lets people sign up with email and password. Registrations land in a pending **Registrations** tab on the Users page; an admin approves each one by picking the group it should join. If email is configured, the applicant gets an approval notice, and admins can list addresses to be **notified whenever someone registers** (the *registration notifications* setting). Self-registration is on by default and can be disabled with `ENABLE_REGISTRATION=false`, which removes the sign-up link and the registration endpoint entirely. Someone who tries to log in while still pending gets a clear "awaiting approval" message — but only if their password is correct, so outsiders can't probe which emails have registered.
 3. **Bulk import.** The repository ships a command-line script (`scripts/import-users.ts`) that bulk-creates users from an `.xlsx` spreadsheet (columns `email` and `benutzername`) against a running deployment: it logs in as the superadmin, assigns everyone to a chosen group with a shared initial password, defaults to a **dry run**, and never modifies existing accounts — re-running it is safe. See `scripts/README.md` in the repository.
+4. **Single Sign-On.** With an OIDC identity provider configured (next section), first-time SSO users are created automatically on login — no password, no approval queue — and join the group named by `OIDC_DEFAULT_GROUP` (or none, until an admin assigns one).
 
 Sessions are cookie-based with a 30-day sliding lifetime, and passwords are hashed with argon2id.
 
@@ -94,6 +95,28 @@ If SMTP is configured (see the configuration section), two email flows light up:
 - **Admin-triggered reset.** Admins can send a reset email to any user from the Users page.
 
 Reset and approval emails automatically reuse your deployment's branding — accent color, logo, and app title. The superadmin's own password is deliberately excluded from email reset: it is environment-managed, and rotating it means editing the env value and restarting. Without SMTP, all email affordances are simply hidden.
+
+### Single Sign-On (OIDC)
+
+Cortex Chat speaks **OpenID Connect with discovery** — the one SSO protocol that covers effectively every identity stack in the wild. Entra ID (Azure AD), on-prem ADFS (Server 2016+), Okta, Auth0, Google Workspace, and the self-hosted crowd (Keycloak, Authentik, Authelia, Zitadel, PocketID) all speak it natively, so configuration is the same three values regardless of vendor:
+
+```dotenv
+OIDC_ISSUER_URL=https://your-idp.example.com/...   # presence enables the feature
+OIDC_CLIENT_ID=cortex-chat
+OIDC_CLIENT_SECRET=...
+```
+
+Register the client at your IdP with the redirect URI `{APP_BASE_URL}/api/auth/oidc/callback` (`APP_BASE_URL` is required when the issuer is set — in the self-host stack that's `CHAT_BASE_URL`). A "Continue with Single Sign-On" button then appears on the login page — rename it with `OIDC_BUTTON_LABEL` ("Sign in with Entra ID"). Unset the issuer and the feature is invisible again: no button, and the SSO endpoints answer 404. Under the hood the flow is Authorization Code + PKCE, and it ends in the same cookie session as a password login — SSO is a second way to sign in, not a parallel account system.
+
+**What happens on first login.** A returning SSO user is recognized by the stable identity the IdP asserts (issuer + subject). A first-time user is matched by email: if a chat account with that email already exists **and the IdP says the email is verified**, the account is linked — from then on both login methods reach the same account. The verified-email requirement is deliberate (an unverified claim must never take over an existing account), and linking also signs out every existing session for that account. If no account matches, one is created on the spot — role `user`, joining the group named by `OIDC_DEFAULT_GROUP`. Leave that unset and new SSO users land group-less: they can sign in but can't chat until an admin assigns a group — the right default when not everyone at your IdP should read your knowledge base.
+
+**Going all-in.** `OIDC_ONLY=true` removes the password form and self-registration entirely — accounts then come only from the IdP. Two things survive on purpose: the superadmin keeps password access via `/login?password=1` (break-glass — it must work even when the IdP is down), and it is excluded from SSO in both directions. Note that disabling a user at the IdP does **not** end their existing chat sessions (30-day sliding lifetime) — to cut access immediately, delete the user in **Admin → Users**, which cascades their sessions. Login history tags each sign-in as `password` or `oidc`.
+
+**Entra ID (Microsoft 365 shops).** In the Azure portal: *App registrations → New registration*, redirect URI (type "Web") `https://chat.example.com/api/auth/oidc/callback`, then create a client secret under *Certificates & secrets*. The three values: `OIDC_ISSUER_URL=https://login.microsoftonline.com/<tenant-id>/v2.0`, client ID from the overview page, and the secret. Entra doesn't emit an `email_verified` claim, so linking to pre-existing password accounts won't happen automatically — either provision via SSO from the start, or expect users with old password accounts to appear as unlinked (an admin can delete the stale account first).
+
+**Keycloak / Authentik (self-hosters).** Create a confidential client with standard flow enabled and the callback redirect URI; the issuer is `https://kc.example.com/realms/<realm>` (Keycloak) or the provider's issuer URL shown in the admin UI (Authentik). Keep **email verification on** at the IdP if you allow self-service signup there — the chat trusts the IdP's word on identity.
+
+**Legacy LDAP or SAML-only stacks.** Don't wait for a native connector — put a thin bridging IdP in front: Authentik and Dex both federate an existing LDAP/Active Directory (or a SAML IdP) and expose it as OIDC. Point `OIDC_ISSUER_URL` at the bridge. This is standard practice and doubles as our recommendation for anything that doesn't speak OIDC natively.
 
 ## The key model — one secret, many scoped keys
 
@@ -192,7 +215,9 @@ Optional:
 | `PORT` | Published port in the Docker Compose file (default `3000`). |
 | `ENABLE_REGISTRATION` | Self-registration with admin approval. On by default; set `false` to disable. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `SMTP_FROM` | Outbound email for password resets, approval notices, and registration notifications. Unset `SMTP_HOST` = no email features, links hidden. `SMTP_SECURE=true` means implicit TLS (port 465); `false` means STARTTLS (587). For local testing, Mailpit on port 1025 works with no auth. |
-| `APP_BASE_URL` | The app's public URL, used to build links in emails. Required when SMTP is configured; reset links never trust the request's Host header. |
+| `APP_BASE_URL` | The app's public URL, used to build links in emails and the SSO redirect URI. Required when SMTP or OIDC is configured; never derived from the request's Host header. |
+| `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Single Sign-On against any OpenID Connect IdP (see the SSO section above). Unset issuer = feature invisible; when set, all three plus `APP_BASE_URL` are required. |
+| `OIDC_SCOPES`, `OIDC_BUTTON_LABEL`, `OIDC_DEFAULT_GROUP`, `OIDC_ONLY` | SSO tuning: requested scopes (default `openid profile email`), the login-button text, the group first-time SSO users join, and IdP-only mode (password login and self-registration off; superadmin keeps `/login?password=1` as break-glass). |
 | `VOICE_STT_BASE_URL`, `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Speech-to-text for the dictation mic — any OpenAI-compatible audio API (`{base}/audio/transcriptions`). Unset base URL = mic hidden; the model is required when the base URL is set. |
 | `VOICE_TTS_BASE_URL`, `VOICE_TTS_API_KEY`, `VOICE_TTS_MODEL`, `VOICE_TTS_VOICE` | Text-to-speech for read-aloud (`{base}/audio/speech`). Same gating; some backends require a voice name. |
 | `SENTRY_ENVIRONMENT`, `SENTRY_DSN`, `SENTRY_DISABLED` | Error-tracking knobs: tag events per deployment, override the built-in GlitchTip DSN, or switch reporting off. `SENTRY_AUTH_TOKEN` is a *build-time* variable that enables source-map upload so stack traces show real file names. |

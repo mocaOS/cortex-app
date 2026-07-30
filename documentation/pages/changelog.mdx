@@ -9,7 +9,7 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## July 30, 2026
 
-Cortex Chat grows from a chat frontend into a collaborative AI workspace. This release adds **personalities** — portable SOUL.md personas, including a generator that researches your knowledge base and writes one for you — **shared projects** where teams converse in the same threads and watch each other's answers stream in live, **voice** in and out, and a broad chat-UX pass (message actions, feedback, pinning, search, exports, deep links). On the Cortex side it ships one new endpoint, `POST /api/llm/completions`, so every LLM call the chat makes — including persona writing — runs through the instance's single model configuration, metered and traced like everything else. All Cortex Chat changes are additive; existing deployments migrate their database automatically on first boot.
+Cortex Chat grows from a chat frontend into a collaborative AI workspace. This release adds **personalities** — portable SOUL.md personas, including a generator that researches your knowledge base and writes one for you — **shared projects** where teams converse in the same threads and watch each other's answers stream in live, **voice** in and out, **Single Sign-On** against any OpenID Connect identity provider, and a broad chat-UX pass (message actions, feedback, pinning, search, exports, deep links). On the Cortex side it ships one new endpoint, `POST /api/llm/completions`, so every LLM call the chat makes — including persona writing — runs through the instance's single model configuration, metered and traced like everything else. All Cortex Chat changes are additive; existing deployments migrate their database automatically on first boot.
 
 ### Cortex Chat: personalities (SOUL.md)
 
@@ -48,6 +48,15 @@ A **project** groups conversations and carries defaults every chat inside it inh
 - **Sidebar**: title search, pinned chats (their own group on top, never reordered by pinning), and per-chat Markdown export with numbered source footnotes.
 - **Starter prompts** — admin-curated suggested questions as clickable cards on the empty screen, combined with the selected personality's own starters.
 - **Deep Research is now the default mode** for new conversations (admin-overridable, and users still switch per conversation), and a new-chat button lives in the header — no sidebar trip required.
+
+### Cortex Chat: Single Sign-On (OIDC)
+
+One SSO adapter that plugs into whatever identity stack a team already runs — Entra ID at an enterprise or a self-hosted Authentik at a five-person shop — with no per-vendor code, because it speaks the one protocol they all share: **OpenID Connect with discovery**.
+
+- **Three env vars enable it** (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`); unset, the feature is invisible — same gating philosophy as email and voice. The flow is Authorization Code + PKCE, and it terminates into the chat's own session model: SSO is simply a second way to mint a session, not a new auth system.
+- **First-time users are JIT-provisioned** into a configurable default group; a returning email/password user is linked to their IdP identity automatically — but **only when the IdP asserts the email as verified**, the guard against the classic SSO account-takeover bug. Linking also revokes every pre-existing session for the account, so an identity squatted before its real owner's first login is evicted the moment they sign in.
+- **`OIDC_ONLY=true`** turns the deployment fully IdP-managed: password login and self-registration disappear. The superadmin stays env-managed and excluded from SSO in both directions — break-glass access never depends on the IdP being up.
+- Works with Entra ID / Azure AD, ADFS 2016+, Okta, Auth0, Google Workspace, Keycloak, Authentik, Authelia, Zitadel, PocketID; legacy LDAP-only or SAML-only stacks bridge with a thin IdP (Authentik or Dex) in front. Login analytics distinguish SSO from password sign-ins, and the repo ships a preconfigured dev Keycloak for local testing.
 
 ### Cortex: raw completion endpoint
 
