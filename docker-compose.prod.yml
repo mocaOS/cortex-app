@@ -36,6 +36,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
+      args:
+        # CPU-only torch wheels (~2.5GB smaller, no nvidia-* stack). Inference
+        # runs on remote APIs; local ML (docling/easyocr/embeddings) works on
+        # CPU. Set TORCH_VARIANT=cuda in .env only for GPU servers.
+        - TORCH_VARIANT=${TORCH_VARIANT:-cpu}
     container_name: cortex-backend
     env_file:
       - .env
