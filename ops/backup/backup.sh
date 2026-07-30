@@ -108,7 +108,7 @@ fi
 # /data/skills and /data/apps carry user-installed AgentSkills and apps — these
 # are user-authored content with no other copy, so losing them is real data loss.
 # Every path is existence-guarded, so stacks that do not mount one are
-# unaffected (the Dokploy compose currently mounts neither skills nor apps).
+# unaffected.
 if [ -d /data/uploads ] || [ -d /data/custom_inputs ] || [ -d /data/chat ] \
    || [ -d /data/skills ] || [ -d /data/apps ]; then
     rc=0

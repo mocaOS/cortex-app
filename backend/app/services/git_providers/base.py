@@ -89,11 +89,13 @@ class GitProvider(ABC):
         base_url: Optional[str] = None,
         timeout: int = 30,
         insecure_hosts: Optional[set[str]] = None,
+        allow_private: bool = True,
     ):
         self._token = token
         self._base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout
         self._insecure_hosts = insecure_hosts or set()
+        self._allow_private = allow_private
 
     # ----- host / url helpers ------------------------------------------------
 
@@ -144,10 +146,14 @@ class GitProvider(ABC):
         # SSRF guard: base_url is caller-supplied for self-hosted GitLab/Gitea.
         # Block loopback/link-local/metadata (and re-validate redirect hops so a
         # public base_url can't 3xx-bounce to an internal target). Private ranges
-        # stay allowed — self-hosted git on an internal IP is legitimate — as are
-        # hosts the operator already trusts via GIT_HTTP_INSECURE_HOSTS.
+        # follow GIT_HTTP_ALLOW_PRIVATE — legitimate for self-hosted git on an
+        # internal IP, off on multi-tenant hosts where a private base_url is a
+        # neighbouring stack. Hosts the operator already trusts via
+        # GIT_HTTP_INSECURE_HOSTS bypass the check regardless.
         from app.services.ssrf_guard import async_request_hook, SSRFError
-        _ssrf_hook = async_request_hook(allow_private=True, allowlist=self._insecure_hosts)
+        _ssrf_hook = async_request_hook(
+            allow_private=self._allow_private, allowlist=self._insecure_hosts
+        )
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout,

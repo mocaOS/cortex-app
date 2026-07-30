@@ -227,6 +227,10 @@ def mock_neo4j(monkeypatch):
         "collection_count": 0,
     }
     fake.find_document_by_filename_and_size.return_value = None
+    # A lookup miss must be a real None, not a truthy MagicMock: with git
+    # integration enabled (the tenant default) the connection endpoints would
+    # otherwise "find" a mock and 500 on response validation instead of 404ing.
+    fake.get_git_connection.return_value = None
     fake.initialize_schema.return_value = None
     fake.ensure_admin_key_exists.return_value = None
     fake.set_custom_input_metadata.return_value = None

@@ -7,6 +7,7 @@
 # as UID 1000 — gets EACCES on the first write:
 #   - uploads            -> POST /api/upload
 #   - .agents/skills     -> downloading/installing a skill ([Errno 13] .../skills/<id>)
+#   - .agents/apps       -> installing an app (bundle dir + storage.sqlite + tasks/)
 #   - custom_inputs      -> manual Q&A / text / markdown inputs
 #   - .cache/huggingface -> reranker/embedding model download
 #
@@ -19,7 +20,8 @@ set -e
 APP_UID=1000
 APP_GID=1000
 
-for d in /app/uploads /app/custom_inputs /app/.agents/skills /app/.cache/huggingface; do
+for d in /app/uploads /app/custom_inputs /app/.agents/skills /app/.agents/apps \
+         /app/.cache/huggingface; do
     mkdir -p "$d"
     # Skip the recursive chown when the mount already has the right owner. This
     # keeps restarts fast — otherwise we'd re-walk the (potentially large) HF

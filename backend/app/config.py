@@ -793,6 +793,16 @@ class Settings(BaseSettings):
         default=""
     )  # Comma-separated hostnames for which git REST calls AND clone TLS verification are skipped
     # (opt-in, for self-signed certs on self-hosted GitLab/Gitea). Empty = verify all (secure default).
+    # NOTE: these hosts also bypass the git SSRF check entirely (they are passed as the guard's
+    # allowlist), so the var grants two things at once. Operator-set only, never user-reachable.
+    git_http_allow_private: bool = Field(
+        default=True
+    )  # SSRF policy for git provider REST calls. True (default) permits
+    # RFC1918/ULA base_urls so a self-hosted GitLab/Gitea on an intranet can be
+    # connected. Set False on MULTI-TENANT hosts where a private-range base_url
+    # is a neighbouring stack rather than the operator's own forge. Loopback and
+    # link-local/metadata are blocked either way. Covers the REST surface only —
+    # the clone/fetch subprocess is not routed through the guard.
 
     # Chunking Configuration (enhanced)
     chunk_by: str = Field(default="sentence")  # "word" or "sentence" based splitting
@@ -1037,6 +1047,15 @@ class Settings(BaseSettings):
         default=30
     )  # Timeout in seconds for the platform "http" capability (server-side
     #   external calls on behalf of platform apps, secret-injected).
+    app_http_allow_private: bool = Field(
+        default=True
+    )  # SSRF policy for the platform "http" capability. True (default) permits
+    #   RFC1918/ULA targets so an admin-installed app can drive a LAN service
+    #   (Paperless/Nextcloud/WebDAV on an intranet) — the single-tenant,
+    #   admin-approves-the-manifest case. Set False on MULTI-TENANT hosts where
+    #   several stacks share a Docker network: there a declared host resolving
+    #   to a private address is a neighbour's container, not the operator's own
+    #   service. Loopback and link-local/metadata are blocked either way.
     app_storage_max_mb: int = Field(
         default=50
     )  # Per-app quota for the platform "storage" capability (KV store backed

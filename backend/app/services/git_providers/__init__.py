@@ -41,6 +41,7 @@ def get_provider(vendor: str, token: str, base_url: Optional[str] = None) -> Git
         base_url=base_url,
         timeout=settings.git_http_timeout,
         insecure_hosts=parse_insecure_hosts(),
+        allow_private=settings.git_http_allow_private,
     )
 
 

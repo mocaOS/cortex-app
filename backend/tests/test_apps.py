@@ -427,6 +427,41 @@ def test_platform_endpoints_gating(apps_env, client):
                        json={"method": "GET", "url": "https://api.example.com/"}).status_code == 401
 
 
+def test_app_http_allow_private_gates_lan_targets(apps_env, client, monkeypatch):
+    """APP_HTTP_ALLOW_PRIVATE decides whether a declared host may resolve into
+    RFC1918. Off (multi-tenant hosts) a LAN target is refused even though the
+    manifest declares it — otherwise one tenant's app could reach a neighbour's
+    container across a shared Docker network."""
+    import httpx
+
+    from app.config import get_settings
+
+    manifest = platform_manifest(
+        id="lan-app", capabilities={"http": {"hosts": ["10.0.0.5"]}}, config=[]
+    )
+    client.post("/api/admin/apps/install",
+                files={"file": ("lan.zip", make_zip(manifest), "application/zip")})
+    token = client.post("/api/apps/lan-app/token").json()["token"]
+    envelope = {"method": "GET", "url": "http://10.0.0.5/api/"}
+
+    monkeypatch.setattr(get_settings(), "app_http_allow_private", False)
+    blocked = client.post("/apps/lan-app/api/platform/http",
+                          headers={"Authorization": f"Bearer {token}"}, json=envelope)
+    assert blocked.status_code == 403
+    assert "Blocked target" in blocked.json()["detail"]
+
+    # Flipped on (single-tenant/self-host), the same declared host is reachable —
+    # the flag gates only the SSRF classification, not the host allowlist.
+    async def fake_request(self, method, url, content=None, headers=None):
+        return httpx.Response(200, json={"ok": True}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(get_settings(), "app_http_allow_private", True)
+    allowed = client.post("/apps/lan-app/api/platform/http",
+                          headers={"Authorization": f"Bearer {token}"}, json=envelope)
+    assert allowed.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # HTTP endpoints
 # ---------------------------------------------------------------------------

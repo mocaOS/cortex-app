@@ -100,7 +100,8 @@ async def execute_app_http(
 ) -> httpx.Response:
     """The single enforcement path for app-originated external HTTP: host
     allowlist (manifest-declared, config-resolved) → SSRF guard (loopback and
-    metadata blocked, LAN allowed) → auth headers injected from encrypted
+    metadata always blocked; LAN allowed per APP_HTTP_ALLOW_PRIVATE, which
+    multi-tenant hosts turn off) → auth headers injected from encrypted
     config. Used by the platform/http endpoint AND http task steps.
 
     auth_override is a full Authorization value ("Bearer x" / "Basic y")
@@ -129,7 +130,7 @@ async def execute_app_http(
     if target_host not in allowed_hosts:
         raise AppHttpError(403, f"Host '{target_host}' is not in this app's declared hosts")
     try:
-        validate_url(url, allow_private=True)
+        validate_url(url, allow_private=get_settings().app_http_allow_private)
     except SSRFError as e:
         raise AppHttpError(403, f"Blocked target: {e}")
 

@@ -265,7 +265,8 @@ See [Chapter 18: Agent Skills](18-skills.md) for full documentation on installin
 | `GIT_SYNC_MAX_FILE_SIZE_MB` | `5` | Skip individual files larger than this during sync. `0` = no per-file limit. |
 | `GIT_SYNC_POLL_INTERVAL` | `5` | Minutes between scheduler ticks that check connections due for a scheduled sync. |
 | `GIT_HTTP_TIMEOUT` | `30` | Timeout in seconds for git provider REST API calls. |
-| `GIT_HTTP_INSECURE_HOSTS` | _(empty)_ | Comma-separated hostnames for which git REST calls and clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts. |
+| `GIT_HTTP_INSECURE_HOSTS` | _(empty)_ | Comma-separated hostnames for which git REST calls and clone TLS verification are skipped (opt-in, for self-hosted GitLab/Gitea with self-signed certs). Empty = verify all hosts. These hosts also bypass the egress check below. |
+| `GIT_HTTP_ALLOW_PRIVATE` | `true` | Whether a connection's `base_url` may resolve to a private (RFC1918/ULA) address — needed for a self-hosted GitLab/Gitea on your intranet. Set `false` on a **multi-tenant host**, where a private-range address is a neighbouring stack rather than your own forge. Loopback and link-local/metadata are blocked either way. Covers REST calls; the clone/fetch subprocess is not routed through the guard. |
 
 The backend image bundles the `git` binary. See [Chapter 21: Git Integration](21-git-integration.md) for the full feature guide.
 
@@ -305,6 +306,7 @@ Host self-contained web apps inside your instance — installed from a zip or st
 | `APP_TOKEN_TTL_SECONDS` | `900` | Lifetime of the short-lived tokens sandboxed apps hold (auto-renewed). |
 | `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where allowlisted app API calls are forwarded (self-loopback). |
 | `APP_HTTP_TIMEOUT` | `30` | Timeout for platform apps' server-side external calls. |
+| `APP_HTTP_ALLOW_PRIVATE` | `true` | Whether a platform app's declared hosts may resolve to private (RFC1918/ULA) addresses — needed for apps that drive a LAN service (Paperless, Nextcloud, WebDAV on your intranet). Set `false` on a **multi-tenant host**, where a declared host resolving into a private range would reach a neighbouring stack's containers. Loopback and link-local/metadata are blocked either way. |
 | `APP_STORAGE_MAX_MB` / `APP_STORAGE_MAX_VALUE_KB` | `50` / `1024` | Per-app storage quota and per-value cap. |
 | `APP_TASK_*` | see [Ch. 24](24-apps.md#configuration-reference) | Background-task caps: items, concurrency (per-task and global), schedule floor, LLM calls per run, step output size, stored tasks per app. |
 

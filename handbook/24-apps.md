@@ -137,6 +137,7 @@ These settings, placed in the backend environment, control the Apps subsystem. O
 | `APP_TOKEN_TTL_SECONDS` | `900` | How long the short-lived app tokens last (15 minutes) before renewal. |
 | `APP_PROXY_UPSTREAM` | `http://127.0.0.1:8000` | Where the app proxy forwards allowed Cortex API calls (the instance itself). |
 | `APP_HTTP_TIMEOUT` | `30` | Timeout, in seconds, for a platform app's server-side external calls. |
+| `APP_HTTP_ALLOW_PRIVATE` | `true` | Whether an app may call hosts on your private network — needed for apps that drive a LAN service. Turn it off on a shared/multi-tenant host, where a private address belongs to someone else's instance. Calls to the machine itself and to cloud metadata are always refused. |
 | `APP_STORAGE_MAX_MB` | `50` | How much data one app may keep in its private store. |
 | `APP_STORAGE_MAX_VALUE_KB` | `1024` | Largest single item an app may store. |
 | `APP_TASK_MAX_ITEMS` | `2000` | Most items one background job may contain. |
