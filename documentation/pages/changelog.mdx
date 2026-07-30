@@ -65,6 +65,10 @@ One SSO adapter that plugs into whatever identity stack a team already runs — 
 
 Verified end to end against a live instance: persona generation grounded in real knowledge-base content through the new endpoint, two-account realtime collaboration (live question + streaming answer on the watching side, mid-stream join with replay), and the full multi-user attribution model. No API or schema breakage anywhere: all chat SSE events are additive, the new endpoint is new surface, and Cortex Chat's SQLite migrations apply automatically on boot. The personality generator requires a Cortex release with the completion endpoint — older backends get a clear message naming the fix, and everything else keeps working.
 
+### Release 1.1.1: everything above, installable
+
+- Cortex Chat **v1.1.0** is tagged and published to GHCR, and this release pins it in `stack.json` — so the workspace release and the completion endpoint it depends on ship as one tested set. An existing self-host install gets all of it with `npx @mocaos/cortex update` (chat updates only where it's enabled, of course); nothing else in the stack changed.
+
 ---
 
 ## July 29, 2026
