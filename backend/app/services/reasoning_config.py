@@ -144,6 +144,17 @@ def adapt_token_params(model: str, kwargs: dict) -> dict:
     return out
 
 
+def is_openai_reasoning_model(model: str) -> bool:
+    """True if the model is an OpenAI GPT-5+/o-series reasoning family.
+
+    Used by tool-calling agents to pin reasoning effort to the floor: newer
+    OpenAI chat-completions models (first seen on gpt-5.6-luna) 400 when
+    function tools are combined with any reasoning effort other than 'none' —
+    including the provider default that applies when we inject nothing.
+    """
+    return parse_model_family(model) in _OPENAI_REASONING_FAMILIES
+
+
 def parse_model_family(model: str) -> ModelFamily:
     """Identify the model family from its name string.
 

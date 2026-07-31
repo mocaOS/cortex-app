@@ -356,3 +356,21 @@ def test_researcher_loop_keeps_reasoning_in_quality_mode():
     assert _chat_reasoning_mode("quality", S()) is ReasoningMode.AUTO
     # speed follows the configured default
     assert _chat_reasoning_mode("speed", S()) is ReasoningMode.OFF
+
+
+def test_researcher_loop_forces_reasoning_off_for_openai_gpt_models():
+    # gpt-5.6-luna 400s when function tools are sent with any reasoning_effort
+    # other than 'none' — including the provider default that applies when we
+    # inject nothing (the quality-mode AUTO path). The researcher loop always
+    # sends tools, so OpenAI reasoning families are pinned OFF in both modes.
+    from app.services.reasoning_config import ReasoningMode
+    from app.services.researcher_agent import _chat_reasoning_mode
+
+    class S:
+        default_reasoning_mode = "auto"
+
+    for model in ("gpt-5.6-luna", "gpt-5.1", "gpt-5-mini", "o3-mini"):
+        assert _chat_reasoning_mode("quality", S(), model) is ReasoningMode.OFF
+        assert _chat_reasoning_mode("speed", S(), model) is ReasoningMode.OFF
+    # non-OpenAI models keep the existing behavior
+    assert _chat_reasoning_mode("quality", S(), "qwen3-32b") is ReasoningMode.AUTO

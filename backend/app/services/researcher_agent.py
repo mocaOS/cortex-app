@@ -40,12 +40,13 @@ from app.services.research_prompts import (
 )
 from app.services.reasoning_config import (
     apply_cache_control,
+    is_openai_reasoning_model,
     safe_chat_completion,
     ReasoningMode,
 )
 
 
-def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
+def _chat_reasoning_mode(mode: str, settings, model: str = "") -> ReasoningMode:
     """Reasoning level for the researcher-loop LLM calls.
 
     Speed/chat → DEFAULT_REASONING_MODE (default OFF → Venice disable_thinking,
@@ -53,8 +54,19 @@ def _chat_reasoning_mode(mode: str, settings) -> ReasoningMode:
     hidden reasoning preserved — the forced-reflection micro-call depends on the
     model actually thinking). See config.default_reasoning_mode.
 
+    Exception: OpenAI GPT-5+/o-series models are always OFF, in both modes.
+    The researcher loop sends function tools, and newer OpenAI chat-completions
+    models (first seen on gpt-5.6-luna) 400 unless reasoning_effort is
+    explicitly 'none' — the AUTO path injects nothing, the provider default
+    effort applies, and the request is rejected before the reasoning-param
+    fallback in safe_chat_completion can help (it only retries params WE sent).
+    OFF maps to the floor each family accepts ('none' on 5.1+, 'minimal'/'low'
+    on older ones), so this is also safe for pre-luna GPT models.
+
     The final writer call uses :func:`_writer_reasoning_mode` instead.
     """
+    if is_openai_reasoning_model(model):
+        return ReasoningMode.OFF
     if mode == "speed":
         return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
     return ReasoningMode.AUTO
@@ -780,7 +792,7 @@ async def _run_researcher_loop(
                 client.chat.completions.create,
                 base_url=llm_config.base_url,
                 model=llm_config.model,
-                reasoning_mode=_chat_reasoning_mode(mode, settings),
+                reasoning_mode=_chat_reasoning_mode(mode, settings, llm_config.model),
                 overrides=settings.parsed_reasoning_overrides,
                 messages=call_messages,
                 tools=tools,
@@ -1717,7 +1729,7 @@ async def _run_researcher_loop(
                     client.chat.completions.create,
                     base_url=llm_config.base_url,
                     model=llm_config.model,
-                    reasoning_mode=_chat_reasoning_mode(mode, settings),
+                    reasoning_mode=_chat_reasoning_mode(mode, settings, llm_config.model),
                     overrides=settings.parsed_reasoning_overrides,
                     messages=messages + [{
                         "role": "system",
