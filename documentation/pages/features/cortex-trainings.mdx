@@ -1,0 +1,64 @@
+---
+title: Cortex Trainings
+description: A standalone app that turns a Cortex knowledge base into interactive training units — a researched, cited curriculum you approve as a document, then generated video, voiceover, beat-synced animations and gamified interactions delivered as a single offline HTML file
+---
+
+[**Cortex Trainings**](https://github.com/mocaOS/cortex-trainings) is a standalone application that turns the knowledge already in a Cortex instance into interactive courses. It runs as its own deployment and connects to the backend exclusively through the REST API with a **read-only key** — a standalone app in the same sense as [Cortex Chat](/features/cortex-chat), as opposed to [Apps](/features/apps) hosted *inside* an instance.
+
+The pitch: describe a topic and an audience, and an agent researches your knowledge base and writes a complete curriculum — levels, learning objectives, scripts, quizzes, and every source it used, cited with dates. You review and approve that as a plain document. Only then does production start, generating cinematic AI video, a narrated voiceover in your language, beat-synced explainer animations and gamified interactions, and delivering the finished course as a single HTML file that runs offline on double-click. Onboarding, compliance and product training built from what your company already knows, in about half an hour.
+
+## The two-part workflow
+
+The split between writing and producing is the core design decision, because a text change before production is free and the same change afterwards means a new voiceover, a new render, and possibly a new film.
+
+### Part 1 — Curriculum (cheap)
+
+- **Four required inputs** — topic and learning objectives, audience and prior knowledge, content language, and desired duration. The app refuses to guess any of them; duration determines the number of levels (3–4, 5–6, or 7–8).
+- **Research-first** — the agent issues a broad fan-out of deep-research queries against your instance *before* writing, then further queries to fill gaps as it drafts. Knowledge-base queries are cheap relative to agent tokens, so the design spends generously here.
+- **A reviewable document** — `curriculum.md` contains a fact sheet, learning objectives, a level table, and per level the teaching text, voiceover script, media plan and fully written-out interaction, plus a final check, a cheat sheet, cited sources and a production estimate.
+- **Free revisions** — request changes in a chat; each revision saves a new version and propagates through the objectives, level table, final check and sources.
+- **Honest gaps** — when the knowledge base doesn't cover something, the curriculum names the gap and asks, rather than filling it with plausible general knowledge.
+
+### Part 2 — Production (costs money)
+
+- **Approval-gated** — unreachable until you explicitly approve. From that point the curriculum is binding: what gets produced is what the document says.
+- **Resumable pipeline** — seven steps with live progress over SSE. Completed steps are skipped on resume and every artefact is cached, so a failure never re-pays for finished work.
+- **Two human checkpoints** — you choose the guide character's reference image (the anchor for every video's look), and you confirm a **live cost quote** before any video is generated.
+- **Media** — generated video for story moments, locally rendered animations for concepts and lists, and images for interaction screens.
+
+## What a training unit is
+
+A single self-contained HTML file, typically 10–15 MB, with all media embedded. No server, no build, no accounts, no telemetry — it runs on double-click and is shareable by mail, Drive, or an LMS.
+
+- **Levels** — each pairs one medium with one interaction; the interaction must be completed to advance, videos are skippable.
+- **Interactions** — multiple choice, myth-or-fact cards, sorting tasks, find-the-mistakes, self-assessment sliders, and a shuffled final check. A different form per level, because repetition is what makes e-learning a chore.
+- **Gamification** — XP with reduced points on a second attempt, level badges, a progress bar.
+- **Progress** — saved in `localStorage`, so closing the tab and returning resumes where the learner left off.
+- **A printable cheat sheet** — the summary screen carries every key takeaway with print styling.
+- **Any language** — learner-facing text and the voice follow the training's language; the `lang` attribute is set accordingly.
+
+A **guide character** carries the visual identity across every medium. It is always an abstract object — a glowing orb, a crystal, a cube — never a human, because abstract objects stay consistent across image generations where a person drifts between shots. Its colour is the configured accent, applied throughout.
+
+### Choosing the medium matters
+
+Video is priced per second and dominates the cost of a training by an order of magnitude; animations are rendered locally and cost nothing. Animations also render **razor-sharp text in any language**, which generative video cannot do — so concepts, lists, rules, processes and numbers belong in an animation, and film is reserved for the two or three moments that genuinely need emotion. A curriculum will often suggest this trade-off itself.
+
+## Access and configuration
+
+Cortex Trainings only ever **reads** your instance.
+
+- **Read-only key** — use a `cortex_ro_…` key, ideally scoped to the collections a training may draw on, so a leaked key exposes only content you already chose to expose.
+- **Required instance flags** — `ENABLE_AGENTIC_RAG` and `ENABLE_AGENT_RESEARCH`, because the research phase relies on agentic retrieval.
+- **Endpoints used** — `POST /api/search`, `POST /api/ask/stream`, the community and graph endpoints for mapping a domain, and `GET /api/documents/{id}/content` for reading primary sources.
+- **Server-side only** — the key never reaches a browser, so the app's origin does not need to be on your instance's CORS allowlist.
+
+Configuration is entirely environment variables: instance URL and key, the AI provider key and model choices, interface language, accent colour, and a storage path. Generated projects are stored as plain files — every curriculum version, the production plan, per-step state and all media — so runs stay inspectable, resumable and recoverable.
+
+Requirements: Node 22+, `ffmpeg`/`ffprobe`, and a headless Chromium for rendering animations.
+
+## Where to go next
+
+- [Apps](/features/apps) — the other kind of app: small web apps that run inside your instance
+- [Cortex Chat](/features/cortex-chat) — the other standalone app, for everyday question answering
+- [Ask AI](/features/ask-ai) — the retrieval and deep-research capabilities the curriculum phase builds on
+- [Authentication](/guides/authentication) — API keys, permissions and collection scoping

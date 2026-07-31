@@ -99,6 +99,7 @@ const config: ZudokuConfig = {
             "/features/skills",
             "/features/apps",
             "/features/cortex-chat",
+            "/features/cortex-trainings",
             "/features/git-integration",
             "/features/web-import",
             "/features/x402-payments",

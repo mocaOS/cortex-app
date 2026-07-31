@@ -43,6 +43,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 24 | [Apps](24-apps.md) | `24-apps.md` | Everyone |
 | 25 | [Cortex Chat](25-cortex-chat.md) | `25-cortex-chat.md` | Everyone |
 | 26 | [Self-Hosting](26-self-hosting.md) | `26-self-hosting.md` | Administrators |
+| 27 | [Cortex Trainings](27-cortex-trainings.md) | `27-cortex-trainings.md` | Everyone |
 
 ## Quick Links
 
@@ -56,6 +57,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 - **I want to extend the agent with custom skills** — See [Chapter 18: Agent Skills](18-skills.md)
 - **I want to run a web app inside my instance** — See [Chapter 24: Apps](24-apps.md)
 - **I want to give my team a ready-made chat interface** — See [Chapter 25: Cortex Chat](25-cortex-chat.md)
+- **I want to turn my knowledge base into interactive trainings** — See [Chapter 27: Cortex Trainings](27-cortex-trainings.md)
 - **Something isn't working** — See [Chapter 19: Troubleshooting](19-troubleshooting.md)
 - **I want to understand the philosophy behind Cortex** — Read [Chapter 22: The Cortex Standard](22-the-cortex-standard.md)
 

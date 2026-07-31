@@ -7,6 +7,19 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## July 31, 2026
+
+Cortex Trainings joins the ecosystem: a standalone app that turns a knowledge base into interactive training units. Where Cortex Chat answers the questions people think to ask, trainings cover the ones they don't know to ask — onboarding, compliance, process knowledge — generated from documents the organization already has, instead of written once by hand and left to go stale.
+
+### Documentation: Cortex Trainings
+
+- **New docs page** — [Cortex Trainings](/features/cortex-trainings) explains the app end to end: the two-part workflow (a researched, cited curriculum you approve as a plain document, then media production behind that gate), what a training unit contains, why the choice between generated video and locally rendered animation dominates cost, and the access model.
+- **New handbook chapter** — Chapter 27 covers the same ground for handbook readers, and Chapter 24 (Apps) now names Cortex Trainings alongside Cortex Chat as an example of a **standalone app** — one that runs outside the instance and connects through the REST API with scoped keys.
+- **Access model** — the app reads only, using a read-only (`cortex_ro_…`) key that is ideally collection-scoped, and requires `ENABLE_AGENTIC_RAG` and `ENABLE_AGENT_RESEARCH` on the instance because the research phase relies on agentic retrieval.
+- No product changes — documentation only. The app lives at [github.com/mocaOS/cortex-trainings](https://github.com/mocaOS/cortex-trainings).
+
+---
+
 ## July 30, 2026
 
 Cortex Chat grows from a chat frontend into a collaborative AI workspace. This release adds **personalities** — portable SOUL.md personas, including a generator that researches your knowledge base and writes one for you — **shared projects** where teams converse in the same threads and watch each other's answers stream in live, **voice** in and out, **Single Sign-On** against any OpenID Connect identity provider, and a broad chat-UX pass (message actions, feedback, pinning, search, exports, deep links). On the Cortex side it ships one new endpoint, `POST /api/llm/completions`, so every LLM call the chat makes — including persona writing — runs through the instance's single model configuration, metered and traced like everything else. All Cortex Chat changes are additive; existing deployments migrate their database automatically on first boot.
