@@ -14,6 +14,7 @@ The split between writing and producing is the core design decision, because a t
 ### Part 1 — Curriculum (cheap)
 
 - **Four required inputs** — topic and learning objectives, audience and prior knowledge, content language, and desired duration. The app refuses to guess any of them; duration determines the number of levels (3–4, 5–6, or 7–8).
+- **Optional inputs** — existing material to build on, a collection to scope research to, and up to three character plus three style **reference images**, analysed once on upload and binding on every prompt from the curriculum onward.
 - **Research-first** — the agent issues a broad fan-out of deep-research queries against your instance *before* writing, then further queries to fill gaps as it drafts. Knowledge-base queries are cheap relative to agent tokens, so the design spends generously here.
 - **A reviewable document** — `curriculum.md` contains a fact sheet, learning objectives, a level table, and per level the teaching text, voiceover script, media plan and fully written-out interaction, plus a final check, a cheat sheet, cited sources and a production estimate.
 - **Free revisions** — request changes in a chat; each revision saves a new version and propagates through the objectives, level table, final check and sources.
@@ -22,9 +23,9 @@ The split between writing and producing is the core design decision, because a t
 ### Part 2 — Production (costs money)
 
 - **Approval-gated** — unreachable until you explicitly approve. From that point the curriculum is binding: what gets produced is what the document says.
-- **Resumable pipeline** — seven steps with live progress over SSE. Completed steps are skipped on resume and every artefact is cached, so a failure never re-pays for finished work.
-- **Two human checkpoints** — you choose the guide character's reference image (the anchor for every video's look), and you confirm a **live cost quote** before any video is generated.
-- **Media** — generated video for story moments, locally rendered animations for concepts and lists, and images for interaction screens.
+- **Resumable pipeline** — eight steps with live progress over SSE, ending in an automated browser click-through that fails the run if an interaction cannot be completed. Completed steps are skipped on resume and every artefact is cached, so a failure never re-pays for finished work.
+- **Two human checkpoints** — you choose the guide character's reference image (the anchor the storyboard's character shots are generated from), and you confirm a **live cost quote** before any video is generated.
+- **Media** — generated video for story moments, locally rendered animations for concepts and lists, and images for interaction screens. Film shots are de-padded before assembly, because video models compose to their own taste and pad to the requested ratio.
 
 ## What a training unit is
 
@@ -37,7 +38,13 @@ A single self-contained HTML file, typically 10–15 MB, with all media embedded
 - **A printable cheat sheet** — the summary screen carries every key takeaway with print styling.
 - **Any language** — learner-facing text and the voice follow the training's language; the `lang` attribute is set accordingly.
 
-A **guide character** carries the visual identity across every medium. It is always an abstract object — a glowing orb, a crystal, a cube — never a human, because abstract objects stay consistent across image generations where a person drifts between shots. Its colour is the configured accent, applied throughout.
+A **guide character** anchors the visual identity. By default it is an abstract object — a glowing orb, a crystal, a cube — never a human, because abstract objects stay consistent across image generations where a person drifts between shots; its colour is then the configured accent, applied throughout.
+
+**Or bring your own.** Upload up to three reference images of your own character — a mascot, a figure, a product — and a vision model extracts a precise description of it, which is then used to generate the anchor image *from your actual images* rather than from a paraphrase. Your character keeps its own colours: the accent still rules the interface, animations and highlights, but nothing is recoloured to match it. The consistency caveat above still holds, so a detailed human character drifts between shots more than a stylised or abstract one.
+
+Upload up to three **style reference images** too, and their extracted aesthetic replaces the preset visual style in every film and image prompt. With both supplied, your character is rendered into the world the script describes, in the look your references define.
+
+**The guide does not appear in every shot**, and that is deliberate. The storyboard decides per shot: roughly half a film's shots — establishing shots, object details, concept imagery — are character-free, and the opening shot almost always is. A guide in every shot reads as a mascot parade and buries the subject the training is actually about. Character-free shots still carry the shared style, so they stay in the same visual world.
 
 ### Choosing the medium matters
 
@@ -52,7 +59,7 @@ Cortex Trainings only ever **reads** your instance.
 - **Endpoints used** — `POST /api/search`, `POST /api/ask/stream`, the community and graph endpoints for mapping a domain, and `GET /api/documents/{id}/content` for reading primary sources.
 - **Server-side only** — the key never reaches a browser, so the app's origin does not need to be on your instance's CORS allowlist.
 
-Configuration is entirely environment variables: instance URL and key, the AI provider key and model choices, interface language, accent colour, and a storage path. Generated projects are stored as plain files — every curriculum version, the production plan, per-step state and all media — so runs stay inspectable, resumable and recoverable.
+Configuration is entirely environment variables: instance URL and key, the AI provider key and model choices — agent, vision, image, image-editing, video and speech — interface language, accent colour, and a storage path. Generated projects are stored as plain files — every curriculum version, the production plan, per-step state and all media — so runs stay inspectable, resumable and recoverable.
 
 Requirements: Node 22+, `ffmpeg`/`ffprobe`, and a headless Chromium for rendering animations.
 

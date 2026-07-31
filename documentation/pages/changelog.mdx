@@ -9,14 +9,29 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## July 31, 2026
 
-Cortex Trainings joins the ecosystem: a standalone app that turns a knowledge base into interactive training units. Where Cortex Chat answers the questions people think to ask, trainings cover the ones they don't know to ask — onboarding, compliance, process knowledge — generated from documents the organization already has, instead of written once by hand and left to go stale.
+Cortex Trainings joins the ecosystem: a standalone app that turns a knowledge base into interactive training units. Where Cortex Chat answers the questions people think to ask, trainings cover the ones they don't know to ask — onboarding, compliance, process knowledge — generated from documents the organization already has, instead of written once by hand and left to go stale. The app also learns to look like you: upload reference images of your own character and of the visual style you want, and both carry through every scene of the finished course.
 
 ### Documentation: Cortex Trainings
 
 - **New docs page** — [Cortex Trainings](/features/cortex-trainings) explains the app end to end: the two-part workflow (a researched, cited curriculum you approve as a plain document, then media production behind that gate), what a training unit contains, why the choice between generated video and locally rendered animation dominates cost, and the access model.
 - **New handbook chapter** — Chapter 27 covers the same ground for handbook readers, and Chapter 24 (Apps) now names Cortex Trainings alongside Cortex Chat as an example of a **standalone app** — one that runs outside the instance and connects through the REST API with scoped keys.
 - **Access model** — the app reads only, using a read-only (`cortex_ro_…`) key that is ideally collection-scoped, and requires `ENABLE_AGENTIC_RAG` and `ENABLE_AGENT_RESEARCH` on the instance because the research phase relies on agentic retrieval.
-- No product changes — documentation only. The app lives at [github.com/mocaOS/cortex-trainings](https://github.com/mocaOS/cortex-trainings).
+- No changes to Cortex itself — the instance-side surface is unchanged, and everything below lives in the app at [github.com/mocaOS/cortex-trainings](https://github.com/mocaOS/cortex-trainings).
+
+### Cortex Trainings: bring your own character and visual style
+
+Until now every training used a generated abstract guide — an orb, a crystal, a cube — in the deployment's accent colour. A course can now carry **your** character and **your** aesthetic, so it reads as your material rather than as generic AI output.
+
+- **Reference images, analysed once** — upload up to three images of a character and up to three that define a visual style. A vision model turns each set into a precise English description at upload time; every prompt downstream, from the curriculum to the last film shot, is written against those descriptions. They can be replaced or removed until production starts, at which point they lock, because the plan was extracted from them.
+- **Your character, not a paraphrase of it** — the guide-character anchor image is generated *from the uploaded images themselves* through image-to-image editing, so identifying details survive that no text description would reliably reproduce. The uploaded images then ride along as extra consistency references on every shot that features the character.
+- **Your character keeps its own colours.** The single-accent rule still governs the interface, animations and highlights, but nothing is recoloured to match it.
+- **The storyboard decides where the character appears.** Roughly half of a film's shots — establishing shots, object details, concept imagery — are deliberately character-free, and the opening shot almost always is. Conditioning every shot on the character produced a mascot parade: the guide turned up in shots written without it, and because the anchor image is a hero portrait, every film opened on that same portrait. Character-free shots are anchored on the style references instead, so losing the character never means losing the look.
+- **Reference images are instructions about everything, not just identity.** A hero-framed character reference makes a video model copy that *framing* into every clip; style references bleed their subjects. Prompts now state explicitly what may be taken from a reference — identity only, or palette and lighting only — and the negative prompt names the portrait framing directly.
+
+### Cortex Trainings: film edges
+
+- **Model-baked padding is cropped before assembly.** Video models compose to their own taste and pad the result to the requested aspect ratio — one composes at roughly 2:1 and fills the remainder with near-white bars, inside the returned frame. Left alone those bars reach the learner looking like a rendering bug. Detection samples several frames per clip, because the padding is not constant within a clip and propagates into a chained shot through its start frame.
+- **A hard-won lesson**: the first fix cropped the white bars and then fitted the clip into 1920×1080, which re-letterboxed the now-2:1 picture with *black* bars — trading the model's bars for our own. Clips are now scaled to fill the frame. A second attempt also tried to detect dark padding by flatness and cropped 283 pixels off a shot that had none, because in near-black footage a genuine edge column is flat black too; only bright padding is detected, and filling handles the rest.
 
 ---
 

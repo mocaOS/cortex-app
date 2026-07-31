@@ -19,7 +19,7 @@ The source lives at [github.com/mocaOS/cortex-trainings](https://github.com/moca
 
 The workflow is deliberately split, and the split is the point.
 
-**Part 1 — Curriculum.** You give four inputs the app refuses to guess: topic and learning objectives, audience and prior knowledge, content language, and desired duration (which determines the number of levels). The agent then researches your instance — a broad fan-out of deep-research queries before it writes anything, and further queries to fill gaps as it goes — and produces `curriculum.md`: a fact sheet, learning objectives, a level table, and per level the teaching text, the voiceover script, a media plan, and the fully written-out interaction. Plus a final check, a cheat sheet, cited sources, and a production estimate. This costs a handful of queries and some agent tokens.
+**Part 1 — Curriculum.** You give four inputs the app refuses to guess: topic and learning objectives, audience and prior knowledge, content language, and desired duration (which determines the number of levels). Optionally you add existing material, a collection to scope research to, and reference images of your own character and of the visual style you want (see [What a training unit is](#what-a-training-unit-is)). The agent then researches your instance — a broad fan-out of deep-research queries before it writes anything, and further queries to fill gaps as it goes — and produces `curriculum.md`: a fact sheet, learning objectives, a level table, and per level the teaching text, the voiceover script, a media plan, and the fully written-out interaction. Plus a final check, a cheat sheet, cited sources, and a production estimate. This costs a handful of queries and some agent tokens.
 
 **Part 2 — Production.** Only reachable after explicit approval. The curriculum becomes binding: what gets produced is what the document says. Media generation runs as a resumable pipeline with live progress, and it pauses twice for human judgement — once to choose the guide character's reference image, once to confirm the quoted video cost before anything is generated.
 
@@ -35,7 +35,11 @@ A single self-contained HTML file, typically 10–15 MB, structured as levels. E
 | Animation | Concepts, lists, rules, processes, numbers. Rendered locally, free, and razor-sharp text in any language — which generative video cannot do. |
 | Image | Context for an interaction screen. Nearly free. |
 
-Interactions vary per level on purpose: repetition is what makes e-learning feel like a chore. A guide character — always an abstract object, never a human, because abstract objects stay consistent across image generations — carries the visual identity, in a single accent colour applied throughout.
+Interactions vary per level on purpose: repetition is what makes e-learning feel like a chore.
+
+A guide character anchors the visual identity. By default it is an abstract object, never a human, because abstract objects stay consistent across image generations — and then the whole training carries a single accent colour. Alternatively you supply **your own** character: up to three reference images, which a vision model turns into a precise description and from which the anchor image is generated directly, so the real design survives instead of a paraphrase. Your character keeps its own colours; the accent still governs the interface, animations and highlights. Up to three **style reference images** can define the aesthetic of every film and image in the same way, replacing the preset visual style.
+
+The guide is not in every shot, by design. The storyboard decides per shot, and roughly half of a film's shots — establishing shots, object details, concept imagery — are character-free, as is the opening shot. Otherwise the character turns up in shots written without it and every film opens on the same portrait of it. Character-free shots keep the shared style, so they stay in the same visual world.
 
 ## The key model
 
@@ -65,12 +69,12 @@ That asymmetry is why the pipeline is shaped the way it is: research generously,
 
 ### Configuration
 
-Configuration is entirely environment variables: the instance base URL and read-only key, the provider key and the model choices for agent, image, video and speech, the interface language, the accent colour, and a storage path for generated projects. The repository's `.env.example` is the canonical list, and `docs/configuration.md` in that repo explains each value with tested defaults.
+Configuration is entirely environment variables: the instance base URL and read-only key, the provider key and the model choices for agent, vision, image, image editing, video and speech, the interface language, the accent colour, and a storage path for generated projects. The repository's `.env.example` is the canonical list, and `docs/configuration.md` in that repo explains each value with tested defaults.
 
 ### First run
 
 1. Point the app at your instance and confirm it can read — the briefing form offers topic suggestions drawn from your knowledge base when the connection works.
-2. Create a project and fill in the four briefing inputs.
+2. Create a project and fill in the four briefing inputs — and, if the training should carry your own character or a specific look, upload the reference images here.
 3. Start the research run and wait a few minutes; review the curriculum it writes.
 4. Request changes in the chat until the document is right. This is free — use it.
 5. Approve, then pick the guide-character reference image and confirm the video quote.
