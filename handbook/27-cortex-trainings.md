@@ -85,7 +85,8 @@ Projects are stored as plain files — every curriculum version, the production 
 ## Where to go next
 
 - [Chapter 24: Apps](24-apps.md) — the other kind of app: small web apps that run inside your instance
-- [Chapter 25: Cortex Chat](25-cortex-chat.md) — the other standalone app, for everyday question answering
+- [Chapter 28: Cortex Videogen](28-cortex-videogen.md) — the sibling standalone app, for marketing videos
+- [Chapter 25: Cortex Chat](25-cortex-chat.md) — the standalone app, for everyday question answering
 - [Chapter 10: Ask AI](10-ask-ai.md) — the retrieval and deep-research capabilities the curriculum phase builds on
 - [Chapter 5: Security](05-security.md) — API keys, scopes, and collection-scoped access
 - [Chapter 15: API Reference](15-api-reference.md) — the endpoints a standalone app consumes

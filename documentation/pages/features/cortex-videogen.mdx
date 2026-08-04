@@ -1,0 +1,57 @@
+---
+title: Cortex Videogen
+description: Generate marketing videos from your knowledge base — Cortex-grounded storyboards you approve, AI footage with gapless narration and karaoke captions, 16:9 or 9:16, with a cost gate before anything is spent
+---
+
+[**Cortex Videogen**](https://github.com/mocaOS/cortex-videogen) is a standalone application that turns the domain knowledge inside your Cortex instance into short marketing videos — 15 to 120 seconds, landscape (16:9) or vertical (9:16), delivered as a publish-ready MP4 master plus a lighter social copy. Like [Cortex Chat](/features/cortex-chat) it runs as its own deployment and connects to your instance purely through the REST API with a scoped key (a **standalone app**, as opposed to [Apps](/features/apps) hosted inside an instance).
+
+## The opportunity
+
+Every organization running a Cortex instance already owns the hardest part of marketing video production: the substance. Product facts, feature lists, differentiators, real numbers — it all lives in the knowledge graph. What usually stands between that substance and a finished video is an agency, an editor, and a budget measured in thousands.
+
+Videogen collapses that distance to a form and two approvals. The pipeline researches your instance for grounded claims (it is explicitly forbidden to invent facts), directs choreographed AI footage around them, and assembles a finished video with narration, subtitles and a call-to-action — for single-digit dollars per video and roughly half an hour end to end. Product teaser for a launch, feature explainer for the docs page, vertical clip for the feed: same form, different toggles.
+
+## How it works
+
+A production run has six steps and **two human gates** — one for content, one for money:
+
+1. **Research** — agentic Deep Research against your instance extracts what a copywriter needs: claims, numbers, differentiators, domain vocabulary. Grounding is two-channel: the research synthesis plus verbatim evidence excerpts from hybrid search, so exact names and figures survive summarization.
+2. **Storyboard** *(approval gate)* — an LLM writes a retention-first storyboard: a hook in the first seconds, few long choreographed one-take shots (not a slideshow of static clips), narration written for the ear, structure matched to length and goal. You review it next to the research it is grounded in, and approve, regenerate with feedback, or re-run the research with steering — all free.
+3. **Voiceover** — per-sentence TTS produces an exact timeline; shot lengths derive from the narration so speech flows gaplessly across cuts.
+4. **Video generation** *(cost gate)* — every shot and start frame is quoted against Venice.ai's live pricing and the run pauses with the total. Nothing is generated until you confirm. Uploaded character/product and style reference images condition each shot's start frame, so identity and aesthetic stay consistent across the whole film.
+5. **Assembly** — a deterministic offline render composites the footage with burned-in karaoke captions (the only text layer — most feed video plays muted), a uniform color grade, and a locally rendered CTA end card in your brand accent.
+6. **QA** — the file is probed for the expected duration, orientation and deliverables before the run reports done.
+
+Everything is cached per artefact: a crashed or resumed run never pays for the same shot twice, and regenerating one shot costs one shot.
+
+## Setup
+
+Videogen is a Node.js application (Node 22+). You need a Venice.ai API key for media generation and a read-scoped API key for your Cortex instance:
+
+```bash
+git clone https://github.com/mocaOS/cortex-videogen
+cd cortex-videogen
+npm install
+cp .env.example .env    # fill in the three keys below
+npm run dev             # http://localhost:3010
+```
+
+| Variable | What it is |
+|----------|-----------|
+| `VENICE_API_KEY` | Venice.ai key — pays for storyboard LLM, images, TTS and video |
+| `CORTEX_BASE_URL` | Your instance, e.g. `https://cortex.example.com` |
+| `CORTEX_API_KEY` | A **read**-scoped [API key](/guides/authentication) for it |
+
+Optional: `ACCENT_COLOR` and `BRAND_NAME` brand the captions and CTA card; `APP_LANG` switches the UI (en/de). ffmpeg is bundled; the first render fetches a headless browser once (`npx hyperframes doctor` verifies).
+
+Create a project in the form: topic, audience, call-to-action, format, length, pacing, video model + resolution (from Venice's live catalog — test cheap, publish at max quality), optional reference images for a consistent character/product and visual style, optional collection scope.
+
+## Costs
+
+Video generation dominates; everything else is cents. Reference: a 30-second video is roughly **$5–7** of footage plus ~$0.35 per generated start frame on the default MiniMax model at 2K. The quote gate shows the exact number for your storyboard before anything is spent, and the CTA end card is rendered locally for $0 — which is also the only way to get pixel-perfect text.
+
+## Learn more
+
+- [Repository & full docs](https://github.com/mocaOS/cortex-videogen) — pipeline internals, the marketing playbook behind the storyboard rules, provider notes
+- [Cortex Trainings](/features/cortex-trainings) — the sibling app for interactive training courses
+- [Apps](/features/apps) — the in-instance app system this is *not* (Videogen runs standalone)
