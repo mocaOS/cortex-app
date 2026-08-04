@@ -125,8 +125,11 @@ Three things bite when testing a just-published release:
   `npx --min-release-age=0 @mocaos/cortex` to test one; there is no
   per-package exemption in npm.
 - `ops/backup/*` ships as a **locally built** image, so a change there only
-  reaches an existing install because `up` passes `--build` (installer
-  ≥ 1.0.2). Raise `minInstaller` in `selfhost/stack.template.json` whenever a
+  reaches an existing install because `up` passes `--build` — that behaviour
+  needed installer ≥ 1.0.2. Today's actual `minInstaller` floor is `1.2.2`:
+  raised further because the chat service moved behind a Compose profile, and
+  an older installer would install this stack with chat silently missing.
+  Raise `minInstaller` in `selfhost/stack.template.json` whenever a
   stack fix depends on newer installer behaviour like that.
 - The `chat` service sits behind `profiles: ["chat"]`. Two non-obvious
   consequences: Compose interpolates `${VAR:?}` **before** filtering profiles,
