@@ -100,5 +100,26 @@ check "Caddyfile.chat.template formatted" \
   "yes" "$(grep -q 'not formatted' <<<"$chat_out" && echo no || echo yes)"
 
 echo
+echo "Caddy: the chat template must FAIL to adapt when CHAT_DOMAIN is unset"
+# This composes the two checks above instead of leaving them separate: "chat
+# excluded/included by the profile" proves Compose can run without
+# CHAT_DOMAIN, and "both templates adapt" above only ever validated the chat
+# template WITH a domain given. Neither, alone or together, asserts the
+# specific combination Fix 1 (final review) exists to prevent: chat resolved
+# on in domain mode with .env holding no CHAT_DOMAIN. caddyTemplateFor
+# (artifacts.ts) picks Caddyfile.chat.template from the chat flag alone, so if
+# Caddy ever tolerated an empty {$CHAT_DOMAIN} here, the installer-side guard
+# (assertChatDomainConfigured, commands/update.ts) would be protecting against
+# a state Caddy no longer minds — this pins the coupling so a Caddy upgrade
+# that changes this behaviour is caught here, not in an operator's outage.
+# No `with-chat` argument here (unlike chat_out above), so caddyv omits
+# -e CHAT_DOMAIN=... — reproducing the broken .env exactly.
+broken_out="$(caddyv Caddyfile.chat.template || true)"
+check "Caddyfile.chat.template does NOT report Valid configuration with CHAT_DOMAIN unset" \
+  "yes" "$(grep -q 'Valid configuration' <<<"$broken_out" && echo no || echo yes)"
+check "Caddyfile.chat.template's failure is the CHAT_DOMAIN-empty error, not something else" \
+  "yes" "$(grep -q 'server block without any key is global configuration' <<<"$broken_out" && echo yes || echo no)"
+
+echo
 if [ "$fail" -ne 0 ]; then echo "selfhost contract: FAILED"; exit 1; fi
 echo "selfhost contract: OK"
