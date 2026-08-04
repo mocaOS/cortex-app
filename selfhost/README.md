@@ -78,7 +78,7 @@ docker compose stop chat && docker compose rm -f chat
 Compose filters by profile on the way down as well as up, so with chat already
 switched off in `.env` a running chat container is simply not in the set either
 command acts on. (`npx @mocaos/cortex restart` does remove it, from installer
-1.2.0 on — it names the profile when tearing down for exactly this reason.)
+1.2.2 on — it names the profile when tearing down for exactly this reason.)
 
 **Single Sign-On (optional).** Chat can authenticate against any OpenID
 Connect IdP — Entra ID, Okta, Keycloak, Authentik, … Register a client at the
