@@ -228,6 +228,10 @@ Two legacy notes for older deployments: the deprecated names `LIBRARY_API_URL` a
 
 ### Deployment
 
+**Already self-hosting Cortex?** If this instance came from `npx @mocaos/cortex` or the `selfhost/` Docker Compose stack, Cortex Chat ships with it already, off by default. Turn it on with `COMPOSE_PROFILES=chat` in `.env` and `npx @mocaos/cortex restart` — or answer yes when the installer asks — rather than deploying it separately below. See [Chapter 26: Self-Hosting](26-self-hosting.md) for the domain-mode extras (a chat domain, the CORS origin, and the Caddyfile swap). That opt-in default is specific to the release/self-host stack — the Coolify and Dokploy composes run Chat unconditionally.
+
+The deployment below is the right path when Chat runs separately from the instance — a different host, or a Cortex you don't administer.
+
 The repository ships a multi-stage Dockerfile and a `docker-compose.yml` aimed at managed platforms (Coolify, Dokploy) — the same pattern used to deploy Cortex itself. The short version:
 
 ```bash

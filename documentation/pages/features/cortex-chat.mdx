@@ -167,6 +167,14 @@ Never prefix any of these with `NEXT_PUBLIC_` — that would compile secrets int
 
 ### Docker
 
+:::tip{title="Already self-hosting Cortex?"}
+
+If this instance came from `npx @mocaos/cortex` or the `selfhost/` Docker Compose stack, Cortex Chat ships with it already, off by default. Enable it with `COMPOSE_PROFILES=chat` in `.env` plus `npx @mocaos/cortex restart` — or answer "yes" when the installer asks — instead of running the container below; see [the deployment guide](/guides/deployment) for the domain-mode extras (chat domain, CORS origin, Caddyfile). This opt-in default is specific to the release/self-host stack — Coolify and Dokploy deployments run chat unconditionally.
+
+The `docker run` below is still the right path when Chat runs **separately** from the instance — a different host, or a Cortex you don't administer.
+
+:::
+
 ```bash
 docker run -p 3000:3000 \
   -e CORTEX_API_URL=https://your-cortex-instance.com \
