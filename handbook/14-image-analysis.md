@@ -131,7 +131,7 @@ Provide structured description:
 Analyzed images become searchable chunks in Neo4j:
 
 - **Chunk ID**: `{document_id}_image_{index}`
-- **Chunk Index**: 1000+ (high index separates image chunks from text chunks)
+- **Chunk Index**: 1,000,000+ (sorts image chunks after all text chunks; identification uses the image chunk id, so long documents with over 1000 text chunks count correctly)
 - **Metadata type**: `image_analysis`
 - **Content format**: `[Image Analysis (Vision Model)]\n{description}`
 

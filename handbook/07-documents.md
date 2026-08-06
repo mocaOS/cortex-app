@@ -214,7 +214,7 @@ Images extracted during Docling conversion are analyzed concurrently in the back
 1. All images are launched for analysis via `asyncio.gather()`
 2. A global semaphore (`VISION_MAX_CONCURRENT`) limits concurrent vision API calls
 3. Each image is analyzed by the vision model (or Docling fallback)
-4. Image descriptions become searchable chunks (type `image_analysis`, chunk_index 1000+)
+4. Image descriptions become searchable chunks (type `image_analysis`, chunk_index 1,000,000+)
 5. Entity extraction runs on image content if enabled
 6. Per-document progress tracked via `image_progress_current` / `image_progress_total`
 

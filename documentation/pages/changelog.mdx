@@ -22,6 +22,13 @@ Document conversion gets a second engine. Cortex now routes text-based PDFs and 
 - **Slim image benefit** — the anydoc wheel is ~8 MB and torch-free, so slim (`INSTALL_LOCAL_ML=false`) deployments without a `cortex-helper` can now convert office documents and text-based PDFs locally instead of failing.
 - Changing the engine configuration alters the reprocess fingerprint, so a reprocess after flipping `ENABLE_ANYDOC` performs a real re-run instead of reporting "Content unchanged". No API or schema breakage — the reprocess `engine` query parameter is the only new surface.
 
+### Fixed: documents with more than 1000 chunks were silently truncated
+
+Image chunks used `chunk_index` 1000+ as their namespace, and two queries defined "text chunk" as `chunk_index < 1000`. Any document that legitimately chunked past 1000 — which the anydoc fast path makes routine, since full-length books now convert instead of timing out — had its chunk count clamped at 1000 in the UI, and worse: a resumed or re-run extraction only saw the first 1000 chunks, so up to two-thirds of a long book's content silently got no entities or relationships.
+
+- Text and image chunks are now distinguished by the image chunk's deterministic id (`{doc_id}_image_{idx}`), never by index; new image chunks sort at index 1,000,000+ so they can't interleave with text chunks. Existing image chunks keep their old indices — nothing filters on the number anymore.
+- The reprocess fingerprint carries a `chunk-namespace:v2` marker, so reprocessing a previously-affected document performs a real re-run (full extraction over all chunks) instead of skipping as "Content unchanged". Documents under 1000 chunks were never affected.
+
 ### Fixed: scanned PDFs silently produced empty documents on vision-enabled instances
 
 Routing scans deliberately through Docling exposed a long-standing bug: with a vision model configured, Docling runs with OCR **disabled** (vision replaces its picture descriptions) — but a scan's text lines are layout-classified as *text regions*, not pictures, so with no text layer and no OCR the conversion returned neither markdown nor images and the document failed as "No content extracted".

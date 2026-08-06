@@ -499,7 +499,14 @@ class Neo4jService:
                        coalesce(d.processing_status, 'pending') as processing_status,
                        coalesce(d.entity_count, -1) as entity_count,
                        size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.has_embedding = false | 1]) as unembedded_chunk_count,
-                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.chunk_index < 1000 | 1]) as text_chunk_count
+                       // Text chunks = everything that is not an image chunk.
+                       // Image chunks are identified by their deterministic id
+                       // ({doc_id}_image_{idx}) — NEVER by chunk_index: large
+                       // documents legitimately exceed 1000 text chunks (a
+                       // 462-page book chunks to 3200), and the old
+                       // chunk_index < 1000 filter clamped the count and made
+                       // ingest-resume rebuild only the first 1000 chunks.
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE NOT c.id STARTS WITH (d.id + '_image_') | 1]) as text_chunk_count
             """, id=doc_id)
             record = result.single()
             return dict(record) if record else None
@@ -1713,11 +1720,19 @@ class Neo4jService:
             }
 
     def get_text_chunks_for_document(self, document_id: str) -> List[dict]:
-        """Get all text chunks (non-image) for a document with their IDs and content."""
+        """Get all text chunks (non-image) for a document with their IDs and content.
+
+        Image chunks are excluded by their deterministic id prefix
+        ({doc_id}_image_{idx}) — NOT by chunk_index. Large documents exceed
+        1000 text chunks (a 462-page book chunks to 3200); the old
+        chunk_index < 1000 filter silently truncated ingest-resume chunk
+        reuse to the first 1000 chunks, so a resumed run extracted only a
+        fraction of the document.
+        """
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
-                WHERE c.chunk_index < 1000
+                WHERE NOT c.id STARTS WITH ($doc_id + '_image_')
                 RETURN c.id as id, c.content as content
                 ORDER BY c.chunk_index
             """, doc_id=document_id)

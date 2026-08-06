@@ -326,7 +326,7 @@ image_chunk = DocumentChunk(
 ### Chunk Indexing
 
 - Text chunks: `0` to `N`
-- Image chunks: `1000` to `1000+M`
+- Image chunks: `1000000` to `1000000+M` (documents processed before August 2026 used `1000+M`; identification is by chunk id, not index)
 - Prevents overlap between text and image chunks
 
 ### Neo4j Storage

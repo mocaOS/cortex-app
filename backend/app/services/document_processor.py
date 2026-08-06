@@ -1322,6 +1322,12 @@ class DocumentProcessor:
                 if s.enable_anydoc
                 else "converter:docling"
             ),
+            # chunk-namespace:v2 (2026-08-06): text/image chunks are now
+            # distinguished by id prefix, not chunk_index < 1000. Documents
+            # processed before this fix with >1000 text chunks had extraction
+            # silently truncated to the first 1000 — the marker makes their
+            # reprocess do real work instead of delta-skipping as unchanged.
+            "chunk-namespace:v2",
         ])
         return hashlib.sha256(src.encode()).hexdigest()[:16]
 
@@ -4203,7 +4209,15 @@ class DocumentProcessor:
                     document_id=doc_id,
                     content=image_content,
                     embedding=None,
-                    chunk_index=1000 + idx,
+                    # Image chunks sort after ALL text chunks. The base must
+                    # exceed any realistic text chunk count — the old 1000+idx
+                    # collided with big documents (a 462-page book chunks to
+                    # 3200 text chunks) and made index-based text/image
+                    # filters truncate at 1000. Identification is by the
+                    # deterministic id ({doc_id}_image_{idx}); the index is
+                    # only for ordering. Pre-fix documents keep 1000+idx —
+                    # nothing filters on the number anymore.
+                    chunk_index=1_000_000 + idx,
                     metadata=image_metadata,
                 )
 
