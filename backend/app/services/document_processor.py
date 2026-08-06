@@ -50,6 +50,7 @@ from app.models import (
     ThinkingEvent,
 )
 from app.services import usage_meter
+from app.services.anydoc_converter import anydoc_version
 from app.services.graph_extractor import (
     ExtractionEndpointUnavailable,
     _is_connection_error,
@@ -397,7 +398,9 @@ def _get_conversion_semaphore() -> asyncio.Semaphore:
     return _conversion_semaphore
 
 
-async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
+async def _convert_via_service(
+    file_path: str, use_vision: bool, force_ocr: bool = False
+) -> dict:
     """Convert via the shared docling service (cortex-helper).
 
     Transport (connection reuse, retries with backoff, circuit breaker,
@@ -407,7 +410,7 @@ async def _convert_via_service(file_path: str, use_vision: bool) -> dict:
     from app.services.helper_client import convert_document
 
     logger.info(f"Converting {Path(file_path).name} via docling service")
-    result = await convert_document(file_path, use_vision)
+    result = await convert_document(file_path, use_vision, force_ocr=force_ocr)
     logger.info(
         f"Service conversion complete for {result.get('filename', '?')} "
         f"(md_len={len(result.get('markdown') or '')}, images={len(result.get('images', []))})"
@@ -419,14 +422,23 @@ async def _convert_document_subprocess(
     file_path: str,
     use_vision: bool,
     on_progress: Optional[Callable[[str, float], Awaitable[None]]] = None,
+    engine: Optional[str] = None,
 ) -> dict:
     """Convert a document to markdown.
 
-    Uses the shared docling service when DOCLING_SERVICE_URL is set. On
+    Routing: the in-process anydoc fast path runs first (milliseconds, no ML
+    — see services/anydoc_converter.py for the gate rules); when it declines
+    (scanned/image-rich/ineligible format) the existing docling paths take
+    over. Uses the shared docling service when DOCLING_SERVICE_URL is set. On
     service failure (after the helper client's retries): with
     HELPER_STRICT_REMOTE the document fails cleanly; otherwise it falls back
     to the local subprocess. Without a service URL, Docling runs in a
     subprocess to avoid GIL contention.
+
+    engine="docling" skips the anydoc fast path entirely — used by image
+    re-extraction (resume_image_analysis: anydoc yields no PDF images, so a
+    re-conversion through it would force-close image counters as
+    irrecoverable) and by explicit force-docling reprocesses.
 
     on_progress(message, fraction) is fired when the conversion actually
     starts (after the conversion-slot semaphore is acquired — callers should
@@ -436,11 +448,63 @@ async def _convert_document_subprocess(
 
     Returns dict with keys: markdown, filename, images, error.
     """
+    from app.metrics import CONVERSION_SECONDS
+    from app.services.anydoc_converter import convert_with_anydoc
+
+    settings = get_settings()
+
+    if engine != "docling":
+        _t0 = time.monotonic()
+        result = await asyncio.to_thread(
+            convert_with_anydoc, file_path, use_vision, settings
+        )
+        if result is not None:
+            CONVERSION_SECONDS.labels(path="anydoc").observe(time.monotonic() - _t0)
+            return result
+
+    result = await _convert_document_docling(file_path, use_vision, on_progress)
+
+    # Scanned-PDF OCR retry: vision-enabled instances run docling with
+    # do_ocr=False (the vision model replaces OCR for *pictures*), but a
+    # scan's text lines are layout-classified as TEXT regions, not pictures
+    # — so with no text layer and no OCR the conversion comes back with
+    # neither markdown nor images and the document used to fail as "No
+    # content extracted" (observed live 2026-08-06). Retry exactly once
+    # with OCR forced on; born-digital documents never hit this path.
+    if (
+        use_vision
+        and Path(file_path).suffix.lower() == ".pdf"
+        and not (result.get("markdown") or "").strip()
+        and not result.get("images")
+    ):
+        logger.warning(
+            f"Docling returned no text and no images for {Path(file_path).name} "
+            f"(likely a scanned PDF with OCR disabled by vision mode) — "
+            f"retrying once with OCR forced on"
+        )
+        result = await _convert_document_docling(
+            file_path, use_vision, on_progress, force_ocr=True
+        )
+    return result
+
+
+async def _convert_document_docling(
+    file_path: str,
+    use_vision: bool,
+    on_progress: Optional[Callable[[str, float], Awaitable[None]]] = None,
+    force_ocr: bool = False,
+) -> dict:
+    """Run the docling conversion paths: shared helper service when
+    configured (with strict-remote semantics), local worker subprocess
+    otherwise. force_ocr=True enables OCR even in vision mode — the
+    scanned-PDF retry (see caller).
+    """
     import json as _json
 
     from app.metrics import CONVERSION_SECONDS
 
     settings = get_settings()
+
     if settings.docling_service_url:
         try:
             _t0 = time.monotonic()
@@ -453,7 +517,7 @@ async def _convert_document_subprocess(
                     await on_progress("Converting document...", 0.0)
                 except Exception:  # noqa: BLE001 — progress must never fail conversion
                     pass
-            result = await _convert_via_service(file_path, use_vision)
+            result = await _convert_via_service(file_path, use_vision, force_ocr)
             CONVERSION_SECONDS.labels(path="remote").observe(time.monotonic() - _t0)
             return result
         except Exception as e:
@@ -493,7 +557,11 @@ async def _convert_document_subprocess(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        request_data = _json.dumps({"file_path": file_path, "use_vision": use_vision}) + "\n"
+        request_data = _json.dumps({
+            "file_path": file_path,
+            "use_vision": use_vision,
+            "force_ocr": force_ocr,
+        }) + "\n"
 
         # Stream stderr live instead of buffering until exit: the worker logs
         # "Converting pages X-Y of Z" per page chunk, which is the only real
@@ -947,7 +1015,8 @@ class DocumentProcessor:
             logger.debug(f"Unregistered processing task for document {doc_id}")
 
     async def _start_processing(
-        self, doc_id: str, file_path: str, file_type: str
+        self, doc_id: str, file_path: str, file_type: str,
+        engine: Optional[str] = None,
     ) -> None:
         """
         Start a document processing task with proper tracking.
@@ -962,6 +1031,8 @@ class DocumentProcessor:
             doc_id: Document ID to process
             file_path: Path to the file
             file_type: File extension/type
+            engine: "docling" forces the docling conversion path for this run
+                (skips the anydoc fast path); None = route normally
         """
         task_lock = _get_task_lock()
 
@@ -984,7 +1055,9 @@ class DocumentProcessor:
 
             # Now create the processing task
             task = asyncio.create_task(
-                self._process_document_with_cleanup(doc_id, file_path, file_type)
+                self._process_document_with_cleanup(
+                    doc_id, file_path, file_type, engine=engine
+                )
             )
 
             # Register it for tracking
@@ -1128,7 +1201,8 @@ class DocumentProcessor:
         return rebuilt
 
     async def _process_document_with_cleanup(
-        self, doc_id: str, file_path: str, file_type: str
+        self, doc_id: str, file_path: str, file_type: str,
+        engine: Optional[str] = None,
     ) -> None:
         """
         Wrapper around _process_document that ensures task cleanup on completion.
@@ -1172,7 +1246,7 @@ class DocumentProcessor:
                         )
                     except Exception as e:  # noqa: BLE001 — best-effort like the marker
                         logger.debug(f"Could not clear queued mark on {doc_id}: {e}")
-                await self._process_document(doc_id, file_path, file_type)
+                await self._process_document(doc_id, file_path, file_type, engine=engine)
         finally:
             # Always unregister the task when done (success or failure)
             await self._unregister_task(doc_id)
@@ -1240,6 +1314,14 @@ class DocumentProcessor:
             # existing docs must re-extract instead of delta-skipping.
             # compact-v1: ENT|/REL| line format (2026-07-08).
             "extraction-prompts:compact-v1",
+            # Conversion engine identity: anydoc and docling produce different
+            # markdown for the same bytes, so flipping the router (or bumping
+            # the pinned anydoc version) must invalidate delta-skips.
+            (
+                f"converter:anydoc-{anydoc_version()}"
+                if s.enable_anydoc
+                else "converter:docling"
+            ),
         ])
         return hashlib.sha256(src.encode()).hexdigest()[:16]
 
@@ -1323,8 +1405,15 @@ class DocumentProcessor:
             f"{cleanup_result['orphaned_entities_removed']} orphaned entities"
         )
 
-    async def _prepare_ingest_resume(self, doc_id: str, file_path: str) -> dict:
+    async def _prepare_ingest_resume(
+        self, doc_id: str, file_path: str, force_full: bool = False
+    ) -> dict:
         """Decide how much of an earlier run this run can reuse.
+
+        force_full=True (forced-engine reprocess) treats stored chunks as
+        stale even when the fingerprint matches: they are the OLD conversion
+        engine's output, and reusing them would skip exactly the
+        re-conversion the caller asked for.
 
         Called at the top of _process_document. Three outcomes:
 
@@ -1365,7 +1454,8 @@ class DocumentProcessor:
                 self.neo4j.get_document_fingerprint, doc_id
             ) or {}
             matches = (
-                fingerprint.get("file_sha256") == file_hash
+                not force_full
+                and fingerprint.get("file_sha256") == file_hash
                 and fingerprint.get("config_hash") == cfg_hash
             )
             text_chunk_count = fingerprint.get("text_chunk_count") or 0
@@ -1489,12 +1579,18 @@ class DocumentProcessor:
             )
         return False
 
-    async def reprocess_document(self, doc_id: str) -> bool:
+    async def reprocess_document(self, doc_id: str, engine: Optional[str] = None) -> bool:
         """
         Reprocess an existing document using its stored file.
 
         WARNING: This starts processing immediately. For batch reprocessing,
         use queue_document_for_reprocessing() + process_pending_documents() instead.
+
+        engine="docling" forces the docling conversion path for this run —
+        the operator's recourse when the anydoc fast path produced a bad
+        conversion for a specific document. A forced engine also bypasses the
+        delta-skip: the point is to redo the conversion, so "content
+        unchanged" must not no-op it.
 
         Returns True if reprocessing started successfully.
         Raises ValueError if document not found or file not available.
@@ -1514,7 +1610,7 @@ class DocumentProcessor:
                 f"File path: {file_path}"
             )
 
-        if await self._reprocess_delta_skip(doc_id, file_path):
+        if engine is None and await self._reprocess_delta_skip(doc_id, file_path):
             return True
 
         # Delete existing chunks and entities (kept when resumable — see helper)
@@ -1526,7 +1622,7 @@ class DocumentProcessor:
         )
 
         # Start reprocessing in background using stored file (with task tracking)
-        await self._start_processing(doc_id, file_path, file_type)
+        await self._start_processing(doc_id, file_path, file_type, engine=engine)
 
         return True
 
@@ -1922,8 +2018,16 @@ class DocumentProcessor:
         counts = await asyncio.to_thread(usage_meter.get_completions_this_month)
         return counts["total"] >= limit
 
-    async def _process_document(self, doc_id: str, file_path: str, file_type: str):
+    async def _process_document(
+        self, doc_id: str, file_path: str, file_type: str,
+        engine: Optional[str] = None,
+    ):
         """Background task to process a document with GraphRAG extraction.
+
+        engine="docling" forces the docling conversion path (skips the anydoc
+        fast path) AND skips ingest-resume chunk reuse — reused chunks are the
+        OLD conversion's output, which is exactly what a forced re-conversion
+        exists to replace.
 
         CPU-intensive operations are run in a thread pool to avoid blocking
         the async event loop, keeping the API responsive during batch processing.
@@ -1978,7 +2082,11 @@ class DocumentProcessor:
             # Ingest resume: decide up front how much of an earlier run this
             # one can build on (stored chunks with embeddings, extraction
             # watermark, relationship flags) — see _prepare_ingest_resume.
-            resume = await self._prepare_ingest_resume(doc_id, file_path)
+            # A forced engine disables chunk reuse: stored chunks are the old
+            # conversion's output and this run exists to replace them.
+            resume = await self._prepare_ingest_resume(
+                doc_id, file_path, force_full=engine is not None
+            )
             resume_reuse = resume["reuse_chunks"]
 
             await loop.run_in_executor(
@@ -2039,7 +2147,8 @@ class DocumentProcessor:
             elif ext in self.DOCLING_EXTENSIONS:
                 use_vision = self.vision_analyzer.is_vision_model_available
                 conversion_result = await _convert_document_subprocess(
-                    file_path, use_vision, on_progress=_conversion_progress
+                    file_path, use_vision, on_progress=_conversion_progress,
+                    engine=engine,
                 )
                 md_text = conversion_result["markdown"]
                 if not md_text:
@@ -3937,7 +4046,21 @@ class DocumentProcessor:
             doc_id, claimed_current, claimed_total,
             "Re-extracting images to resume analysis...",
         )
-        conversion_result = await _convert_document_subprocess(file_path, True)
+        # Engine choice matters for image parity with the ORIGINAL conversion
+        # (image chunk ids are index-based):
+        # - PDFs force docling — the anydoc fast path never returns images
+        #   for PDFs, so routing through it would falsely reconcile the
+        #   counters of a docling-converted PDF as "no images found".
+        # - Office formats resume through the normal router — their original
+        #   images came from anydoc's asset order, and a docling re-conversion
+        #   could order/crop them differently, mismatching the index-keyed
+        #   already-analyzed skip.
+        _resume_engine = (
+            "docling" if Path(file_path).suffix.lower() == ".pdf" else None
+        )
+        conversion_result = await _convert_document_subprocess(
+            file_path, True, engine=_resume_engine
+        )
         serialized_images = conversion_result.get("images") or []
         if not serialized_images:
             await _reconcile("Image analysis reconciled — re-conversion found no images")

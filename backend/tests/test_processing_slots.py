@@ -59,7 +59,7 @@ class TestProcessingSlots:
         started = 0
         release = asyncio.Event()
 
-        async def fake_process(doc_id, file_path, file_type):
+        async def fake_process(doc_id, file_path, file_type, engine=None):
             nonlocal running, peak, started
             running += 1
             started += 1
@@ -104,7 +104,7 @@ class TestProcessingSlots:
         proc = _make_processor(neo4j)
         release = asyncio.Event()
 
-        async def fake_process(doc_id, file_path, file_type):
+        async def fake_process(doc_id, file_path, file_type, engine=None):
             await release.wait()
 
         monkeypatch.setattr(proc, "_process_document", fake_process)

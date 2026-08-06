@@ -75,15 +75,17 @@ Cortex resizes images so the longer side fits `VISION_MAX_IMAGE_SIDE` (default 1
 
 ## Image Extraction
 
-Images are extracted during Docling conversion from:
-- **PDF files** — Embedded images, charts, diagrams
-- **Word documents** (.docx) — Embedded images
-- **PowerPoint** (.pptx) — Slide images and embedded media
+Images are extracted during document conversion from:
+- **PDF files** — Embedded images, charts, diagrams (Docling path)
+- **Word documents** (.docx) — Embedded images (either engine)
+- **PowerPoint** (.pptx) — Slide images and embedded media (either engine)
 - **Image files** (.png, .jpg, etc.) — The entire file is the image
 
+**PDF routing and images**: the anydoc fast path (see [Chapter 7](07-documents.md)) cannot extract images from PDFs. When a vision model is active, PDFs dense with embedded images (`ANYDOC_PDF_MAX_IMAGES_PER_PAGE`, default 0.5/page) are automatically kept on the Docling path so their figures still reach image analysis. Text-heavy PDFs with only incidental images (a cover, a logo) take the fast path and skip image analysis for those — force a full Docling run with `POST /api/documents/{id}/reprocess?engine=docling` if a specific PDF's images matter.
+
 Each extracted image includes metadata:
-- Page number (from document provenance)
-- Bounding box coordinates (position on page)
+- Page number (from document provenance; not available for office-format images extracted on the fast path)
+- Bounding box coordinates (position on page; same caveat)
 - Caption (if available from the document)
 - Any existing description from Docling's built-in analysis
 

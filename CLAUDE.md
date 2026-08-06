@@ -37,7 +37,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/main.py` | `architecture.md` + relevant `domain/*.md` for the endpoint area |
 | `backend/app/config.py`, `.env*` | `environment.md` |
 | `backend/app/models.py` | `architecture.md` |
-| `backend/app/services/document_processor.py`, `docling_worker.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
+| `backend/app/services/document_processor.py`, `docling_worker.py`, `anydoc_converter.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
 | `backend/app/services/observability.py`, `error_tracking.py` | `domain/observability.md` |
 | `frontend/src/instrumentation*.ts`, `frontend/sentry.*.config.ts`, `frontend/next.config.mjs` | `domain/observability.md` (error tracking) |
 | `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |

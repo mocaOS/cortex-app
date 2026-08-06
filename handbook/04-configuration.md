@@ -443,6 +443,18 @@ Behavior:
 | `MAX_COLLECTIONS` | `0` (unlimited) | Maximum number of collections allowed. |
 | `MAX_QUERIES_PER_MONTH` | `0` (unlimited) | Monthly usage quota in **units** (internal LLM completions). Both questions (each Q&A turn uses a handful of units) and document imports/graph builds (a few units per file) draw from the same pool; embeddings are free. When the quota is reached, new questions and new document processing return `429` until the next UTC month — work already in flight always finishes. Usage appears as a meter bar on the Settings page (Statistics panel). |
 
+## Document Conversion (anydoc Fast Path)
+
+Text-based PDFs and office documents (Word, Excel, PowerPoint, EPUB) convert through the in-process anydoc engine in milliseconds; Docling handles everything needing layout analysis or OCR. Files anydoc declines fall through to Docling automatically.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_ANYDOC` | `true` | Master switch for the fast path. `false` = every conversion uses the Docling paths as before. |
+| `ANYDOC_PDF_MIN_CHARS_PER_PAGE` | `200` | PDFs whose converted text averages fewer characters per page are treated as (hybrid) scans and routed to Docling OCR. `0` disables. |
+| `ANYDOC_PDF_MAX_IMAGES_PER_PAGE` | `0.5` | Only with a vision model active: PDFs with more embedded images per page keep the Docling path, so their figures still reach image analysis (anydoc cannot extract images from PDFs). Negative disables. |
+
+A document that converted badly on the fast path can be forced through Docling once with `POST /api/documents/{id}/reprocess?engine=docling`.
+
 ## Docling Configuration (Advanced)
 
 | Variable | Default | Description |

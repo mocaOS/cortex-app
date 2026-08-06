@@ -159,7 +159,16 @@ Offload heavy models to a service hosted once per physical machine (see the `cor
 - `INSTANCE_ID` (default: empty ⇒ container hostname) — identifies this stack to the shared helper (`X-Tenant-ID`) for per-tenant fair queuing.
 - `DOCLING_CONVERSION_TIMEOUT` (default: `600`) — hard ceiling in seconds on a single **local** docling subprocess conversion. On timeout the worker is killed and the document is marked `failed` with a clear message, instead of hanging in `processing` forever on a large/corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path (the helper client has its own timeouts).
 
-**Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors.
+**Slim image**: `Dockerfile.prod` build args `INSTALL_LOCAL_ML=false` (+ optional `PREDOWNLOAD_MODELS=false`) build a torch-free backend (~800MB–1GB smaller; `requirements-base.txt` only). Slim requires OpenAI embeddings + the helper URLs; the local-model paths fail fast with actionable errors. The anydoc fast path (below) is in `requirements-base.txt`, so even the slim image converts office formats and text-based PDFs locally — the helper is only needed for the docling lane (scans, image-rich PDFs, images, audio).
+
+## anydoc Fast-Path Conversion
+
+In-process, no-ML converter (`services/anydoc_converter.py`, PyPI `firecrawl-anydoc`, pure-Rust ~8MB wheel) that handles office formats + text-based PDFs in milliseconds (measured 2026-08-06: 462-page book 0.47s/41MB RSS vs docling ~590s/1.6GB). Runs BEFORE the docling paths in `_convert_document_subprocess`; when it declines (typed error e.g. scanned PDF "OCR is required", low text yield, image-rich + vision) the existing docling helper/subprocess paths take over unchanged. anydoc returns **zero images for PDFs** (no document model for PDF); office formats (docx/pptx/epub/…) DO get their embedded images mapped into the vision pipeline. Engine identity (`converter:anydoc-<version>` / `converter:docling`) is part of `_reprocess_config_hash`.
+
+- `ENABLE_ANYDOC` (default: **true**) — master switch. Off = every conversion uses the docling paths exactly as before the router existed.
+- `ANYDOC_PDF_MIN_CHARS_PER_PAGE` (default: `200`) — text-yield floor: a PDF whose anydoc markdown averages fewer chars/page is treated as a (hybrid) scan and re-routed to docling's OCR path. `0` disables.
+- `ANYDOC_PDF_MAX_IMAGES_PER_PAGE` (default: `0.5`) — figure-density ceiling, applied only when a vision model is active: PDFs with more embedded images per page (raw XObjects via pypdf, ~ms) keep the docling path so figures still reach vision analysis. Negative disables.
+- Operator recourse for a bad anydoc conversion: `POST /api/documents/{id}/reprocess?engine=docling` — forces the docling engine for that run and bypasses both the delta-skip and ingest-resume chunk reuse.
 
 ## MDHarvest powered by Crawl4ai (web → markdown)
 

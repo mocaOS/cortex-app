@@ -2964,15 +2964,26 @@ async def delete_all_documents(auth: AuthResult = Depends(require_manage_permiss
 async def reprocess_document(
     document_id: str,
     file: Optional[UploadFile] = File(default=None),
+    engine: Optional[str] = None,
     auth: AuthResult = Depends(require_manage_permission),
     _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Reprocess a single document.
-    
+
     If no file is provided, uses the stored original file.
     If a file is provided, updates the stored file and reprocesses.
+
+    engine=docling (query param, stored-file path only) forces the docling
+    conversion engine for this run — the recourse when the anydoc fast path
+    produced a bad conversion for this document. Bypasses the delta-skip and
+    ingest-resume chunk reuse so the conversion actually reruns.
     """
+    if engine not in (None, "docling"):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported engine override; only 'docling' is supported",
+        )
     settings = get_settings()
     neo4j = get_neo4j_service()
     processor = get_document_processor()
@@ -3039,7 +3050,7 @@ async def reprocess_document(
     else:
         # No file provided - use stored file
         try:
-            await processor.reprocess_document(document_id)
+            await processor.reprocess_document(document_id, engine=engine)
             
             return {
                 "document_id": document_id,

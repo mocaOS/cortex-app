@@ -7,6 +7,31 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## August 6, 2026
+
+Document conversion gets a second engine. Cortex now routes text-based PDFs and office documents through **anydoc** — an in-process, pure-Rust converter with no ML models — and reserves Docling for the documents that genuinely need its layout analysis and OCR: scans, image-rich PDFs, standalone images, and audio. The practical difference is dramatic: a 462-page book that previously ran into the 600-second conversion timeout now converts in under a second, at a fraction of the memory. Nothing about chunking, embedding, or extraction changes — only how the markdown gets made.
+
+### Conversion fast path (anydoc)
+
+- **Routing, not replacement** — every eligible file tries anydoc first; anything it declines falls through to the exact Docling paths that existed before (shared `cortex-helper` service or local subprocess). Worst case equals previous behavior plus a few milliseconds.
+- **Eligible formats** — PDF, Word (`.doc`/`.docx`), Excel (`.xls`/`.xlsx`), PowerPoint (`.ppt`/`.pptx`), and EPUB. HTML, images (OCR), audio (ASR), LaTeX, and XML keep their existing paths.
+- **Scanned and hybrid PDFs stay on Docling** — image-only PDFs are refused by anydoc with a typed "OCR is required" error, and PDFs whose text layer averages fewer than `ANYDOC_PDF_MIN_CHARS_PER_PAGE` (default `200`) characters per page are treated as scans; both route to Docling's OCR pipeline automatically.
+- **Vision analysis is protected** — anydoc cannot extract images from PDFs, so when a vision model is active, PDFs with more than `ANYDOC_PDF_MAX_IMAGES_PER_PAGE` (default `0.5`) embedded images per page keep the Docling path and their figure analysis. Embedded images in Word/PowerPoint/EPUB files **are** extracted on the fast path and flow into image analysis as before.
+- **Master switch** — `ENABLE_ANYDOC` (default `true`). Setting it `false` restores pre-router behavior exactly.
+- **Per-document recourse** — if a specific document converts badly on the fast path, `POST /api/documents/{id}/reprocess?engine=docling` forces a full Docling re-conversion for that run (bypassing the content-unchanged skip).
+- **Slim image benefit** — the anydoc wheel is ~8 MB and torch-free, so slim (`INSTALL_LOCAL_ML=false`) deployments without a `cortex-helper` can now convert office documents and text-based PDFs locally instead of failing.
+- Changing the engine configuration alters the reprocess fingerprint, so a reprocess after flipping `ENABLE_ANYDOC` performs a real re-run instead of reporting "Content unchanged". No API or schema breakage — the reprocess `engine` query parameter is the only new surface.
+
+### Fixed: scanned PDFs silently produced empty documents on vision-enabled instances
+
+Routing scans deliberately through Docling exposed a long-standing bug: with a vision model configured, Docling runs with OCR **disabled** (vision replaces its picture descriptions) — but a scan's text lines are layout-classified as *text regions*, not pictures, so with no text layer and no OCR the conversion returned neither markdown nor images and the document failed as "No content extracted".
+
+- **OCR retry** — when a PDF conversion on a vision-enabled instance returns no text *and* no images, Cortex now retries it exactly once with OCR forced on. Born-digital documents never pay for this; scans pay one extra conversion and come back with their text.
+- **cortex-helper update required** — the helper's `/convert` endpoint gained a `force_ocr` field (warm converters are cached per mode). A helper predating the field ignores it: the document then fails exactly as before, never worse — but deploy the updated helper together with the app to get the fix fleet-wide.
+- Verified live: a scanned page that previously failed empty now OCRs (EasyOCR, English + German) and proceeds through chunking, embedding, and extraction normally.
+
+---
+
 ## July 31, 2026
 
 Cortex Trainings joins the ecosystem: a standalone app that turns a knowledge base into interactive training units. Where Cortex Chat answers the questions people think to ask, trainings cover the ones they don't know to ask — onboarding, compliance, process knowledge — generated from documents the organization already has, instead of written once by hand and left to go stale. The app also learns to look like you: upload reference images of your own character and of the visual style you want, and both carry through every scene of the finished course.

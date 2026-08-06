@@ -200,7 +200,7 @@ Run the indicated step to resolve staleness.
 
 | Bottleneck | Symptom | Solution |
 |-----------|---------|----------|
-| Docling conversion | Stuck at 0% for large PDFs | Check `DOCLING_PAGE_CHUNK_SIZE`, try `DOCLING_USE_PYPDFIUM_FOR_LARGE_MB` |
+| Docling conversion | Stuck at 0% for large PDFs | First check why the PDF isn't taking the anydoc fast path (backend logs: `anydoc gate:` / `anydoc declined`) — scans and image-rich PDFs are routed to Docling by design. For genuine Docling work, check `DOCLING_PAGE_CHUNK_SIZE`, try `DOCLING_USE_PYPDFIUM_FOR_LARGE_MB` |
 | Embedding API | Slow after conversion | Check API latency, increase thread pool |
 | Entity extraction | Slow at "extracting" stage | Increase `CONCURRENT_EXTRACTIONS`, check LLM API speed |
 | Vision API | Image progress stuck | Increase `VISION_MAX_CONCURRENT`, check vision API |
@@ -212,7 +212,7 @@ Run the indicated step to resolve staleness.
 
 **Solutions:**
 - A server restart no longer leaves documents stuck. On startup, any documents left in **Processing** are automatically reset to **Pending** so you can process them again (via the process-pending endpoint or the **Generate Graph** flow).
-- If a document repeatedly fails on a large or complex file, the local Docling conversion now times out (configurable via `DOCLING_CONVERSION_TIMEOUT`, default 600 seconds) and the document is marked **Failed** with a message instead of hanging.
+- If a document repeatedly fails on a large or complex file, the local Docling conversion now times out (configurable via `DOCLING_CONVERSION_TIMEOUT`, default 600 seconds) and the document is marked **Failed** with a message instead of hanging. Note that large *text-based* PDFs (books) no longer approach this timeout at all — they convert via the anydoc fast path in under a second; the timeout now effectively concerns scanned/image-rich documents only.
 
 ### Slow Relationship Analysis
 

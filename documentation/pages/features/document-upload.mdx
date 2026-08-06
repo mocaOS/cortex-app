@@ -11,17 +11,20 @@ Cortex supports various document formats and provides flexible upload options fo
 
 | Format | Extension | Speed | Notes |
 |--------|-----------|-------|-------|
-| PDF | `.pdf` | ~1 s/page | Per-page ML layout analysis — fine for papers/reports, minutes for books; scanned PDFs slower still (OCR) |
-| EPUB | `.epub` | Seconds | E-books parsed natively — much faster than the same book as PDF; prefer uploading the EPUB when you have both. Kindle formats (`.mobi`, `.azw`) are not supported — convert them to EPUB first (e.g. with Calibre) |
+| PDF (text-based) | `.pdf` | Milliseconds | anydoc fast path — a full-length book converts in under a second, independent of page count |
+| PDF (scanned / image-rich) | `.pdf` | ~1 s/page | Routed to Docling automatically: per-page ML layout analysis + OCR, and figure extraction for vision analysis |
+| EPUB | `.epub` | Milliseconds | E-books parsed natively. Kindle formats (`.mobi`, `.azw`) are not supported — convert them to EPUB first (e.g. with Calibre) |
 | Plain Text | `.txt` | Instant | Direct text ingestion |
 | Markdown | `.md` | Instant | Preserves formatting, headers, code blocks |
-| Word | `.docx` | Seconds | Parsed natively — upload the `.docx`, not an "Export as PDF" of it |
+| Word | `.docx` | Milliseconds | Parsed natively — upload the `.docx`, not an "Export as PDF" of it |
 
-**Rule of thumb: upload the source format, not a rendering of it.** Only PDFs
-and standalone images go through per-page ML analysis; every other format is
-parsed directly from its markup in seconds regardless of length. Books → EPUB,
-Office documents → the office file itself, web content → Web Import or
-HTML/Markdown. Reserve PDF for content that only exists as PDF.
+**Rule of thumb: upload the source format, not a rendering of it.** Text-based
+PDFs are fast now, but the source format still preserves structure (headings,
+lists, tables) more faithfully than a print rendering, and office-format
+embedded images flow into vision analysis on the fast path while PDF images
+require the Docling path. Books → EPUB, Office documents → the office file
+itself, web content → Web Import or HTML/Markdown. Reserve PDF for content
+that only exists as PDF.
 
 ## Upload Methods
 

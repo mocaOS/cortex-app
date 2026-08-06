@@ -16,9 +16,9 @@ Upload → Text Extraction → Chunking → Embedding → Entity Extraction
 
 Each stage transforms the raw document into searchable, interconnected knowledge.
 
-### Text Extraction (Docling)
+### Text Extraction (anydoc + Docling)
 
-The Library uses **Docling**, a powerful document conversion engine, to extract text from a wide variety of formats:
+The Library extracts text with two complementary engines. **anydoc** — a millisecond-fast converter with no ML models — handles office documents, EPUBs, and text-based PDFs. **Docling** — a powerful ML-based conversion engine — handles everything that needs layout analysis or OCR: scanned and image-rich PDFs, standalone images, audio, HTML, and LaTeX. Routing is automatic; a file the fast engine can't do justice falls through to Docling. Together they cover a wide variety of formats:
 
 | Format | Extensions | Notes |
 |--------|-----------|-------|
@@ -35,7 +35,7 @@ The Library uses **Docling**, a powerful document conversion engine, to extract 
 | Images | `.png`, `.jpg`, `.jpeg`, `.tiff`, `.bmp` | Via vision model analysis |
 | Audio | `.wav`, `.mp3` | Transcription support |
 
-Docling also extracts embedded images from PDFs, Word documents, and presentations for separate analysis via the vision model pipeline.
+Embedded images are also extracted for separate analysis via the vision model pipeline — from Word documents, presentations, and EPUBs on either engine, and from PDFs on the Docling path (PDFs dense with figures are automatically kept on Docling when a vision model is active, precisely so those figures aren't lost).
 
 ### Chunks
 

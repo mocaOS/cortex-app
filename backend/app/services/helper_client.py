@@ -172,8 +172,15 @@ def _backoff(attempt: int) -> float:
     return raw * (0.5 + random.random() / 2)  # jitter: 50-100% of raw
 
 
-async def convert_document(file_path: str, use_vision: bool) -> dict:
+async def convert_document(
+    file_path: str, use_vision: bool, force_ocr: bool = False
+) -> dict:
     """Convert a document via the helper's /convert endpoint.
+
+    force_ocr enables OCR even in vision mode (the scanned-PDF retry). A
+    helper predating the field ignores the extra form value and returns the
+    same empty result — the document then fails exactly as it did before the
+    retry existed, never worse.
 
     Retries transient failures; raises HelperUnavailableError when the
     circuit is open or all attempts fail. 4xx responses are NOT retried
@@ -194,7 +201,10 @@ async def convert_document(file_path: str, use_vision: bool) -> dict:
                 resp = await client.post(
                     url,
                     files={"file": (Path(file_path).name, fh)},
-                    data={"use_vision": str(use_vision).lower()},
+                    data={
+                        "use_vision": str(use_vision).lower(),
+                        "force_ocr": str(force_ocr).lower(),
+                    },
                     headers=_headers(),
                 )
             resp.raise_for_status()

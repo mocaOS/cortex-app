@@ -64,7 +64,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 ## Features
 
 ### Core Features
-- **📁 Document Upload**: Broad format support via Docling — PDF, EPUB, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — with source tracking for API integrations
+- **📁 Document Upload**: Broad format support — PDF, EPUB, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — via a millisecond anydoc fast path with Docling fallback for scans and OCR, with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
@@ -228,7 +228,7 @@ The [Deployment guide](https://docs.cortex.eco/guides/deployment) covers all of 
 
 ## Supported File Types
 
-All formats are converted through **Docling** (locally or via the shared `cortex-helper` service), which unifies them into structured Markdown before chunking and extraction:
+All formats are unified into structured Markdown before chunking and extraction, by one of two engines: **anydoc** (in-process, no ML — office documents and text-based PDFs in milliseconds, so even full-length books convert in under a second) with automatic fallback to **Docling** (locally or via the shared `cortex-helper` service) for everything that needs layout analysis or OCR — scanned/image-rich PDFs, images, audio, HTML, LaTeX:
 
 | Type | Extensions |
 |------|-----------|

@@ -12,10 +12,16 @@ Memory optimizations for large documents:
 - PyPdfium fallback: For very large files, uses memory-efficient backend.
 
 Protocol (stdin → stdout):
-    Input  – JSON line: {"file_path": "...", "use_vision": true/false}
+    Input  – JSON line: {"file_path": "...", "use_vision": true/false,
+             "force_ocr": true/false (optional, default false)}
     Output – JSON line: {"markdown": "...", "images": [...], "error": null}
              images is a list of {image_id, page_number, bbox, caption,
              existing_description, base64_png}
+
+force_ocr enables OCR even in vision mode (normally do_ocr = not use_vision).
+Used by the scanned-PDF retry: a scan's text lines are layout-classified as
+text regions (not pictures), so with vision on and OCR off the conversion
+yields neither markdown nor images.
 """
 
 import base64
@@ -85,7 +91,7 @@ def _get_pdf_page_count(file_path: str):  # -> Optional[int]
         return None
 
 
-def _build_converter(use_vision: bool, use_pypdfium: bool = False):
+def _build_converter(use_vision: bool, use_pypdfium: bool = False, force_ocr: bool = False):
     from docling.datamodel.pipeline_options import (
         AcceleratorDevice,
         AcceleratorOptions,
@@ -102,7 +108,10 @@ def _build_converter(use_vision: bool, use_pypdfium: bool = False):
     )
 
     opts = PdfPipelineOptions()
-    opts.do_ocr = not use_vision
+    # Vision mode replaces OCR for pictures, but a scan's text lines are
+    # layout-classified as TEXT regions — force_ocr (scanned-PDF retry)
+    # turns OCR back on so those pages yield text instead of nothing.
+    opts.do_ocr = force_ocr or not use_vision
     opts.do_table_structure = True
     opts.do_picture_description = not use_vision
     opts.table_structure_options = TableStructureOptions(
@@ -110,7 +119,7 @@ def _build_converter(use_vision: bool, use_pypdfium: bool = False):
         mode=TableFormerMode.ACCURATE,
     )
 
-    if not use_vision:
+    if opts.do_ocr:
         opts.ocr_options = EasyOcrOptions(
             lang=["en", "de"],
             use_gpu=True,
@@ -289,7 +298,7 @@ def _convert_xml_fallback(file_path: str) -> dict:
     return {"markdown": md_text, "filename": path.name, "images": [], "error": None}
 
 
-def convert(file_path: str, use_vision: bool):
+def convert(file_path: str, use_vision: bool, force_ocr: bool = False):
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -309,7 +318,7 @@ def convert(file_path: str, use_vision: bool):
         logger.info(f"Large PDF ({page_count} pages), processing in chunks of {PAGE_CHUNK_SIZE}")
         all_markdown = []
         all_images = []
-        converter = _build_converter(use_vision, use_pypdfium)
+        converter = _build_converter(use_vision, use_pypdfium, force_ocr)
 
         try:
             for start in range(0, page_count, PAGE_CHUNK_SIZE):
@@ -329,7 +338,7 @@ def convert(file_path: str, use_vision: bool):
         md_text = "\n\n".join(all_markdown) if all_markdown else ""
         images = all_images
     else:
-        converter = _build_converter(use_vision, use_pypdfium)
+        converter = _build_converter(use_vision, use_pypdfium, force_ocr)
         convert_kwargs = {"max_num_pages": 500}  # Safety limit
         if max_file_size > 0 and max_file_size < (2**31 - 1):
             convert_kwargs["max_file_size"] = max_file_size
@@ -383,10 +392,11 @@ def main():
     req = json.loads(line)
     file_path = req["file_path"]
     use_vision = req.get("use_vision", False)
+    force_ocr = req.get("force_ocr", False)
 
-    logger.info(f"Converting {file_path} (use_vision={use_vision})")
+    logger.info(f"Converting {file_path} (use_vision={use_vision}, force_ocr={force_ocr})")
     try:
-        result = convert(file_path, use_vision)
+        result = convert(file_path, use_vision, force_ocr)
     except Exception as exc:
         logger.error(f"Conversion failed: {exc}", exc_info=True)
         result = {"markdown": None, "filename": Path(file_path).name, "images": [], "error": str(exc)}

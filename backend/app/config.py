@@ -518,6 +518,26 @@ class Settings(BaseSettings):
     #   worker is killed and the document is marked failed with a clear message.
 
     # ==========================================================================
+    # anydoc fast-path conversion (in-process, no ML) — text-based PDFs and
+    # office formats convert in milliseconds instead of docling's per-page
+    # layout inference. Docling remains the fallback for scanned/image-rich
+    # PDFs, images, audio, html, latex, xml. See services/anydoc_converter.py.
+    # ==========================================================================
+    enable_anydoc: bool = Field(default=True)
+    #   Master switch. Off = every conversion uses the docling paths (helper
+    #   service / local subprocess), exactly as before the router existed.
+    anydoc_pdf_min_chars_per_page: int = Field(default=200)
+    #   Text-yield floor: a PDF whose anydoc markdown averages fewer chars per
+    #   page than this is treated as a (hybrid) scan and re-routed to docling's
+    #   OCR path. 0 disables the check.
+    anydoc_pdf_max_images_per_page: float = Field(default=0.5)
+    #   Figure-density ceiling, applied only when a vision model is active:
+    #   anydoc returns no images for PDFs, so PDFs with more embedded images
+    #   per page than this keep the docling path and their vision analysis
+    #   (counted via pypdf in ~ms; raw XObjects, not semantic figures).
+    #   Negative disables the check.
+
+    # ==========================================================================
     # MDHarvest powered by Crawl4ai — web → markdown harvesting.
     # cortex-app NEVER embeds a browser/crawler stack; it speaks crawl4ai's
     # native REST API (/md, /crawl) over HTTP. One code path, two deployments:

@@ -20,6 +20,13 @@ haystack-ai>=2.8.0,<3.0.0
 # (vision_analyzer) even when the docling converter itself is remote.
 docling-core>=2.0.0
 pypdf>=4.0.0  # Lightweight PDF page counting for chunked Docling processing
+
+# anydoc fast-path converter (pure-Rust wheel, ~8MB, zero Python deps, no
+# torch): text-based PDFs + office formats in milliseconds; docling stays the
+# fallback for scans/image-rich PDFs. Pinned exact — v0.1.x, PDF heuristics
+# may shift between patch releases and conversion output feeds the reprocess
+# fingerprint (see anydoc_converter.py + _reprocess_config_hash).
+firecrawl-anydoc==0.1.6
 markdown==3.5.2
 markdown-it-py==3.0.0
 mdit-plain==1.0.1

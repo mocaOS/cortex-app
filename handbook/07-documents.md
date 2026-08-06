@@ -4,7 +4,7 @@ This chapter covers everything about uploading, processing, viewing, and managin
 
 ## Supported File Formats
 
-The Library supports 30+ file formats via the Docling conversion engine:
+The Library supports 30+ file formats via a two-engine conversion pipeline — a millisecond-fast text engine (anydoc) for office documents and text-based PDFs, with Docling's ML pipeline handling everything that needs layout analysis or OCR:
 
 | Category | Extensions | Notes |
 |----------|-----------|-------|
@@ -27,17 +27,24 @@ Maximum file size: 50 MB by default (configurable via `MAX_FILE_SIZE_MB`). Files
 ## Choosing the Right Format
 
 **Upload the source format, not a rendering of it.** PDF is a *print* format:
-when Cortex ingests one, it must reconstruct the document's structure page by
-page with ML layout models — structure the original file already had natively.
-Only PDFs and standalone images take this expensive path; every other supported
-format is parsed directly from its markup in seconds, **regardless of length**:
+its native structure (headings, reading order) has to be reconstructed, and
+its embedded figures are only recoverable on the expensive path. Text-based
+PDFs now convert in well under a second regardless of length via the anydoc
+fast path — but source formats still preserve structure more faithfully and
+keep their embedded images flowing into image analysis:
 
 | Cost tier | Formats | What to expect |
 |-----------|---------|----------------|
 | Instant | `.md`, `.txt`, code files | Ingested as-is — no conversion at all |
-| Fast (native parsing) | `.epub`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.tex` | Seconds per document, independent of page count |
-| Expensive (per-page ML) | `.pdf` | ~1 second per page on CPU — fine for papers and reports, minutes for books |
-| Most expensive | Scanned PDFs, standalone images | OCR / vision-model analysis on top |
+| Fast (anydoc) | `.epub`, `.docx`, `.pptx`, `.xlsx`, text-based `.pdf` | Milliseconds per document, independent of page count |
+| Fast (native parsing) | `.html`, `.tex` | Seconds per document |
+| Expensive (per-page ML) | Scanned or image-rich `.pdf` | Docling layout + OCR, ~1 second per page on CPU |
+| Most expensive | Standalone images | Vision-model analysis |
+
+A PDF is routed to the expensive tier automatically when it has no usable
+text layer (a scan) or when it carries enough embedded images per page that
+skipping Docling would cost you figure analysis (only relevant with a vision
+model configured — thresholds under [Configuration](04-configuration.md)).
 
 Practical rules:
 
@@ -147,15 +154,21 @@ The batch processing concurrency is controlled by `BATCH_PROCESSING_CONCURRENCY`
 
 When a document is processed, it passes through these stages:
 
-### Stage 1: Document Conversion (Docling)
+### Stage 1: Document Conversion (anydoc → Docling)
 
-The document is converted to markdown text using Docling in a subprocess (to avoid Python GIL contention). A conversion semaphore limits this to one document at a time to prevent memory overload.
+The document is converted to markdown text by one of two engines:
+
+**anydoc fast path** (`ENABLE_ANYDOC`, default on): office documents, EPUBs, and text-based PDFs convert in-process in milliseconds — no ML models, no subprocess, no per-page cost. A 400-page book converts in under a second. Embedded images in Word/PowerPoint/EPUB files are extracted here too. The fast path *declines* files it can't do justice — scanned PDFs (no text layer), hybrid scans (almost no text per page), and image-rich PDFs when a vision model is active (anydoc can't extract images from PDFs, so those keep their figure analysis) — and they fall through to Docling automatically.
+
+**Docling** (everything the fast path declines, plus HTML, LaTeX, XML, standalone images, and audio) runs in a subprocess (to avoid Python GIL contention) or on the shared `cortex-helper` service. A conversion semaphore limits this to one document at a time to prevent memory overload.
 
 **Docling capabilities:**
 - Table structure recognition using TableFormer (ACCURATE mode)
 - EasyOCR for text in images (English + German, GPU-accelerated when available)
 - Image extraction from PDFs, Word docs, and presentations
 - 8-thread acceleration with auto-detected compute device (CUDA/MPS/CPU)
+
+If a specific document converts badly on the fast path, force a Docling re-run with `POST /api/documents/{id}/reprocess?engine=docling`.
 
 ### Stage 2: URL Protection and Cleanup
 
