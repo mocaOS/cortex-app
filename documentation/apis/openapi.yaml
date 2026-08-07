@@ -495,8 +495,17 @@ paths:
   /api/ask:
     post:
       tags: [Ask AI]
-      summary: Ask a question
-      description: Get an AI-generated answer with sources
+      summary: Ask a question (non-streaming, fast chat only)
+      description: >-
+        Get a single-shot AI-generated answer with sources. To retrieve
+        knowledge from the Cortex, prefer a streaming Deep Research query on
+        `POST /api/ask/stream` with `use_agentic: true` — use this endpoint
+        only for quick chat answers from callers that cannot consume SSE.
+        Constraints: `use_agentic: true` is rejected here with
+        `400 {"error": "agentic_requires_streaming"}` (agentic runs routinely
+        take 60–90s), and the request is bounded by a server-side deadline
+        (`ASK_DEADLINE_SECONDS`, default 28s) returning
+        `504 {"error": "deadline_exceeded"}` on expiry.
       requestBody:
         required: true
         content:
@@ -510,12 +519,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AskResponse'
+        '400':
+          description: >-
+            Agentic mode requested on the non-streaming endpoint —
+            `{"error": "agentic_requires_streaming", "use_endpoint": "/api/ask/stream"}`
+        '504':
+          description: >-
+            Server-side deadline exceeded (`ASK_DEADLINE_SECONDS`, default 28s) —
+            `{"error": "deadline_exceeded"}`; retry, simplify, or use `/api/ask/stream`
 
   /api/ask/stream:
     post:
       tags: [Ask AI]
-      summary: Streaming answer
-      description: Get a streaming answer using Server-Sent Events
+      summary: Streaming answer (primary retrieval endpoint)
+      description: >-
+        Get a streaming answer using Server-Sent Events. This is the
+        recommended way to ask the Cortex anything: send
+        `use_agentic: true` for Deep Research (agentic multi-step retrieval
+        with visible reasoning), or omit it for streamed chat. SSE heartbeats
+        keep long runs alive — this endpoint has no server-side deadline.
       requestBody:
         required: true
         content:
@@ -2875,6 +2897,10 @@ components:
         use_agentic:
           type: boolean
           default: false
+          description: >-
+            Deep Research mode (agentic multi-step retrieval). Only honored on
+            the streaming endpoints — the non-streaming `POST /api/ask`
+            rejects `use_agentic: true` with `400 agentic_requires_streaming`.
         use_fast_search:
           type: boolean
           default: false

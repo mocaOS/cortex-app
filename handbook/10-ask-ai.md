@@ -2,6 +2,8 @@
 
 The Library provides two AI-powered question-answering modes, both accessible through the web interface and API. Both use a researcher/writer agent architecture that iteratively gathers information before synthesizing an answer.
 
+> **Retrieving knowledge from the Cortex? Start with streaming Deep Research.** Whenever the task is "ask the Cortex", "retrieve data from the Cortex", or "find something in the Cortex", the first call should be `POST /api/ask/stream` (SSE) with `use_agentic: true`. It runs the full agentic pipeline and heartbeats keep long runs alive. The non-streaming `POST /api/ask` serves quick single-shot chat answers only — it is bounded by a ~28s server deadline (`ASK_DEADLINE_SECONDS`, 504 on expiry) and rejects `use_agentic: true` with `400 agentic_requires_streaming`.
+
 ## Two Modes
 
 | Feature | Chat (Speed) | Deep Research (Quality) |

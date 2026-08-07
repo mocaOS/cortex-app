@@ -200,7 +200,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `total_results`: int
 
 #### `POST /api/ask`
-**Description**: Ask a question using enhanced GraphRAG  
+**Description**: Ask a question using enhanced GraphRAG — **non-streaming, fast-chat only**. To retrieve knowledge from the Cortex, the recommended first call is a streaming Deep Research query on `POST /api/ask/stream` with `use_agentic: true`; use this endpoint only for quick single-shot answers from callers that cannot consume SSE.  
 **Authentication**: `require_read_permission`  
 **Request**: `RAGRequest`
 - `question`: str
@@ -209,8 +209,11 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `max_hops`: int (default: 2, min: 1, max: 3)
 - `conversation_history`: Optional[List[ConversationMessage]]
 - `use_reranking`: bool (default: true)
-- `use_agentic`: bool (default: false)
+- `use_agentic`: bool (default: false) — **rejected on this endpoint**: `use_agentic: true` returns `400 {"error": "agentic_requires_streaming", "use_endpoint": "/api/ask/stream"}`. Agentic Deep Research routinely runs 60–90s and only the SSE endpoint survives that (heartbeats keep the connection alive).
 - `use_fast_search`: bool (default: false)
+
+**Constraints**:
+- Bounded by a server-side wall-clock deadline (`ASK_DEADLINE_SECONDS`, default 28s, kept just below the edge-proxy read timeout). On expiry the request returns `504 {"error": "deadline_exceeded"}` with guidance to retry, simplify, or switch to `/api/ask/stream` (which is not subject to this deadline).
 
 **Response**: `RAGResponse`
 - `question`: str
@@ -225,7 +228,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `collection_id`: Optional[str]
 
 #### `POST /api/ask/stream`
-**Description**: Stream RAG response (Server-Sent Events)  
+**Description**: Stream RAG response (Server-Sent Events) — **the primary retrieval endpoint**. "Ask the Cortex" / "find something in the Cortex" should start here with `use_agentic: true` (streaming Deep Research); the SSE heartbeats keep long agentic runs alive where the non-streaming endpoint would time out.  
 **Authentication**: `require_read_permission`  
 **Request**: `RAGRequest` (same as `/api/ask`)
 
@@ -245,7 +248,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 
 #### `POST /api/ask/stream/thinking`
 **Description**: Stream RAG with extended thinking visibility  
-**Authentication**: None  
+**Authentication**: `require_read_permission`  
 **Request**: `RAGRequest`
 
 **Response**: SSE stream with thinking events (same as agentic mode in `/api/ask/stream`)

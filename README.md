@@ -204,7 +204,15 @@ curl -X POST http://localhost:8000/api/search \
   -H "X-API-Key: your-api-key" \
   -d '{"query": "What is machine learning?", "top_k": 5}'
 
-# GraphRAG Q&A (add "use_agentic": true for Deep Research mode)
+# Ask the Cortex — streaming Deep Research (SSE), the default way to retrieve knowledge
+curl -N -X POST http://localhost:8000/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"question": "Explain the main concepts", "use_agentic": true}'
+
+# Quick chat answer (non-streaming; bounded by a ~28s server deadline,
+# and use_agentic is rejected here with 400 — Deep Research is streaming-only)
 curl -X POST http://localhost:8000/api/ask \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \

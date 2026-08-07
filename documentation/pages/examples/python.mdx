@@ -168,18 +168,21 @@ class CortexClient:
         question: str,
         collection_id: Optional[str] = None,
         conversation_history: Optional[List[Dict]] = None,
-        use_fast_search: bool = False,
-        use_agentic: bool = False
+        use_fast_search: bool = False
     ) -> Dict[str, Any]:
         """
-        Ask a question using RAG.
+        Ask a quick chat question (non-streaming).
+
+        For retrieving knowledge from the Cortex, prefer
+        ask_streaming(use_agentic=True) — streaming Deep Research.
+        The non-streaming endpoint is bounded by a ~28s server deadline
+        and rejects use_agentic with 400 agentic_requires_streaming.
 
         Args:
             question: The question to ask
             collection_id: Optional collection to query
             conversation_history: Previous messages for context
             use_fast_search: Use fast vector-only search
-            use_agentic: Use deep research mode
         """
         payload = {'question': question}
         if collection_id:
@@ -188,8 +191,6 @@ class CortexClient:
             payload['conversation_history'] = conversation_history
         if use_fast_search:
             payload['use_fast_search'] = True
-        if use_agentic:
-            payload['use_agentic'] = True
         return self._request('POST', '/api/ask', json=payload)
 
     def ask_streaming(
@@ -359,6 +360,21 @@ results = client.search(
 ```
 
 ### Ask Questions
+
+To retrieve knowledge from the Cortex, start with a streaming Deep Research query — it runs the full agentic multi-step pipeline and streams progress while it works:
+
+```python
+# Deep Research (recommended first choice for "ask the Cortex" / "find X in the Cortex")
+answer = ""
+for event in client.ask_streaming("What are the main findings?", use_agentic=True):
+    if 'content' in event:
+        answer += event['content']
+    elif 'thinking' in event:
+        print(f"[research] {event['thinking']}")
+print(answer)
+```
+
+For quick single-shot chat answers, the non-streaming endpoint works too (bounded by a ~28s server deadline; Deep Research is not available here):
 
 ```python
 # Simple question

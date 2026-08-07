@@ -9,6 +9,8 @@ When adding, modifying, or removing API endpoints, features, or configuration op
 
 #### Changelog structure (`documentation/pages/changelog.mdx`)
 
+**When to write an entry:** only for new product features or significant changes to existing code. Hotfixes, documentation-only updates, and internal tooling tweaks (e.g. bench) get **no** changelog entry.
+
 Newest entries first. **Exactly one `##` heading per calendar day** — never two `##` entries for the same date. The `##` heading is the **date only** — no parenthetical theme, no suffix (per explicit owner preference; a themed-header format was tried June 10–July 20, 2026 and rolled back). Each day follows this shape:
 
 ```markdown

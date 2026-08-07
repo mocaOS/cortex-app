@@ -7,6 +7,12 @@ import { Mermaid } from "zudoku/mermaid";
 
 Ask questions about your documents and get intelligent answers with source citations. Cortex's Ask AI feature uses Retrieval-Augmented Generation (RAG) with optional agentic reasoning for complex queries. The primary interface is the **streaming endpoint**, which delivers results in real time via Server-Sent Events (SSE).
 
+:::tip{title="Retrieving knowledge from the Cortex? Start here"}
+
+Whenever the task is "ask the Cortex", "retrieve data from the Cortex", or "find something in the Cortex", the first call should be a **streaming Deep Research query**: `POST /api/ask/stream` with `use_agentic: true`. It runs the full agentic multi-step pipeline and the SSE heartbeats keep long runs alive. The non-streaming `POST /api/ask` exists for quick single-shot chat answers only — it is bounded by a ~28s server deadline (504 on expiry) and rejects `use_agentic: true` with `400 agentic_requires_streaming`.
+
+:::
+
 ## Frontend UI
 
 In the Cortex frontend, Ask AI is accessed via the **Explore** section with two dedicated tabs:

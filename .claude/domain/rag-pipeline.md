@@ -2,6 +2,8 @@
 
 Two-stage researcher/writer pipeline for answering questions. See [`.claude/domain/skills.md`](skills.md) for skill-augmented capabilities.
 
+**Retrieval doctrine (all docs follow this):** the first-choice call for "ask/retrieve/find something in the Cortex" is a **streaming Deep Research query** — `POST /api/ask/stream` (SSE) with `use_agentic: true`. Non-streaming `POST /api/ask` is quick-chat only: bounded by `ASK_DEADLINE_SECONDS` (28s → 504) and rejects `use_agentic` with `400 agentic_requires_streaming`. Keep every doc surface (README, documentation/, handbook/, cortex-skills) consistent with this.
+
 ## Researcher Agent
 
 Uses OpenAI function-calling to iteratively gather information via tools:

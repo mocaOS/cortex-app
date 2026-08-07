@@ -5,6 +5,12 @@ description: Integrate Cortex with popular frameworks, tools, and platforms
 
 Examples for integrating Cortex with popular frameworks, AI tools, and automation platforms.
 
+:::tip{title="Retrieving knowledge from Cortex?"}
+
+The recommended first call for "ask the Cortex" / "find something in the Cortex" is a **streaming Deep Research query**: `POST /api/ask/stream` (SSE) with `use_agentic: true` — see [Ask AI](/features/ask-ai). The non-streaming `POST /api/ask` shown in some examples below is for platforms that cannot consume SSE (Slack slash commands, n8n HTTP nodes); it serves quick chat answers only, is bounded by a ~28s server deadline, and rejects `use_agentic: true`.
+
+:::
+
 ## AI Coding Agents (Cortex Skills)
 
 The fastest way to integrate is to let your AI agent do it. [Cortex Skills](https://cortexskills.org) ([source](https://github.com/mocaOS/cortex-skills)) serves curated, always-current `SKILL.md` files over plain HTTP — one per subsystem — so agents work from ground truth instead of stale training data:
@@ -372,7 +378,7 @@ def handle_ask(ack, respond, command):
         response = requests.post(
             f"{CORTEX_URL}/api/ask",
             headers={"X-API-Key": CORTEX_KEY},
-            json={"query": question}
+            json={"question": question}
         )
         response.raise_for_status()
         
@@ -548,7 +554,7 @@ Configure an HTTP Request node in n8n:
 **Body:**
 ```json
 {
-  "query": "{{$node.previous.json.question}}"
+  "question": "{{$node.previous.json.question}}"
 }
 ```
 

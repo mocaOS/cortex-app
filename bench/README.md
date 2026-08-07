@@ -267,8 +267,9 @@ python bench/test_heuristics.py
 9. **Snapshots stats** via `/api/stats`.
 10. **Q+A speed mode** → asks the shared question bank via `/api/ask`
     (chat mode, `use_agentic=false`); logs answers, sources, latency.
-11. **Q+A quality mode** → same bank via `/api/ask` (`use_agentic=true`,
-    deep-research path); logs answers, sources, latency.
+11. **Q+A quality mode** → same bank via `/api/ask/stream` (`use_agentic=true`,
+    deep-research path, aggregated from the SSE frames — the non-streaming
+    `/api/ask` rejects agentic requests); logs answers, sources, latency.
 12. **Parses `docker logs`** over the combo's wall-clock window for signal
     counts + phase timestamps.
 13. **Applies heuristic analysis** — verdict, failure_patterns,
@@ -331,9 +332,11 @@ How it works:
 2. **Per-combo: speed mode** — every question is posted to `/api/ask` with
    `use_agentic=false`. This is the chat path: hybrid search + reranking +
    one writer pass. 90 s per-question timeout.
-3. **Per-combo: quality mode** — same bank, `use_agentic=true`. The full
-   researcher agent loop with tool calls (`knowledge_search`,
-   `community_search`, `entity_lookup`, `reasoning`). 300 s per-question
+3. **Per-combo: quality mode** — same bank, `use_agentic=true` on
+   `POST /api/ask/stream` (streaming-only; answers reassembled from the SSE
+   `content` frames). The full researcher agent loop with tool calls
+   (`knowledge_search`, `community_search`, `entity_lookup`, `reasoning`).
+   300 s per-question
    timeout (bumped from 180 s after a minimax-m27 run showed the researcher
    loop genuinely needs >180 s on harder questions).
 4. **End-of-batch judge pass** — one LLM call across all (run × mode ×

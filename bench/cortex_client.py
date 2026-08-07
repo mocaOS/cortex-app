@@ -323,6 +323,47 @@ class CortexClient:
                 except json.JSONDecodeError:
                     continue
 
+    async def ask_deep_research(
+        self,
+        question: str,
+        *,
+        top_k: int = 5,
+        use_graph: bool = True,
+        use_reranking: bool = True,
+        timeout_s: float = 180.0,
+    ) -> dict:
+        """Deep-research Q+A aggregated from the SSE stream into a
+        RAGResponse-shaped dict ({answer, sources, retrieval_stats}).
+
+        The non-streaming /api/ask rejects use_agentic=true with
+        400 agentic_requires_streaming, so quality-mode questions must ride
+        /api/ask/stream and reassemble the answer from `content` frames.
+        """
+        answer_parts: list[str] = []
+        sources: list[dict] = []
+        retrieval_stats: Optional[dict] = None
+        async for event in self.ask_stream_events(
+            question,
+            use_agentic=True,
+            top_k=top_k,
+            use_graph=use_graph,
+            use_reranking=use_reranking,
+            timeout_s=timeout_s,
+        ):
+            if "content" in event:
+                answer_parts.append(event["content"])
+            elif "sources" in event:
+                sources = event["sources"] or []
+            elif "retrieval_stats" in event:
+                retrieval_stats = event["retrieval_stats"]
+            elif "error" in event:
+                raise CortexError(f"/api/ask/stream error frame: {event['error']!r}")
+        return {
+            "answer": "".join(answer_parts),
+            "sources": sources,
+            "retrieval_stats": retrieval_stats,
+        }
+
     # ----- library export (used for pre-batch safety backup) ----------------
 
     async def trigger_export(self) -> dict:

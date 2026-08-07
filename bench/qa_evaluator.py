@@ -213,7 +213,9 @@ async def run_question_set(
     *,
     mode: Literal["speed", "quality"],
 ) -> list[dict]:
-    """Ask every question via /api/ask in the given mode. Returns answer dicts.
+    """Ask every question in the given mode. Speed rides the non-streaming
+    /api/ask; quality rides /api/ask/stream (deep research is streaming-only).
+    Returns answer dicts.
 
     Never raises — per-question failures are captured in the `error` field of
     the answer record and the loop continues. Ingestion is already paid for;
@@ -237,14 +239,25 @@ async def run_question_set(
         }
         start = time.monotonic()
         try:
-            resp = await cx.ask(
-                q["question"],
-                use_agentic=use_agentic,
-                top_k=5,
-                use_graph=True,
-                use_reranking=True,
-                timeout_s=timeout,
-            )
+            if use_agentic:
+                # Deep research is streaming-only: the non-streaming /api/ask
+                # rejects use_agentic=true (400 agentic_requires_streaming).
+                resp = await cx.ask_deep_research(
+                    q["question"],
+                    top_k=5,
+                    use_graph=True,
+                    use_reranking=True,
+                    timeout_s=timeout,
+                )
+            else:
+                resp = await cx.ask(
+                    q["question"],
+                    use_agentic=False,
+                    top_k=5,
+                    use_graph=True,
+                    use_reranking=True,
+                    timeout_s=timeout,
+                )
             record["answer"] = resp.get("answer", "") or ""
             sources = resp.get("sources") or []
             record["sources_count"] = len(sources)
