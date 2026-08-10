@@ -495,6 +495,13 @@ class TestResearchPricing:
         assert exc.value.status_code == 422
         assert "no payment was taken" in exc.value.detail
 
+    async def test_context_endpoint_charges_base_price(self, x402_on, mock_neo4j, monkeypatch):
+        request = make_request("/api/context", body={"query": "assemble"})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 402
+        assert self._challenge_amount(exc) == "50000"  # base rate, never research-priced
+
     async def test_depth_deep_on_non_streaming_ask_rejected_before_payment(
         self, x402_on, mock_neo4j, monkeypatch
     ):

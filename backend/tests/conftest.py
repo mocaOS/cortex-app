@@ -72,6 +72,7 @@ def _isolate_env(tmp_path, monkeypatch):
         "api_key_cache_ttl_seconds": settings.api_key_cache_ttl_seconds,
         "x402_enabled": settings.x402_enabled,
         "enable_webhooks": getattr(settings, "enable_webhooks", False),
+        "enable_remote_mcp": getattr(settings, "enable_remote_mcp", False),
     }
 
     settings.max_files = 0
@@ -101,6 +102,7 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.x402_enabled = False
     # Webhooks are opt-in too.
     settings.enable_webhooks = False
+    settings.enable_remote_mcp = False
 
     # The auth validation cache is module-global; never leak entries between
     # tests (a cached AuthResult would mask each test's mock_neo4j setup).

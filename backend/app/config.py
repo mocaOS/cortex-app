@@ -1051,6 +1051,17 @@ class Settings(BaseSettings):
     #   emit calls are no-ops and the admin endpoints 403.
 
     # ==========================================================================
+    # Remote MCP (see app/services/remote_mcp.py)
+    # ==========================================================================
+    enable_remote_mcp: bool = Field(
+        default=False
+    )  # Serve the Model Context Protocol directly from this instance at /mcp
+    #   (streamable HTTP, stateless). Claude Desktop/Code, Cursor etc. connect
+    #   with just the URL + an API key — no npm install. Tools dispatch through
+    #   the instance's own REST API, so auth/scoping/quotas apply unchanged.
+    #   Off = /mcp returns 404.
+
+    # ==========================================================================
     # Consolidation scheduler (see _maybe_run_consolidation in main.py)
     # ==========================================================================
     enable_consolidation_scheduler: bool = Field(

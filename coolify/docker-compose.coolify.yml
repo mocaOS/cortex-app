@@ -108,6 +108,8 @@ services:
       - X402_ENABLED=${X402_ENABLED:-false}
       # Outbound webhooks (document/task lifecycle events, admin-managed endpoints)
       - ENABLE_WEBHOOKS=${ENABLE_WEBHOOKS:-false}
+      # Instance-hosted MCP endpoint at /mcp (connect Claude/Cursor with URL + API key)
+      - ENABLE_REMOTE_MCP=${ENABLE_REMOTE_MCP:-false}
       # Unattended community refresh on idle instances (see communities docs)
       - ENABLE_CONSOLIDATION_SCHEDULER=${ENABLE_CONSOLIDATION_SCHEDULER:-false}
       - CONSOLIDATION_MIN_NEW_DOCUMENTS=${CONSOLIDATION_MIN_NEW_DOCUMENTS:-25}

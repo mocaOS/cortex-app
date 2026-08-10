@@ -310,6 +310,40 @@ class SearchResponse(BaseModel):
         return self
 
 
+class ContextRequest(BaseModel):
+    """Request model for POST /api/context — retrieval without the writer."""
+    query: str = Field(..., min_length=1)
+    collection_id: Optional[str] = Field(
+        default=None, description="Collection ID to scope retrieval to"
+    )
+    max_tokens: int = Field(
+        default=4000, ge=200, le=32000,
+        description="Token budget for the assembled context bundle",
+    )
+    top_k: int = Field(default=12, ge=1, le=50, description="Candidate chunks to retrieve")
+    max_hops: int = Field(default=2, ge=1, le=3, description="Graph traversal depth")
+    include_graph: bool = Field(default=True, description="Include entity/relationship context")
+    include_communities: bool = Field(default=True, description="Include community summaries")
+    use_reranking: bool = Field(default=True, description="Cross-encoder rerank the candidates")
+
+
+class ContextResponse(BaseModel):
+    """Response model for POST /api/context.
+
+    `text` is the ready-to-inject block (chunks cited [src_N], then graph and
+    community sections); `chunks`/`graph_context`/`communities` carry the same
+    material structured. `budget` reports the token allocation actually used.
+    """
+    query: str
+    chunks: list["SearchResult"]
+    graph_context: Optional["GraphContext"] = None
+    communities: list[dict] = Field(default_factory=list)
+    text: str
+    token_count: int
+    budget: dict
+    collection_id: Optional[str] = None
+
+
 class ConversationMessage(BaseModel):
     """A message in a conversation."""
     role: str = Field(..., description="Role: 'user' or 'assistant'")

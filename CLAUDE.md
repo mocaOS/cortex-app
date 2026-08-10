@@ -52,6 +52,7 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md`, `domain/observability.md` (OpenAI client factory) |
 | `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
 | `backend/app/services/webhook_service.py` | `domain/document-pipeline.md` (ingestion status & webhooks) |
+| `backend/app/services/remote_mcp.py` | `architecture.md`, `domain/rag-pipeline.md` |
 | `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md`, `domain/x402.md` (monetized keys) |
 | `backend/app/services/prompt_security.py` | `architecture.md` |
 | `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |

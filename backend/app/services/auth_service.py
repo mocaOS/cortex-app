@@ -35,6 +35,7 @@ MONETIZED_KEY_ALLOWED_PATHS = frozenset({
     "/api/ask",
     "/api/ask/stream",
     "/api/ask/stream/thinking",
+    "/api/context",
 })
 
 

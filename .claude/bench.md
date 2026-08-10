@@ -4,7 +4,7 @@ Autonomous LLM-stack benchmark orchestrator. Lives at the repo root in `bench/`.
 
 > **Public status (important).** This subsystem is an **isolated commit, not yet publicly documented**. The main `README.md`, anything under `documentation/`, `handbook/`, and the public-facing layers of the project deliberately do NOT mention `bench/`. When making changes here, do **not** add references to the bench in those docs. Update this file and `bench/README.md` only.
 
-Reference docs inside `bench/`: `BASELINE.md` (A/B gate procedure for efficiency flags) and `STEP1_RESEARCH.md` (2026-07 research pass — Step 1 cost anatomy + ranked optimization levers with external evidence; the flag A/Bs it prescribes run through the BASELINE.md gate).
+Reference docs inside `bench/`: `BASELINE.md` (A/B gate procedure for efficiency flags), `STEP1_RESEARCH.md` (2026-07 research pass — Step 1 cost anatomy + ranked optimization levers with external evidence; the flag A/Bs it prescribes run through the BASELINE.md gate), and `PUBLIC_EVALS.md` (2026-08 design + runbook for eventually publishing retrieval-quality evals: public corpus, frozen question bank, disinterested judge, sanitized export — design only, nothing public yet).
 
 ## What it is, in one paragraph
 

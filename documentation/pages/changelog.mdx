@@ -37,6 +37,14 @@ Node ≥ 18 and modern browsers; 11 kB packed; zero runtime dependencies.
 
 **The MCP server rides on it.** [`@mocaos/cortex-mcp`](https://www.npmjs.com/package/@mocaos/cortex-mcp) was rebuilt as a thin wrapper over the SDK and is now a one-liner install — `npx @mocaos/cortex-mcp` — instead of clone-and-build. Same tools, now with conversation-thread support in `ask_question`.
 
+### POST /api/context: bring the knowledge to your own prompt
+
+Every ask endpoint has Cortex write the answer. The new context endpoint inverts that: one call returns a **token-budgeted context bundle** — reranked chunks, entity/relationship context, and community summaries — both structured and as a ready-to-inject text block with `[src_N]` citations. It's for agents and pipelines that compose their own prompts: RAG loops, prefetch layers, anything that wants Cortex as pure retrieval. Budget policy keeps chunks whole (graph and community enrichment capped at ~30% of the budget), and the response reports exactly how the budget was spent. Collection-scoped like every read; available to monetized keys at the base per-query rate. Also exposed in the SDK (`cortex.getContext(query, { max_tokens })`) and as a `get_context` MCP tool.
+
+### Remote MCP: every instance is now an MCP server
+
+With `ENABLE_REMOTE_MCP=true`, the instance itself speaks the Model Context Protocol at `/mcp` (streamable HTTP, stateless) — point Claude Desktop, Claude Code, or Cursor at `https://your-instance/mcp` with an API key and you're connected, no npm install, no local process. Thirteen tools (search, ask with deep research, context assembly, documents, knowledge graph, collections, communities, uploads, stats) dispatch through the instance's **own REST API**, so authentication, collection scoping, quotas, and usage analytics treat MCP traffic exactly like API traffic. Long deep-research calls stream with keep-alives so proxies don't cut them. Off by default; when disabled the endpoint doesn't exist. The npm package (`npx @mocaos/cortex-mcp`) remains the right choice for stdio-based setups and conversation threads.
+
 ### One dial for research depth: `depth`
 
 The chat/deep-research split used to live in two boolean flags with non-obvious interactions. Ask requests now take a single `depth` parameter — `fast` (vector-only quick answer), `standard` (the default researched answer), `deep` (agentic deep research, streaming endpoints only). The legacy `use_agentic`/`use_fast_search` flags remain permanently supported as aliases; sending a flag that contradicts `depth` is a clean 400. Pay-per-query instances price by the same resolution: `depth: "deep"` quotes the research rate in the 402 challenge, and malformed or contradictory requests are rejected **before** any payment moves.

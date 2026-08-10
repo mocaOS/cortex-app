@@ -29,6 +29,8 @@ import json
 from app.config import get_settings
 from app.models import (
     UploadResponse,
+    ContextRequest,
+    ContextResponse,
     SearchRequest,
     SearchResponse,
     SearchResult,
@@ -3753,6 +3755,198 @@ async def cleanup_orphaned_entities(auth: AuthResult = Depends(require_manage_pe
         }
     except Exception as e:
         logger.error(f"Error cleaning up orphaned entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _estimate_tokens(text: str) -> int:
+    """Token estimate for context budgeting: tiktoken when available, else the
+    ~4-chars-per-token heuristic. Budgeting needs consistency, not exactness."""
+    from app.services.document_processor import _token_len
+
+    exact = _token_len(text)
+    return exact if exact is not None else max(1, len(text) // 4)
+
+
+@app.post("/api/context", response_model=ContextResponse)
+async def assemble_context(
+    request: ContextRequest,
+    auth: AuthResult = Depends(require_read_permission),
+    _quota: None = Depends(enforce_query_quota),
+    _rate: None = Depends(enforce_rate_limit),
+    _x402: None = Depends(enforce_x402_payment),
+):
+    """Retrieval without the writer: assemble a token-budgeted context bundle.
+
+    For agents and pipelines that inject Cortex knowledge into their OWN
+    prompts instead of asking Cortex to write the answer. One call returns
+    reranked chunks + entity/relationship context + community summaries, both
+    structured and as a ready-to-inject `text` block, trimmed to `max_tokens`.
+
+    Budget policy: graph + community sections are capped at ~30% of the budget
+    combined; chunks fill the rest (whole chunks only — a chunk that would
+    overflow the remaining budget is dropped, not truncated mid-sentence).
+    """
+    try:
+        # Collection scoping — same resolution as /api/search
+        if request.collection_id:
+            validate_collection_access(auth, request.collection_id, "assemble context from")
+        effective_collection_id = request.collection_id
+        allowed_collection_ids: Optional[List[str]] = None
+        if not effective_collection_id:
+            collection_filter = auth.get_collection_filter()
+            if collection_filter is not None:
+                if len(collection_filter) == 1:
+                    effective_collection_id = collection_filter[0]
+                else:
+                    allowed_collection_ids = collection_filter
+
+        processor = get_query_processor()
+
+        # Retrieval (hybrid RRF + graph traversal), with rerank headroom
+        search_result = await processor.graph_search_async(
+            request.query,
+            top_k=request.top_k * 2,
+            max_hops=request.max_hops,
+            use_hybrid_rrf=get_settings().enable_hybrid_search,
+            collection_id=effective_collection_id,
+            allowed_collection_ids=allowed_collection_ids,
+        )
+        results = search_result["results"]
+        graph_data = search_result.get("graph_context") or {}
+
+        if request.use_reranking and get_settings().enable_reranking and results:
+            results = await processor.rerank_results_async(
+                request.query, results, request.top_k
+            )
+        else:
+            results = results[: request.top_k]
+
+        communities: List[dict] = []
+        if request.include_communities:
+            try:
+                communities = await asyncio.to_thread(
+                    get_neo4j_service().search_communities_by_content,
+                    request.query, 5, allowed_collection_ids,
+                )
+            except Exception as e:  # noqa: BLE001 — communities are enrichment
+                logger.warning(f"Community search failed for /api/context: {e}")
+
+        # ------------------------------------------------------------------
+        # Assemble under the token budget
+        # ------------------------------------------------------------------
+        budget = request.max_tokens
+        enrichment_cap = int(budget * 0.30)
+
+        graph_text = ""
+        if request.include_graph and (graph_data.get("entities") or graph_data.get("relationships")):
+            lines = []
+            if graph_data.get("entities"):
+                lines.append("=== Related Entities ===")
+                lines += [
+                    f"- {e.get('name', '?')} ({e.get('type', 'Unknown')}): {e.get('description', '')}"
+                    for e in graph_data["entities"][:15]
+                ]
+            if graph_data.get("relationships"):
+                lines.append("=== Entity Relationships ===")
+                lines += [
+                    f"- {r.get('source', '?')} --[{r.get('type', '?')}]--> {r.get('target', '?')}"
+                    for r in graph_data["relationships"][:20]
+                ]
+            graph_text = "\n".join(lines)
+
+        community_text = ""
+        if communities:
+            community_text = "=== Knowledge Communities ===\n" + "\n".join(
+                f"- {c.get('name', 'Unnamed')}: {c.get('summary', '')}" for c in communities
+            )
+
+        # Trim enrichment to its cap (drop communities first, then graph)
+        graph_tokens = _estimate_tokens(graph_text) if graph_text else 0
+        community_tokens = _estimate_tokens(community_text) if community_text else 0
+        if graph_tokens + community_tokens > enrichment_cap:
+            if graph_tokens <= enrichment_cap:
+                community_text, community_tokens = "", 0
+                communities = []
+            else:
+                community_text, community_tokens = "", 0
+                communities = []
+                graph_text, graph_tokens = "", 0
+                graph_data = {}
+
+        # Fill the rest with whole chunks, cited [src_N]
+        chunk_budget = budget - graph_tokens - community_tokens
+        included: List[dict] = []
+        chunk_lines: List[str] = []
+        used_chunk_tokens = 0
+        for idx, r in enumerate(results):
+            piece = (
+                f"[src_{len(included) + 1}] Source: {r.get('filename', '')}\n"
+                f"{r.get('content', '')}"
+            )
+            piece_tokens = _estimate_tokens(piece)
+            if used_chunk_tokens + piece_tokens > chunk_budget:
+                if included:
+                    break
+                # Always include at least one (truncated) chunk — an empty
+                # bundle with a healthy corpus would just look broken.
+                approx_chars = max(200, chunk_budget * 4)
+                piece = piece[:approx_chars]
+                piece_tokens = _estimate_tokens(piece)
+            included.append(r)
+            chunk_lines.append(piece)
+            used_chunk_tokens += piece_tokens
+
+        sections = []
+        if chunk_lines:
+            sections.append("=== Knowledge Context ===\n" + "\n\n".join(chunk_lines))
+        if graph_text:
+            sections.append(graph_text)
+        if community_text:
+            sections.append(community_text)
+        text = "\n\n".join(sections)
+
+        chunks = [
+            SearchResult(
+                document_id=r.get("document_id", ""),
+                chunk_id=r.get("chunk_id", ""),
+                content=r.get("content", ""),
+                score=r.get("rerank_score", r.get("score", 0)),
+                metadata={
+                    "filename": r.get("filename", ""),
+                    "chunk_index": r.get("chunk_index", 0),
+                },
+            )
+            for r in included
+        ]
+
+        graph_context = None
+        if request.include_graph and (graph_data.get("entities") or graph_data.get("relationships")):
+            graph_context = GraphContext(
+                entities=graph_data.get("entities", [])[:15],
+                relationships=graph_data.get("relationships", [])[:20],
+            )
+
+        return ContextResponse(
+            query=request.query,
+            chunks=chunks,
+            graph_context=graph_context,
+            communities=communities,
+            text=text,
+            token_count=_estimate_tokens(text) if text else 0,
+            budget={
+                "max_tokens": budget,
+                "chunks": used_chunk_tokens,
+                "graph": graph_tokens,
+                "communities": community_tokens,
+                "chunks_considered": len(results),
+                "chunks_included": len(included),
+            },
+            collection_id=effective_collection_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error assembling context: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -7777,6 +7971,119 @@ async def get_x402_earnings(auth: AuthResult = Depends(require_admin)):
     except Exception as e:
         logger.error(f"Error reading x402 earnings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Remote MCP (instance-hosted; see app/services/remote_mcp.py)
+# =============================================================================
+
+def _require_remote_mcp_enabled() -> None:
+    if not getattr(get_settings(), "enable_remote_mcp", False):
+        # 404 (not 403): with the feature off, the endpoint doesn't exist —
+        # same zero-traces philosophy as ENABLE_APPS.
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@app.post("/mcp")
+async def remote_mcp(
+    request: Request,
+    auth: AuthResult = Depends(require_read_permission),
+):
+    """Model Context Protocol endpoint (streamable HTTP, stateless).
+
+    Single JSON-RPC messages only (batching was removed from the MCP spec).
+    initialize / tools/list / ping answer as JSON immediately; tools/call
+    streams as SSE (with keep-alive comments) when the client accepts
+    text/event-stream — deep research runs minutes and must not be silently
+    cut by an idle proxy. Notifications are acknowledged with 202.
+    """
+    from app.services import remote_mcp as mcp_service
+
+    _require_remote_mcp_enabled()
+
+    try:
+        msg = await request.json()
+    except Exception:
+        return Response(
+            content=json.dumps(mcp_service.rpc_error(None, -32700, "Parse error")),
+            status_code=400, media_type="application/json",
+        )
+    if isinstance(msg, list):
+        return Response(
+            content=json.dumps(mcp_service.rpc_error(None, -32600, "Batching is not supported")),
+            status_code=400, media_type="application/json",
+        )
+    if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
+        return Response(
+            content=json.dumps(mcp_service.rpc_error(None, -32600, "Invalid Request")),
+            status_code=400, media_type="application/json",
+        )
+
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+
+    # Notifications and client responses: acknowledge, no body
+    if msg_id is None or method.startswith("notifications/"):
+        return Response(status_code=202)
+
+    if method == "initialize":
+        return mcp_service.handle_initialize(msg)
+    if method == "ping":
+        return mcp_service.rpc_result(msg_id, {})
+    if method == "tools/list":
+        return mcp_service.handle_tools_list(msg)
+
+    if method == "tools/call":
+        params = msg.get("params") or {}
+        tool_name = params.get("name", "")
+        tool_args = params.get("arguments") or {}
+        # The caller's key rides into the internal REST calls, so scoping,
+        # quotas and analytics see MCP traffic as normal API traffic.
+        api_key = (
+            request.headers.get("X-API-Key")
+            or (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+        )
+
+        accepts_sse = "text/event-stream" in (request.headers.get("accept") or "")
+        if not accepts_sse:
+            result = await mcp_service.execute_tool(tool_name, tool_args, api_key)
+            return mcp_service.rpc_result(msg_id, result)
+
+        async def _sse():
+            result = await mcp_service.execute_tool(tool_name, tool_args, api_key)
+            # Raw JSON-RPC on the wire — never sse_frame() here: its additive
+            # `type` stamp belongs to Cortex's own SSE contract, not MCP's.
+            yield f"data: {json.dumps(mcp_service.rpc_result(msg_id, result))}\n\n"
+
+        return StreamingResponse(
+            with_sse_heartbeat(_sse()),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    return Response(
+        content=json.dumps(mcp_service.rpc_error(msg_id, -32601, f"Method not found: {method}")),
+        media_type="application/json",
+    )
+
+
+@app.get("/mcp")
+async def remote_mcp_get():
+    """Server-initiated streams are not offered (stateless server) — the spec
+    allows answering GET with 405."""
+    _require_remote_mcp_enabled()
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.delete("/mcp")
+async def remote_mcp_delete():
+    """No sessions to terminate (stateless)."""
+    _require_remote_mcp_enabled()
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 # =============================================================================
