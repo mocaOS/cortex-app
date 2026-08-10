@@ -1051,6 +1051,21 @@ class Settings(BaseSettings):
     #   emit calls are no-ops and the admin endpoints 403.
 
     # ==========================================================================
+    # Server-side sessions (see app/services/session_service.py)
+    # ==========================================================================
+    enable_sessions: bool = Field(
+        default=False
+    )  # Server-stored conversation state for API consumers: POST /api/sessions
+    #   mints a session_id; passing it on ask endpoints makes the backend keep
+    #   the history + curated memory blob, replacing the client-carried
+    #   conversation_memory round-trip. Off by default: enabling means the
+    #   instance persists conversation content on behalf of API callers —
+    #   a data-retention decision the operator makes explicitly.
+    session_max_turns: int = Field(default=200)   # history cap per session (oldest trimmed)
+    session_ttl_days: int = Field(default=30)     # idle expiry, swept hourly (0 = never)
+    session_max_per_key: int = Field(default=500) # per-API-key session quota
+
+    # ==========================================================================
     # Remote MCP (see app/services/remote_mcp.py)
     # ==========================================================================
     enable_remote_mcp: bool = Field(

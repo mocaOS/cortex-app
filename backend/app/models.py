@@ -395,6 +395,16 @@ class RAGRequest(BaseModel):
             "returned in the 'structured' response field alongside the raw text."
         ),
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Server-side session id (from POST /api/sessions; requires "
+            "ENABLE_SESSIONS). The backend loads and persists conversation "
+            "history + curated memory itself. Mutually exclusive with "
+            "conversation_history/conversation_memory (400 session_conflict); "
+            "not available with fast search."
+        ),
+    )
 
 
 class RAGResponse(BaseModel):

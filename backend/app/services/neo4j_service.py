@@ -5990,6 +5990,109 @@ class Neo4jService:
             )
 
     # ------------------------------------------------------------------
+    # API sessions (server-side conversation state for API consumers —
+    # instance-operational: excluded from library export; conversation
+    # content, so per-key private and TTL-swept)
+    # ------------------------------------------------------------------
+
+    @retry_on_transient
+    def create_api_session(
+        self, key_id: str, name: str, history_json: str, memory_json: str, turn_count: int
+    ) -> dict:
+        session_id = f"ses_{uuid.uuid4().hex}"
+        with self.driver.session() as session:
+            record = session.run("""
+                CREATE (s:ApiSession {
+                    id: $id, key_id: $key_id, name: $name,
+                    history: $history, memory: $memory,
+                    turn_count: $turn_count,
+                    created_at: datetime(), updated_at: datetime()
+                })
+                RETURN s.id as id, s.name as name, s.turn_count as turn_count,
+                       toString(s.created_at) as created_at,
+                       toString(s.updated_at) as updated_at
+            """, id=session_id, key_id=key_id, name=name,
+                 history=history_json, memory=memory_json, turn_count=turn_count).single()
+            return dict(record)
+
+    @retry_on_transient
+    def get_api_session(self, session_id: str, key_id: str) -> Optional[dict]:
+        """Fetch a session INCLUDING state — only for its owning key."""
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (s:ApiSession {id: $id, key_id: $key_id})
+                RETURN s.id as id, s.name as name, s.history as history,
+                       s.memory as memory, s.turn_count as turn_count,
+                       toString(s.created_at) as created_at,
+                       toString(s.updated_at) as updated_at
+            """, id=session_id, key_id=key_id).single()
+            return dict(record) if record else None
+
+    @retry_on_transient
+    def list_api_sessions(self, key_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """Own sessions only, newest-active first; state excluded (list = metadata)."""
+        with self.driver.session() as session:
+            total = session.run(
+                "MATCH (s:ApiSession {key_id: $key_id}) RETURN count(s) as n",
+                key_id=key_id,
+            ).single()["n"]
+            result = session.run("""
+                MATCH (s:ApiSession {key_id: $key_id})
+                RETURN s.id as id, s.name as name, s.turn_count as turn_count,
+                       toString(s.created_at) as created_at,
+                       toString(s.updated_at) as updated_at
+                ORDER BY s.updated_at DESC
+                SKIP $offset LIMIT $limit
+            """, key_id=key_id, offset=offset, limit=limit)
+            return {"sessions": [dict(r) for r in result], "total": total}
+
+    @retry_on_transient
+    def count_api_sessions(self, key_id: str) -> int:
+        with self.driver.session() as session:
+            return session.run(
+                "MATCH (s:ApiSession {key_id: $key_id}) RETURN count(s) as n",
+                key_id=key_id,
+            ).single()["n"]
+
+    @retry_on_transient
+    def update_api_session_state(
+        self, session_id: str, key_id: str,
+        history_json: str, memory_json: str, turn_count: int,
+    ) -> bool:
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (s:ApiSession {id: $id, key_id: $key_id})
+                SET s.history = $history, s.memory = $memory,
+                    s.turn_count = $turn_count, s.updated_at = datetime()
+                RETURN count(s) as updated
+            """, id=session_id, key_id=key_id,
+                 history=history_json, memory=memory_json, turn_count=turn_count).single()
+            return bool(record and record["updated"])
+
+    @retry_on_transient
+    def delete_api_session(self, session_id: str, key_id: str) -> bool:
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (s:ApiSession {id: $id, key_id: $key_id})
+                DETACH DELETE s
+                RETURN count(*) as deleted
+            """, id=session_id, key_id=key_id).single()
+            return bool(record and record["deleted"])
+
+    def sweep_expired_api_sessions(self, ttl_days: int) -> int:
+        """Delete sessions idle longer than the TTL (hourly maintenance)."""
+        if ttl_days <= 0:
+            return 0
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (s:ApiSession)
+                WHERE s.updated_at < datetime() - duration({days: $days})
+                DETACH DELETE s
+                RETURN count(*) as deleted
+            """, days=ttl_days).single()
+            return record["deleted"] if record else 0
+
+    # ------------------------------------------------------------------
     # Webhook endpoints (instance-operational, like X402Config/GitConnection:
     # excluded from library export and untouched by System Reset)
     # ------------------------------------------------------------------

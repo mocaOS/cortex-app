@@ -110,6 +110,9 @@ services:
       - ENABLE_WEBHOOKS=${ENABLE_WEBHOOKS:-false}
       # Instance-hosted MCP endpoint at /mcp (connect Claude/Cursor with URL + API key)
       - ENABLE_REMOTE_MCP=${ENABLE_REMOTE_MCP:-false}
+      # Server-side sessions (persists conversation state for API consumers)
+      - ENABLE_SESSIONS=${ENABLE_SESSIONS:-false}
+      - SESSION_TTL_DAYS=${SESSION_TTL_DAYS:-30}
       # Unattended community refresh on idle instances (see communities docs)
       - ENABLE_CONSOLIDATION_SCHEDULER=${ENABLE_CONSOLIDATION_SCHEDULER:-false}
       - CONSOLIDATION_MIN_NEW_DOCUMENTS=${CONSOLIDATION_MIN_NEW_DOCUMENTS:-25}

@@ -1580,6 +1580,17 @@ async def _hourly_maintenance() -> None:
         await asyncio.to_thread(_purge_stale_import_uploads)
     except Exception as e:
         logger.warning(f"Import upload sweep failed: {e}")
+    # Expired server-side sessions (idle past SESSION_TTL_DAYS). Swept even if
+    # the feature was later disabled — stored conversations still age out.
+    try:
+        ttl = getattr(get_settings(), "session_ttl_days", 30)
+        swept = await asyncio.to_thread(
+            get_neo4j_service().sweep_expired_api_sessions, ttl
+        )
+        if swept:
+            logger.info(f"Session sweep removed {swept} expired session(s)")
+    except Exception as e:
+        logger.warning(f"Session sweep failed: {e}")
     # Scheduled consolidation (env-gated, default off).
     try:
         await _maybe_run_consolidation()
@@ -3758,6 +3769,224 @@ async def cleanup_orphaned_entities(auth: AuthResult = Depends(require_manage_pe
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =============================================================================
+# Server-side sessions (see app/services/session_service.py)
+# =============================================================================
+
+def _require_sessions_enabled() -> None:
+    from app.services.session_service import sessions_enabled
+
+    if not sessions_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Sessions are disabled on this instance (set ENABLE_SESSIONS=true).",
+        )
+
+
+class SessionCreateRequest(BaseModel):
+    name: str = Field(default="", max_length=200)
+    # Import support: seed a session from existing client-carried state
+    # (e.g. migrating a chat that used the conversation_memory contract).
+    history: Optional[List[ConversationMessage]] = None
+    memory: Optional[dict] = None
+
+
+@app.post("/api/sessions")
+async def create_session(
+    request: SessionCreateRequest,
+    auth: AuthResult = Depends(require_read_permission),
+):
+    """Create a server-side conversation session (optionally seeded)."""
+    from app.services.session_service import serialize_state, trim_history
+
+    _require_sessions_enabled()
+    settings = get_settings()
+    try:
+        neo4j = get_neo4j_service()
+        count = await asyncio.to_thread(neo4j.count_api_sessions, auth.key_id)
+        if count >= settings.session_max_per_key:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "session_quota_exceeded",
+                    "message": (
+                        f"This key already has {count} sessions "
+                        f"(limit {settings.session_max_per_key}). Delete old ones."
+                    ),
+                },
+            )
+        history = [m.model_dump() for m in (request.history or [])]
+        memory = request.memory if isinstance(request.memory, dict) else {}
+        history, memory = trim_history(history, memory, settings.session_max_turns)
+        history_json, memory_json = serialize_state(history, memory)
+        session = await asyncio.to_thread(
+            neo4j.create_api_session,
+            auth.key_id, request.name, history_json, memory_json, len(history),
+        )
+        return session
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions")
+async def list_sessions(
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    auth: AuthResult = Depends(require_read_permission),
+):
+    """List this key's sessions (metadata only), most recently active first."""
+    _require_sessions_enabled()
+    try:
+        return await asyncio.to_thread(
+            get_neo4j_service().list_api_sessions, auth.key_id, limit, offset
+        )
+    except Exception as e:
+        logger.error(f"Error listing sessions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(
+    session_id: str, auth: AuthResult = Depends(require_read_permission)
+):
+    """Fetch one session including its history and memory state (owner only)."""
+    from app.services.session_service import parse_session_state
+
+    _require_sessions_enabled()
+    try:
+        row = await asyncio.to_thread(
+            get_neo4j_service().get_api_session, session_id, auth.key_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        history, memory = parse_session_state(row)
+        return {
+            "id": row["id"], "name": row["name"],
+            "turn_count": row["turn_count"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+            "history": history, "memory": memory,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(
+    session_id: str, auth: AuthResult = Depends(require_read_permission)
+):
+    _require_sessions_enabled()
+    try:
+        deleted = await asyncio.to_thread(
+            get_neo4j_service().delete_api_session, session_id, auth.key_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _load_ask_session(request: "RAGRequest", auth: AuthResult) -> Optional[dict]:
+    """Resolve request.session_id → stored state, injected into the request.
+
+    Returns a persist context ({id, key_id, history, memory}) or None when no
+    session was requested. Enforces: feature flag, one-source-of-truth (400
+    session_conflict when client-carried state rides along), no fast search
+    (stateless by definition), and key ownership (foreign session → 404).
+    """
+    if not request.session_id:
+        return None
+    from app.services.session_service import parse_session_state
+
+    _require_sessions_enabled()
+    if request.conversation_history or request.conversation_memory is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "session_conflict",
+                "message": (
+                    "session_id and client-carried conversation_history/"
+                    "conversation_memory are mutually exclusive — the session "
+                    "IS the conversation state."
+                ),
+            },
+        )
+    if request.use_fast_search:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "session_not_supported",
+                "message": "Fast search is a stateless one-shot — omit session_id.",
+            },
+        )
+    row = await asyncio.to_thread(
+        get_neo4j_service().get_api_session, request.session_id, auth.key_id
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    history, memory = parse_session_state(row)
+    request.conversation_history = [
+        ConversationMessage(role=m["role"], content=m["content"])
+        for m in history
+        if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+    ]
+    # {} opts a fresh session into the memory pipeline from turn 1
+    request.conversation_memory = memory
+    return {"id": row["id"], "key_id": auth.key_id, "history": history, "memory": memory}
+
+
+def _persist_session_turn(
+    session_ctx: dict, question: str, answer: str, updated_memory: Optional[dict]
+) -> None:
+    from app.services.session_service import build_turn_state
+
+    settings = get_settings()
+    history_json, memory_json, turn_count = build_turn_state(
+        session_ctx["history"], session_ctx["memory"],
+        question, answer, updated_memory, settings.session_max_turns,
+    )
+    get_neo4j_service().update_api_session_state(
+        session_ctx["id"], session_ctx["key_id"],
+        history_json, memory_json, turn_count,
+    )
+
+
+async def _with_session_persistence(events, session_ctx: dict, question: str):
+    """Pass ask events through unchanged; persist the turn at stream end.
+
+    Accumulates the answer from content frames and captures the memory_update
+    frame (which arrives after done). Persistence is best-effort — a storage
+    hiccup must never break a served answer.
+    """
+    answer_parts: List[str] = []
+    updated_memory: Optional[dict] = None
+    async for event in events:
+        if isinstance(event, dict):
+            if isinstance(event.get("content"), str):
+                answer_parts.append(event["content"])
+            if isinstance(event.get("memory_update"), dict):
+                updated_memory = event["memory_update"]
+        yield event
+    if answer_parts:
+        try:
+            await asyncio.to_thread(
+                _persist_session_turn, session_ctx, question,
+                "".join(answer_parts), updated_memory,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Session turn persistence failed: {e}")
+
+
 def _estimate_tokens(text: str) -> int:
     """Token estimate for context budgeting: tiktoken when available, else the
     ~4-chars-per-token heuristic. Budgeting needs consistency, not exactness."""
@@ -4058,6 +4287,9 @@ async def ask_question(
         # Unified depth dial → legacy flags (400 on contradiction)
         normalize_ask_depth(request)
 
+        # Server-side session: inject stored history, persist the turn after
+        session_ctx = await _load_ask_session(request, auth)
+
         # Validate collection access if a specific collection is requested
         if request.collection_id:
             validate_collection_access(auth, request.collection_id, "query")
@@ -4164,6 +4396,17 @@ async def ask_question(
         if result.get("graph_context"):
             graph_context = GraphContext(**result["graph_context"])
 
+        # Persist the turn (memory blob unchanged — compaction only runs on
+        # the streaming agent paths; history continuity still accrues here).
+        if session_ctx and result.get("answer"):
+            try:
+                await asyncio.to_thread(
+                    _persist_session_turn, session_ctx,
+                    request.question, result["answer"], None,
+                )
+            except Exception as persist_err:  # noqa: BLE001
+                logger.warning(f"Session turn persistence failed: {persist_err}")
+
         return RAGResponse(
             question=result["question"],
             answer=result["answer"],
@@ -4267,6 +4510,11 @@ async def ask_question_stream(
             else:
                 _stream_allowed_collection_ids = _stream_collection_filter
 
+    # Server-side session: inject stored history/memory, persist after stream.
+    # Loaded before the API-key config check so session errors (404/conflict)
+    # aren't masked by an unrelated configuration error.
+    _session_ctx = await _load_ask_session(request, auth)
+
     settings = get_settings()
     
     if not settings.openai_api_key:
@@ -4283,23 +4531,29 @@ async def ask_question_stream(
 
                 # Use new agent-based pipeline if enabled, otherwise legacy
                 if settings.enable_agent_research:
-                    async for event in processor.agent_rag_stream(
+                    events = processor.agent_rag_stream(
                         question=request.question,
                         mode="quality",
                         conversation_history=request.conversation_history,
                         collection_id=_stream_effective_collection_id,
                         allowed_collection_ids=_stream_allowed_collection_ids,
                         conversation_memory=request.conversation_memory,
-                    ):
+                    )
+                    if _session_ctx:
+                        events = _with_session_persistence(events, _session_ctx, request.question)
+                    async for event in events:
                         yield sse_frame(event)
                 else:
-                    async for event in processor.agentic_rag_stream(
+                    events = processor.agentic_rag_stream(
                         question=request.question,
                         top_k=request.top_k,
                         max_hops=request.max_hops,
                         conversation_history=request.conversation_history,
                         collection_id=_stream_effective_collection_id
-                    ):
+                    )
+                    if _session_ctx:
+                        events = _with_session_persistence(events, _session_ctx, request.question)
+                    async for event in events:
                         yield sse_frame(event)
 
             except Exception as e:
@@ -4487,14 +4741,17 @@ Question: {processed_question}"""
 
             # Speed mode agent pipeline for standard chat (opt-in via config)
             if settings.enable_agent_chat:
-                async for event in processor.agent_rag_stream(
+                events = processor.agent_rag_stream(
                     question=processed_question,
                     mode="speed",
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id,
                     allowed_collection_ids=_stream_allowed_collection_ids,
                     conversation_memory=request.conversation_memory,
-                ):
+                )
+                if _session_ctx:
+                    events = _with_session_persistence(events, _session_ctx, processed_question)
+                async for event in events:
                     yield sse_frame(event)
                 return
 
@@ -5997,29 +6254,37 @@ async def ask_with_thinking_stream(
     if not settings.openai_api_key:
         raise HTTPException(status_code=400, detail="OpenAI API key required for streaming")
     
+    _session_ctx = await _load_ask_session(request, auth)
+
     async def generate():
         try:
             processor = get_query_processor()
 
             # Use new agent pipeline if enabled, otherwise legacy
             if settings.enable_agent_research:
-                async for event in processor.agent_rag_stream(
+                events = processor.agent_rag_stream(
                     question=request.question,
                     mode="quality",
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id,
                     allowed_collection_ids=_stream_allowed_collection_ids,
                     conversation_memory=request.conversation_memory,
-                ):
+                )
+                if _session_ctx:
+                    events = _with_session_persistence(events, _session_ctx, request.question)
+                async for event in events:
                     yield sse_frame(event)
             else:
-                async for event in processor.agentic_rag_stream(
+                events = processor.agentic_rag_stream(
                     question=request.question,
                     top_k=request.top_k,
                     max_hops=request.max_hops,
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id
-                ):
+                )
+                if _session_ctx:
+                    events = _with_session_persistence(events, _session_ctx, request.question)
+                async for event in events:
                     yield sse_frame(event)
 
         except Exception as e:
@@ -6061,6 +6326,9 @@ async def get_feature_flags(auth: AuthResult = Depends(require_read_permission))
         "enable_git_integration": settings.enable_git_integration,
         # Web import needs both the master switch AND a configured crawl service.
         "enable_web_crawl": settings.enable_web_crawl and bool(settings.crawl_service_url),
+        # Server-side sessions: SDK/harness clients feature-detect this and
+        # prefer session_id over the client-carried memory blob when present.
+        "enable_sessions": getattr(settings, "enable_sessions", False),
     }
 
 

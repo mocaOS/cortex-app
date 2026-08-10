@@ -37,6 +37,15 @@ Node ≥ 18 and modern browsers; 11 kB packed; zero runtime dependencies.
 
 **The MCP server rides on it.** [`@mocaos/cortex-mcp`](https://www.npmjs.com/package/@mocaos/cortex-mcp) was rebuilt as a thin wrapper over the SDK and is now a one-liner install — `npx @mocaos/cortex-mcp` — instead of clone-and-build. Same tools, now with conversation-thread support in `ask_question`.
 
+### Server-side sessions: conversations the backend remembers (opt-in)
+
+Cortex's multi-turn machinery has always been client-carried: send the full history plus an opaque memory blob every turn, catch the update frame, replay both. That contract stays — it's the right stateless default — but with `ENABLE_SESSIONS=true` there is now an alternative: `POST /api/sessions` mints a `session_id`, and passing it on ask endpoints makes the backend keep the conversation itself. Follow-ups work from a bare `curl`; the request size stops growing with conversation length; and a conversation started on one machine can be continued from another.
+
+- Sessions belong to the API key that created them (anything else sees 404), inherit its collection scoping, and can be seeded at creation with existing history + memory — the migration path for clients already using the blob contract.
+- Passing `session_id` together with client-carried state is a clean 400 — one source of truth per request.
+- History is capped per session (oldest turns trimmed, with the memory blob's internal index adjusted so the rolling summary stays coherent), sessions are quota-capped per key, and idle sessions expire on a configurable TTL.
+- Off by default, deliberately: enabling means the instance stores conversation content on behalf of API callers — a data-retention decision the operator makes explicitly. Clients can feature-detect via `GET /api/features`.
+
 ### POST /api/context: bring the knowledge to your own prompt
 
 Every ask endpoint has Cortex write the answer. The new context endpoint inverts that: one call returns a **token-budgeted context bundle** — reranked chunks, entity/relationship context, and community summaries — both structured and as a ready-to-inject text block with `[src_N]` citations. It's for agents and pipelines that compose their own prompts: RAG loops, prefetch layers, anything that wants Cortex as pure retrieval. Budget policy keeps chunks whole (graph and community enrichment capped at ~30% of the budget), and the response reports exactly how the budget was spent. Collection-scoped like every read; available to monetized keys at the base per-query rate. Also exposed in the SDK (`cortex.getContext(query, { max_tokens })`) and as a `get_context` MCP tool.
