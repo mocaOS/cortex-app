@@ -15,7 +15,7 @@ Think of the memory hierarchy in your AI systems:
 | Layer | Role | Persistence | Example |
 |-------|------|-------------|---------|
 | **Context Window** | Short-term memory | Conversation-scoped | Current chat messages |
-| **Agent Harness** | Long-term memory | Agent-scoped — one agent, one framework, one machine | Harness memory files, learned preferences |
+| **Agent Harness** | Long-term memory | Agent-scoped — one agent, one framework | Harness memory files, learned preferences |
 | **Cortex Library** | Collective memory | Permanent and shared — every person, agent, and app | Survives crashes, redeployments, and framework migrations |
 
 Cortex Library sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph to propagate updated knowledge across all your agents and applications. Every agent — whether prompted or autonomously executing — can selectively pull knowledge from available collections to better serve itself and your users.

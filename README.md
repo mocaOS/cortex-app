@@ -25,8 +25,8 @@ Think about where memory lives in your AI stack:
 | Layer | Memory | Scope |
 |-------|--------|-------|
 | Context window | **Short-term** | One session — gone when it ends |
-| Agent harness | **Long-term** | One agent, one framework, one machine |
-| **Cortex** | **Collective** | Every person, agent, and app in your organization — shared, permanent, portable |
+| Agent harness | **Long-term** | One agent, one framework |
+| **Cortex** | **Collective** | Every person, agent, and app in your organization |
 
 Point Cortex at one enthusiast's notes and it becomes their personal memory. Point it at a company or a community and it becomes *institutional* memory: every member — and every agent they run — draws on the shared understanding, and every contribution compounds it.
 
