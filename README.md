@@ -10,6 +10,7 @@
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Neo4j](https://img.shields.io/badge/Neo4j-008CC1?style=flat&logo=neo4j&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)
+![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat&logo=apache&logoColor=white)
 
 [**Documentation**](https://docs.cortex.eco) · [**Skills for Agents**](https://cortexskills.org) · [**Quickstart**](https://docs.cortex.eco/quickstart) · [**LLM Templates**](https://docs.cortex.eco/llm-templates)
 
@@ -17,22 +18,38 @@
 
 ## What is Cortex?
 
-**Cortex** is institutional memory for the agentic era — a shared knowledge base that both humans and agents can read, write, and reason over. It ingests your documents and analyzes their contents via LLM-assisted workflows, automatically extracting entities and building the relationships between them into a **scalable knowledge graph** that grows smarter with every source you add.
+**Cortex** is institutional memory for the agentic era — a self-hosted knowledge base that humans and agents read, write, and reason over together, and the collective memory layer of your AI stack. Knowledge flows in from every source your organization produces — documents, repositories, crawled pages, synced apps — and LLM-assisted workflows extract the entities and relationships between them into a **scalable knowledge graph** that grows smarter with every source you add. Everything flows back out through a REST API, TypeScript SDK, and MCP — into every agent and app you run.
 
-Point it at one enthusiast's notes and it becomes their personal long-term memory. Point it at a company or a community and it becomes *collective* memory: every member — and every agent they run — can enrich their understanding from the shared knowledge of the cortexes they have access to. The more people and agents that draw on it, the more valuable that memory compounds. And because the whole graph is exposed over a clean REST API — framework-agnostic and portable by design — it plugs into Q+A interfaces, enriches your agents' understanding, and serves as the long-term memory backbone for your entire AI stack, no matter which model or harness comes next.
+Think about where memory lives in your AI stack:
 
-### Why Cortex?
+| Layer | Memory | Scope |
+|-------|--------|-------|
+| Context window | **Short-term** | One session — gone when it ends |
+| Agent harness | **Long-term** | One agent, one framework, one machine |
+| **Cortex** | **Collective** | Every person, agent, and app in your organization — shared, permanent, portable |
 
-Think of the memory hierarchy in your AI systems:
-- **Context** = Short-term memory
-- **Agent Memory Stack** = Mid-term memory
-- **Cortex** = Long-term memory (survives crashes, redeployments, and even framework migrations)
+Point Cortex at one enthusiast's notes and it becomes their personal memory. Point it at a company or a community and it becomes *institutional* memory: every member — and every agent they run — draws on the shared understanding, and every contribution compounds it.
 
-Cortex sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph nightly to propagate updated knowledge across all your agents and apps. Every agent—whether prompted or autonomously executing—can selectively pull knowledge from available buckets to better serve itself and your users.
+### Your knowledge is the moat
 
-The beauty? Your data isn't trapped. When a hot new agent framework drops next month, just wait for an official plugin OR write a migration script and connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
+Frontier models are a commodity — your competitors call the same APIs you do. What can't be bought is what your organization knows: the decisions, discussions, documents, code, and culture that never made it into anyone's training set. Cortex turns that into a queryable graph you own and host yourself. The longer it runs, the more sources it syncs, the more people and agents enrich it — the wider the moat gets.
 
-> **💡 Pro Tip:** Use the built-in **Web Import** feature (*MDHarvest powered by Crawl4ai*) to turn any URL into beautifully formatted Markdown and ingest it straight into your graph — point Cortex at a [crawl4ai](https://github.com/unclecode/crawl4ai) service and paste or discover the links you want. See the [Web Import guide](handbook/23-web-import.md).
+And the moat is *yours*, not ours. The whole graph is portable by design — Apache-2.0 licensed, full library export/import, framework-agnostic API. When a hot new agent framework drops next month, connect your existing knowledge graph to it and keep going. **Your agents' memories move with you.**
+
+### Knowledge flows in — automatically
+
+- **📦 Apps** — installable apps sync external systems on a schedule, server-side, with no browser open: [paperless-sync](https://github.com/mocaOS/cortex-app-paperless) turns a paperless-ngx archive into an hourly ingestion daemon, [yt-transcriber](https://github.com/mocaOS/cortex-app-youtube-transcriber) pulls YouTube transcripts into the graph. Install from the public [app registry](https://github.com/mocaOS/cortex-registry), or build a connector for your own stack from the [app template](https://github.com/mocaOS/cortex-app-template).
+- **🔗 Git integration** — GitHub, GitLab, and Gitea repositories (including self-hosted) stay in sync incrementally via git history, on manual or scheduled polling.
+- **🌐 Web Import** — *MDHarvest powered by [Crawl4ai](https://github.com/unclecode/crawl4ai)*: turn any URL into clean Markdown and ingest it straight into the graph. See the [Web Import guide](handbook/23-web-import.md).
+- **📁 Uploads & API** — PDF, EPUB, Office, HTML, Markdown, images (OCR), audio (ASR), plus file-less Q&A pairs and freeform text; bulk upload with progress tracking, and outbound webhooks that confirm every ingestion.
+
+### …and out into everything you run
+
+- **🔌 REST API** — everything the UI does is an endpoint; collection-scoped keys isolate tenants on a single instance.
+- **🧰 TypeScript SDK** — [`@mocaos/cortex-client`](https://www.npmjs.com/package/@mocaos/cortex-client): unified ask (`fast|standard|deep`), SSE streaming, conversation threads, uploads, webhooks.
+- **🤖 MCP** — [`npx @mocaos/cortex-mcp`](https://www.npmjs.com/package/@mocaos/cortex-mcp) locally, or the instance-hosted remote MCP at `/mcp` — one URL any MCP-capable agent connects to.
+- **🧩 Agent skills** — [cortexskills.org](https://cortexskills.org) serves ground-truth `SKILL.md` files so agents drive the API correctly on the first try; [Hermes](https://nousresearch.com) and [OpenClaw](https://docs.openclaw.ai) plug Cortex in as a persistent memory backend.
+- **💸 x402 payments** — optionally sell slices of your graph: agents pay per query in stablecoins, revenue flows straight to your wallet.
 
 ## Self-hosting
 
@@ -49,7 +66,7 @@ walkthrough, or [selfhost/README.md](selfhost/README.md) for the manual path.
 
 ## The Cortex Ecosystem
 
-This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on its REST API:
+This repository is the core of Cortex — the backend, knowledge graph pipeline, and management UI. A family of companion projects builds on the same REST API your own agents and apps use:
 
 | Repository | What it is |
 |------------|-----------|
@@ -134,7 +151,7 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 
 > **🤖 Let your agent do it:** want Claude, Hermes, OpenClaw, or any other agent to install and run Cortex for you? Send it **[cortexskills.org](https://cortexskills.org)** — the `setup` skill contains everything an agent needs to self-host a Cortex from scratch (autonomous install, health checks, troubleshooting) and the feature skills teach it to drive the API correctly afterwards.
 >
-> **🧠 Agent long-term memory:** Cortex doubles as a persistent memory backend for agent runtimes. [Hermes](https://nousresearch.com) is the recommended integration ([cortexskills.org/hermes](https://cortexskills.org/hermes/SKILL.md) — includes a native memory-provider plugin for ambient recall); [OpenClaw](https://docs.openclaw.ai) runs the same skill via the open SKILL.md standard ([cortexskills.org/openclaw](https://cortexskills.org/openclaw/SKILL.md)).
+> **🧠 Agent memory backend:** Cortex doubles as a persistent, shared memory backend for agent runtimes. [Hermes](https://nousresearch.com) is the recommended integration ([cortexskills.org/hermes](https://cortexskills.org/hermes/SKILL.md) — includes a native memory-provider plugin for ambient recall); [OpenClaw](https://docs.openclaw.ai) runs the same skill via the open SKILL.md standard ([cortexskills.org/openclaw](https://cortexskills.org/openclaw/SKILL.md)).
 
 ### Prerequisites
 

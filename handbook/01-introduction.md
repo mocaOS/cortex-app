@@ -4,7 +4,7 @@
 
 Cortex is the managed, API-first Knowledge Graph System at the heart of MOCA's (The Museum of Crypto Art) Agent as a Service platform. It transforms your documents into intelligent, queryable knowledge — the persistent memory layer for AI agents, applications, and teams.
 
-**Cortex** is an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 100+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the long-term memory backbone for your entire AI stack.
+**Cortex** is an open-source agentic knowledge base that ingests documents, extracts entities and relationships via LLM-assisted workflows, and builds a traversable knowledge graph stored in Neo4j. This graph is exposed through a comprehensive REST API with 100+ endpoints, ready to power Q&A interfaces, enrich your agents' understanding, or serve as the collective memory backbone for your entire AI stack.
 
 Cortex is designed for a world where AI evolves at breakneck speed and agent frameworks rise and fall overnight. Your knowledge shouldn't be locked into any single system. The beauty of Cortex is that your data isn't trapped — when a hot new agent framework drops next month, just connect your existing knowledge graph to the new system. **Your agents' memories become portable.**
 
@@ -15,8 +15,8 @@ Think of the memory hierarchy in your AI systems:
 | Layer | Role | Persistence | Example |
 |-------|------|-------------|---------|
 | **Context Window** | Short-term memory | Conversation-scoped | Current chat messages |
-| **Agent Memory Stack** | Mid-term memory | Session-scoped | In-flight task state |
-| **Cortex Library** | Long-term memory | Permanent | Survives crashes, redeployments, and framework migrations |
+| **Agent Harness** | Long-term memory | Agent-scoped — one agent, one framework, one machine | Harness memory files, learned preferences |
+| **Cortex Library** | Collective memory | Permanent and shared — every person, agent, and app | Survives crashes, redeployments, and framework migrations |
 
 Cortex Library sits at the center of your setup. Curate your base knowledge in the default collection, continuously push short-term learnings into specialized buckets, and let the system rebuild the graph to propagate updated knowledge across all your agents and applications. Every agent — whether prompted or autonomously executing — can selectively pull knowledge from available collections to better serve itself and your users.
 
