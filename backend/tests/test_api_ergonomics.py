@@ -304,3 +304,56 @@ class TestParseStructuredAnswer:
 
     def test_garbage_is_none(self):
         assert _parse_structured_answer('no json here') is None
+
+
+# ---------------------------------------------------------------------------
+# Unified ask depth dial
+# ---------------------------------------------------------------------------
+
+class TestDepthParam:
+    def test_depth_deep_on_non_streaming_ask_400(self, client, mock_processors, _isolate_env):
+        _isolate_env.enable_agent_research = True
+        r = client.post("/api/ask", json={"question": "q", "depth": "deep"})
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "agentic_requires_streaming"
+
+    def test_depth_conflict_is_400(self, client, mock_processors):
+        r = client.post(
+            "/api/ask",
+            json={"question": "q", "depth": "fast", "use_agentic": True},
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "depth_conflict"
+
+    def test_depth_conflict_on_stream_is_400(self, client, mock_processors):
+        r = client.post(
+            "/api/ask/stream",
+            json={"question": "q", "depth": "standard", "use_fast_search": True},
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "depth_conflict"
+
+    def test_invalid_depth_is_422(self, client, mock_processors):
+        r = client.post("/api/ask", json={"question": "q", "depth": "turbo"})
+        assert r.status_code == 422
+
+    def test_depth_standard_normalizes_legacy_flags(self, client, mock_processors):
+        mock_processors.query.rag_query = AsyncMock(return_value={
+            "question": "q", "answer": "a", "sources": [], "graph_context": None,
+            "reranked": False, "reasoning_steps": None,
+        })
+        r = client.post("/api/ask", json={"question": "q", "depth": "standard"})
+        assert r.status_code == 200
+        _, kwargs = mock_processors.query.rag_query.call_args
+        assert kwargs["use_agentic"] is False
+
+    def test_matching_redundant_flags_are_fine(self, client, mock_processors, _isolate_env):
+        _isolate_env.enable_agent_research = True
+        # depth=deep + use_agentic=true agree — passes normalization, then the
+        # non-streaming agentic guard fires as it always has.
+        r = client.post(
+            "/api/ask",
+            json={"question": "q", "depth": "deep", "use_agentic": True},
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "agentic_requires_streaming"

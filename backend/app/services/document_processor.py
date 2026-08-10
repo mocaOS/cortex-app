@@ -3086,6 +3086,16 @@ class DocumentProcessor:
             except Exception:
                 pass
 
+            # Outbound webhook (no-op unless ENABLE_WEBHOOKS): subscribers get
+            # the completion push instead of polling GET /api/documents/{id}.
+            from app.services.webhook_service import emit_event
+            emit_event("document.processed", {
+                "document_id": doc_id,
+                "chunks": len(embedded_chunks),
+                "entities": total_entities,
+                "relationships": total_relationships,
+            })
+
             logger.info(
                 f"Document {doc_id} processed successfully: "
                 f"{len(embedded_chunks)} chunks, {total_entities} entities, "
@@ -3132,6 +3142,11 @@ class DocumentProcessor:
                 DOCUMENTS_PROCESSED.labels(status="failed").inc()
             except Exception:
                 pass
+            from app.services.webhook_service import emit_event
+            emit_event("document.failed", {
+                "document_id": doc_id,
+                "error": error_message[:500],
+            })
             try:
                 await loop.run_in_executor(
                     _get_processing_executor(),

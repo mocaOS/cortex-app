@@ -464,6 +464,47 @@ class TestResearchPricing:
         )
         assert amount == "50000"
 
+    async def test_depth_deep_charges_multiplied_price(self, x402_on, mock_neo4j, monkeypatch):
+        amount = await self._amount_for(
+            x402_on, monkeypatch, {"question": "deep", "depth": "deep"},
+        )
+        assert amount == "500000"
+
+    @pytest.mark.parametrize("depth", ["standard", "fast"])
+    async def test_depth_non_deep_charges_base_price(self, x402_on, mock_neo4j, monkeypatch, depth):
+        amount = await self._amount_for(
+            x402_on, monkeypatch, {"question": "quick", "depth": depth},
+        )
+        assert amount == "50000"
+
+    async def test_depth_conflict_rejected_before_payment(self, x402_on, mock_neo4j, monkeypatch):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", True)
+        request = make_request(
+            "/api/ask/stream",
+            body={"question": "q", "depth": "deep", "use_fast_search": True},
+        )
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 400
+        assert "no payment was taken" in exc.value.detail
+
+    async def test_invalid_depth_rejected_before_payment(self, x402_on, mock_neo4j, monkeypatch):
+        request = make_request("/api/ask/stream", body={"question": "q", "depth": "turbo"})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 422
+        assert "no payment was taken" in exc.value.detail
+
+    async def test_depth_deep_on_non_streaming_ask_rejected_before_payment(
+        self, x402_on, mock_neo4j, monkeypatch
+    ):
+        monkeypatch.setattr(x402_service.get_settings(), "enable_agent_research", True, raising=False)
+        request = make_request("/api/ask", body={"question": "q", "depth": "deep"})
+        with pytest.raises(HTTPException) as exc:
+            await enforce_x402_payment(request, monetized_auth())
+        assert exc.value.status_code == 400
+        assert "no payment was taken" in exc.value.detail
+
     async def test_agentic_disabled_on_instance_charges_base(self, x402_on, mock_neo4j, monkeypatch):
         monkeypatch.setattr(x402_service.get_settings(), "enable_agentic_rag", False)
         request = make_request("/api/ask/stream", body={"question": "q", "use_agentic": True})

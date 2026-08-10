@@ -2,7 +2,7 @@
 
 Two-stage researcher/writer pipeline for answering questions. See [`.claude/domain/skills.md`](skills.md) for skill-augmented capabilities.
 
-**Retrieval doctrine (all docs follow this):** the first-choice call for "ask/retrieve/find something in the Cortex" is a **streaming Deep Research query** — `POST /api/ask/stream` (SSE) with `use_agentic: true`. Non-streaming `POST /api/ask` is quick-chat only: bounded by `ASK_DEADLINE_SECONDS` (28s → 504) and rejects `use_agentic` with `400 agentic_requires_streaming`. Keep every doc surface (README, documentation/, handbook/, cortex-skills) consistent with this.
+**Retrieval doctrine (all docs follow this):** the first-choice call for "ask/retrieve/find something in the Cortex" is a **streaming Deep Research query** — `POST /api/ask/stream` (SSE) with `depth: "deep"` (or the legacy `use_agentic: true`, permanently supported). Non-streaming `POST /api/ask` is quick-chat only: bounded by `ASK_DEADLINE_SECONDS` (28s → 504) and rejects deep research with `400 agentic_requires_streaming`. Keep every doc surface (README, documentation/, handbook/, cortex-skills) consistent with this.
 
 ## Researcher Agent
 
@@ -28,6 +28,10 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 ### Iteration Caps
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3)
 - `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8)
+
+## Unified ask depth (`depth` dial)
+
+`RAGRequest.depth` (`fast|standard|deep`) is the one research-depth dial: `fast` ≡ `use_fast_search` (vector-only), `standard` = the default single-pass researched answer, `deep` ≡ `use_agentic` (agentic quality mode, streaming only). `normalize_ask_depth()` (main.py, called at the top of all three ask endpoints) makes `depth` authoritative — it rewrites the legacy flags to match and 400s (`depth_conflict`) on contradiction; when absent it derives `depth` from the flags, so downstream routing can rely on either view. The x402 gate mirrors the exact same resolution in `_inspect_request_body` (depth-aware research pricing + all pre-payment guards). Legacy flags stay supported indefinitely. Tested in `tests/test_api_ergonomics.py` (TestDepthParam) + `tests/test_x402.py`.
 
 ## SSE frame typing (`type` discriminator)
 

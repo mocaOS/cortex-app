@@ -312,6 +312,8 @@ See [`.claude/domain/git-integration.md`](domain/git-integration.md) for the ful
 
 ## x402 Payments
 
+- `ENABLE_WEBHOOKS` (default: false) — master switch for outbound webhooks. When true, admin-registered endpoints (`/api/admin/webhooks`) receive HMAC-signed POSTs on `document.processed` / `document.failed` / `task.completed` / `task.failed`; secrets encrypted at rest, endpoints stored as `WebhookEndpoint` nodes (instance-operational — excluded from export/reset). Off = emit calls are no-ops and the admin endpoints 403. See [`domain/document-pipeline.md`](domain/document-pipeline.md#ingestion-status--webhooks).
+- `ENABLE_CONSOLIDATION_SCHEDULER` (default: false) — unattended community-layer refresh from the hourly maintenance loop, gated on the instance being idle and the graph being stale (or the corpus having grown). Tuning: `CONSOLIDATION_MIN_NEW_DOCUMENTS` (25), `CONSOLIDATION_IDLE_MINUTES` (60), `CONSOLIDATION_COOLDOWN_HOURS` (24), `CONSOLIDATION_MIN_COMMUNITY_SIZE` (3). Never auto-merges entities. See [`domain/communities.md`](domain/communities.md#consolidation-scheduler-unattended-refresh).
 - `X402_ENABLED` (default: false) — master switch for x402 pay-per-query monetization. Deliberately the **only** x402 env var: when true, the "x402 Payments" section appears on the admin Settings page where the owner configures recipient wallet, facilitator, network and asset at **runtime** (stored on the Neo4j `X402Config` node — survives redeploys, excluded from library export and System Reset). Priced API keys and the 402 payment gate only activate once that config passes the admin verify suite. See [`domain/x402.md`](domain/x402.md).
 
 ## Observability (Langfuse)

@@ -12,7 +12,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from urllib.parse import urlparse
 
@@ -212,6 +212,50 @@ def sse_frame(event: dict) -> str:
         else:
             event = {"type": "event", **event}
     return f"data: {json.dumps(event)}\n\n"
+
+
+def normalize_ask_depth(request: "RAGRequest") -> None:
+    """Resolve the unified `depth` dial against the legacy boolean flags.
+
+    `depth` is authoritative when present: the legacy flags are rewritten to
+    match, and a legacy flag that CONTRADICTS it is a 400 (sending the same
+    intent both ways is fine). When absent, `depth` is derived from the flags,
+    so downstream code — and the x402 gate's mirror of this logic — can rely
+    on either view being populated.
+    """
+    if request.depth is None:
+        if request.use_agentic and not request.use_fast_search:
+            request.depth = "deep"
+        elif request.use_fast_search:
+            request.depth = "fast"
+        else:
+            request.depth = "standard"
+        return
+
+    if request.use_agentic and request.depth != "deep":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "depth_conflict",
+                "message": (
+                    f"use_agentic=true contradicts depth='{request.depth}' — "
+                    "pass depth alone (it is the authoritative dial)."
+                ),
+            },
+        )
+    if request.use_fast_search and request.depth != "fast":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "depth_conflict",
+                "message": (
+                    f"use_fast_search=true contradicts depth='{request.depth}' — "
+                    "pass depth alone (it is the authoritative dial)."
+                ),
+            },
+        )
+    request.use_agentic = request.depth == "deep"
+    request.use_fast_search = request.depth == "fast"
 
 
 def _validate_response_format(schema: dict) -> None:
@@ -1534,6 +1578,108 @@ async def _hourly_maintenance() -> None:
         await asyncio.to_thread(_purge_stale_import_uploads)
     except Exception as e:
         logger.warning(f"Import upload sweep failed: {e}")
+    # Scheduled consolidation (env-gated, default off).
+    try:
+        await _maybe_run_consolidation()
+    except Exception as e:
+        logger.warning(f"Consolidation scheduler check failed: {e}")
+
+
+async def _maybe_run_consolidation() -> None:
+    """Unattended community-layer refresh for long-running instances.
+
+    Gated on ENABLE_CONSOLIDATION_SCHEDULER (default off). Fires only when ALL
+    of these hold at the hourly check:
+
+    - **Idle**: no AskAI queries in flight, no document pipelines running, no
+      ingestion backlog, and the last ask activity (SystemMeta `last_query_at`,
+      restart-safe) is older than CONSOLIDATION_IDLE_MINUTES.
+    - **Cooldown**: the previous scheduled run is older than
+      CONSOLIDATION_COOLDOWN_HOURS.
+    - **There is work**: the community layer is stale by the existing rules
+      (relationship analysis or entity merges newer than the last detection),
+      or the completed-document count grew by CONSOLIDATION_MIN_NEW_DOCUMENTS
+      since the recorded baseline (first check only records the baseline).
+
+    The refresh is the standard community-detection task — summarization
+    included when enabled — so it shows up in /api/tasks, emits the
+    task.completed webhook, and can be aborted like any operator-started run.
+    Deliberately NOT auto-merging entities: dedup stays a reviewed operation.
+    """
+    settings = get_settings()
+    if not settings.enable_consolidation_scheduler:
+        return
+    if not settings.enable_community_detection:
+        return
+
+    from app.services.document_processor import get_active_processing_ids
+
+    neo4j = get_neo4j_service()
+
+    # --- Idle ----------------------------------------------------------------
+    if _active_query_count > 0 or get_active_processing_ids():
+        return
+    stats = await asyncio.to_thread(neo4j.get_stats)
+    if stats.get("pending_count", 0) or stats.get("processing_count", 0):
+        return
+    if not stats.get("entity_count", 0):
+        return  # nothing extracted yet — nothing to consolidate
+    now = datetime.now(timezone.utc)
+    last_query_raw = await asyncio.to_thread(neo4j._get_meta, "last_query_at")
+    if last_query_raw:
+        try:
+            last_query = datetime.fromisoformat(last_query_raw)
+            if now - last_query < timedelta(minutes=settings.consolidation_idle_minutes):
+                return
+        except ValueError:
+            pass
+
+    # --- Cooldown --------------------------------------------------------------
+    last_run_raw = await asyncio.to_thread(neo4j._get_meta, "last_consolidation_at")
+    if last_run_raw:
+        try:
+            last_run = datetime.fromisoformat(last_run_raw)
+            if now - last_run < timedelta(hours=settings.consolidation_cooldown_hours):
+                return
+        except ValueError:
+            pass
+
+    # --- Is there work? ---------------------------------------------------------
+    detected = stats.get("last_community_detection_at") or ""
+    analyzed = stats.get("last_relationship_analysis_at") or ""
+    merged = stats.get("last_entity_merge_at") or ""
+    stale = bool(detected) and ((analyzed and analyzed > detected) or (merged and merged > detected))
+
+    doc_count = int(stats.get("completed_count", 0) or 0)
+    baseline_raw = await asyncio.to_thread(neo4j._get_meta, "consolidation_doc_baseline")
+    baseline = int(baseline_raw) if baseline_raw and baseline_raw.isdigit() else None
+    if baseline is None:
+        # First sighting: record where we are and act on growth next time.
+        await asyncio.to_thread(neo4j.set_meta, "consolidation_doc_baseline", str(doc_count))
+        if not stale:
+            return
+        grew = False
+    else:
+        grew = (doc_count - baseline) >= settings.consolidation_min_new_documents
+    if not (stale or grew):
+        return
+
+    # --- Run ---------------------------------------------------------------------
+    task = create_task(
+        "community_detection",
+        resume_context={"trigger": "consolidation_scheduler"},
+    )
+    logger.info(
+        "Consolidation scheduler: refreshing communities (stale=%s, new_docs=%s) as task %s",
+        stale, (doc_count - baseline) if baseline is not None else 0, task.task_id,
+    )
+    await asyncio.to_thread(neo4j.set_meta, "last_consolidation_at", now.isoformat())
+    await asyncio.to_thread(neo4j.set_meta, "consolidation_doc_baseline", str(doc_count))
+    asyncio.create_task(
+        _run_community_detection_task(
+            task.task_id, settings.consolidation_min_community_size, None
+        )
+    )
 
 
 async def _task_persist_loop():
@@ -1646,6 +1792,12 @@ def complete_task(task_id: str, result: dict) -> None:
         task.result = result
         task.message = "Completed successfully"
         _task_dirty.add(task_id)
+        from app.services.webhook_service import emit_event
+        emit_event("task.completed", {
+            "task_id": task_id,
+            "task_type": task.task_type,
+            "message": task.message,
+        })
 
 
 def fail_task(task_id: str, error: str) -> None:
@@ -1657,6 +1809,12 @@ def fail_task(task_id: str, error: str) -> None:
         task.error = error
         task.message = f"Failed: {error}"
         _task_dirty.add(task_id)
+        from app.services.webhook_service import emit_event
+        emit_event("task.failed", {
+            "task_id": task_id,
+            "task_type": task.task_type,
+            "error": error[:500],
+        })
 
 
 def cleanup_old_tasks(max_age_hours: int = 24) -> int:
@@ -3356,6 +3514,63 @@ async def reprocess_documents(
 # Batch Processing Endpoints
 # =============================================================================
 
+@app.get("/api/ingestion/status")
+async def get_ingestion_status(auth: AuthResult = Depends(require_read_permission)):
+    """Aggregate ingestion-backlog view for API consumers.
+
+    One call answers "is my upload done / how busy is the pipeline?" without
+    per-document polling: status counts across the (key-visible) corpus, the
+    documents currently inside a pipeline with their progress, and whether the
+    instance is idle. Counts respect collection scoping like every other read.
+    """
+    try:
+        from app.services.document_processor import get_active_processing_ids
+
+        neo4j = get_neo4j_service()
+        documents = await asyncio.to_thread(neo4j.get_all_documents)
+
+        collection_filter = auth.get_collection_filter()
+        if collection_filter is not None:
+            documents = [d for d in documents if d.get("collection_id") in collection_filter]
+
+        counts: dict[str, int] = {}
+        for d in documents:
+            status = d.get("processing_status") or "unknown"
+            # Docs parked while waiting for a free pipeline slot are shown as
+            # "queued" (the additive flag the UI uses), not "processing".
+            if status == "processing" and d.get("processing_queued"):
+                status = "queued"
+            counts[status] = counts.get(status, 0) + 1
+
+        live_ids = set(get_active_processing_ids())
+        active = [
+            {
+                "id": d.get("id"),
+                "filename": d.get("filename"),
+                "status": d.get("processing_status"),
+                "queued": bool(d.get("processing_queued")),
+                "progress_current": d.get("progress_current", 0),
+                "progress_total": d.get("progress_total", 0),
+                "progress_message": d.get("progress_message", ""),
+                "live": d.get("id") in live_ids,
+            }
+            for d in documents
+            if d.get("processing_status") in ("processing", "extracting")
+        ]
+
+        backlog = counts.get("pending", 0) + counts.get("queued", 0) + counts.get("processing", 0) + counts.get("extracting", 0)
+        return {
+            "counts": counts,
+            "active": active,
+            "backlog": backlog,
+            "idle": backlog == 0,
+            "total_documents": len(documents),
+        }
+    except Exception as e:
+        logger.error(f"Error getting ingestion status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/documents/pending")
 async def get_pending_documents(auth: AuthResult = Depends(require_read_permission)):
     """
@@ -3646,6 +3861,9 @@ async def ask_question(
     - Agentic multi-step reasoning (optional)
     """
     try:
+        # Unified depth dial → legacy flags (400 on contradiction)
+        normalize_ask_depth(request)
+
         # Validate collection access if a specific collection is requested
         if request.collection_id:
             validate_collection_access(auth, request.collection_id, "query")
@@ -3819,6 +4037,9 @@ async def ask_question_stream(
     - Uses simple vector search only (no hybrid/reranking)
     - Fastest response time for quick queries
     """
+    # Unified depth dial → legacy flags (400 on contradiction)
+    normalize_ask_depth(request)
+
     # Structured answers don't compose with token streaming — the JSON is only
     # valid as a whole. Point the caller at the non-streaming endpoint.
     if request.response_format is not None:
@@ -5544,6 +5765,9 @@ async def ask_with_thinking_stream(
     This provides extended thinking where users can see
     the agent's reasoning process in real-time.
     """
+    # Unified depth dial → legacy flags (400 on contradiction)
+    normalize_ask_depth(request)
+
     # Structured answers don't compose with token streaming (see /api/ask/stream).
     if request.response_format is not None:
         raise HTTPException(
@@ -7552,6 +7776,119 @@ async def get_x402_earnings(auth: AuthResult = Depends(require_admin)):
         return await asyncio.to_thread(x402_service.get_earnings)
     except Exception as e:
         logger.error(f"Error reading x402 earnings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Outbound Webhooks (admin-managed; see app/services/webhook_service.py)
+# =============================================================================
+
+def _require_webhooks_enabled() -> None:
+    from app.services.webhook_service import webhooks_enabled
+
+    if not webhooks_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Webhooks are disabled on this instance (set ENABLE_WEBHOOKS=true).",
+        )
+
+
+class WebhookCreateRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000)
+    events: List[str] = Field(
+        default_factory=list,
+        description="Event types to receive (empty = all events)",
+    )
+    description: str = Field(default="", max_length=500)
+
+
+@app.get("/api/admin/webhooks")
+async def list_webhooks(auth: AuthResult = Depends(require_admin)):
+    """List registered webhook endpoints (secrets are never returned)."""
+    _require_webhooks_enabled()
+    try:
+        endpoints = await asyncio.to_thread(get_neo4j_service().list_webhook_endpoints)
+        for ep in endpoints:
+            ep.pop("secret", None)
+        return {"webhooks": endpoints, "total": len(endpoints)}
+    except Exception as e:
+        logger.error(f"Error listing webhooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/webhooks")
+async def create_webhook(
+    request: WebhookCreateRequest, auth: AuthResult = Depends(require_admin)
+):
+    """Register a webhook endpoint. The signing secret is returned ONCE here
+    — store it; it is kept encrypted server-side and never shown again."""
+    from app.services import webhook_service
+    from app.services.crypto_service import get_crypto_service
+
+    _require_webhooks_enabled()
+    if not request.url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="url must be http(s)")
+    unknown = [e for e in request.events if e not in webhook_service.EVENT_TYPES]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown event type(s): {', '.join(unknown)}. "
+                f"Allowed: {', '.join(sorted(webhook_service.EVENT_TYPES))}"
+            ),
+        )
+    try:
+        secret = webhook_service.generate_secret()
+        encrypted = get_crypto_service().encrypt(secret)
+        endpoint = await asyncio.to_thread(
+            get_neo4j_service().create_webhook_endpoint,
+            request.url, request.events, request.description, encrypted,
+        )
+        webhook_service.invalidate_webhook_cache()
+        return {**endpoint, "secret": secret}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating webhook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/admin/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str, auth: AuthResult = Depends(require_admin)):
+    from app.services import webhook_service
+
+    _require_webhooks_enabled()
+    try:
+        deleted = await asyncio.to_thread(
+            get_neo4j_service().delete_webhook_endpoint, webhook_id
+        )
+        webhook_service.invalidate_webhook_cache()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Webhook not found")
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting webhook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/webhooks/{webhook_id}/test")
+async def test_webhook(webhook_id: str, auth: AuthResult = Depends(require_admin)):
+    """Send a synchronous webhook.test event and report the outcome."""
+    from app.services import webhook_service
+
+    _require_webhooks_enabled()
+    try:
+        endpoints = await asyncio.to_thread(get_neo4j_service().list_webhook_endpoints)
+        endpoint = next((ep for ep in endpoints if ep.get("id") == webhook_id), None)
+        if not endpoint:
+            raise HTTPException(status_code=404, detail="Webhook not found")
+        return await asyncio.to_thread(webhook_service.deliver_test, endpoint)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error testing webhook: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

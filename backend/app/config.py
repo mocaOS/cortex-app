@@ -1040,6 +1040,34 @@ class Settings(BaseSettings):
     #   is deliberately NOT env-driven — see .claude/domain/x402.md.
 
     # ==========================================================================
+    # Outbound webhooks (see app/services/webhook_service.py)
+    # ==========================================================================
+    enable_webhooks: bool = Field(
+        default=False
+    )  # Master switch for outbound webhooks. When true, admin-registered
+    #   endpoints (/api/admin/webhooks) receive HMAC-signed POSTs on
+    #   document.processed / document.failed / task.completed / task.failed —
+    #   replacing per-document status polling for API consumers. Off = the
+    #   emit calls are no-ops and the admin endpoints 403.
+
+    # ==========================================================================
+    # Consolidation scheduler (see _maybe_run_consolidation in main.py)
+    # ==========================================================================
+    enable_consolidation_scheduler: bool = Field(
+        default=False
+    )  # When true, the hourly maintenance loop refreshes the community layer
+    #   unattended: once the instance is idle (no queries/pipelines in flight,
+    #   no recent ask activity) AND the graph is stale (relationships/merges
+    #   newer than the last detection) or the corpus grew by
+    #   CONSOLIDATION_MIN_NEW_DOCUMENTS completed docs, it launches the
+    #   standard community-detection task (includes summarization). Runs are
+    #   visible in /api/tasks and rate-limited by the cooldown below.
+    consolidation_min_new_documents: int = Field(default=25)
+    consolidation_idle_minutes: int = Field(default=60)
+    consolidation_cooldown_hours: int = Field(default=24)
+    consolidation_min_community_size: int = Field(default=3)
+
+    # ==========================================================================
     # Apps (in-instance app hosting — see .claude/domain/apps.md)
     # ==========================================================================
     enable_apps: bool = Field(

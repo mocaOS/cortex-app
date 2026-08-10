@@ -5989,6 +5989,80 @@ class Neo4jService:
                 props=props,
             )
 
+    # ------------------------------------------------------------------
+    # Webhook endpoints (instance-operational, like X402Config/GitConnection:
+    # excluded from library export and untouched by System Reset)
+    # ------------------------------------------------------------------
+
+    @retry_on_transient
+    def create_webhook_endpoint(
+        self, url: str, events: list, description: str, secret_encrypted: str
+    ) -> dict:
+        """Create one outbound webhook endpoint; returns its public shape."""
+        endpoint_id = str(uuid.uuid4())
+        with self.driver.session() as session:
+            record = session.run("""
+                CREATE (w:WebhookEndpoint {
+                    id: $id,
+                    url: $url,
+                    events: $events,
+                    description: $description,
+                    secret: $secret,
+                    active: true,
+                    created_at: datetime(),
+                    delivery_count: 0,
+                    failure_count: 0
+                })
+                RETURN w.id as id, w.url as url, w.events as events,
+                       w.description as description, w.active as active,
+                       toString(w.created_at) as created_at
+            """, id=endpoint_id, url=url, events=events,
+                 description=description, secret=secret_encrypted).single()
+            return dict(record)
+
+    @retry_on_transient
+    def list_webhook_endpoints(self) -> list:
+        """All webhook endpoints, secrets included ENCRYPTED (the service
+        layer decrypts for delivery and must never return them via the API)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (w:WebhookEndpoint)
+                RETURN w.id as id, w.url as url, w.events as events,
+                       w.description as description, w.active as active,
+                       w.secret as secret,
+                       toString(w.created_at) as created_at,
+                       w.delivery_count as delivery_count,
+                       w.failure_count as failure_count,
+                       toString(w.last_delivery_at) as last_delivery_at,
+                       w.last_status as last_status
+                ORDER BY w.created_at
+            """)
+            return [dict(record) for record in result]
+
+    @retry_on_transient
+    def delete_webhook_endpoint(self, endpoint_id: str) -> bool:
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (w:WebhookEndpoint {id: $id})
+                DETACH DELETE w
+                RETURN count(*) as deleted
+            """, id=endpoint_id).single()
+            return bool(record and record["deleted"])
+
+    def record_webhook_delivery(
+        self, endpoint_id: str, ok: bool, status: Optional[int]
+    ) -> None:
+        """Best-effort delivery bookkeeping (never retried, never raises)."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (w:WebhookEndpoint {id: $id})
+                SET w.delivery_count = coalesce(w.delivery_count, 0) + 1,
+                    w.failure_count = coalesce(w.failure_count, 0) + CASE WHEN $ok THEN 0 ELSE 1 END,
+                    w.last_delivery_at = datetime(),
+                    w.last_status = $status,
+                    w.last_ok = $ok
+            """, id=endpoint_id, ok=ok, status=status)
+
     def mark_x402_verified(self, verified_hash: str) -> None:
         """Stamp the current config as verified (hash binds it to the state
         that passed the checks; any later save with different payment fields

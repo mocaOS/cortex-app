@@ -329,6 +329,18 @@ class RAGRequest(BaseModel):
     use_reranking: bool = Field(default=True, description="Whether to use cross-encoder reranking")
     use_agentic: bool = Field(default=False, description="Whether to use agentic multi-step RAG for complex questions")
     use_fast_search: bool = Field(default=False, description="Use simple vector search for faster responses (disables hybrid/reranking)")
+    depth: Optional[str] = Field(
+        default=None,
+        pattern="^(fast|standard|deep)$",
+        description=(
+            "Unified research-depth dial: 'fast' = vector-only quick answer "
+            "(≡ use_fast_search), 'standard' = single-pass researched answer "
+            "(the default), 'deep' = agentic deep research (≡ use_agentic; "
+            "streaming endpoints only). Authoritative when present — a legacy "
+            "boolean flag that contradicts it is a 400. Omit to keep using "
+            "the legacy flags."
+        ),
+    )
     collection_id: Optional[str] = Field(default=None, description="Collection ID to scope the search to (None = all collections)")
     conversation_memory: Optional[Dict[str, Any]] = Field(
         default=None,

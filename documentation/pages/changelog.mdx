@@ -9,18 +9,60 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## August 10, 2026
 
-The API gets a harness-ergonomics pass. Live end-to-end testing of agent integrations (the Hermes/OpenClaw skill, the memory plugin, the MCP server) showed that every external client was re-implementing the same workarounds: downloading the whole corpus because the document list took no query parameters, sniffing SSE frames by which key happens to be present, juggling three different shapes for the same `collection_id`, and treating every question as a cold one-shot because nothing outside the built-in frontend spoke the conversation-memory contract. This release removes those frictions at the source — everything is additive, and no existing integration changes behavior.
+**Cortex gets an official TypeScript SDK.** Until today, every integration talked to Cortex through its own hand-rolled client — a bash helper here, a Python plugin there, a TypeScript wrapper in the MCP server — each independently rediscovering the same choreography: which endpoint honors deep research, how to parse the SSE stream, when the memory frame arrives, how collections resolve. [`@mocaos/cortex-client`](https://www.npmjs.com/package/@mocaos/cortex-client) ends that era: one typed, dependency-free package that owns the entire integration surface, informed by everything live agent-harness testing taught us about where clients go wrong. Alongside it, the API itself was reshaped so the SDK launches on a clean surface instead of wrapping workarounds — one depth dial instead of boolean flags, webhooks instead of polling, structured answers, and a knowledge graph that keeps itself fresh.
+
+### The SDK: `@mocaos/cortex-client`
+
+```ts
+const cortex = new CortexClient({ baseUrl, apiKey });
+
+const quick = await cortex.ask("What did we decide about the auth rewrite?");
+const deep  = await cortex.deepResearch("Compare every SSE approach we tried", {
+  onContent: (token) => process.stdout.write(token),
+});
+
+const thread = cortex.thread("auth-review");        // multi-turn memory
+await thread.ask("How does Cortex validate API keys?");
+await thread.ask("Expand on the caching part");      // follow-ups just work
+```
+
+What it owns so integrators never have to:
+
+- **Unified ask** — `depth: "fast" | "standard" | "deep"`, with `deep` transparently running over SSE (the only place the backend executes agentic research). Version-tolerant: it sends the new dial *and* the agreeing legacy flags, so one client works against current and older instances alike.
+- **Streaming done right** — typed SSE events, keep-alive handling, graceful-restart detection, and an aggregator that reads past the `done` frame for the late conversation-memory update (the subtle contract every hand-rolled client got wrong at least once).
+- **Conversation threads** — history plus the server-curated memory blob carried across asks, with pluggable persistence; the file store shares its on-disk format with the agent skill's thread state, so a CLI agent and an SDK app can continue each other's conversations.
+- **The rest of the surface** — upload-and-wait, collection find-or-create, server-side document listing, ingestion status, knowledge-graph reads, webhook administration, and typed errors carrying the backend's machine-readable codes.
+
+Node ≥ 18 and modern browsers; 11 kB packed; zero runtime dependencies.
+
+**The MCP server rides on it.** [`@mocaos/cortex-mcp`](https://www.npmjs.com/package/@mocaos/cortex-mcp) was rebuilt as a thin wrapper over the SDK and is now a one-liner install — `npx @mocaos/cortex-mcp` — instead of clone-and-build. Same tools, now with conversation-thread support in `ask_question`.
+
+### One dial for research depth: `depth`
+
+The chat/deep-research split used to live in two boolean flags with non-obvious interactions. Ask requests now take a single `depth` parameter — `fast` (vector-only quick answer), `standard` (the default researched answer), `deep` (agentic deep research, streaming endpoints only). The legacy `use_agentic`/`use_fast_search` flags remain permanently supported as aliases; sending a flag that contradicts `depth` is a clean 400. Pay-per-query instances price by the same resolution: `depth: "deep"` quotes the research rate in the 402 challenge, and malformed or contradictory requests are rejected **before** any payment moves.
+
+### Webhooks: stop polling for "is it done?"
+
+With `ENABLE_WEBHOOKS=true`, admins can register webhook endpoints (`POST /api/admin/webhooks`) that receive signed POSTs when work finishes: `document.processed`, `document.failed`, `task.completed`, `task.failed`. Deliveries carry a Stripe-style HMAC signature (`X-Cortex-Signature: t=…,v1=…`) so receivers can verify authenticity and reject replays; the signing secret is generated server-side, shown once at creation, and stored encrypted. Bounded retries with backoff, per-endpoint delivery bookkeeping, and a "send test event" endpoint round it out. Off by default — when disabled the feature costs nothing.
+
+Alongside it, `GET /api/ingestion/status` answers "how busy is the pipeline?" in one call: document counts by status (including queued-for-a-slot), the documents currently inside a pipeline with live progress, and an overall idle flag — no more fetching the whole document list to count statuses.
+
+### Consolidation scheduler: the graph stays fresh unattended
+
+Long-running instances accumulate staleness: documents keep arriving, entities get merged, and the community layer silently drifts until an operator clicks regenerate. With `ENABLE_CONSOLIDATION_SCHEDULER=true`, Cortex now refreshes itself — when the instance has been genuinely idle (no queries, no pipelines, configurable quiet window), the previous run's cooldown has passed, and there is actual work (stale communities or ≥ N new documents), the standard community-detection + summarization task launches on its own. It shows up in the task list like any operator-started run, emits the `task.completed` webhook, and deliberately never auto-merges entities — deduplication stays a human-reviewed operation. Off by default.
+
+### Structured answers: `response_format` on POST /api/ask
+
+Pass a JSON Schema (root `type: "object"`) as `response_format` and the non-streaming ask endpoint generates the answer as JSON conforming to it — parsed into a new `structured` response field (raw text always remains in `answer`). Provider-native structured output is used when available, with a graceful fallback cascade for OpenAI-compatible backends that lack it. Built for apps and agent harnesses that consume answers programmatically. Streaming endpoints and agentic mode reject it with a clear 400 pointing at the right call.
 
 ### API ergonomics (all additive — nothing breaks)
+
+Live end-to-end testing of agent integrations (the Hermes/OpenClaw skill, the memory plugin, the MCP server) showed every external client re-implementing the same workarounds. This release removes those frictions at the source — everything is additive, and no existing integration changes behavior.
 
 - **`GET /api/documents` grows query parameters** — `collection_id`, `status`, `sort` (`upload_date|filename|file_size|chunk_count|processing_status|entity_count`, `-` prefix for descending), `limit` + `offset`. Filtering, sorting and pagination now happen server-side; `total` reports the filtered count before pagination. With no parameters the response is byte-compatible with before. Previously every API client fetched the entire corpus and filtered locally.
 - **Response fields normalized via aliases** — search responses carry `total` alongside `total_results`; upload responses carry `id` alongside `document_id`; search/ask/stream sources now populate `document_title` (from the filename) instead of leaving it null; `POST /api/ask` echoes the `collection_id` that was actually applied instead of always null. The old names all remain — existing clients are untouched. Clients that deserialize with "reject unknown fields" enabled will see new keys.
 - **SSE frames carry a `type` discriminator** — every `data:` frame on the streaming endpoints now names itself (`content`, `status`, `sources`, `done`, `memory_update`, `error`, …) while keeping the flat keys, so new clients switch on `type` instead of key-sniffing and old clients notice nothing.
 - **Uniform `collection_id` placement** — `POST /api/search` accepts a top-level `collection_id` (equivalent to `filters.collection_id`; a disagreement between the two is a clean 400), and `POST /api/upload` accepts `collection_id`/`start_processing`/`source` as multipart form fields alongside the query params.
-
-### Structured answers: `response_format` on POST /api/ask
-
-Pass a JSON Schema (root `type: "object"`) as `response_format` and the non-streaming ask endpoint generates the answer as JSON conforming to it — parsed into a new `structured` response field (raw text always remains in `answer`). Provider-native structured output is used when available, with a graceful fallback cascade for OpenAI-compatible backends that lack it. Built for apps and agent harnesses that consume answers programmatically. Streaming endpoints and agentic mode reject it with a clear 400 pointing at the right call.
 
 ### Conversation threads for every integration surface
 
@@ -28,7 +70,7 @@ Cortex has shipped a client-carried conversation-memory contract for a while (`c
 
 - **Skill (`cortex.sh`)** — `cortex.sh --thread <name> ask "…"` carries the full history plus the server-curated memory blob across calls, so follow-ups like "expand on the second point" finally work from a harness. `cortex.sh thread list|show|clear` manages threads; state lives beside the existing sources state, `chmod 600`.
 - **Hermes memory plugin** — `cortex_ask` gains `thread` (same state files as the skill — the two interoperate) and `deep` (agentic deep research, previously unreachable from the plugin) parameters, with a stdlib SSE reader that correctly handles the memory frame arriving after `done`.
-- **MCP server** — `ask_question` gains a `thread` parameter with the same semantics; the stream aggregator was also fixed to keep reading past the `done` frame when a memory update is still pending.
+- **MCP server** — `ask_question` gains a `thread` parameter with the same semantics, wired through the SDK.
 
 ### Skills distribution: versions + integrity manifest
 

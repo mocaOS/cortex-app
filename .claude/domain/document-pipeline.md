@@ -10,6 +10,11 @@ Full pipeline from upload to graph storage. See [`.claude/domain/relationships.m
 - Progress tracked per-document in the frontend
 - **Uniform param placement** (2026-08-10): `collection_id`, `start_processing`, `source` are accepted as multipart **form fields** in addition to the legacy query params (query wins when both are set) — harness clients no longer need a query-string shape just for upload. `UploadResponse` carries an additive `id` alias kept in lockstep with `document_id`. Tests: `tests/test_api_ergonomics.py`.
 
+## Ingestion status & webhooks
+
+- `GET /api/ingestion/status` (read): one-call backlog view — status counts (`processing_queued` docs reported as `queued`), the active pipeline docs with progress + a `live` flag (id ∈ `get_active_processing_ids()`), `backlog`, `idle`. Collection-scoped like every read. Kills per-document polling loops for API consumers.
+- **Outbound webhooks** (`app/services/webhook_service.py`, `ENABLE_WEBHOOKS` default off): `document.processed` / `document.failed` emit at the pipeline completion/failure sites in `_process_document` (next to the DOCUMENTS_PROCESSED metric), `task.completed` / `task.failed` in main.py's `complete_task`/`fail_task`. Admin CRUD `GET/POST/DELETE /api/admin/webhooks` + `/{id}/test`; HMAC-signed delivery (Stripe-style `X-Cortex-Signature: t=…,v1=…`), 3 attempts with backoff on a dedicated 2-thread pool, secrets encrypted at rest, endpoints persisted as `WebhookEndpoint` nodes (instance-operational: excluded from export/reset). Tests: `tests/test_ingestion_webhooks.py`.
+
 ## Listing (`GET /api/documents`)
 
 Server-side filtering/sorting/pagination via additive query params (2026-08-10; previously the endpoint took none and every API client filtered the full corpus locally): `collection_id` (validated against key scope), `status` (processing_status), `sort` (`upload_date|filename|file_size|chunk_count|processing_status|entity_count`, `-` prefix = descending; unknown field → 400), `limit` (1–1000) + `offset`. No params = full list newest-first, unchanged. `total` = filtered count **before** pagination; the response echoes `limit`/`offset`. Tests: `tests/test_api_ergonomics.py`.

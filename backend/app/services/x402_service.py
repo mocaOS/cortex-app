@@ -675,13 +675,44 @@ async def _inspect_request_body(request: Request) -> Tuple[dict, bool]:
             detail=f"Field '{required_field}' is required (no payment was taken)",
         )
 
+    # Mirror of main.py's normalize_ask_depth: `depth` is the authoritative
+    # dial; contradicting legacy flags are a guaranteed 400 at the endpoint,
+    # so reject them here BEFORE any payment. An invalid depth value would be
+    # a guaranteed 422 (pydantic pattern) — same treatment.
+    depth = data.get("depth")
+    if depth is not None:
+        if depth not in ("fast", "standard", "deep"):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Field 'depth' must be one of fast|standard|deep "
+                    "(no payment was taken)"
+                ),
+            )
+        if (data.get("use_agentic") and depth != "deep") or (
+            data.get("use_fast_search") and depth != "fast"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "depth contradicts a legacy use_agentic/use_fast_search "
+                    "flag (no payment was taken)"
+                ),
+            )
+    wants_deep = depth == "deep" if depth is not None else (
+        data.get("use_agentic") is True and not data.get("use_fast_search")
+    )
+    wants_fast = depth == "fast" if depth is not None else bool(
+        data.get("use_fast_search")
+    )
+
     # Mirror of main.py's agentic_requires_streaming guard: the non-streaming
-    # /api/ask rejects use_agentic with 400 AFTER dependencies run — without
+    # /api/ask rejects deep research with 400 AFTER dependencies run — without
     # this pre-check a payer would settle (at the research rate!) for a
     # guaranteed error.
     if (
         path == "/api/ask"
-        and data.get("use_agentic")
+        and wants_deep
         and bool(getattr(get_settings(), "enable_agent_research", False))
     ):
         raise HTTPException(
@@ -697,8 +728,8 @@ async def _inspect_request_body(request: Request) -> Tuple[dict, bool]:
     # only when requested, enabled on the instance, and not in fast-search.
     is_research = (
         path in _ASK_PATHS
-        and data.get("use_agentic") is True
-        and not data.get("use_fast_search")
+        and wants_deep
+        and not wants_fast
         and bool(getattr(get_settings(), "enable_agentic_rag", False))
     )
     return data, is_research

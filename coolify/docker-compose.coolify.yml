@@ -106,6 +106,13 @@ services:
       # --- x402 Payments (optional) — the only x402 env var; everything else
       # (wallet, facilitator, network, asset) is runtime config in the admin UI.
       - X402_ENABLED=${X402_ENABLED:-false}
+      # Outbound webhooks (document/task lifecycle events, admin-managed endpoints)
+      - ENABLE_WEBHOOKS=${ENABLE_WEBHOOKS:-false}
+      # Unattended community refresh on idle instances (see communities docs)
+      - ENABLE_CONSOLIDATION_SCHEDULER=${ENABLE_CONSOLIDATION_SCHEDULER:-false}
+      - CONSOLIDATION_MIN_NEW_DOCUMENTS=${CONSOLIDATION_MIN_NEW_DOCUMENTS:-25}
+      - CONSOLIDATION_IDLE_MINUTES=${CONSOLIDATION_IDLE_MINUTES:-60}
+      - CONSOLIDATION_COOLDOWN_HOURS=${CONSOLIDATION_COOLDOWN_HOURS:-24}
       # --- Apps (optional) — in-instance app hosting; see .claude/domain/apps.md
       - ENABLE_APPS=${ENABLE_APPS:-false}
       # Encrypts stored secrets at rest (git PATs, skill secrets, x402
