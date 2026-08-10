@@ -38,9 +38,9 @@ And the moat is *yours*, not ours. The whole graph is portable by design — Apa
 
 ### Knowledge flows in — automatically
 
-- **📦 Apps** — installable apps sync external systems on a schedule, server-side, with no browser open: [paperless-sync](https://github.com/mocaOS/cortex-app-paperless) turns a paperless-ngx archive into an hourly ingestion daemon, [yt-transcriber](https://github.com/mocaOS/cortex-app-youtube-transcriber) pulls YouTube transcripts into the graph. Install from the public [app registry](https://github.com/mocaOS/cortex-registry), or build a connector for your own stack from the [app template](https://github.com/mocaOS/cortex-app-template).
+- **📦 Apps** — installable apps sync external systems on a schedule, server-side, with no browser open: **SharePoint**, **Google Drive**, **Dropbox**, **OneDrive**, **Nextcloud**, paperless-ngx, YouTube transcripts, and more. Install from the public [app registry](https://github.com/mocaOS/cortex-registry), or build a connector for your own stack from the [app template](https://github.com/mocaOS/cortex-app-template).
 - **🔗 Git integration** — GitHub, GitLab, and Gitea repositories (including self-hosted) stay in sync incrementally via git history, on manual or scheduled polling.
-- **🌐 Web Import** — *MDHarvest powered by [Crawl4ai](https://github.com/unclecode/crawl4ai)*: turn any URL into clean Markdown and ingest it straight into the graph. See the [Web Import guide](handbook/23-web-import.md).
+- **🌐 Web Import** — scrape websites via the [crawl4ai](https://github.com/unclecode/crawl4ai) integration: turn any URL into clean Markdown and ingest it straight into the graph. See the [Web Import guide](handbook/23-web-import.md).
 - **📁 Uploads & API** — PDF, EPUB, Office, HTML, Markdown, images (OCR), audio (ASR), plus file-less Q&A pairs and freeform text; bulk upload with progress tracking, and outbound webhooks that confirm every ingestion.
 
 ### …and out into everything you run
@@ -77,14 +77,14 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 | [**cortex-skills**](https://github.com/mocaOS/cortex-skills) | The knowledge layer between AI agents and Cortex. Curated `SKILL.md` files (served at [cortexskills.org](https://cortexskills.org)) that agents fetch via HTTP to get ground-truth knowledge about the Cortex API — so they build correct integrations on the first try instead of hallucinating endpoints. |
 | [**cortex-explorer**](https://github.com/mocaOS/cortex-explorer) | Standalone, iframe-ready knowledge graph visualizer. 2D/3D force-directed graph with entity search, click-to-expand neighborhood traversal, spaceship-style 3D flight, and an accent-derived palette — a single static bundle pointed at any Cortex backend with a read-only key. |
 | [**cortex-app-template**](https://github.com/mocaOS/cortex-app-template) | The starting point for building apps that run *inside* a Cortex instance: React/Tailwind scaffold with the design tokens pre-wired, a typed client for the hosting contract (token handshake, proxy, platform tasks/storage), and validate/package scripts that produce an installable zip. |
-| [**cortex-registry**](https://github.com/mocaOS/cortex-registry) | The public app catalog: git-native, PR-moderated, metadata-only. Listings pin release artifacts by sha256, CI re-verifies them continuously, and instances install from it via the admin **Browse Registry** panel — with an independent checksum verification before anything is unpacked. First-party apps: [paperless-sync](https://github.com/mocaOS/cortex-app-paperless), [yt-transcriber](https://github.com/mocaOS/cortex-app-youtube-transcriber). |
+| [**cortex-registry**](https://github.com/mocaOS/cortex-registry) | The public app catalog: git-native, PR-moderated, metadata-only. Listings pin release artifacts by sha256, CI re-verifies them continuously, and instances install from it via the admin **Browse Registry** panel — with an independent checksum verification before anything is unpacked. First-party sync apps for SharePoint, Google Drive, Dropbox, OneDrive, Nextcloud, WebDAV, and paperless-ngx, plus a YouTube transcriber. |
 
 ## Features
 
 ### Core Features
 - **📁 Document Upload**: Broad format support — PDF, EPUB, Office (Word/Excel/PowerPoint), HTML/XML, Markdown/text/LaTeX, images (OCR), and audio (ASR) — via a millisecond anydoc fast path with Docling fallback for scans and OCR, with source tracking for API integrations
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
-- **🌐 Web Import** (*MDHarvest powered by Crawl4ai*): Harvest web pages into clean markdown and ingest them into the graph. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
+- **🌐 Web Import**: Scrape web pages into clean markdown and ingest them into the graph via the crawl4ai integration. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
 - **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
