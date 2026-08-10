@@ -7,6 +7,35 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## August 10, 2026
+
+The API gets a harness-ergonomics pass. Live end-to-end testing of agent integrations (the Hermes/OpenClaw skill, the memory plugin, the MCP server) showed that every external client was re-implementing the same workarounds: downloading the whole corpus because the document list took no query parameters, sniffing SSE frames by which key happens to be present, juggling three different shapes for the same `collection_id`, and treating every question as a cold one-shot because nothing outside the built-in frontend spoke the conversation-memory contract. This release removes those frictions at the source — everything is additive, and no existing integration changes behavior.
+
+### API ergonomics (all additive — nothing breaks)
+
+- **`GET /api/documents` grows query parameters** — `collection_id`, `status`, `sort` (`upload_date|filename|file_size|chunk_count|processing_status|entity_count`, `-` prefix for descending), `limit` + `offset`. Filtering, sorting and pagination now happen server-side; `total` reports the filtered count before pagination. With no parameters the response is byte-compatible with before. Previously every API client fetched the entire corpus and filtered locally.
+- **Response fields normalized via aliases** — search responses carry `total` alongside `total_results`; upload responses carry `id` alongside `document_id`; search/ask/stream sources now populate `document_title` (from the filename) instead of leaving it null; `POST /api/ask` echoes the `collection_id` that was actually applied instead of always null. The old names all remain — existing clients are untouched. Clients that deserialize with "reject unknown fields" enabled will see new keys.
+- **SSE frames carry a `type` discriminator** — every `data:` frame on the streaming endpoints now names itself (`content`, `status`, `sources`, `done`, `memory_update`, `error`, …) while keeping the flat keys, so new clients switch on `type` instead of key-sniffing and old clients notice nothing.
+- **Uniform `collection_id` placement** — `POST /api/search` accepts a top-level `collection_id` (equivalent to `filters.collection_id`; a disagreement between the two is a clean 400), and `POST /api/upload` accepts `collection_id`/`start_processing`/`source` as multipart form fields alongside the query params.
+
+### Structured answers: `response_format` on POST /api/ask
+
+Pass a JSON Schema (root `type: "object"`) as `response_format` and the non-streaming ask endpoint generates the answer as JSON conforming to it — parsed into a new `structured` response field (raw text always remains in `answer`). Provider-native structured output is used when available, with a graceful fallback cascade for OpenAI-compatible backends that lack it. Built for apps and agent harnesses that consume answers programmatically. Streaming endpoints and agentic mode reject it with a clear 400 pointing at the right call.
+
+### Conversation threads for every integration surface
+
+Cortex has shipped a client-carried conversation-memory contract for a while (`conversation_memory` blob in, `memory_update` SSE event out) — but only the built-in frontend and Cortex Chat spoke it. Now the whole integration stack does:
+
+- **Skill (`cortex.sh`)** — `cortex.sh --thread <name> ask "…"` carries the full history plus the server-curated memory blob across calls, so follow-ups like "expand on the second point" finally work from a harness. `cortex.sh thread list|show|clear` manages threads; state lives beside the existing sources state, `chmod 600`.
+- **Hermes memory plugin** — `cortex_ask` gains `thread` (same state files as the skill — the two interoperate) and `deep` (agentic deep research, previously unreachable from the plugin) parameters, with a stdlib SSE reader that correctly handles the memory frame arriving after `done`.
+- **MCP server** — `ask_question` gains a `thread` parameter with the same semantics; the stream aggregator was also fixed to keep reading past the `done` frame when a memory update is still pending.
+
+### Skills distribution: versions + integrity manifest
+
+Every skill on cortexskills.org now carries a frontmatter `version`, and the site publishes a machine-readable manifest at `/index.json` — per-skill version, entry point, and a sha256 + byte size for every distributable file. Agents that installed a skill from a single URL can now detect updates, verify what they fetched, and discover the companion files (`scripts/`, `references/`, `plugin/`) that a one-URL install misses.
+
+---
+
 ## August 6, 2026
 
 Document conversion gets a second engine. Cortex now routes text-based PDFs and office documents through **anydoc** — an in-process, pure-Rust converter with no ML models — and reserves Docling for the documents that genuinely need its layout analysis and OCR: scans, image-rich PDFs, standalone images, and audio. The practical difference is dramatic: a 462-page book that previously ran into the 600-second conversion timeout now converts in under a second, at a fraction of the memory. Nothing about chunking, embedding, or extraction changes — only how the markdown gets made.

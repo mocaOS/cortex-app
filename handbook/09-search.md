@@ -92,13 +92,15 @@ curl -X POST http://localhost:8000/api/search \
       "chunk_id": "doc_abc123_chunk_3",
       "content": "Machine learning is a subset of artificial intelligence...",
       "score": 0.89,
+      "document_title": "AI Fundamentals.pdf",
       "metadata": {
-        "document_name": "AI Fundamentals.pdf",
+        "filename": "AI Fundamentals.pdf",
         "chunk_index": 3
       }
     }
   ],
-  "total_results": 5
+  "total_results": 5,
+  "total": 5
 }
 ```
 

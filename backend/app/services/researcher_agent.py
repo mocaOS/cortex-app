@@ -2092,6 +2092,9 @@ async def run_research_pipeline(
             "content": r.get("content", ""),
             "score": r.get("rerank_score", r.get("score", 0)),
             "metadata": {"filename": r.get("filename", "")},
+            # Human-readable label at the top level (clients previously had to
+            # dig it out of metadata.filename).
+            "document_title": r.get("filename") or None,
             "sid": source_sid(r),
         }
         for r in writer_sources

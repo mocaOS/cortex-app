@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -263,6 +263,13 @@ class SearchRequest(BaseModel):
     query: str
     top_k: int = Field(default=5, ge=1, le=50)
     filters: Optional[dict] = None
+    # Uniform scoping: accept collection_id at the top level like /api/ask and
+    # /api/upload do, so clients don't need a filters wrapper just for scoping.
+    # filters.collection_id keeps working; when both are set they must agree.
+    collection_id: Optional[str] = Field(
+        default=None,
+        description="Collection ID to scope the search to (equivalent to filters.collection_id)",
+    )
 
 
 class SearchResult(BaseModel):
@@ -272,6 +279,17 @@ class SearchResult(BaseModel):
     content: str
     score: float
     metadata: dict = {}
+    # Human-readable label. Historically documented but never populated —
+    # clients fell back to metadata.filename. Now filled server-side.
+    document_title: Optional[str] = Field(
+        default=None, description="Human-readable document label (filename)"
+    )
+
+    @model_validator(mode="after")
+    def _fill_document_title(self):
+        if self.document_title is None:
+            self.document_title = self.metadata.get("filename") or None
+        return self
 
 
 class SearchResponse(BaseModel):
@@ -279,6 +297,17 @@ class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
     total_results: int
+    # Alias of total_results (kept in lockstep) so list/search responses agree
+    # on one name; total_results remains for existing clients.
+    total: Optional[int] = Field(
+        default=None, description="Alias of total_results"
+    )
+
+    @model_validator(mode="after")
+    def _fill_total(self):
+        if self.total is None:
+            self.total = self.total_results
+        return self
 
 
 class ConversationMessage(BaseModel):
@@ -311,6 +340,15 @@ class RAGRequest(BaseModel):
             "stateless/legacy behavior. See context_curator.py."
         ),
     )
+    response_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Optional JSON Schema (root must be an object) for a structured answer. "
+            "Supported on non-streaming POST /api/ask only. When set, the answer is "
+            "generated as JSON conforming to the schema and the parsed object is "
+            "returned in the 'structured' response field alongside the raw text."
+        ),
+    )
 
 
 class RAGResponse(BaseModel):
@@ -326,6 +364,10 @@ class RAGResponse(BaseModel):
     communities_used: Optional[List[int]] = Field(default=None, description="Community IDs used for context")
     retrieval_stats: Optional[dict] = Field(default=None, description="Search statistics")
     collection_id: Optional[str] = Field(default=None, description="Collection scope for the query")
+    structured: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Parsed JSON answer when request.response_format was set and the model returned valid JSON",
+    )
 
 
 class GraphStatsResponse(BaseModel):
@@ -370,6 +412,15 @@ class UploadResponse(BaseModel):
     status: ProcessingStatus
     message: str
     source: str = Field(default="upload", description="Origin of the document")
+    # Alias of document_id (kept in lockstep) so upload and document responses
+    # agree on one name; document_id remains for existing clients.
+    id: Optional[str] = Field(default=None, description="Alias of document_id")
+
+    @model_validator(mode="after")
+    def _fill_id(self):
+        if self.id is None:
+            self.id = self.document_id
+        return self
 
 
 class DocumentListResponse(BaseModel):

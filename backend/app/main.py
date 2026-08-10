@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Depends, Request, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from starlette.concurrency import run_in_threadpool
@@ -176,6 +176,78 @@ _HEARTBEAT_DONE = object()
 SHUTTING_DOWN = asyncio.Event()
 
 
+# Frame classification for the additive SSE `type` discriminator. Frames are
+# historically flat-keyed (clients switch on which key is present); `type`
+# names the frame explicitly so new clients don't need key-sniffing. Ordered:
+# frames can carry secondary keys ({'done': True, 'pending_memory': True}),
+# so the first present key wins.
+_SSE_TYPE_PRIORITY = (
+    "error",
+    "done",
+    "memory_update",
+    "sources",
+    "graph_context",
+    "retrieval_stats",
+    "retrieval",
+    "sub_questions",
+    "status",
+    "thinking",
+    "reasoning",
+    "content",
+)
+
+
+def sse_frame(event: dict) -> str:
+    """Serialize one SSE data frame, stamping an additive `type` field.
+
+    The flat keys stay untouched (existing clients switch on key presence);
+    `type` is only added when absent, derived from the highest-priority key
+    in the frame. Unknown shapes get type "event".
+    """
+    if "type" not in event:
+        for key in _SSE_TYPE_PRIORITY:
+            if key in event:
+                event = {"type": key, **event}
+                break
+        else:
+            event = {"type": "event", **event}
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _validate_response_format(schema: dict) -> None:
+    """Reject malformed response_format schemas with a clear 400.
+
+    Contract: a JSON Schema whose root is an object, small enough to ride in
+    a prompt. Anything else fails fast instead of producing junk output.
+    """
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_response_format",
+                "message": "response_format must be a JSON Schema whose root 'type' is 'object'.",
+            },
+        )
+    try:
+        encoded = json.dumps(schema)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_response_format",
+                "message": "response_format must be JSON-serializable.",
+            },
+        )
+    if len(encoded) > 20_000:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_response_format",
+                "message": "response_format schema too large (max 20000 chars serialized).",
+            },
+        )
+
+
 def sse_error_frame(exc: Exception, *, context: str = "answer") -> str:
     """Build a client-safe SSE error frame.
 
@@ -191,7 +263,7 @@ def sse_error_frame(exc: Exception, *, context: str = "answer") -> str:
     )
     if rid:
         message += f" (reference: {rid})"
-    return f"data: {json.dumps({'error': message})}\n\n"
+    return sse_frame({'error': message})
 
 
 async def with_sse_heartbeat(gen, interval: float = 8.0):
@@ -2125,16 +2197,36 @@ async def upload_file(
     collection_id: Optional[str] = Query(default=None, description="Collection to add document to"),
     start_processing: bool = Query(default=False, description="Start processing immediately (set to false for bulk uploads)"),
     source: Optional[str] = Query(default=None, description="Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'."),
+    # Multipart-form equivalents (uniform with the body placement on /api/ask
+    # and /api/search). Query params win when both are provided.
+    collection_id_form: Optional[str] = Form(
+        default=None, alias="collection_id",
+        description="collection_id as a multipart form field (query param equivalent)",
+    ),
+    start_processing_form: Optional[bool] = Form(
+        default=None, alias="start_processing",
+        description="start_processing as a multipart form field (query param equivalent)",
+    ),
+    source_form: Optional[str] = Form(
+        default=None, alias="source",
+        description="source as a multipart form field (query param equivalent)",
+    ),
     auth: AuthResult = Depends(require_manage_permission),
     _rate: None = Depends(enforce_rate_limit),
     _quota: None = Depends(enforce_processing_quota),
 ):
     """
     Upload a file to the knowledge base.
-    
+
     For bulk uploads (100+ files), set start_processing=false to upload all files first,
     then call POST /api/documents/process-pending to start processing.
     """
+    # Merge query/form placements (query wins; form fills in when absent)
+    collection_id = collection_id or collection_id_form
+    source = source or source_form
+    if not start_processing and start_processing_form is not None:
+        start_processing = start_processing_form
+
     # Validate collection access
     target_collection = collection_id or "default"
     validate_collection_access(auth, target_collection, "upload to")
@@ -2664,19 +2756,93 @@ async def get_custom_input(document_id: str, auth: AuthResult = Depends(require_
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_DOCUMENT_SORT_FIELDS = {
+    "upload_date", "filename", "file_size", "chunk_count",
+    "processing_status", "entity_count",
+}
+
+
 @app.get("/api/documents")
-async def list_documents(auth: AuthResult = Depends(require_read_permission)):
-    """List all documents in the knowledge base (filtered by API key collection access)."""
+async def list_documents(
+    collection_id: Optional[str] = Query(
+        default=None, description="Only documents in this collection"
+    ),
+    status: Optional[str] = Query(
+        default=None, description="Only documents with this processing status"
+    ),
+    limit: Optional[int] = Query(
+        default=None, ge=1, le=1000,
+        description="Page size (omit for the full list — legacy behavior)",
+    ),
+    offset: int = Query(default=0, ge=0, description="Page start offset"),
+    sort: Optional[str] = Query(
+        default=None,
+        description=(
+            "Sort field: upload_date|filename|file_size|chunk_count|"
+            "processing_status|entity_count. Prefix with '-' for descending. "
+            "Default: -upload_date."
+        ),
+    ),
+    auth: AuthResult = Depends(require_read_permission),
+):
+    """List documents in the knowledge base (filtered by API key collection access).
+
+    Filtering, sorting and pagination happen server-side; with no query params
+    the response is the full list, newest first (unchanged legacy behavior).
+    `total` is the filtered count before pagination.
+    """
     try:
         neo4j = get_neo4j_service()
         documents = await asyncio.to_thread(neo4j.get_all_documents)
-        
+
         # Filter documents based on collection access
         collection_filter = auth.get_collection_filter()
         if collection_filter is not None:
             documents = [d for d in documents if d.get("collection_id") in collection_filter]
-        
-        return {"documents": documents, "total": len(documents)}
+
+        if collection_id:
+            validate_collection_access(auth, collection_id, "list documents in")
+            documents = [d for d in documents if d.get("collection_id") == collection_id]
+
+        if status:
+            documents = [d for d in documents if d.get("processing_status") == status]
+
+        if sort:
+            field = sort.lstrip("-")
+            if field not in _DOCUMENT_SORT_FIELDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unsupported sort field '{field}'. "
+                        f"Allowed: {', '.join(sorted(_DOCUMENT_SORT_FIELDS))}"
+                    ),
+                )
+            # Values are coalesced in the Cypher query, so keys are uniform per
+            # field; guard with a type-stable fallback anyway.
+            _numeric = field in {"file_size", "chunk_count", "entity_count"}
+
+            def _sort_key(d: dict):
+                v = d.get(field)
+                if _numeric:
+                    return v if isinstance(v, (int, float)) else 0
+                return str(v or "").lower()
+
+            documents.sort(key=_sort_key, reverse=sort.startswith("-"))
+
+        total = len(documents)
+        if offset:
+            documents = documents[offset:]
+        if limit is not None:
+            documents = documents[:limit]
+
+        return {
+            "documents": documents,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3396,8 +3562,19 @@ async def search(
     Note: For restricted API keys, results are filtered to accessible collections.
     """
     try:
-        # Check if collection_id is specified in filters
+        # Collection scoping: top-level collection_id (uniform with /api/ask and
+        # /api/upload) or the legacy filters.collection_id — both supported.
         filter_collection_id = request.filters.get("collection_id") if request.filters else None
+        if (
+            request.collection_id
+            and filter_collection_id
+            and request.collection_id != filter_collection_id
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="collection_id and filters.collection_id disagree — pass one (or the same value).",
+            )
+        filter_collection_id = request.collection_id or filter_collection_id
         if filter_collection_id:
             validate_collection_access(auth, filter_collection_id, "search in")
 
@@ -3441,6 +3618,10 @@ async def search(
             results=search_results,
             total_results=len(search_results)
         )
+    except HTTPException:
+        # Preserve intended status codes (400 scope mismatch, 403 collection
+        # access) instead of re-wrapping them as a generic 500.
+        raise
     except Exception as e:
         logger.error(f"Error in search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3498,6 +3679,20 @@ async def ask_question(
         # always races the edge-proxy read timeout and dies as a bare 500.
         # Fail fast with structured guidance to the SSE endpoint (which stays
         # alive via heartbeats) instead of making the client wait for a 504.
+        if request.response_format is not None:
+            _validate_response_format(request.response_format)
+            if request.use_agentic:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "response_format_not_supported",
+                        "message": (
+                            "response_format is only supported on standard "
+                            "(non-agentic) questions — omit use_agentic."
+                        ),
+                    },
+                )
+
         if request.use_agentic and settings.enable_agent_research:
             raise HTTPException(
                 status_code=400,
@@ -3532,6 +3727,7 @@ async def ask_question(
                 use_agentic=request.use_agentic,
                 collection_id=effective_collection_id,
                 allowed_collection_ids=allowed_collection_ids,
+                response_format=request.response_format,
             ),
             timeout=deadline if deadline and deadline > 0 else None,
         )
@@ -3562,7 +3758,11 @@ async def ask_question(
             sources=sources,
             graph_context=graph_context,
             reranked=result.get("reranked", False),
-            reasoning_steps=result.get("reasoning_steps")
+            reasoning_steps=result.get("reasoning_steps"),
+            # Echo the scope that was actually applied (request or key
+            # restriction) — this used to always read null.
+            collection_id=effective_collection_id,
+            structured=result.get("structured"),
         )
     except asyncio.TimeoutError:
         deadline = get_settings().ask_deadline_seconds
@@ -3619,6 +3819,21 @@ async def ask_question_stream(
     - Uses simple vector search only (no hybrid/reranking)
     - Fastest response time for quick queries
     """
+    # Structured answers don't compose with token streaming — the JSON is only
+    # valid as a whole. Point the caller at the non-streaming endpoint.
+    if request.response_format is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "response_format_requires_non_streaming",
+                "message": (
+                    "response_format is not supported on streaming endpoints. "
+                    "Use POST /api/ask for structured JSON answers."
+                ),
+                "use_endpoint": "/api/ask",
+            },
+        )
+
     # Validate collection access if a specific collection is requested
     if request.collection_id:
         validate_collection_access(auth, request.collection_id, "query")
@@ -3661,7 +3876,7 @@ async def ask_question_stream(
                         allowed_collection_ids=_stream_allowed_collection_ids,
                         conversation_memory=request.conversation_memory,
                     ):
-                        yield f"data: {json.dumps(event)}\n\n"
+                        yield sse_frame(event)
                 else:
                     async for event in processor.agentic_rag_stream(
                         question=request.question,
@@ -3670,7 +3885,7 @@ async def ask_question_stream(
                         conversation_history=request.conversation_history,
                         collection_id=_stream_effective_collection_id
                     ):
-                        yield f"data: {json.dumps(event)}\n\n"
+                        yield sse_frame(event)
 
             except Exception as e:
                 logger.error("Error in streaming agentic RAG: %s", e, exc_info=True)
@@ -3705,8 +3920,8 @@ async def ask_question_stream(
                 
                 if was_blocked:
                     logger.warning(f"Blocked potential prompt injection: {reason}")
-                    yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
-                    yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                    yield sse_frame({'content': get_safe_refusal_message()})
+                    yield sse_frame({'done': True, 'fast_mode': True})
                     return
 
                 # Query-time prompt-guard classifier (shared cortex-helper).
@@ -3715,8 +3930,8 @@ async def ask_question_stream(
                 )
                 if guard_blocked:
                     logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                    yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
-                    yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                    yield sse_frame({'content': get_safe_refusal_message()})
+                    yield sse_frame({'done': True, 'fast_mode': True})
                     return
 
                 processor = get_query_processor()
@@ -3803,9 +4018,9 @@ Question: {processed_question}"""
                 async for safe in filter_stream(
                     _fast_deltas(), system_prompt, enabled=settings.prompt_security
                 ):
-                    yield f"data: {json.dumps({'content': safe})}\n\n"
+                    yield sse_frame({'content': safe})
 
-                yield f"data: {json.dumps({'done': True, 'fast_mode': True})}\n\n"
+                yield sse_frame({'done': True, 'fast_mode': True})
                 
             except Exception as e:
                 logger.error("Error in fast streaming RAG: %s", e, exc_info=True)
@@ -3839,8 +4054,8 @@ Question: {processed_question}"""
 
             if was_blocked:
                 logger.warning(f"Blocked potential prompt injection: {reason}")
-                yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
+                yield sse_frame({'content': get_safe_refusal_message()})
+                yield sse_frame({'done': True})
                 return
 
             # Query-time prompt-guard classifier (shared cortex-helper).
@@ -3849,8 +4064,8 @@ Question: {processed_question}"""
             )
             if guard_blocked:
                 logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                yield f"data: {json.dumps({'content': get_safe_refusal_message()})}\n\n"
-                yield f"data: {json.dumps({'done': True})}\n\n"
+                yield sse_frame({'content': get_safe_refusal_message()})
+                yield sse_frame({'done': True})
                 return
 
             processor = get_query_processor()
@@ -3865,7 +4080,7 @@ Question: {processed_question}"""
                     allowed_collection_ids=_stream_allowed_collection_ids,
                     conversation_memory=request.conversation_memory,
                 ):
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield sse_frame(event)
                 return
 
             # Legacy standard streaming path (hybrid search + reranking + writer)
@@ -3877,7 +4092,7 @@ Question: {processed_question}"""
             # by stream_reasoning_steps so the setting matches behavior.
             _emit_status = settings.stream_reasoning_steps
             if _emit_status:
-                yield f"data: {json.dumps({'status': {'stage': 'searching', 'message': 'Searching the knowledge base'}})}\n\n"
+                yield sse_frame({'status': {'stage': 'searching', 'message': 'Searching the knowledge base'}})
 
             if request.use_graph:
                 search_result = await processor.graph_search_async(
@@ -3907,7 +4122,7 @@ Question: {processed_question}"""
             # Re-rank if enabled
             if request.use_reranking and settings.enable_reranking and results:
                 if _emit_status:
-                    yield f"data: {json.dumps({'status': {'stage': 'reranking', 'message': 'Ranking the most relevant sources'}})}\n\n"
+                    yield sse_frame({'status': {'stage': 'reranking', 'message': 'Ranking the most relevant sources'}})
                 results = await processor.rerank_results_async(
                     processed_question, results, request.top_k
                 )
@@ -3921,15 +4136,16 @@ Question: {processed_question}"""
                     "chunk_id": r["chunk_id"],
                     "content": r["content"],
                     "score": r.get("rerank_score", r.get("score", 0)),
-                    "metadata": {"filename": r["filename"]}
+                    "metadata": {"filename": r["filename"]},
+                    "document_title": r.get("filename") or None,
                 }
                 for r in results
             ]
-            yield f"data: {json.dumps({'sources': sources})}\n\n"
+            yield sse_frame({'sources': sources})
 
             # Send graph context
             if graph_context:
-                yield f"data: {json.dumps({'graph_context': graph_context.model_dump()})}\n\n"
+                yield sse_frame({'graph_context': graph_context.model_dump()})
 
             # Build context for generation
             formatted_sources = ""
@@ -3988,7 +4204,7 @@ Question: {processed_question}"""
             )
 
             if _emit_status:
-                yield f"data: {json.dumps({'status': {'stage': 'generating', 'message': 'Writing the answer'}})}\n\n"
+                yield sse_frame({'status': {'stage': 'generating', 'message': 'Writing the answer'}})
 
             stream = await safe_chat_completion(
                 client.chat.completions.create,
@@ -4016,9 +4232,9 @@ Question: {processed_question}"""
             async for safe in filter_stream(
                 _writer_deltas(), system_prompt, enabled=settings.prompt_security
             ):
-                yield f"data: {json.dumps({'content': safe})}\n\n"
+                yield sse_frame({'content': safe})
 
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            yield sse_frame({'done': True})
 
         except Exception as e:
             logger.error("Error in streaming RAG: %s", e, exc_info=True)
@@ -5328,6 +5544,20 @@ async def ask_with_thinking_stream(
     This provides extended thinking where users can see
     the agent's reasoning process in real-time.
     """
+    # Structured answers don't compose with token streaming (see /api/ask/stream).
+    if request.response_format is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "response_format_requires_non_streaming",
+                "message": (
+                    "response_format is not supported on streaming endpoints. "
+                    "Use POST /api/ask for structured JSON answers."
+                ),
+                "use_endpoint": "/api/ask",
+            },
+        )
+
     # Validate collection access if a specific collection is requested
     if request.collection_id:
         validate_collection_access(auth, request.collection_id, "query")
@@ -5363,7 +5593,7 @@ async def ask_with_thinking_stream(
                     allowed_collection_ids=_stream_allowed_collection_ids,
                     conversation_memory=request.conversation_memory,
                 ):
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield sse_frame(event)
             else:
                 async for event in processor.agentic_rag_stream(
                     question=request.question,
@@ -5372,7 +5602,7 @@ async def ask_with_thinking_stream(
                     conversation_history=request.conversation_history,
                     collection_id=_stream_effective_collection_id
                 ):
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield sse_frame(event)
 
         except Exception as e:
             logger.error("Error in streaming agentic RAG: %s", e, exc_info=True)

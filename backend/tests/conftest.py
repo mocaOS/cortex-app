@@ -45,8 +45,10 @@ def _isolate_env(tmp_path, monkeypatch):
 
     upload_dir = tmp_path / "uploads"
     custom_inputs_dir = tmp_path / "custom_inputs"
+    git_work_dir = tmp_path / "git_repos"
     upload_dir.mkdir(parents=True, exist_ok=True)
     custom_inputs_dir.mkdir(parents=True, exist_ok=True)
+    git_work_dir.mkdir(parents=True, exist_ok=True)
 
     saved: dict[str, Any] = {
         "max_files": settings.max_files,
@@ -55,6 +57,10 @@ def _isolate_env(tmp_path, monkeypatch):
         "max_queries_per_month": settings.max_queries_per_month,
         "upload_dir": settings.upload_dir,
         "custom_inputs_dir": settings.custom_inputs_dir,
+        # A developer .env with ENABLE_GIT_INTEGRATION=true and the container
+        # path GIT_WORK_DIR=/app/... otherwise makes the lifespan's makedirs
+        # blow up outside Docker (PermissionError: '/app').
+        "git_work_dir": settings.git_work_dir,
         "openai_api_key": settings.openai_api_key,
         "graph_extraction_api_key": settings.graph_extraction_api_key,
         "relationship_extraction_api_key": settings.relationship_extraction_api_key,
@@ -73,6 +79,7 @@ def _isolate_env(tmp_path, monkeypatch):
     settings.max_queries_per_month = 0
     settings.upload_dir = str(upload_dir)
     settings.custom_inputs_dir = str(custom_inputs_dir)
+    settings.git_work_dir = str(git_work_dir)
     settings.openai_api_key = ""
     # Blank the tier keys too: a developer's .env otherwise leaks into
     # get_extraction_llm_config()/get_relationship_llm_config(), and any

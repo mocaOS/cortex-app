@@ -360,6 +360,34 @@ def _restore_urls(text: str, url_map: dict) -> str:
     return result
 
 
+def _parse_structured_answer(text: str) -> Optional[dict]:
+    """Parse a model answer that was requested as structured JSON.
+
+    Tolerates the common decorations models add around JSON — markdown fences
+    and stray prose before/after the object. Returns None (never raises) when
+    no JSON object can be recovered; the caller falls back to raw text.
+    """
+    candidate = text.strip()
+    # Strip a ```json ... ``` (or bare ```) fence
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```[a-zA-Z]*\s*", "", candidate)
+        candidate = re.sub(r"\s*```$", "", candidate)
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Last resort: the outermost {...} span
+    start, end = candidate.find("{"), candidate.rfind("}")
+    if start != -1 and end > start:
+        try:
+            parsed = json.loads(candidate[start:end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
+
+
 # Thread pool for re-ranking (cross-encoder can be slow)
 _rerank_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reranker")
 
@@ -4788,10 +4816,15 @@ class QueryProcessor:
         use_agentic: bool = False,
         collection_id: Optional[str] = None,
         allowed_collection_ids: Optional[List[str]] = None,
+        response_format: Optional[dict] = None,
     ) -> dict:
         """
         Answer a question using enhanced GraphRAG features.
         Optionally scoped to a specific collection or list of collections.
+
+        When `response_format` (a JSON Schema, root object) is set, the answer
+        is generated as JSON conforming to the schema; the parsed object rides
+        back under the "structured" key. Standard (non-agentic) path only.
 
         Features:
         - Hybrid search with RRF (vector + keyword + graph)
@@ -4913,7 +4946,23 @@ class QueryProcessor:
             )
 
             # Enhanced system prompt with anti-injection protection
-            system_prompt = """You are an expert research assistant providing accurate, helpful answers.
+            if response_format:
+                # Structured mode: the whole answer is one JSON object; prose
+                # conventions (citations, sections) don't apply.
+                system_prompt = (
+                    """You are an expert research assistant providing accurate, factual answers.
+
+Respond with a SINGLE JSON object that conforms exactly to the JSON Schema below.
+- Output ONLY the JSON object — no prose, no markdown fences, no [src_N] citation markers.
+- Populate fields from the reference material; be precise and avoid speculation.
+- If information for a field is unavailable, use the schema's null/empty conventions.
+
+=== Response JSON Schema ===
+"""
+                    + json.dumps(response_format, indent=2)
+                ) + get_anti_injection_instruction(enabled=self.settings.prompt_security)
+            else:
+                system_prompt = """You are an expert research assistant providing accurate, helpful answers.
 
 Guidelines:
 1. Synthesize information into a coherent, natural-sounding answer
@@ -4928,8 +4977,8 @@ Response Style:
 - Prefer specific facts over vague generalizations
 - Connect related concepts naturally
 - If sources conflict, acknowledge the discrepancy objectively""" + get_anti_injection_instruction(
-                enabled=self.settings.prompt_security
-            )
+                    enabled=self.settings.prompt_security
+                )
 
             # Format sources with reference IDs
             formatted_sources = ""
@@ -4944,7 +4993,12 @@ Response Style:
                     formatted_sources += f"\n[{ref_id}] Source: {r['filename']}{rerank_info}\n{r['content']}\n"
 
             # Build the prompt
-            prompt = f"""Answer the following question. Use reference IDs like [src_1], [src_2] to cite specific information.
+            citation_instruction = (
+                "Respond only with the JSON object described in the system message."
+                if response_format
+                else "Use reference IDs like [src_1], [src_2] to cite specific information."
+            )
+            prompt = f"""Answer the following question. {citation_instruction}
 
 === Reference Material ===
 {formatted_sources if formatted_sources else "No references available."}
@@ -4971,14 +5025,59 @@ Response Style:
             # the event loop, starving every other in-flight request's async
             # work (Neo4j acquisition, etc.) and cascading into timeouts/500s
             # under concurrency. Embeddings/Neo4j already use to_thread.
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
+            create_kwargs = dict(
                 model=llm_config.model,
                 messages=messages,
                 **build_chat_params(llm_config.model, temperature=0.3, max_tokens=1200),
             )
+            if response_format:
+                # Provider-native structured output when available, with a
+                # graceful cascade (json_schema → json_object → plain). The
+                # schema always rides in the system prompt too, so fallback
+                # calls still tend to produce conforming JSON.
+                try:
+                    response = await asyncio.to_thread(
+                        client.chat.completions.create,
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "cortex_answer",
+                                "schema": response_format,
+                                "strict": False,
+                            },
+                        },
+                        **create_kwargs,
+                    )
+                except Exception as rf_err:
+                    logger.info(
+                        f"Provider rejected json_schema response_format ({rf_err}); "
+                        f"falling back to json_object mode"
+                    )
+                    try:
+                        response = await asyncio.to_thread(
+                            client.chat.completions.create,
+                            response_format={"type": "json_object"},
+                            **create_kwargs,
+                        )
+                    except Exception:
+                        response = await asyncio.to_thread(
+                            client.chat.completions.create, **create_kwargs
+                        )
+            else:
+                response = await asyncio.to_thread(
+                    client.chat.completions.create, **create_kwargs
+                )
 
             answer = response.choices[0].message.content
+
+            structured = None
+            if response_format and answer:
+                structured = _parse_structured_answer(answer)
+                if structured is None:
+                    logger.warning(
+                        "response_format was requested but the model output "
+                        "did not parse as JSON — returning raw text only"
+                    )
 
             return {
                 "question": question,
@@ -4987,6 +5086,7 @@ Response Style:
                 "graph_context": graph_context.model_dump() if graph_context else None,
                 "reranked": reranked,
                 "reasoning_steps": None,
+                "structured": structured,
                 **search_metadata,
             }
 

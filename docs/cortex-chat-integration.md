@@ -117,6 +117,7 @@ Ship the round-trip whenever you want. Until you do — no `conversation_memory`
 | `pending_memory: true` (on the `done` frame) | when a `memory_update` will still follow | keep reading the stream; expect one more event |
 | `sid` (on each `sources[]` item) | any turn with sources | persist `src_N → sid` for cross-turn citation identity |
 | `: ping` (SSE comment line) | silent windows ≥ 8 s | ignore (keep-alive) |
+| `type` (on every frame) | always (2026-08-10+) | additive discriminator naming the frame (`content`, `status`, `sources`, `done`, `memory_update`, `error`, …) — switch on it instead of key-sniffing if you only target current backends |
 
 `done` (always) and `error` (on failure) remain guaranteed, but `done` is no longer necessarily the final frame — see the amendment above.
 

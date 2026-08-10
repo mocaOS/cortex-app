@@ -29,6 +29,14 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3)
 - `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8)
 
+## SSE frame typing (`type` discriminator)
+
+Every `data:` frame on `/api/ask/stream` + `/api/ask/stream/thinking` carries an additive `type` field (`sse_frame()` in `main.py`), derived from the highest-priority key present (`_SSE_TYPE_PRIORITY`: error > done > memory_update > sources > graph_context > retrieval_stats > retrieval > sub_questions > status > thinking > reasoning > content; unknown shapes → `"event"`). The flat keys are unchanged — existing clients that switch on key presence keep working; new clients switch on `type`. Multi-key frames type by priority (`{done, pending_memory}` → `"done"`). All ask-path emission sites route through `sse_frame()`; `sse_error_frame` does too. Source events also carry a top-level `document_title` (from filename) so clients stop digging in `metadata.filename`. Tested in `tests/test_api_ergonomics.py`.
+
+## Structured answers (`response_format`)
+
+`RAGRequest.response_format` — a JSON Schema with root `type: "object"` (validated by `_validate_response_format` in `main.py`: 400 on non-object root / non-serializable / >20k chars) — makes the **non-streaming, non-agentic** `POST /api/ask` generate the answer as JSON conforming to the schema. Streaming endpoints reject it (`400 response_format_requires_non_streaming`); combined with `use_agentic` it's `400 response_format_not_supported`. Implementation in `rag_query` (`document_processor.py`): schema rides in the system prompt (structured-mode prompt, no `[src_N]` citations) AND as provider-native `response_format` with a graceful cascade `json_schema → json_object → plain`; the output is parsed by `_parse_structured_answer` (fence/prose tolerant, never raises) into `RAGResponse.structured` (null when unparseable — raw text always in `answer`). `/api/ask` also now echoes the **applied** `collection_id` (request or key restriction) instead of always null.
+
 ## Streaming feedback (status + heartbeat)
 
 To remove the "is it stuck?" silent window before the first token, the SSE stream emits additive `{"status": {"stage", "message"}}` events at pipeline stages — `analyzing`/`searching`/`generating` on the agent path (`researcher_agent.py`), `searching`/`reranking`/`generating` on the legacy chat path (`main.py`) — gated by `stream_reasoning_steps`. Every `StreamingResponse` is wrapped with `with_sse_heartbeat()` (`main.py`), which injects `: ping` comment lines during ≥8 s silent windows (keep-alive; ignored by clients). Both are additive/backward-compatible. The frontend `ChatMessage` `ThinkingIndicator` consumes `status` (with a heuristic fallback). Partner integration: [`docs/cortex-chat-integration.md`](../../docs/cortex-chat-integration.md).

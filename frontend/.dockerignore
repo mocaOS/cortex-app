@@ -1,0 +1,8 @@
+# Never ship a host-side build into the image: a stale .next in the build
+# context beats --no-cache (Docker still COPYs the old artifacts) and served
+# a live self-host debugging session pages built with the wrong API URL.
+.next
+node_modules
+npm-debug.log
+.env*.local
+tsconfig.tsbuildinfo
