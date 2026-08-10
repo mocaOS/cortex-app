@@ -31,6 +31,34 @@ Example prompt:
 
 > Fetch `https://cortexskills.org/upload/SKILL.md` and use it to write a Python script that batch-uploads a folder of PDFs to my Cortex instance.
 
+## Official TypeScript SDK
+
+For JavaScript/TypeScript, skip the hand-rolled fetch wrappers below — the official SDK owns the whole integration surface (unified ask with `depth`, SSE streaming that correctly handles the late memory frame, conversation threads, upload-and-wait, collections, webhooks, typed errors) and works against current and older Cortex versions alike:
+
+```bash
+npm install @mocaos/cortex-client
+```
+
+```typescript
+import { CortexClient } from "@mocaos/cortex-client";
+
+const cortex = new CortexClient({
+  baseUrl: process.env.CORTEX_API_URL!,
+  apiKey: process.env.CORTEX_API_KEY!,
+});
+
+const quick = await cortex.ask("What did we decide about the auth rewrite?");
+const deep = await cortex.deepResearch("Compare every approach we tried", {
+  onContent: (token) => process.stdout.write(token),
+});
+
+const thread = cortex.thread("research-session");   // multi-turn memory
+await thread.ask("How does authentication work?");
+await thread.ask("Expand on the caching part");     // follow-ups work
+```
+
+Full reference: [npmjs.com/package/@mocaos/cortex-client](https://www.npmjs.com/package/@mocaos/cortex-client). The raw-fetch recipes below remain useful as a wire-level reference and for other languages.
+
 ## Next.js / React Integration
 
 ### API Route Handler

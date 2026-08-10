@@ -218,6 +218,8 @@ for event in client.ask_stream(
 
 ## JavaScript/TypeScript Client
 
+**Use the official SDK** — `npm install @mocaos/cortex-client` gives you a typed client with the unified `depth` dial, SSE streaming (including the late `memory_update` frame), conversation threads, upload-and-wait, and webhook admin, version-tolerant across Cortex releases. The hand-rolled class below is kept as a minimal wire-level reference:
+
 ```typescript
 class CortexClient {
   constructor(private baseUrl: string, private apiKey: string) {
