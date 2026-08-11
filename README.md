@@ -34,9 +34,9 @@ Think about where memory lives in your AI stack:
 
 ### Your knowledge is the moat
 
-Frontier models are a commodity — your competitors call the same APIs you do. What can't be bought is what your organization knows: the decisions, discussions, documents, code, and culture that never made it into anyone's training set. Cortex turns that into a queryable graph you own and host yourself. The longer it runs, the more sources it syncs, the more people and agents enrich it — the wider the moat gets.
+Frontier models are a commodity, your competitors call the same APIs you do. What can't be bought is what your organization knows: the decisions, discussions, documents, code, and culture that never made it into anyone's training set. Cortex turns that into a queryable graph you own and host yourself. The longer it runs, the more sources it syncs, the more people and agents enrich it, the wider the moat gets.
 
-And the moat is *yours*, not ours. The whole graph is portable by design — Apache-2.0 licensed, full library export/import, framework-agnostic API. When a hot new agent framework drops next month, connect your existing knowledge graph to it and keep going. **Your agents' memories move with you.**
+And the moat is *yours*, not ours. The whole graph is portable by design, Apache-2.0 licensed, allows for full export/import and usage via framework-agnostic API. When a hot new agent framework drops next month, connect your existing knowledge graph to it and keep going. **Your collective memories move with you.**
 
 ### Knowledge flows in — automatically
 
