@@ -25,7 +25,7 @@ At least one LLM provider is required:
 # OpenAI-compatible provider (any endpoint that speaks the OpenAI API)
 OPENAI_API_KEY=sk-your-api-key-here
 OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MODEL=qwen3-6-35b-a3b
 ```
 
 ### Admin Authentication
@@ -45,12 +45,12 @@ SESSION_SECRET=your-session-secret-key-at-least-32-characters-long
 
 ```bash
 # Primary model for Q&A, research, chat
-# Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
+# Recommended: Qwen3.6 35B A3B (qwen3-6-35b-a3b) — blazing-fast MoE, ideal for retrieval
 # (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
-OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MODEL=qwen3-6-35b-a3b
 
 # Optional: Faster/cheaper model for "Fast Mode"
-OPENAI_MODEL_FAST_MODE=google-gemma-4-26b-a4b-it
+OPENAI_MODEL_FAST_MODE=qwen3-6-35b-a3b
 
 # Primary token budgets (floor of the fallback chain — see "Budget Fallback Chain" below)
 OPENAI_MAX_OUTPUT_TOKENS=8000   # Default output tokens for every LLM call
@@ -280,8 +280,8 @@ OUTPUT TOKENS:                          INPUT CONTEXT:
 **Recommended minimal stack** — configure two models + two context windows; everything else inherits:
 
 ```bash
-OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
-OPENAI_MAX_CONTEXT=256000                 # Gemma4 26B A4B full input window (= code default)
+OPENAI_MODEL=qwen3-6-35b-a3b   # primary / agentic (256K window)
+OPENAI_MAX_CONTEXT=256000                 # Qwen3.6 35B A3B full input window (= code default)
 
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b    # extraction + (inherited) relationship (256K window)
 GRAPH_EXTRACTION_MAX_CONTEXT=24000         # size to the provider's DECODE SPEED, not the model's window — see "Provider Notes: Venice" below
@@ -829,7 +829,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `NEO4J_USER` | Yes | - | Neo4j username |
 | `NEO4J_PASSWORD` | Yes | - | Neo4j password |
 | `OPENAI_API_KEY` | Yes | - | OpenAI API key |
-| `OPENAI_MODEL` | No | `google-gemma-4-26b-a4b-it` | Primary LLM for Q&A, research, chat |
+| `OPENAI_MODEL` | No | `qwen3-6-35b-a3b` | Primary LLM for Q&A, research, chat |
 | `OPENAI_MAX_OUTPUT_TOKENS` | No | `8000` | Floor of the output-token budget chain |
 | `OPENAI_MAX_CONTEXT` | No | `256000` | Floor of the input-context budget chain (the value extraction inherits is clamped at 48000) |
 | `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |

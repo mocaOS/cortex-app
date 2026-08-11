@@ -1029,7 +1029,7 @@ curl -H "X-API-Key: cortex_ro_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
 #### OpenAI / LiteLLM Configuration
 - `OPENAI_API_KEY`: API key for LLM calls
 - `OPENAI_API_BASE`: API base URL (default: `https://api.openai.com/v1`)
-- `OPENAI_MODEL`: Model for LLM calls (default: `google-gemma-4-26b-a4b-it`)
+- `OPENAI_MODEL`: Model for LLM calls (default: `qwen3-6-35b-a3b`)
 - `OPENAI_MODEL_FAST_MODE`: Model for Fast Mode (defaults to `OPENAI_MODEL`)
 
 #### Upload Configuration

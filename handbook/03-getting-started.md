@@ -25,13 +25,13 @@ cd cortex-app
 cp .env.example .env
 ```
 
-> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (Gemma4 26B A4B primary + Qwen3.6 27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. `OPENAI_MAX_CONTEXT` unlocks the primary's full input window; `GRAPH_EXTRACTION_MAX_CONTEXT` is deliberately *small* — extraction is decode-bound, so batches sized to the model's full window time out (see Chapter 4 § "Budget Fallback Chain").
+> ⚡ **Recommended Stack Shortcut.** If you want the bench-validated 2-model stack (Qwen3.6 35B A3B primary + Qwen3.6 27B extraction), paste this block instead of building your LLM config tier-by-tier in Step 2 below. Everything else (relationship, vision, output budgets) inherits automatically. `OPENAI_MAX_CONTEXT` unlocks the primary's full input window; `GRAPH_EXTRACTION_MAX_CONTEXT` is deliberately *small* — extraction is decode-bound, so batches sized to the model's full window time out (see Chapter 4 § "Budget Fallback Chain").
 >
 > ```env
-> # Primary — agentic Q&A / researcher (Gemma4 26B A4B: fast MoE, 256K context window)
+> # Primary — agentic Q&A / researcher (Qwen3.6 35B A3B: fast MoE, 256K context window)
 > OPENAI_API_KEY=
 > OPENAI_API_BASE=https://api.venice.ai/api/v1
-> OPENAI_MODEL=google-gemma-4-26b-a4b-it
+> OPENAI_MODEL=qwen3-6-35b-a3b
 > OPENAI_MAX_CONTEXT=256000
 >
 > # Extraction — deliberately small context: extraction output scales with input, so
@@ -76,7 +76,7 @@ SESSION_SECRET=at-least-32-characters-long-random-secret
 # ── Primary LLM ─────────────────────────────────────────────────
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_API_BASE=https://api.openai.com/v1   # point at whichever OpenAI-compatible provider serves your model
-OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MODEL=qwen3-6-35b-a3b
 ```
 
 **Generating secure secrets:**
@@ -286,12 +286,12 @@ The Library is LLM-agnostic. Each capability can point to a different model or p
 
 ```env
 # ── Primary LLM (Q&A, research, chat) ─────────────────────────
-# Recommended: Gemma4 26B A4B (google-gemma-4-26b-a4b-it) — blazing-fast MoE, ideal for retrieval
+# Recommended: Qwen3.6 35B A3B (qwen3-6-35b-a3b) — blazing-fast MoE, ideal for retrieval
 # (MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff)
 OPENAI_API_KEY=sk-your-key
 OPENAI_API_BASE=https://api.openai.com/v1   # point at whichever OpenAI-compatible provider serves these models
-OPENAI_MODEL=google-gemma-4-26b-a4b-it
-OPENAI_MODEL_FAST_MODE=google-gemma-4-26b-a4b-it    # Optional: faster model for "Fast Mode"
+OPENAI_MODEL=qwen3-6-35b-a3b
+OPENAI_MODEL_FAST_MODE=qwen3-6-35b-a3b    # Optional: faster model for "Fast Mode"
 
 # ── Graph Extraction (entity discovery + community summarization) ─
 # Recommended: Qwen3.6 27B — reasoning suppressed so it behaves like a fast instruct model (no overthinking)

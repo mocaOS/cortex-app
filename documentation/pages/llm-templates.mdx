@@ -7,7 +7,7 @@ Cortex works with **any model from any OpenAI-compatible API**. These templates 
 
 Two model roles matter when adapting a template:
 
-- **Primary agent** (`OPENAI_MODEL`) — agentic retrieval from the graph, Q&A, research, chat. Snappiness matters most here; **Gemma4 26B A4B** (a fast MoE) is the bench-validated pick.
+- **Primary agent** (`OPENAI_MODEL`) — agentic retrieval from the graph, Q&A, research, chat. Snappiness matters most here; **Qwen3.6 35B A3B** (a fast MoE) is the bench-validated pick.
 - **Knowledge-graph generation** (`GRAPH_EXTRACTION_MODEL`, usually also `VISION_MODEL`) — entity/relationship extraction and image analysis during ingestion. The more complex structured task; **Qwen3.6 27B** is the recommended pick.
 
 You do **not** need to set context windows for the extraction or vision models — ingestion runs on its own fine-tuned budgets (16000/16000 by default). Only `OPENAI_MAX_CONTEXT` should match your primary model's window.
@@ -19,7 +19,7 @@ Model catalog: [docs.venice.ai/models/overview](https://docs.venice.ai/models/ov
 ```bash
 OPENAI_API_KEY=your-venice-api-key
 OPENAI_API_BASE=https://api.venice.ai/api/v1
-OPENAI_MODEL=google-gemma-4-26b-a4b-it
+OPENAI_MODEL=qwen3-6-35b-a3b
 OPENAI_MAX_CONTEXT=256000
 
 EMBEDDING_MODEL=text-embedding-3-small
@@ -31,16 +31,16 @@ GRAPH_EXTRACTION_MODEL=qwen3-6-27b
 
 This is exactly the stack `.env.recommended` ships — Venice serves chat, vision, and embeddings from one key, making it the smoothest single-provider setup. **Don't touch the ingestion concurrency defaults on Venice** — everything is tuned to stay inside the rate limits of an API key.
 
-**If Gemma4 26B feels slow on Venice**, the next best move is switching the primary to `minimax-m3-preview` — a bit more expensive and slower per token, but it can deliver higher answer quality. The trade-off is snappiness, and it's a no-brainer whenever Gemma4 is running slower anyway. A budget alternative is `qwen3-5-35b-a3b`: faster and cheaper, though whether the quality satisfies depends on the data in your Cortex. When you swap the primary, set `OPENAI_MAX_CONTEXT` to the new model's input window (see the Venice model overview).
+**If Qwen3.6 35B feels slow on Venice**, the next best move is switching the primary to `minimax-m3-preview` — a bit more expensive and slower per token, but it can deliver higher answer quality. The trade-off is snappiness, and it's a no-brainer whenever Qwen3.6 is running slower anyway. When you swap the primary, set `OPENAI_MAX_CONTEXT` to the new model's input window (see the Venice model overview).
 
 ## OpenRouter
 
-Routing guide: [provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) · Models: [gemma-4-26b-a4b-it](https://openrouter.ai/google/gemma-4-26b-a4b-it) · [qwen3.6-27b](https://openrouter.ai/qwen/qwen3.6-27b)
+Routing guide: [provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) · Models: [qwen3.6-35b-a3b](https://openrouter.ai/qwen/qwen3.6-35b-a3b) · [qwen3.6-27b](https://openrouter.ai/qwen/qwen3.6-27b)
 
 ```bash
 OPENAI_API_KEY=your-openrouter-key
 OPENAI_API_BASE=https://openrouter.ai/api/v1
-OPENAI_MODEL=google/gemma-4-26b-a4b-it:nitro
+OPENAI_MODEL=qwen/qwen3.6-35b-a3b:nitro
 OPENAI_MAX_CONTEXT=256000
 
 # OpenRouter serves chat but not embeddings — give embeddings their own provider

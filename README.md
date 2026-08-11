@@ -186,7 +186,7 @@ nano .env
 docker compose up -d
 ```
 
-`.env.recommended` ships the bench-validated model stack — **Gemma4 26B A4B** as the primary agent model, **Qwen3.6 27B** for knowledge-graph generation and vision, `text-embedding-3-small` embeddings — and leaves everything else on production-tuned code defaults. Set `ENCRYPTION_KEY` so git tokens and skill secrets are encrypted at rest (guidance is in the file). Every other knob is documented in the [Configuration Reference](https://docs.cortex.eco/configuration).
+`.env.recommended` ships the bench-validated model stack — **Qwen3.6 35B A3B** as the primary agent model, **Qwen3.6 27B** for knowledge-graph generation and vision, `text-embedding-3-small` embeddings — and leaves everything else on production-tuned code defaults. Set `ENCRYPTION_KEY` so git tokens and skill secrets are encrypted at rest (guidance is in the file). Every other knob is documented in the [Configuration Reference](https://docs.cortex.eco/configuration).
 
 ### Either way
 

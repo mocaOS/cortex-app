@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # OpenAI / LiteLLM Configuration
     openai_api_key: str = Field(default="")
     openai_api_base: str = Field(default="https://api.openai.com/v1")
-    openai_model: str = Field(default="google-gemma-4-26b-a4b-it")
+    openai_model: str = Field(default="qwen3-6-35b-a3b")
     openai_model_fast_mode: str = Field(
         default=""
     )  # Model for "Fast Mode" in Ask AI (defaults to openai_model if empty)
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     # don't truncate their <relationship> output. Models that finish much
     # earlier (Mistral, GPT-OSS) simply use less of the cap — no cost penalty.
     openai_max_output_tokens: int = Field(default=8000)
-    # 256k matches the recommended primary model (Gemma4 26B A4B), which is
+    # 256k matches the recommended primary model (Qwen3.6 35B A3B), which is
     # the retrieval agent's working context. Extraction does NOT get this:
     # `extraction_max_context` clamps the inherited value at 48k (2026-07-09,
     # decided with Rene — raised from 32768 where it silently under-used the

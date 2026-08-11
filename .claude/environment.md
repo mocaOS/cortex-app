@@ -15,11 +15,11 @@ Copy `.env.example` to `.env`. Variables are grouped by concern below.
 
 ## Primary LLM
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: google-gemma-4-26b-a4b-it) — Primary LLM for Q&A, research, and chat. Recommended: Gemma4 26B A4B — a blazing-fast 26B/4B-active MoE benched faster than MiniMax-M3 at similar quality, ideal for retrieval. MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff
+- `OPENAI_API_KEY`, `OPENAI_MODEL` (default: qwen3-6-35b-a3b) — Primary LLM for Q&A, research, and chat. Recommended: Qwen3.6 35B A3B — a blazing-fast 35B/3B-active MoE, ideal for retrieval. MiniMax M3 can give slightly better results but costs the system its snappiness — not a worthwhile tradeoff
 - `OPENAI_API_BASE` — for LiteLLM-compatible providers
 - `LLM_REQUEST_TIMEOUT_SECONDS` (default: 360), `LLM_MAX_RETRIES` (default: 2) — transport limits applied by the `llm_config` client factories to every LLM client (unless the call site passes its own). Replaces the SDK's 600s default so a hung provider connection can't pin an extraction slot for 10 minutes. `0` timeout restores the SDK default; streaming reads are bounded between chunks, not whole-stream. Since 2026-07-09 the graph-extractor tier clients (main/extraction/relationship) no longer pass their own values — they used to hardcode 120s/2 retries, which shadowed this env: every "361s batch timeout" in the field was actually 3×120s SDK attempts re-sending the same large prompt into a saturated endpoint. Extraction calls whose caller owns the retry strategy (entity batch split-retry, per-chunk single-chunk fallback) now go through `max_retries=0` one-shot twins (`_oneshot_async_client`); 429s on the entity path are requeued whole with bounded exponential backoff instead of SDK-retried.
 - `OPENAI_MAX_OUTPUT_TOKENS` (default: 8000) — floor of the output-token budget chain. Sub-tier `*_MAX_OUTPUT_TOKENS` knobs inherit when set to 0. 8000 is generous enough that verbose-XML models (Qwen3-family) don't truncate `<relationship>` output; tighter models simply finish under cap with no cost penalty. See [Budget Fallback Chain](#budget-fallback-chain).
-- `OPENAI_MAX_CONTEXT` (default: 256000 since 2026-07-09, was 32768) — floor of the input-context budget chain, sized to the recommended primary (Gemma4 26B A4B, the retrieval agent's working context). `GRAPH_EXTRACTION_MAX_CONTEXT` ships its own real default (16000) and only inherits on explicit 0 — the inherited value is clamped at 48000. `RELATIONSHIP_MAX_CONTEXT` inherits the extraction budget when 0.
+- `OPENAI_MAX_CONTEXT` (default: 256000 since 2026-07-09, was 32768) — floor of the input-context budget chain, sized to the recommended primary (Qwen3.6 35B A3B, the retrieval agent's working context). `GRAPH_EXTRACTION_MAX_CONTEXT` ships its own real default (16000) and only inherits on explicit 0 — the inherited value is clamped at 48000. `RELATIONSHIP_MAX_CONTEXT` inherits the extraction budget when 0.
 
 ## Extraction LLM
 
@@ -101,8 +101,8 @@ The regex parser handles same-family minor releases automatically (e.g. `gpt-5.8
 
 Recommended minimal config when running a 3-tier stack (= what `.env.recommended` ships):
 ```env
-OPENAI_MODEL=google-gemma-4-26b-a4b-it   # primary / agentic (256K window)
-OPENAI_MAX_CONTEXT=256000                # Gemma4 26B A4B full input window (= code default since 2026-07-09)
+OPENAI_MODEL=qwen3-6-35b-a3b   # primary / agentic (256K window)
+OPENAI_MAX_CONTEXT=256000                # Qwen3.6 35B A3B full input window (= code default since 2026-07-09)
 GRAPH_EXTRACTION_MODEL=qwen3-6-27b  # extraction + (inherited) relationship (256K window)
 VISION_MODEL=qwen3-6-27b            # image analysis (does NOT inherit from extraction; api_base/api_key inherit from OPENAI_*)
 EMBEDDING_MODEL=text-embedding-3-small   # 1536-dim; model + dimension are the code defaults
