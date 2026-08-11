@@ -265,11 +265,15 @@ class TestRouterWiring:
             raise AssertionError("anydoc fast path ran despite engine='docling'")
 
         monkeypatch.setattr(anydoc_converter, "convert_with_anydoc", _must_not_run)
-        # qa-venv has no docling and no service URL — reaching the docling
-        # path raises the actionable slim-image RuntimeError, which proves
-        # the fast path was skipped without needing docling installed.
+        # Patch the docling seam to raise instead of relying on docling being
+        # absent from the venv (CI installs the full ML stack, so the real
+        # conversion would run and succeed). Reaching the seam proves the
+        # fast path was skipped.
+        docling = AsyncMock(side_effect=RuntimeError("docling unavailable (test)"))
+        monkeypatch.setattr(dp, "_convert_document_docling", docling)
         with pytest.raises(RuntimeError, match="docling"):
             await dp._convert_document_subprocess(text_pdf, False, engine="docling")
+        docling.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_fast_path_decline_falls_through(self, tmp_path, monkeypatch):
@@ -278,10 +282,13 @@ class TestRouterWiring:
         monkeypatch.setattr(
             anydoc_converter, "convert_with_anydoc", lambda *a: None
         )
+        docling = AsyncMock(side_effect=RuntimeError("docling unavailable (test)"))
+        monkeypatch.setattr(dp, "_convert_document_docling", docling)
         p = tmp_path / "scan.pdf"
         p.write_bytes(build_scanned_pdf())
         with pytest.raises(RuntimeError, match="docling"):
             await dp._convert_document_subprocess(str(p), False)
+        docling.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

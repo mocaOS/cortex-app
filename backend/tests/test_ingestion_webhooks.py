@@ -192,9 +192,21 @@ class TestWebhookAdminEndpoints:
         ).status_code == 403
 
     def test_create_returns_secret_once_and_list_never(
-        self, client, mock_neo4j, _isolate_env
+        self, client, mock_neo4j, _isolate_env, monkeypatch
     ):
         _isolate_env.enable_webhooks = True
+        # Pin the crypto singleton to a throwaway key: encryption must not
+        # depend on the host env (CI has no ENCRYPTION_KEY → plaintext
+        # passthrough; a dev .env may have one).
+        from cryptography.fernet import Fernet
+
+        from app.services import crypto_service
+
+        monkeypatch.setattr(
+            crypto_service,
+            "_crypto_service",
+            crypto_service.CryptoService(Fernet.generate_key().decode()),
+        )
         mock_neo4j.create_webhook_endpoint.return_value = {
             "id": "wh1", "url": "https://x.test/h", "events": [],
             "description": "", "active": True, "created_at": "2026-08-10",
@@ -204,6 +216,7 @@ class TestWebhookAdminEndpoints:
         assert r.json()["secret"].startswith("whsec_")
         # stored encrypted, not plaintext
         stored = mock_neo4j.create_webhook_endpoint.call_args.args[-1]
+        assert stored.startswith(crypto_service.ENC_PREFIX)
         assert not stored.startswith("whsec_")
 
         mock_neo4j.list_webhook_endpoints.return_value = [{
