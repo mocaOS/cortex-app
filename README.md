@@ -18,7 +18,7 @@
 
 ## What is Cortex?
 
-**Cortex** is institutional memory for the agentic era. A self-hosted knowledge base that humans and agents read, write and reason over together effectively forming the collective memory layer of your AI stack. Knowledge is sycned from every source your organization produces: documents, repositories and connected apps.
+**Cortex** is institutional memory for the agentic era. A self-hosted knowledge base that humans and agents read, write and reason over together effectively forming the collective memory layer of your AI stack. Knowledge is synced from every source your organization produces: documents, repositories and connected apps.
 
 LLM-assisted workflows extract the entities and relationships between them into a **scalable knowledge graph** that grows smarter with every source you add. Everything can be queried through a REST API, TypeScript SDK, and MCP to be leveraged by any agent and app you are running.
 
