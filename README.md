@@ -12,13 +12,15 @@
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat&logo=next.js&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat&logo=apache&logoColor=white)
 
-[**Documentation**](https://docs.cortex.eco) · [**Skills for Agents**](https://cortexskills.org) · [**Quickstart**](https://docs.cortex.eco/quickstart) · [**LLM Templates**](https://docs.cortex.eco/llm-templates)
+[**Documentation**](https://docs.cortex.eco) · [**Skills for Agents**](https://cortexskills.org) · [**Quickstart**](https://docs.cortex.eco/quickstart)
 
 </div>
 
 ## What is Cortex?
 
-**Cortex** is institutional memory for the agentic era — a self-hosted knowledge base that humans and agents read, write, and reason over together, and the collective memory layer of your AI stack. Knowledge flows in from every source your organization produces — documents, repositories, crawled pages, synced apps — and LLM-assisted workflows extract the entities and relationships between them into a **scalable knowledge graph** that grows smarter with every source you add. Everything flows back out through a REST API, TypeScript SDK, and MCP — into every agent and app you run.
+**Cortex** is institutional memory for the agentic era — a self-hosted knowledge base that humans and agents read, write, and reason over together, and the collective memory layer of your AI stack. Knowledge flows in from every source your organization produces — documents, repositories, crawled pages, synced apps.
+
+LLM-assisted workflows extract the entities and relationships between them into a **scalable knowledge graph** that grows smarter with every source you add. Everything flows back out through a REST API, TypeScript SDK, and MCP — to be leveraged by every agent and app you are running.
 
 Think about where memory lives in your AI stack:
 
@@ -28,7 +30,7 @@ Think about where memory lives in your AI stack:
 | Agent harness | **Persistent** | Personal memories of that agent |
 | **Cortex** | **Collective** | Every person, agent, and app in your organization |
 
-Point Cortex at one enthusiast's notes and it becomes their personal memory. Point it at a company or a community and it becomes *institutional* memory: every member — and every agent they run — draws on the shared understanding, and every contribution compounds it.
+
 
 ### Your knowledge is the moat
 
