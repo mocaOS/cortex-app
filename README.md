@@ -24,7 +24,7 @@ Think about where memory lives in your AI stack:
 
 | Layer | Memory | Scope |
 |-------|--------|-------|
-| Context window | **Short-term** | One session — gone when it ends |
+| Context window | **Short-term** | Doesn't survive the session |
 | Agent harness | **Persistent** | Personal memories of that agent |
 | **Cortex** | **Collective** | Every person, agent, and app in your organization |
 
