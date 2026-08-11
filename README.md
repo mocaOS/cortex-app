@@ -207,10 +207,8 @@ The installer prints these when it finishes — plus a Chat URL if you chose to 
 | Resource | What you'll find |
 |----------|------------------|
 | [**docs.cortex.eco**](https://docs.cortex.eco) | The documentation site — [Quickstart](https://docs.cortex.eco/quickstart), [LLM Deployment Templates](https://docs.cortex.eco/llm-templates), [Configuration Reference](https://docs.cortex.eco/configuration) (all 160+ env vars), feature guides, and the interactive API reference |
-| [`handbook/`](handbook/) | In-repo deep-dive chapters: getting started, configuration, web interface, deployment, every subsystem |
-| [`BACKEND_API_DOCUMENTATION.md`](BACKEND_API_DOCUMENTATION.md) | Complete backend API documentation in one file |
-| [`documentation/apis/openapi.yaml`](documentation/apis/openapi.yaml) | The authoritative OpenAPI contract (also served at `/docs` and `/redoc` in dev) |
 | [**cortexskills.org**](https://cortexskills.org) | `SKILL.md` files for AI agents — ground-truth API knowledge for building integrations, self-hosting (`setup`), search, auth, MCP, and more |
+| [**cortex.eco/ask**](https://cortex.eco/ask) | Our very own Support Cortex which syncs the Handbook and Documentation folder from this repo into an interactive Q+A interface |
 
 ## API
 
