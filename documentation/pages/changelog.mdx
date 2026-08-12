@@ -28,8 +28,6 @@ A pass over an external security report closed the remaining unguarded server-si
 - **Git clone re-validated at sync time** — the clone/fetch target is re-resolved through the SSRF guard on every sync, narrowing the DNS-rebinding window (git still resolves DNS itself, so container-level egress filtering remains the complete answer for the clone path).
 - **Library import survives crafted archives** — a hostile `file_path` (`..`) no longer aborts the whole import: the document node imports file-less with a warning. And two documents sharing a basename no longer silently overwrite each other on disk — restored files are named `{doc_id}_{basename}` with each copy failure-isolated to a warning. Previously imported libraries are unaffected.
 - **Weak app-token secret warning** — with Apps enabled, boot logs a loud warning when the app-token signing secret (`SESSION_SECRET`, falling back to `ENCRYPTION_KEY`/`ADMIN_API_KEY`) is shorter than 32 characters outside production.
-- **Web Import redirect chains pre-validated** — server-side redirect chains are now walked hop-by-hop through the same SSRF policy before crawl4ai receives the (final, validated) URL; previously only the initial URL was checked. Legitimate public redirects keep working unchanged.
-- **Rate limiting resolves the real client IP behind reverse proxies** — the shipped backend CMDs now run uvicorn with `--proxy-headers`, so per-IP buckets and request logs see the actual client instead of the proxy address. No behavior change unless `RATE_LIMIT_QPM` is set; pin `UVICORN_FORWARDED_ALLOW_IPS` (default `*`) if the backend port is ever published directly.
 
 ---
 

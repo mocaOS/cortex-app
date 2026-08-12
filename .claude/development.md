@@ -73,7 +73,7 @@ On a host running **multiple** cortex stacks (Dokploy `dokploy-network`, Coolify
 
 ### Standalone Docker
 
-`docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`). The backend CMD runs uvicorn with `--proxy-headers --forwarded-allow-ips ${UVICORN_FORWARDED_ALLOW_IPS:-*}`, so `request.client.host` carries the real client IP from nginx's `X-Forwarded-For` (per-IP rate-limit bucket, request logs). The backend port is never published in the shipped stacks, so the `*` default is safe; pin `UVICORN_FORWARDED_ALLOW_IPS` to the proxy subnet(s) when self-publishing the backend (also flips uvicorn to the spoof-resistant right-to-left trust walk — see [`environment.md`](environment.md)).
+`docker-compose.prod.yml` with Nginx reverse proxy (`nginx/nginx.conf`).
 
 ### Container user & volume ownership (prod)
 

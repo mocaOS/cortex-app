@@ -93,13 +93,6 @@ EXPOSE 8000
 # Increase workers via UVICORN_WORKERS env var if you have enough RAM (each worker uses ~1-2GB)
 # --timeout-graceful-shutdown drains in-flight requests/SSE streams on SIGTERM
 # (pair with compose stop_grace_period > this value).
-# --proxy-headers + --forwarded-allow-ips: the backend only ever sits behind a
-# reverse proxy in the shipped stacks (its port is unpublished), so the real
-# client IP from X-Forwarded-For is what request.client.host should carry —
-# the per-IP rate-limit bucket and request logs key on it. Pin
-# UVICORN_FORWARDED_ALLOW_IPS to the proxy subnet(s) if the backend is ever
-# published directly (spoof-resistant right-to-left trust walk; see
-# environment.md). Default * trusts any peer, safe while unpublished.
 # The CMD is passed as args to docker-entrypoint.sh, which execs it via gosu as UID 1000.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1} --timeout-graceful-shutdown 30 --proxy-headers --forwarded-allow-ips ${UVICORN_FORWARDED_ALLOW_IPS:-*}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1} --timeout-graceful-shutdown 30"]
