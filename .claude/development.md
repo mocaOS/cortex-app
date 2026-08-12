@@ -10,6 +10,14 @@ docker compose up --build
 docker compose -f docker-compose.prod.yml up --build
 ```
 
+**Backend builds default to CPU-only torch.** Both `docker-compose.yml` and
+`docker-compose.prod.yml` pass `TORCH_VARIANT=${TORCH_VARIANT:-cpu}` to the
+backend build, skipping the ~2.5GB of `nvidia-*` CUDA wheels PyPI torch pulls
+in (nothing in the container requests GPU devices — Docling/reranker/embedder
+all run the CPU path regardless). Set `TORCH_VARIANT=cuda` in `.env` only for
+a GPU server. The bare `docker build` ARG default stays `cuda` so untouched
+builds are unchanged.
+
 **Frontend memory limits are mode-dependent.** Dev mode runs the Turbopack
 compiler in-process plus `@sentry/nextjs` instrumentation and peaks well past
 1g while compiling routes — the dev compose defaults `FRONTEND_MEM_LIMIT` to

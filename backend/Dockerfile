@@ -17,11 +17,28 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
+# torch flavor (mirrors Dockerfile.prod):
+#   cuda — PyPI wheels, bundles ~2.5GB of nvidia-* deps
+#   cpu  — CPU-only wheels, ~2.5GB smaller
+# Nothing in this image installs the CUDA runtime or requests GPU devices, so
+# docker-compose.yml defaults the build to `cpu`. The ARG default stays `cuda`
+# so a bare `docker build` is unchanged.
+ARG TORCH_VARIANT=cuda
+
 # Copy requirements first for better caching (requirements.txt -r's the split files)
 COPY requirements.txt requirements-base.txt requirements-ml.txt ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies. CPU torch must be installed BEFORE
+# requirements-ml.txt: with --extra-index-url pip resolves the highest version
+# across indexes and would still take the CUDA wheel, so we satisfy the
+# dependency from the CPU-only index up front.
+RUN pip install --no-cache-dir -r requirements-base.txt && \
+    if [ "$TORCH_VARIANT" = "cpu" ]; then \
+        pip install --no-cache-dir \
+            --index-url https://download.pytorch.org/whl/cpu \
+            torch torchvision; \
+    fi && \
+    pip install --no-cache-dir -r requirements-ml.txt
 
 # Deterministic HF cache location, independent of container user.
 # Mount a volume here in production to keep the cache across container restarts.

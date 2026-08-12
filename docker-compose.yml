@@ -35,6 +35,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # CPU-only torch wheels (~2.5GB smaller, no nvidia-* stack). Inference
+        # runs on remote APIs; local ML (docling/easyocr/reranker) works on
+        # CPU. Set TORCH_VARIANT=cuda in .env only for GPU servers.
+        - TORCH_VARIANT=${TORCH_VARIANT:-cpu}
     container_name: cortex-backend
     restart: unless-stopped
     # Hard memory ceiling: a runaway (e.g. a large export/import) self-OOMs inside
