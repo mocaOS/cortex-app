@@ -14,7 +14,7 @@ Skills are SKILL.md files with YAML frontmatter (name, description, license, met
 ## Discovery & Installation
 
 - Skills discovered from `.agents/skills/` directory on startup
-- Installable from direct URLs or skills.sh registry (`GET https://skills.sh/api/search?q={query}&limit=20`)
+- Installable from direct URLs or skills.sh registry (`GET https://skills.sh/api/search?q={query}&limit=20`). Install-from-URL passes the SSRF guard (same policy as skill HTTP execution — see Legacy Tool Execution); the registry path is host-pinned to `raw.githubusercontent.com`.
 - Neo4j `Skill` nodes track metadata, enabled state, and `config_schema` (JSON)
 
 ## Auto-Activation Pattern
@@ -95,6 +95,8 @@ Config models in `models.py`: `SkillConfigVariable`, `SkillConfigSchema`, `Skill
 ## Legacy Tool Execution
 
 Skill tool names namespaced as `skill__{skill_id}__{tool_name}`. Legacy tool execution via `SkillService.execute_skill_tool()`: HTTP tools use httpx with env var substitution (only `SKILL_*` vars for security), script tools gated by `ENABLE_SKILL_SCRIPTS` (disabled by default).
+
+**SSRF guard (tools.json HTTP execution)** — `_execute_http_tool` validates `execution.url` through `services/ssrf_guard.py` before connecting, applying the *same* policy as the built-in `http_request` tool (`SKILL_HTTP_ALLOW_PRIVATE`, default `false`, blocks private/loopback/link-local/metadata; `SKILL_HTTP_ALLOWED_HOSTS` exempts named hosts). The URL is skill-authored content that executes on ordinary user questions once an admin enables the skill, so an unguarded tool could reach cloud metadata or internal services. Redirects are not followed here (unlike `http_request`), so the initial URL is the only hop; a blocked call returns the same `Error: request blocked (...)` tool-result string the researcher tool produces.
 
 ## Frontend
 

@@ -157,6 +157,23 @@ class GitConnectorService:
     async def _clone_or_fetch(self, connection_id: str, clone_url: str, branch: str,
                               host: str, token: str) -> str:
         """Ensure the work tree exists and the remote branch is fetched. Returns NEW head sha."""
+        # Re-validate the clone target at sync time: the provider REST guard
+        # ran when the connection was verified, but DNS can be rebound (or
+        # GIT_HTTP_ALLOW_PRIVATE flipped) afterwards. This narrows the window;
+        # git still resolves DNS itself for the subprocess, so container-level
+        # egress filtering remains the complete answer (documented residual).
+        # The wiki clone shares the provider host, so it is covered by the
+        # same check. Error text carries only host/IP, never the token URL.
+        from app.services import ssrf_guard
+        try:
+            await asyncio.to_thread(
+                ssrf_guard.validate_url,
+                clone_url,
+                allow_private=self.settings.git_http_allow_private,
+                allowlist=parse_insecure_hosts(),
+            )
+        except ssrf_guard.SSRFError as e:
+            raise GitSyncError(f"clone target blocked by SSRF guard: {e}")
         repo_dir = self._repo_dir(connection_id)
         depth = max(1, int(self.settings.git_clone_depth or 1))
         tls = self._tls_git_config(host)

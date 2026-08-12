@@ -74,7 +74,7 @@ A hard requirement, satisfied by construction. The controls live where the opera
 3. **Cache-bypass per request** (`c="0"`) so one tenant is never served another's cached page.
 4. **Network isolation + token** — crawl4ai binds a private interface, firewalled off the public net; `CRAWL_SERVICE_TOKEN` ↔ crawl4ai `CRAWL4AI_API_TOKEN` (`security.api_token`). For crawl4ai ≥ 0.9.0 the token is required (tokenless it binds `127.0.0.1` only).
 
-There is no crawl-history surface to leak; 1–3 make cross-tenant visibility impossible, 4 controls who can call it. **SSRF**: crawl4ai fetches any URL given — on shared hosts, add egress rules blocking RFC1918 + `169.254.169.254` at the network layer (see `cortex-helper/README.md`).
+There is no crawl-history surface to leak; 1–3 make cross-tenant visibility impossible, 4 controls who can call it. **SSRF**: cortex-app validates only the **initial** URL through `ssrf_guard` before handing it over (`WEB_IMPORT_ALLOW_PRIVATE`, default `true` — deliberate, so intranet crawls keep working; loopback/link-local/metadata always refused). crawl4ai then fetches the URL **and follows any redirects unguarded** in its own container — a public URL can 3xx-bounce to metadata/internal and cortex-app cannot see the hop. On shared hosts the complete answer is network-layer egress rules blocking RFC1918 + `169.254.169.254` on the crawl4ai container (see `cortex-helper/README.md`); the app-level guard is defense-in-depth for the first hop only.
 
 ## Frontend (Documents-page modal)
 

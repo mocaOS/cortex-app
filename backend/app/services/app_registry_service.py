@@ -104,10 +104,24 @@ class AppRegistryService:
         if expected_size <= 0 or expected_size > cap:
             raise RegistryError(400, f"Artifact size exceeds the {settings.app_max_package_mb} MB cap")
 
+        # SSRF guard: the artifact URL comes from the catalog (operator-configured
+        # but third-party-served), and registry releases are public by design, so
+        # private targets are always refused. Every redirect hop is re-validated
+        # via the request hook, since release URLs legitimately 3xx to CDN hosts.
+        from app.services.ssrf_guard import SSRFError, async_request_hook, validate_url
+        try:
+            await asyncio.to_thread(validate_url, url, allow_private=False)
+        except SSRFError as e:
+            raise RegistryError(400, f"Artifact URL not allowed: {e}")
+
         chunks: List[bytes] = []
         received = 0
         try:
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=60.0,
+                follow_redirects=True,
+                event_hooks={"request": [async_request_hook(allow_private=False)]},
+            ) as client:
                 async with client.stream("GET", url) as response:
                     if response.status_code != 200:
                         raise RegistryError(502, f"Artifact fetch failed: {response.status_code}")
@@ -118,6 +132,8 @@ class AppRegistryService:
                                 502, "Artifact is larger than its listed size — refusing"
                             )
                         chunks.append(chunk)
+        except SSRFError as e:
+            raise RegistryError(502, f"Artifact redirect target not allowed: {e}")
         except httpx.HTTPError as e:
             raise RegistryError(502, f"Artifact fetch failed: {type(e).__name__}")
 

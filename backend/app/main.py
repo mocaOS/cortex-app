@@ -793,6 +793,22 @@ async def lifespan(app: FastAPI):
     # the schedule poller (recurring headless tasks, e.g. a paperless sync).
     app_task_scheduler = None
     if settings.enable_apps:
+        # App tokens and share-link grants are HMAC-signed with the
+        # SESSION_SECRET → ENCRYPTION_KEY → ADMIN_API_KEY fallback chain
+        # (app_service._token_secret). Production is guarded by
+        # _enforce_production_secrets; elsewhere a short effective secret
+        # makes those tokens forgeable, so warn loudly at boot.
+        token_material = (
+            settings.session_secret or settings.encryption_key or settings.admin_api_key
+        )
+        if len(token_material or "") < 32:
+            logger.warning(
+                "Apps are enabled but the app-token signing secret "
+                "(SESSION_SECRET, falling back to ENCRYPTION_KEY/ADMIN_API_KEY) "
+                "is shorter than 32 characters — app tokens and share-link "
+                "grants are forgeable with a guessable key. Set SESSION_SECRET "
+                "to a strong random value (e.g. `openssl rand -hex 32`)."
+            )
         try:
             from app.services.app_task_service import get_app_task_service
 

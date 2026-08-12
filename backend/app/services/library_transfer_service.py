@@ -106,6 +106,44 @@ def _count_ndjson(zf: zipfile.ZipFile, filename: str) -> int:
     return count
 
 
+_SAFE_DOC_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_import_basename(old_path: str) -> Optional[str]:
+    """Plain basename of an exported ``file_path``, or None when unusable.
+
+    An export archive is admin-supplied, so ``documents.ndjson`` can carry a
+    crafted ``file_path`` whose basename is empty or ``..`` — restoring to
+    such a name raises ``IsADirectoryError`` (previously aborting the whole
+    import) and is never a legitimate file. ``Path.name`` already strips
+    directories, so only the empty/dot names and NUL need rejecting.
+    """
+    name = Path(old_path).name
+    if not name or name in (".", "..") or "\x00" in name:
+        return None
+    return name
+
+
+def _doc_scoped_filename(doc_id: str, fname: str, used: set) -> str:
+    """Traversal-free, per-import-unique destination name for a restored file.
+
+    Export stores bytes under ``files/{doc_id}{ext}`` but the restore used the
+    raw basename as the on-disk name, so two documents sharing a basename
+    (``a/report.pdf`` + ``b/report.pdf``) silently overwrote each other and
+    both nodes ended up serving one file's bytes. Scoping the name to the
+    (character-sanitized) doc id makes collisions structurally impossible; the
+    counter is belt-and-braces for two ids that sanitize to the same string.
+    """
+    safe_id = _SAFE_DOC_ID_CHARS.sub("_", doc_id) or "doc"
+    name = f"{safe_id}_{fname}"
+    n = 1
+    while name in used:
+        n += 1
+        name = f"{safe_id}_{n}_{fname}"
+    used.add(name)
+    return name
+
+
 class LibraryTransferService:
     """Handles full library export and import."""
 
@@ -457,15 +495,30 @@ class LibraryTransferService:
                 update_progress(task_id, step, total_steps, f"Importing {len(documents)} documents...")
                 docs_imported = 0
                 if documents:
-                    # Remap file paths to this instance
+                    # Remap file paths to this instance. The basename comes
+                    # from an untrusted archive and the on-disk name is scoped
+                    # to the doc id — see _safe_import_basename /
+                    # _doc_scoped_filename (hostile-name abort + basename
+                    # collision hardening).
+                    used_file_names: set = set()
                     for doc in documents:
                         old_path = doc.get("file_path", "")
                         if old_path:
-                            fname = Path(old_path).name
-                            if doc.get("is_custom_input"):
-                                doc["file_path"] = str(Path(self.settings.custom_inputs_dir) / fname)
+                            fname = _safe_import_basename(old_path)
+                            if fname is None:
+                                warnings.append(
+                                    f"Document '{doc.get('filename', doc.get('id', ''))}' has an "
+                                    f"unsafe file_path ({old_path!r}); imported without its file"
+                                )
+                                doc["file_path"] = ""
                             else:
-                                doc["file_path"] = str(Path(self.settings.upload_dir) / fname)
+                                unique = _doc_scoped_filename(
+                                    str(doc.get("id", "")), fname, used_file_names
+                                )
+                                if doc.get("is_custom_input"):
+                                    doc["file_path"] = str(Path(self.settings.custom_inputs_dir) / unique)
+                                else:
+                                    doc["file_path"] = str(Path(self.settings.upload_dir) / unique)
                         # Set processing status to completed (already processed)
                         doc["processing_status"] = "completed"
                     docs_imported = self.neo4j.import_documents_batch(documents)
@@ -481,22 +534,35 @@ class LibraryTransferService:
 
                 for doc in documents:
                     doc_id = doc.get("id", "")
-                    old_file_path = doc.get("file_path", "")
-                    if not old_file_path:
+                    new_file_path = doc.get("file_path", "")
+                    if not new_file_path:
                         continue
-                    fname = Path(old_file_path).name
                     # Find the file in ZIP - look for files/{doc_id}.ext
                     zip_entries = [n for n in zf.namelist() if n.startswith(f"files/{doc_id}")]
                     if not zip_entries:
                         warnings.append(f"Missing file for document '{doc.get('filename', doc_id)}'")
                         continue
                     zip_entry = zip_entries[0]
-                    if doc.get("is_custom_input"):
-                        dest = custom_inputs_dir / fname
-                    else:
-                        dest = upload_dir / fname
-                    with zf.open(zip_entry) as src, open(str(dest), "wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                    # dest is the remapped path built above from sanitized
+                    # components; re-prove containment before writing anyway
+                    # (mirrors the skill-restore check in step 17).
+                    try:
+                        resolved = Path(new_file_path).resolve()
+                        if resolved.parent not in {upload_dir.resolve(), custom_inputs_dir.resolve()}:
+                            warnings.append(
+                                f"Skipping file restore outside the target directory for "
+                                f"document '{doc.get('filename', doc_id)}'"
+                            )
+                            continue
+                        with zf.open(zip_entry) as src, open(str(resolved), "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                    except OSError as e:
+                        # One bad entry must not abort the whole import.
+                        warnings.append(
+                            f"Could not restore file for document "
+                            f"'{doc.get('filename', doc_id)}': {e}"
+                        )
+                        continue
                     files_imported += 1
 
                 # Manifest stats drive progress totals so we never pre-read the

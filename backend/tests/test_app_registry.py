@@ -21,6 +21,20 @@ def registry_env(apps_env, monkeypatch):  # noqa: F811
 
     registry_module._registry_service = None
 
+    # The fake catalog host doesn't resolve in DNS, so exempt exactly it from
+    # the artifact-fetch SSRF guard — every other URL still hits the real
+    # guard (the metadata-IP test below depends on that).
+    from app.services import ssrf_guard
+
+    real_validate = ssrf_guard.validate_url
+
+    def fake_validate(url, *, allow_private=False, allowlist=None):
+        if "github.example" in str(url):
+            return
+        return real_validate(url, allow_private=allow_private, allowlist=allowlist)
+
+    monkeypatch.setattr(ssrf_guard, "validate_url", fake_validate)
+
     manifest = make_manifest(id="registry-app")
     zip_bytes = make_zip(manifest)
     listing = {
@@ -109,6 +123,19 @@ def test_registry_install_refuses_size_lie(registry_env, client):
     resp = client.post("/api/admin/apps/registry/install", json={"slug": "registry-app"})
     assert resp.status_code == 502
     assert "larger than its listed size" in resp.json()["detail"]
+
+
+def test_registry_install_refuses_internal_artifact_url(registry_env, client):
+    # SSRF guard: the artifact URL comes from the catalog, and registry
+    # releases are public by design — private/metadata targets are refused
+    # before any fetch (redirect hops are re-validated via the request hook).
+    registry_env["index"]["apps"][0]["artifact"]["url"] = (
+        "https://169.254.169.254/registry-app-1.0.0.zip"
+    )
+    resp = client.post("/api/admin/apps/registry/install", json={"slug": "registry-app"})
+    assert resp.status_code == 400
+    assert "not allowed" in resp.json()["detail"]
+    assert client.get("/api/admin/apps").json() == []  # nothing was installed
 
 
 def test_registry_unknown_slug_404(registry_env, client):

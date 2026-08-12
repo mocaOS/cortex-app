@@ -336,6 +336,20 @@ class SkillService:
 
     async def install_from_url(self, url: str) -> dict:
         """Download and install a skill from a URL pointing to a SKILL.md file."""
+        # SSRF guard: admin-triggered, but the URL is arbitrary — same egress
+        # policy as skill HTTP execution. Single hop: redirects are not
+        # followed, so only the initial URL needs validation.
+        from app.services.ssrf_guard import SSRFError, validate_url
+        try:
+            await asyncio.to_thread(
+                validate_url,
+                url,
+                allow_private=self.settings.skill_http_allow_private,
+                allowlist=self.settings.skill_http_allowed_hosts,
+            )
+        except SSRFError as e:
+            raise ValueError(f"Skill URL not allowed: {e}")
+
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url)
             resp.raise_for_status()
@@ -687,6 +701,23 @@ class SkillService:
             headers[k] = _substitute_env_vars(v)
 
         timeout = self.settings.skill_http_timeout
+
+        # SSRF guard: the URL comes from an installed skill's tools.json —
+        # user-influenced content (registry / install-from-URL) that reaches
+        # execution via ordinary questions once the skill is enabled — so the
+        # same egress policy applies as for the agent's built-in http_request
+        # tool. Redirects are not followed, so the initial URL is the only hop.
+        from app.services.ssrf_guard import SSRFError, validate_url
+        try:
+            await asyncio.to_thread(
+                validate_url,
+                url,
+                allow_private=self.settings.skill_http_allow_private,
+                allowlist=self.settings.skill_http_allowed_hosts,
+            )
+        except SSRFError as e:
+            logger.warning(f"Skill HTTP tool blocked by SSRF guard: {method} {url} → {e}")
+            return f"Error: request blocked ({e})"
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

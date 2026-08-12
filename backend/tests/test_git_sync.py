@@ -260,3 +260,29 @@ def test_sync_failure_manual_connection_gets_no_due_date(monkeypatch):
     assert fake.state["sync_status"] == "error"
     assert fake.state["consecutive_sync_failures"] == 1
     assert "next_sync_due" not in fake.state
+
+
+def test_clone_or_fetch_revalidates_target_at_sync_time(monkeypatch):
+    """The clone/fetch subprocess is re-gated by the SSRF guard at sync time:
+    a connection created while its host resolved publicly must not clone from
+    a link-local/metadata address after DNS rebinding. The guard fires before
+    any git subprocess is spawned."""
+    from app.services.git_connector_service import GitSyncError
+
+    spawned = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def spy(*args, **kwargs):
+        spawned.append(args)
+        return await real_exec(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+
+    svc = GitConnectorService()
+    with pytest.raises(GitSyncError, match="SSRF guard"):
+        asyncio.run(
+            svc._clone_or_fetch(
+                "c1", "http://169.254.169.254/x.git", "main", "169.254.169.254", ""
+            )
+        )
+    assert spawned == []  # no git process ever launched
