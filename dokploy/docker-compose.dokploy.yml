@@ -435,6 +435,16 @@ services:
       - SUPERADMIN_PASSWORD=${ADMIN_PASSWORD}
       # 32 random bytes, base64 — encrypts minted backend keys in SQLite
       - APP_ENCRYPTION_KEY=${CHAT_APP_ENCRYPTION_KEY}
+      # Self-registration (chat default: ON; set "false" on public instances).
+      - ENABLE_REGISTRATION=${ENABLE_REGISTRATION:-}
+      # Public demo mode (optional): DEMO_MODE=true bootstraps a shared demo
+      # user (default test@test.com/test), prefills the login form, stores its
+      # chats in the visitor's browser, and locks its per-user mutations.
+      # See cortex-chat's .env.example for full semantics.
+      - DEMO_MODE=${DEMO_MODE:-}
+      - DEMO_EMAIL=${DEMO_EMAIL:-}
+      - DEMO_PASSWORD=${DEMO_PASSWORD:-}
+      - DEMO_GROUP=${DEMO_GROUP:-}
     expose:
       - "3000"
     volumes:
