@@ -935,7 +935,7 @@ async def lifespan(app: FastAPI):
 # it must never drift: scripts/check-version-sync.mjs compares it to the root
 # package.json and fails the release if they disagree. Distinct from the FastAPI
 # `version` below, which is the API contract's version, not the product's.
-CORTEX_VERSION = "1.1.1"
+CORTEX_VERSION = "1.2.0"
 
 # Interactive docs are disabled in production by default (EXPOSE_API_DOCS=auto)
 # so a directly-exposed backend doesn't leak its full API schema to anonymous

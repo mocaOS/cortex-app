@@ -7,6 +7,16 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## August 12, 2026
+
+### Release 1.2.0: everything above, installable
+
+Cortex **1.2.0** is tagged and on GHCR. It ships the whole run of work since 1.1.1 as one tested stack: the API/SDK release of August 10 (the TypeScript SDK, server-side sessions, remote MCP, `POST /api/context`, the `depth` dial, webhooks, structured answers, the consolidation scheduler and the ergonomics pass) and the August 6 conversion fast path (anydoc routing, the >1000-chunk truncation fix, the scanned-PDF OCR retry). The cortex-chat pin is unchanged at **1.1.0**. An existing self-host install gets all of it with `npx @mocaos/cortex update`.
+
+- **New default primary model: Qwen3.6 35B A3B** (replacing Gemma4 26B A4B) — `qwen3-6-35b-a3b` on Venice, `qwen/qwen3.6-35b-a3b:nitro` on OpenRouter, 262K-native context. This is the *default* for new installs; an existing `.env` with an explicit `OPENAI_MODEL` keeps whatever it names.
+
+---
+
 ## August 10, 2026
 
 **Cortex gets an official TypeScript SDK.** Until today, every integration talked to Cortex through its own hand-rolled client — a bash helper here, a Python plugin there, a TypeScript wrapper in the MCP server — each independently rediscovering the same choreography: which endpoint honors deep research, how to parse the SSE stream, when the memory frame arrives, how collections resolve. [`@mocaos/cortex-client`](https://www.npmjs.com/package/@mocaos/cortex-client) ends that era: one typed, dependency-free package that owns the entire integration surface, informed by everything live agent-harness testing taught us about where clients go wrong. Alongside it, the API itself was reshaped so the SDK launches on a clean surface instead of wrapping workarounds — one depth dial instead of boolean flags, webhooks instead of polling, structured answers, and a knowledge graph that keeps itself fresh.
