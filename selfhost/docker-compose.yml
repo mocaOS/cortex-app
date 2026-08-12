@@ -138,6 +138,14 @@ services:
       - SUPERADMIN_PASSWORD=${ADMIN_PASSWORD}
       - APP_ENCRYPTION_KEY=${CHAT_APP_ENCRYPTION_KEY:?CHAT_APP_ENCRYPTION_KEY is required}
       - ENABLE_REGISTRATION=${ENABLE_REGISTRATION:-}
+      # Public demo mode — optional; DEMO_MODE=true bootstraps a shared demo
+      # user (default test@test.com/test), prefills the login form, stores its
+      # chats in the visitor's browser, and locks its per-user mutations.
+      # Other accounts are unaffected. See cortex-chat's .env.example.
+      - DEMO_MODE=${DEMO_MODE:-}
+      - DEMO_EMAIL=${DEMO_EMAIL:-}
+      - DEMO_PASSWORD=${DEMO_PASSWORD:-}
+      - DEMO_GROUP=${DEMO_GROUP:-}
       - APP_BASE_URL=${CHAT_BASE_URL:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}

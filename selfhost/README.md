@@ -96,6 +96,18 @@ OIDC_CLIENT_SECRET=...
 `OIDC_ISSUER_URL` = the feature is invisible. The chat superadmin
 (`ADMIN_EMAIL`) always keeps its password login as break-glass access.
 
+**Public demo mode (optional).** `DEMO_MODE=true` flips chat into a "try the
+product" instance: a shared demo user is bootstrapped at boot (default
+`test@test.com`/`test`, override with `DEMO_EMAIL`/`DEMO_PASSWORD`; its
+password is re-hashed from env every start), the login form comes prefilled,
+the demo user's chats are stored in the visitor's **browser** (localStorage)
+instead of the server, its per-user mutations (password/profile/personal
+personalities/projects/…) answer 403, and its chat turns are throttled per
+visitor IP. Other accounts on the instance are unaffected. `DEMO_GROUP`
+(group name) pins which collections the demo can search; on a public demo,
+set `ENABLE_REGISTRATION=false` too. Turning `DEMO_MODE` off disarms the
+demo login on the next boot. Incompatible with `OIDC_ONLY`.
+
 Chat's data stays in the `chat_data` volume either way.
 
 `CORTEX_CHAT_IMAGE` and `CHAT_APP_ENCRYPTION_KEY` stay set even with chat off:
