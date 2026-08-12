@@ -1,7 +1,7 @@
 {
   "name": "cortex",
   "private": false,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "scripts": {
     "test": "cd backend && .venv/bin/python -m pytest",
     "test:scripts": "node --test scripts/*.test.mjs",

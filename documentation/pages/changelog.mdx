@@ -9,6 +9,10 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## August 12, 2026
 
+### Release 1.2.1: the hardening pass, tagged
+
+Cortex **1.2.1** is tagged and on GHCR — a patch release shipping the security hardening pass below on top of 1.2.0. No API or schema changes, no new configuration; the cortex-chat pin stays at **1.1.0**. Existing self-host installs update with `npx @mocaos/cortex update`.
+
 ### Release 1.2.0: everything above, installable
 
 Cortex **1.2.0** is tagged and on GHCR. It ships the whole run of work since 1.1.1 as one tested stack: the API/SDK release of August 10 (the TypeScript SDK, server-side sessions, remote MCP, `POST /api/context`, the `depth` dial, webhooks, structured answers, the consolidation scheduler and the ergonomics pass) and the August 6 conversion fast path (anydoc routing, the >1000-chunk truncation fix, the scanned-PDF OCR retry). The cortex-chat pin is unchanged at **1.1.0**. An existing self-host install gets all of it with `npx @mocaos/cortex update`.
