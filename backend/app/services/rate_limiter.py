@@ -5,6 +5,12 @@ client IP). Disabled by default (`RATE_LIMIT_QPM=0`); billing-grade quota
 remains `MAX_QUERIES_PER_MONTH`. State is per-process — fine for the default
 single-worker deployment; multi-worker stacks get per-worker buckets, which
 still bounds abuse to workers × limit.
+
+Per-IP bucketing relies on `request.client.host`: the shipped Docker CMDs run
+uvicorn with `--proxy-headers` (trust configurable via
+`UVICORN_FORWARDED_ALLOW_IPS`), so behind the standard reverse-proxy stacks the
+bucket key is the real client IP rather than the proxy's address. A direct ASGI
+deployment without proxy headers falls back to the immediate peer IP.
 """
 
 from __future__ import annotations

@@ -76,6 +76,91 @@ def _patch_common(monkeypatch, tmp_path, crawl_impl):
     return {"staged": staged, "created": created, "completed": completed, "failed": failed, "spawned": spawned}
 
 
+# --- Endpoint-level redirect pre-flight ---------------------------------------
+#
+# The endpoints walk each URL's server-side redirect chain (per-hop SSRF
+# validation) before queueing, and crawl4ai receives the final validated URL —
+# see crawl_client.resolve_redirect_chain.
+
+def _enable_web_crawl(monkeypatch):
+    settings = main.get_settings()
+    monkeypatch.setattr(settings, "enable_web_crawl", True, raising=False)
+    monkeypatch.setattr(settings, "crawl_service_url", "http://crawl.test", raising=False)
+
+
+def test_web_import_endpoint_rejects_metadata_redirect(client, monkeypatch):
+    """A URL whose redirect chain hits a blocked target is refused before queueing."""
+    _enable_web_crawl(monkeypatch)
+    from app.services import ssrf_guard
+
+    async def boom(url, **kwargs):
+        raise ssrf_guard.SSRFError(
+            "blocked outbound target '169.254.169.254' -> 169.254.169.254 (link-local/metadata)"
+        )
+
+    monkeypatch.setattr(crawl_client, "resolve_redirect_chain", boom)
+    spawned = []
+    monkeypatch.setattr(main, "_spawn_chain_task", lambda x: spawned.append(x))
+
+    resp = client.post("/api/web-import", json={"urls": ["http://93.184.216.34/x"]})
+    assert resp.status_code == 400
+    assert "redirect target blocked" in resp.json()["detail"]
+    assert spawned == []  # nothing was queued
+
+
+def test_web_import_endpoint_hands_resolved_url_to_task(client, monkeypatch):
+    """crawl4ai receives the final validated URL, not the redirecting original."""
+    _enable_web_crawl(monkeypatch)
+
+    async def fake_resolve(url, **kwargs):
+        return "http://93.184.216.34/final"
+
+    monkeypatch.setattr(crawl_client, "resolve_redirect_chain", fake_resolve)
+    calls = []
+    # Plain sentinel (not a coroutine) so nothing is left un-awaited.
+    monkeypatch.setattr(
+        main,
+        "_run_web_import_task",
+        lambda *args, **kwargs: calls.append(args) or ("TASK", args),
+    )
+    monkeypatch.setattr(main, "_spawn_chain_task", lambda x: None)
+
+    resp = client.post("/api/web-import", json={"urls": ["http://93.184.216.34/start"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["accepted_urls"] == 1
+    assert calls and calls[0][1] == ["http://93.184.216.34/final"]
+
+
+def test_web_discover_rejects_metadata_redirect(client, monkeypatch):
+    _enable_web_crawl(monkeypatch)
+    from app.services import ssrf_guard
+
+    async def boom(url, **kwargs):
+        raise ssrf_guard.SSRFError("blocked outbound target '169.254.169.254' -> ...")
+
+    monkeypatch.setattr(crawl_client, "resolve_redirect_chain", boom)
+    resp = client.post("/api/web-import/discover", json={"url": "http://93.184.216.34/x"})
+    assert resp.status_code == 400
+    assert "redirect target blocked" in resp.json()["detail"]
+
+
+def test_web_discover_uses_resolved_url(client, monkeypatch):
+    _enable_web_crawl(monkeypatch)
+
+    async def fake_resolve(url, **kwargs):
+        return "http://93.184.216.34/final"
+
+    async def fake_discover(url):
+        return {"source_url": url, "domain": "93.184.216.34", "links": []}
+
+    monkeypatch.setattr(crawl_client, "resolve_redirect_chain", fake_resolve)
+    monkeypatch.setattr(crawl_client, "discover_links", fake_discover)
+
+    resp = client.post("/api/web-import/discover", json={"url": "http://93.184.216.34/start"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source_url"] == "http://93.184.216.34/final"
+
+
 @pytest.mark.asyncio
 async def test_aggregates_one_domain_into_a_single_document(monkeypatch, tmp_path):
     async def crawl(url, content_filter=None, query=None):

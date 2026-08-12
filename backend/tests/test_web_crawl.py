@@ -93,3 +93,124 @@ async def test_discover_links_filters(monkeypatch):
     urls = [l["url"] for l in out["links"]]
     assert urls == ["https://example.com/a", "https://example.com/b"]
     assert out["domain"] == "example.com"
+
+
+# --- resolve_redirect_chain (SSRF pre-flight for crawl4ai) -------------------
+#
+# crawl4ai follows redirects in its own container, so the chain is walked here
+# with per-hop ssrf_guard validation before a URL is handed over. Literal IPs
+# keep these hermetic — no DNS needed for global/link-local classification.
+
+class _ScriptedResponse:
+    def __init__(self, status, location=None):
+        self.status_code = status
+        self.headers = {"location": location} if location else {}
+
+
+class _ScriptedStream:
+    def __init__(self, resp):
+        self._resp = resp
+
+    async def __aenter__(self):
+        return self._resp
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def _scripted_client(monkeypatch, routes, calls):
+    """Patch crawl_client's httpx with a fake serving {(method, url): (status, location) | Exception}."""
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def head(self, url, **kwargs):
+            calls.append(("HEAD", url))
+            outcome = routes[("HEAD", url)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _ScriptedResponse(*outcome)
+
+        def stream(self, method, url, **kwargs):
+            calls.append((method, url))
+            outcome = routes[(method, url)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _ScriptedStream(_ScriptedResponse(*outcome))
+
+    monkeypatch.setattr(crawl_client.httpx, "AsyncClient", _Client)
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_blocks_metadata_hop(monkeypatch):
+    """A public URL bouncing to cloud metadata must never reach crawl4ai."""
+    routes = {("HEAD", "http://93.184.216.34/start"): (301, "http://169.254.169.254/latest/meta-data")}
+    _scripted_client(monkeypatch, routes, [])
+    from app.services.ssrf_guard import SSRFError
+    with pytest.raises(SSRFError):
+        await crawl_client.resolve_redirect_chain("http://93.184.216.34/start")
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_blocks_loopback_hop(monkeypatch):
+    routes = {("HEAD", "http://93.184.216.34/x"): (302, "http://127.0.0.1:8000/admin")}
+    _scripted_client(monkeypatch, routes, [])
+    from app.services.ssrf_guard import SSRFError
+    with pytest.raises(SSRFError):
+        await crawl_client.resolve_redirect_chain("http://93.184.216.34/x")
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_returns_final_public_url(monkeypatch):
+    """Relative and absolute public hops resolve to the final fetch target."""
+    routes = {
+        ("HEAD", "http://93.184.216.34/a"): (301, "/b"),  # relative redirect
+        ("HEAD", "http://93.184.216.34/b"): (301, "http://93.184.216.34/c"),
+        ("HEAD", "http://93.184.216.34/c"): (200, None),
+    }
+    _scripted_client(monkeypatch, routes, [])
+    final = await crawl_client.resolve_redirect_chain("http://93.184.216.34/a")
+    assert final == "http://93.184.216.34/c"
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_detects_loop(monkeypatch):
+    routes = {
+        ("HEAD", "http://93.184.216.34/x"): (301, "http://93.184.216.34/y"),
+        ("HEAD", "http://93.184.216.34/y"): (301, "http://93.184.216.34/x"),
+    }
+    _scripted_client(monkeypatch, routes, [])
+    with pytest.raises(crawl_client.CrawlUnavailableError, match="redirect loop"):
+        await crawl_client.resolve_redirect_chain("http://93.184.216.34/x")
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_head_405_falls_back_to_get(monkeypatch):
+    calls = []
+    routes = {
+        ("HEAD", "http://93.184.216.34/a"): (405, None),
+        ("GET", "http://93.184.216.34/a"): (301, "http://93.184.216.34/b"),
+        ("HEAD", "http://93.184.216.34/b"): (200, None),
+    }
+    _scripted_client(monkeypatch, routes, calls)
+    final = await crawl_client.resolve_redirect_chain("http://93.184.216.34/a")
+    assert final == "http://93.184.216.34/b"
+    assert ("GET", "http://93.184.216.34/a") in calls
+
+
+@pytest.mark.asyncio
+async def test_resolve_chain_fails_open_on_transport_error(monkeypatch):
+    """Probe failures must not break legitimate imports: last validated URL wins."""
+    import httpx as real_httpx
+
+    routes = {("HEAD", "http://93.184.216.34/slow"): real_httpx.ConnectError("boom")}
+    _scripted_client(monkeypatch, routes, [])
+    final = await crawl_client.resolve_redirect_chain("http://93.184.216.34/slow")
+    assert final == "http://93.184.216.34/slow"  # crawl4ai proceeds as before

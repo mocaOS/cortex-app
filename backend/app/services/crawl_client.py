@@ -69,6 +69,86 @@ class CrawlUnavailableError(RuntimeError):
     attempts failed)."""
 
 
+_REDIRECT_MAX_HOPS = 5
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+# Overall pre-flight budget across ALL hops: must stay comfortably below the
+# edge-proxy read timeout (~30s) since the web-import endpoint awaits it.
+_REDIRECT_PREFLIGHT_DEADLINE_S = 15.0
+
+
+async def resolve_redirect_chain(url: str, *, max_hops: int = _REDIRECT_MAX_HOPS) -> str:
+    """Resolve a URL's server-side redirect chain, SSRF-validating every hop.
+
+    crawl4ai follows redirects inside its own container, where cortex-app
+    cannot intercept them — so the web-import SSRF guard walks the 30x chain
+    *before* handing a URL over, and crawl4ai then fetches the final,
+    already-validated target directly.
+
+    Every hop (including the initial URL) goes through ssrf_guard under the
+    web-import egress policy (``WEB_IMPORT_ALLOW_PRIVATE``); a blocked hop
+    raises SSRFError and the URL is rejected outright. Transport failures are
+    **fail-open**: the last validated URL is returned and crawl4ai proceeds as
+    before — this thin probe can't pass JS challenges/browser checks that
+    crawl4ai's real browser can, so it must never break a legitimate import.
+    A redirect loop or hop overflow raises CrawlUnavailableError (bad URL).
+    """
+    from app.services.ssrf_guard import validate_url
+
+    settings = get_settings()
+    allow_private = settings.web_import_allow_private
+    current = url
+    await asyncio.to_thread(validate_url, current, allow_private=allow_private)
+
+    deadline = time.monotonic() + _REDIRECT_PREFLIGHT_DEADLINE_S
+    seen = {current}
+    async with httpx.AsyncClient(
+        follow_redirects=False,
+        # Browser UA: the probe should see the same redirect behaviour as
+        # crawl4ai's browser fetch (some sites branch redirects on UA).
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"},
+    ) as client:
+        for _ in range(max_hops):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.info(
+                    f"web-import redirect pre-flight budget exhausted at {current}; "
+                    "crawl4ai will fetch it directly"
+                )
+                return current
+            request_timeout = httpx.Timeout(min(8.0, remaining),
+                                            connect=min(4.0, remaining))
+            try:
+                response = await client.head(current, timeout=request_timeout)
+                if response.status_code in (405, 501):
+                    # HEAD not supported — read response headers only via GET.
+                    async with client.stream("GET", current,
+                                             timeout=request_timeout) as streamed:
+                        response = streamed
+            except httpx.HTTPError as e:
+                # Fail open: can't probe this hop — hand crawl4ai the last
+                # validated URL and let its browser try (documented residual).
+                logger.info(
+                    f"web-import redirect pre-flight stopped at {current} "
+                    f"({type(e).__name__}); crawl4ai will fetch it directly"
+                )
+                return current
+            if response.status_code not in _REDIRECT_STATUSES:
+                return current
+            location = response.headers.get("location", "").strip()
+            if not location:
+                return current
+            nxt = urljoin(current, location)
+            # Blocked hop (metadata/loopback/private per policy, bad scheme,
+            # unresolvable host) — fail CLOSED, the whole point of the guard.
+            await asyncio.to_thread(validate_url, nxt, allow_private=allow_private)
+            if nxt in seen:
+                raise CrawlUnavailableError(f"redirect loop at {nxt}")
+            seen.add(nxt)
+            current = nxt
+    raise CrawlUnavailableError(f"too many redirects (>{max_hops}) from {url}")
+
+
 def get_breaker_state() -> str:
     return _crawl_breaker.state
 

@@ -1031,6 +1031,9 @@ async def enforce_rate_limit(request: Request) -> None:
     # additionally a per-key bucket when a key is present — a rotated/forged key
     # header can therefore never escape the per-IP cap.
     api_key = request.headers.get("X-API-Key")
+    # Behind the shipped Docker CMDs (uvicorn --proxy-headers) this is the real
+    # client IP from X-Forwarded-For; without proxy headers it's the immediate
+    # peer (the reverse proxy's address on classic deployments).
     client_ip = request.client.host if request.client else None
     limiter = get_rate_limiter()
     burst = getattr(settings, "rate_limit_burst", 10)
@@ -7739,6 +7742,7 @@ async def web_import(
     validate_collection_access(auth, target_collection, "add content to")
 
     # Normalize + validate URLs (http/https only, dedup, preserve order).
+    from app.services import ssrf_guard
     seen: set = set()
     urls: List[str] = []
     for raw in request.urls:
@@ -7750,7 +7754,6 @@ async def web_import(
             raise HTTPException(status_code=400, detail=f"Invalid URL: {raw}")
         # SSRF guard: block loopback/link-local/metadata (and private ranges
         # unless WEB_IMPORT_ALLOW_PRIVATE) before handing the URL to crawl4ai.
-        from app.services import ssrf_guard
         try:
             await asyncio.to_thread(
                 ssrf_guard.validate_url,
@@ -7771,6 +7774,28 @@ async def web_import(
             status_code=400,
             detail=f"Too many URLs ({len(urls)}); this plan allows {cap} per job.",
         )
+
+    # Redirect-chain pre-flight: crawl4ai follows redirects inside its own
+    # container, out of our reach — so each URL's server-side 30x chain is
+    # walked here (every hop SSRF-validated) and crawl4ai receives the final,
+    # validated target to fetch directly. Transport problems fail open to the
+    # last validated URL (see crawl_client.resolve_redirect_chain).
+    from app.services import crawl_client
+    sem = asyncio.Semaphore(max(1, int(settings.crawl_concurrency or 5)))
+
+    async def _resolve(u: str) -> str:
+        async with sem:
+            return await crawl_client.resolve_redirect_chain(u)
+
+    try:
+        resolved = await asyncio.gather(*(_resolve(u) for u in urls))
+    except ssrf_guard.SSRFError as e:
+        raise HTTPException(
+            status_code=400, detail=f"URL not allowed (redirect target blocked: {e})"
+        )
+    except crawl_client.CrawlUnavailableError as e:
+        raise HTTPException(status_code=400, detail=f"URL redirect check failed: {e}")
+    urls = list(dict.fromkeys(resolved))
 
     # Enforce graph file/entity limits (same gate as custom-input).
     neo4j = get_neo4j_service()
@@ -7822,6 +7847,15 @@ async def web_import_discover(
         )
     except ssrf_guard.SSRFError as e:
         raise HTTPException(status_code=400, detail=f"URL not allowed ({e})")
+
+    # Walk the server-side redirect chain with per-hop validation (crawl4ai
+    # would otherwise follow it unguarded) and discover from the final URL.
+    try:
+        url = await crawl_client.resolve_redirect_chain(url)
+    except ssrf_guard.SSRFError as e:
+        raise HTTPException(status_code=400, detail=f"URL not allowed (redirect target blocked: {e})")
+    except crawl_client.CrawlUnavailableError as e:
+        raise HTTPException(status_code=400, detail=f"URL redirect check failed: {e}")
 
     try:
         result = await crawl_client.discover_links(url)
