@@ -125,9 +125,10 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
 
 <p align="center">
-  <img src=".github/media/cortex-chat-3.jpg" alt="Source modal showing the underlying document a citation points to" width="70%" />
+  <img src=".github/media/cortex-chat-3.jpg" alt="A Deep Research answer with visible thinking steps and inline numbered citation badges" width="49%" />
+  <img src=".github/media/cortex-chat-4.jpg" alt="Source modal opened from a citation, showing the underlying document chunk with its relevance score" width="49%" />
   <br />
-  <sub><i>Every citation opens the underlying source, so any claim can be verified in one click.</i></sub>
+  <sub><i>Answers arrive with inline citations — and every citation opens the underlying source, so any claim can be verified in one click.</i></sub>
 </p>
 
 ### GraphRAG Features
