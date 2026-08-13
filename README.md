@@ -63,6 +63,20 @@ And the moat is *yours*, not ours. The whole graph is portable by design, Apache
 - **📁 Uploads & API** — PDF, EPUB, Office, HTML, Markdown, images (OCR), audio (ASR), plus file-less Q&A pairs and freeform text; bulk upload with progress tracking, and outbound webhooks that confirm every ingestion.
 
 <p align="center">
+  <img src=".github/media/cortex-app-4.jpg" alt="Settings → Apps with the Paperless Sync app installed — scoped API key, collection access, and a scheduled background sync task" width="49%" />
+  <img src=".github/media/cortex-app-5.jpg" alt="Configure Paperless Sync modal — base URL and API token, stored encrypted and injected server-side" width="49%" />
+  <br />
+  <sub><i>Install a sync app and configure it in place — secrets are stored encrypted and injected server-side, never exposed to the browser.</i></sub>
+</p>
+
+<p align="center">
+  <img src=".github/media/cortex-app-6.jpg" alt="The Paperless Sync app mid-run — connected paperless-ngx instance, daily schedule, live progress; sync runs server-side even with the tab closed" width="49%" />
+  <img src=".github/media/cortex-app-7.jpg" alt="Browse Registry panel with one-click installs for Dropbox, Google Drive, Nextcloud, OneDrive, SharePoint, WebDAV, and YouTube transcript sync apps" width="49%" />
+  <br />
+  <sub><i>Syncs run server-side on a schedule — no browser open — and more connectors install with one click from the public app registry.</i></sub>
+</p>
+
+<p align="center">
   <img src=".github/media/cortex-app-3.jpg" alt="Cortex settings page showing two GitHub repositories syncing incrementally plus knowledge base statistics — documents, chunks, entities, relationships, communities, and monthly usage" width="92%" />
   <br />
   <sub><i>Connected git repositories stay in sync incrementally, while Settings tracks the whole knowledge base at a glance — documents, chunks, entities, relationships, and usage.</i></sub>
