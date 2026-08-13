@@ -22,6 +22,12 @@
 
 LLM-assisted workflows extract the entities and relationships between them into a **scalable knowledge graph** that grows smarter with every source you add. Everything can be queried through a REST API, TypeScript SDK, and MCP to be leveraged by any agent and app you are running.
 
+<p align="center">
+  <img src=".github/media/cortex-app-2.jpg" alt="Exploring the Cortex knowledge graph — entity search, neighborhood expansion, and a detail panel showing related entities and key relationships" width="92%" />
+  <br />
+  <sub><i>The knowledge graph, explorable: search entities, expand neighborhoods, and inspect any node's relationships — built automatically from your documents.</i></sub>
+</p>
+
 Think about where memory lives in your AI stack:
 
 | Layer | Memory | Scope |
@@ -30,7 +36,12 @@ Think about where memory lives in your AI stack:
 | Agent harness | **Persistent** | Personal memories of that agent |
 | **Cortex** | **Collective** | Every person, agent, and app in your organization |
 
-
+<p align="center">
+  <img src=".github/media/cortex-chat-1.jpg" alt="Cortex Chat landing page with assistant presets and suggested questions" width="49%" />
+  <img src=".github/media/cortex-chat-2.jpg" alt="Cortex Chat answering a question with visible reasoning and inline numbered citations" width="49%" />
+  <br />
+  <sub><i>Cortex Chat — a lean, multi-tenant chat frontend for end users: assistant presets, Chat & Deep Research modes, and inline citations on every answer.</i></sub>
+</p>
 
 ### Your knowledge is the moat
 
@@ -38,12 +49,24 @@ Frontier models are a commodity, your competitors call the same APIs you do. Wha
 
 And the moat is *yours*, not ours. The whole graph is portable by design, Apache-2.0 licensed, allows for full export/import and usage via framework-agnostic API. When a hot new agent framework drops next month, connect your existing knowledge graph to it and keep going. **Your collective memories move with you.**
 
+<p align="center">
+  <img src=".github/media/cortex-app-1.jpg" alt="The one-click Generate Graph pipeline in Cortex — entity extraction with live per-document progress, followed by deep relationship analysis and community detection steps" width="92%" />
+  <br />
+  <sub><i>Generating the graph is one click: entity & relation extraction → cross-document deep analysis → community detection, with live per-document progress.</i></sub>
+</p>
+
 ### Knowledge flows in — automatically
 
 - **📦 Apps** — installable apps sync external systems on a schedule, server-side, with no browser open: **SharePoint**, **Google Drive**, **Dropbox**, **OneDrive**, **Nextcloud**, paperless-ngx, YouTube transcripts, and more. Install from the public [app registry](https://github.com/mocaOS/cortex-registry), or build a connector for your own stack from the [app template](https://github.com/mocaOS/cortex-app-template).
 - **🔗 Git integration** — GitHub, GitLab, and Gitea repositories (including self-hosted) stay in sync incrementally via git history, on manual or scheduled polling.
 - **🌐 Web Import** — scrape websites via the [crawl4ai](https://github.com/unclecode/crawl4ai) integration: turn any URL into clean Markdown and ingest it straight into the graph. See the [Web Import guide](handbook/23-web-import.md).
 - **📁 Uploads & API** — PDF, EPUB, Office, HTML, Markdown, images (OCR), audio (ASR), plus file-less Q&A pairs and freeform text; bulk upload with progress tracking, and outbound webhooks that confirm every ingestion.
+
+<p align="center">
+  <img src=".github/media/cortex-app-3.jpg" alt="Cortex settings page showing two GitHub repositories syncing incrementally plus knowledge base statistics — documents, chunks, entities, relationships, communities, and monthly usage" width="92%" />
+  <br />
+  <sub><i>Connected git repositories stay in sync incrementally, while Settings tracks the whole knowledge base at a glance — documents, chunks, entities, relationships, and usage.</i></sub>
+</p>
 
 ### …and out into everything you run
 
@@ -80,6 +103,13 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 | [**cortex-trainings**](https://github.com/mocaOS/cortex-trainings) | Turns a knowledge base into interactive training units. An agent researches your instance and writes a complete curriculum — levels, scripts, quizzes, cited sources — which you approve as a plain document before any media is generated; then it produces AI video, voiceover, beat-synced animations and gamified interactions into a single offline HTML file. Reads any Cortex instance with a read-only, collection-scoped key. |
 | [**@mocaos/cortex-client**](https://www.npmjs.com/package/@mocaos/cortex-client) | The official TypeScript SDK — unified ask (`depth: fast\|standard\|deep`), SSE streaming, conversation threads with server-curated memory, uploads, collections, webhooks. The MCP server ([`npx @mocaos/cortex-mcp`](https://www.npmjs.com/package/@mocaos/cortex-mcp)) is built on it. |
 
+<p align="center">
+  <img src=".github/media/cortex-explorer-1.jpg" alt="Cortex Explorer 2D force-directed graph with a focused entity and its relationships highlighted" width="49%" />
+  <img src=".github/media/cortex-explorer-2.jpg" alt="Cortex Explorer 3D view of the same knowledge graph" width="49%" />
+  <br />
+  <sub><i>Cortex Explorer — the standalone, iframe-ready graph visualizer: the same knowledge graph in 2D or 3D, with search and click-to-expand traversal.</i></sub>
+</p>
+
 ## Features
 
 ### Core Features
@@ -87,12 +117,18 @@ This repository is the core of Cortex — the backend, knowledge graph pipeline,
 - **✏️ Custom Inputs**: Manually add Q&A pairs, text, or markdown without file uploads
 - **🌐 Web Import**: Scrape web pages into clean markdown and ingest them into the graph via the crawl4ai integration. Paste URLs or **discover** the links on a page and pick which to pull. Cortex never embeds a browser — it calls a self-hosted or shared [crawl4ai](https://github.com/unclecode/crawl4ai) service over HTTP, so one crawler instance serves many deployments. Off by default (`ENABLE_WEB_CRAWL=true` + `CRAWL_SERVICE_URL`).
 - **🔍 Hybrid Search**: Semantic + keyword search with Reciprocal Rank Fusion (RRF)
-- **💬 AI Q&A**: Ask questions and get AI-generated answers with sources
+- **💬 AI Q&A**: Ask questions and get AI-generated answers with cited sources
 - **🔗 Graph Storage**: Documents stored as interconnected nodes in Neo4j
 - **⚡ Vector Search**: Fast similarity search using Neo4j's vector index
 - **🎨 Modern UI**: Beautiful, responsive interface with unified navigation:
   - **Manage**: Documents, Knowledge Graph (one-click "Generate Graph" pipeline: entity extraction & relation discovery → cross-document deep relationship analysis → detect communities; "Regenerate Graph" deletes all communities, cross-document relations, and entities for a from-scratch rebuild while preserving per-chunk relations during Step 2 rebuild), Entity Deduplication, Collections, Add
   - **Explore**: Knowledge Graph, Entities, Relationships, Communities, Deep Research, Chat
+
+<p align="center">
+  <img src=".github/media/cortex-chat-3.jpg" alt="Source modal showing the underlying document a citation points to" width="70%" />
+  <br />
+  <sub><i>Every citation opens the underlying source, so any claim can be verified in one click.</i></sub>
+</p>
 
 ### GraphRAG Features
 - **🧠 GraphRAG**: LLM-powered entity extraction with per-chunk relationship extraction during ingestion (with retry and exponential backoff for rate limits, canonical name remapping, and self-referential filtering), plus cross-document deep relationship analysis — default `targeted` mode generates candidate pairs without the LLM (entity-embedding kNN + document co-mention) and verifies them in small batched LLM calls; legacy `llm_scan` mode runs the two-phase full-batch scan (candidate scanning with few-shot examples → confidence-scored XML extraction) — for knowledge graph construction. Stats endpoint returns `per_chunk_relationship_count` separately so the UI can distinguish Step 1 relations vs cross-document relations. Dedicated relationship model with separate rate limiting from entity extraction (fallback: relationship → extraction → primary).
