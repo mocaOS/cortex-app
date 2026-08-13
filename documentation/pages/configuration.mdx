@@ -469,7 +469,7 @@ ENABLE_AGENT_CHAT=true
 
 # Max agent loop iterations per mode
 # RESEARCHER_MAX_ITERATIONS_SPEED=3      # Chat mode (speed)
-# RESEARCHER_MAX_ITERATIONS_QUALITY=8    # Deep research mode (quality)
+# RESEARCHER_MAX_ITERATIONS_QUALITY=5    # Deep research mode (quality)
 
 # Max output tokens for the writer per mode
 # WRITER_MAX_TOKENS_SPEED=1200           # Chat mode
@@ -488,7 +488,7 @@ ENABLE_AGENT_CHAT=true
 # RESEARCHER_FORCE_REFLECTION=true       # Force a reasoning step after search rounds the model didn't reflect on
 # RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35  # Search round below this share of previously-unseen sources counts as stale
 # RESEARCHER_NOVELTY_STALE_ROUNDS=2      # Consecutive stale rounds before the answer is written from gathered results
-# RESEARCHER_WALL_CLOCK_SECONDS=120      # Research time budget; on expiry the writer starts (0 = unlimited)
+# RESEARCHER_WALL_CLOCK_SECONDS=60      # Research time budget; on expiry the writer starts (0 = unlimited)
 ```
 
 ### Reasoning Visibility
@@ -889,7 +889,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `ENABLE_AGENT_RESEARCH` | No | `true` | Use agent pipeline for deep research (vs legacy) |
 | `ENABLE_AGENT_CHAT` | No | `true` | Use agent pipeline for standard chat (required for skills) |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | No | `3` | Agent loop iterations for chat mode |
-| `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `8` | Agent loop iterations for deep research |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `5` | Agent loop iterations for deep research |
 | `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |
 | `WRITER_MAX_TOKENS_QUALITY` | No | `4000` | Max output tokens for deep research answers |
 | `RESEARCHER_SPEED_EARLY_WRITE` | No | `true` | Chat skips the agent's final confirmation LLM call after a fruitful search |
@@ -978,7 +978,7 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `ENABLE_AUDIT_LOG` | `false` | Append-only JSONL audit trail: auth failures, key-attributed mutating requests, search/ask activity. Metadata only — never document content or query text. |
 | `AUDIT_LOG_PATH` | `./logs/audit.log` | Audit trail location; rotates at 50 MB keeping one `.1` generation. |
 | `CORTEX_NEO4J_TX_TIMEOUT` | `300s` | (Compose-level) server-side Neo4j transaction timeout — kills runaway queries so they can't pin connections forever. |
-| `RESEARCHER_WALL_CLOCK_SECONDS` | `120` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. Guards against provider queue spikes so the answer always starts; raise or disable for slow self-hosted inference. |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `60` | Wall-clock budget for the researcher loop (0 = unlimited); on expiry the writer synthesizes from gathered results. Guards against provider queue spikes so the answer always starts; raise or disable for slow self-hosted inference. |
 | `RERANK_TOP_K` | `15` | Candidates kept/reranked per knowledge search. |
 | `HELPER_STRICT_REMOTE` | `false` | With `DOCLING_SERVICE_URL` set: conversion failure marks the document failed instead of falling back to local docling. |
 | `DOCLING_CONVERSION_TIMEOUT` | `600` | Hard ceiling (seconds) on a single local docling subprocess conversion. On timeout the worker is killed and the document is marked failed instead of hanging in `processing` on a large/corrupt file. Does not apply to the remote `DOCLING_SERVICE_URL` path. |

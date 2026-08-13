@@ -22,12 +22,12 @@ Uses OpenAI function-calling to iteratively gather information via tools:
 - Tools: `knowledge_search` + `done` (+ `http_request`/`reasoning` when skills active)
 
 ### Quality Mode (Deep Research)
-- Up to 10 iterations
+- Up to `RESEARCHER_MAX_ITERATIONS_QUALITY` iterations (default 5)
 - All tools with reasoning transparency
 
 ### Iteration Caps
 - `RESEARCHER_MAX_ITERATIONS_SPEED` (default: 3)
-- `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 8)
+- `RESEARCHER_MAX_ITERATIONS_QUALITY` (default: 5)
 
 ## Unified ask depth (`depth` dial)
 
@@ -123,5 +123,5 @@ The quality prompt's stopping criterion is evidence-based ("call done when searc
 - **Stable researcher prompt** (`RESEARCHER_STABLE_PROMPT`, default true): the system prompt is built once per request from `get_researcher_prompt_static` (iteration-free, parameterized on `has_skills` — skill-less deployments get a prompt with no skills/http_request references at all) + skill blocks; the `Iteration i of N` counter rides as a trailing system note rebuilt per call. The message list stays append-only → provider prefix caches (OpenAI auto, vLLM `--enable-prefix-caching`, OpenRouter) hit from iteration 2 on. `false` restores the legacy per-iteration rebuild.
 - **Anthropic cache_control** (`ENABLE_PROMPT_CACHE_CONTROL`): `reasoning_config.apply_cache_control` marks the first system message as an ephemeral cache breakpoint — only on OpenRouter + `anthropic/*` models; applied in `_prepare_call` (all three model tiers) and the researcher loop.
 - **Skill state TTL cache**: `SkillService` caches `get_skill_catalog()` + `load_skill_for_activation()` for 60s (invalidated on every skill CRUD/config mutation) — removes the per-request Neo4j query + SKILL.md reads + secret decryption, and makes `<active_skills>` byte-identical across requests.
-- **Budgets**: `RESEARCHER_WALL_CLOCK_SECONDS` (default 120, 0=off) breaks the loop to the writer on expiry — guards against provider queue spikes so the answer always starts (forced reflection is skipped when <20s remain); `RERANK_TOP_K` (15) bounds rerank input; inbound `conversation_memory` blobs are clamped (`clamp_memory_blob`: ledger cap, ~64KB ceiling, never a 4xx); `is_memory_answerable` pre-gates the classifier LLM call when the blob has no summary/facts/intent.
+- **Budgets**: `RESEARCHER_WALL_CLOCK_SECONDS` (default 60, 0=off) breaks the loop to the writer on expiry — guards against provider queue spikes so the answer always starts (forced reflection is skipped when <20s remain); `RERANK_TOP_K` (15) bounds rerank input; inbound `conversation_memory` blobs are clamped (`clamp_memory_blob`: ledger cap, ~64KB ceiling, never a 4xx); `is_memory_answerable` pre-gates the classifier LLM call when the blob has no summary/facts/intent.
 - **Per-key rate limiting** (`RATE_LIMIT_QPM`, 0=off): token bucket on ask/upload endpoints, 429 + `Retry-After`.

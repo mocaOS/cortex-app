@@ -216,7 +216,7 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 | `ENABLE_AGENT_RESEARCH` | `true` | Use agent pipeline for Deep Research mode. Set `false` for legacy fixed-step pipeline. |
 | `ENABLE_AGENT_CHAT` | `true` | Use agent pipeline for standard Chat mode (required for skills in chat). |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations for Chat mode (speed). |
-| `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations for Deep Research (quality). |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | `5` | Max agent loop iterations for Deep Research (quality). |
 | `WRITER_MAX_TOKENS_SPEED` | `1200` | Max output tokens for Chat answers. |
 | `WRITER_MAX_TOKENS_QUALITY` | `8000` | Max output tokens for Deep Research answers. |
 | `RESEARCHER_SPEED_EARLY_WRITE` | `true` | Chat mode skips the agent's final "research complete" confirmation call once a search has produced sources (and no skill/git action ran) — one full LLM round-trip less per chat turn. |
@@ -494,7 +494,7 @@ Hardening & operations:
 | `AUTO_RESUME_PENDING_ON_STARTUP` | `true` | Resume a pipeline run killed by a restart (quota-guarded) — stranded documents, a queued batch that never started, or an interrupted Step 2/3; the Generate Graph chain is persisted, so a resumed Step 1 still continues into Steps 2 and 3. |
 | `AUTO_RESUME_IMAGE_ANALYSIS` | `true` | Resume image analysis killed by a restart. A restart leaves completed documents with unfinished image analysis stuck forever (the counters freeze at `current < total`); on boot Cortex re-extracts their images via local Docling re-conversion (no LLM cost) and analyzes **only** the images not yet stored — already-analyzed images are never re-paid for. Set `false` to require a manual reprocess instead. |
 | `ENABLE_AUDIT_LOG` / `AUDIT_LOG_PATH` | `false` / `./logs/audit.log` | Append-only JSONL audit trail (metadata only, never content). |
-| `RESEARCHER_WALL_CLOCK_SECONDS` | `120` | Time budget for deep research (0 = unlimited); on expiry the writer synthesizes from what was gathered, so an answer always starts even when the LLM provider is queueing. |
+| `RESEARCHER_WALL_CLOCK_SECONDS` | `60` | Time budget for deep research (0 = unlimited); on expiry the writer synthesizes from what was gathered, so an answer always starts even when the LLM provider is queueing. |
 | `RERANK_TOP_K` | `15` | Rerank candidate pool size. |
 | `HELPER_STRICT_REMOTE` | `false` | Never fall back to local docling when the shared helper is configured. |
 | `INSTANCE_ID` | hostname | Tenant identity for helper fair-queuing. |

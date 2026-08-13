@@ -50,7 +50,7 @@ An LLM-driven agent iteratively gathers information using function-calling tools
 
 Read-only searches the agent issues in a single turn run **concurrently**, and an identical repeated search is answered from a per-question cache with a nudge to try a different angle — both keep long research runs from wasting wall-clock (see the loop-efficiency flags in [Chapter 4](04-configuration.md#agent-research-pipeline)).
 
-The reflect-between-rounds rhythm (step 3) is **enforced by the loop**, not left to the model's goodwill: a search round the model didn't reason about triggers a forced reflection step whose analysis steers the next round (`RESEARCHER_FORCE_REFLECTION`), and research ends early once consecutive rounds mostly re-surface already-seen sources (`RESEARCHER_NOVELTY_*`) or the time budget runs out (`RESEARCHER_WALL_CLOCK_SECONDS`, default 120s) — the writer then synthesizes from what was gathered, so an answer always arrives even when the LLM provider is slow. Models that reflect on their own never trigger the forced step.
+The reflect-between-rounds rhythm (step 3) is **enforced by the loop**, not left to the model's goodwill: a search round the model didn't reason about triggers a forced reflection step whose analysis steers the next round (`RESEARCHER_FORCE_REFLECTION`), and research ends early once consecutive rounds mostly re-surface already-seen sources (`RESEARCHER_NOVELTY_*`) or the time budget runs out (`RESEARCHER_WALL_CLOCK_SECONDS`, default 60s) — the writer then synthesizes from what was gathered, so an answer always arrives even when the LLM provider is slow. Models that reflect on their own never trigger the forced step.
 
 ### Research Tools
 
@@ -262,7 +262,7 @@ ENABLE_AGENT_CHAT=true            # Agent for Chat (enables skills in chat mode)
 
 # Iteration limits
 RESEARCHER_MAX_ITERATIONS_SPEED=3    # Chat: 3 iterations
-RESEARCHER_MAX_ITERATIONS_QUALITY=8  # Research: up to 8 iterations
+RESEARCHER_MAX_ITERATIONS_QUALITY=5  # Research: up to 5 iterations
 
 # Writer output limits
 WRITER_MAX_TOKENS_SPEED=1200     # Chat answers
@@ -280,7 +280,7 @@ EMIT_DONE_BEFORE_MEMORY=true          # SSE done before memory compaction
 RESEARCHER_FORCE_REFLECTION=true      # Force a reasoning step after unreflected search rounds
 RESEARCHER_NOVELTY_MIN_NEW_RATIO=0.35 # Round below this share of new sources counts as stale
 RESEARCHER_NOVELTY_STALE_ROUNDS=2     # Consecutive stale rounds before the answer is written
-RESEARCHER_WALL_CLOCK_SECONDS=120     # Research time budget (0 = unlimited)
+RESEARCHER_WALL_CLOCK_SECONDS=60     # Research time budget (0 = unlimited)
 
 # Search configuration
 ENABLE_HYBRID_SEARCH=true

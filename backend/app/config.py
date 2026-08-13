@@ -637,8 +637,15 @@ class Settings(BaseSettings):
     #   flow (activate → call → answer) without truncating it, while plain
     #   Q&A still finishes in one search + done. Deep research uses the quality cap.
     researcher_max_iterations_quality: int = Field(
-        default=8
-    )  # Max agent loop iterations in quality/research mode
+        default=5
+    )  # Max agent loop iterations in quality/research mode. Lowered 8 → 5
+    #   (2026-08): thorough-searching primaries (deepseek-v4-flash) write
+    #   diverse enough queries that every round keeps surfacing >35% new
+    #   chunks — the novelty stop never fires and the loop rides this cap.
+    #   4-5 rounds already gather 60+ chunks, far past what RERANK_TOP_K
+    #   feeds the writer; benched at 5: models stop on their own (`done`)
+    #   on most questions with no quality loss. Raise for exhaustive
+    #   research on very large corpora.
     writer_max_tokens_speed: int = Field(
         default=1200
     )  # Max output tokens for writer in speed mode
@@ -650,15 +657,17 @@ class Settings(BaseSettings):
     #   trace is billed against this same budget — at 4000 that combination
     #   truncated answers mid-word. 8000 leaves headroom for both.
     researcher_wall_clock_seconds: int = Field(
-        default=120
+        default=60
     )  # Wall-clock budget for the researcher loop (0 = unlimited). On expiry
     #   the loop stops gathering and the writer synthesizes from what it has.
-    #   Default 120s: healthy deep-research runs finish gathering in 30-60s;
-    #   the budget exists for provider queue spikes (measured live on Venice:
-    #   a 2-token completion taking 107s), where it guarantees the writer
-    #   still starts instead of the user watching a 3-minute silent stall.
-    #   Checked between iterations, so one in-flight call may overshoot it.
-    #   Raise (or 0) for slow self-hosted inference.
+    #   Default 60s (tightened from 120 in 2026-08 together with the quality
+    #   iteration cap 8 → 5): healthy runs under the 5-iteration cap finish
+    #   gathering in 15-40s; the budget exists for provider queue spikes
+    #   (measured live on Venice: a 2-token completion taking 107s), where it
+    #   guarantees the writer still starts instead of the user watching a
+    #   multi-minute silent stall. Checked between iterations, so one
+    #   in-flight call may overshoot it. Raise (or 0) for slow self-hosted
+    #   inference.
     researcher_force_reflection: bool = Field(
         default=True
     )  # Quality mode: after a search round with no reflection (neither a

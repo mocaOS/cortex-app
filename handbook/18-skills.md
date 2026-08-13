@@ -217,7 +217,7 @@ When a skill is enabled but needs setup:
 | `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions in the system prompt. Enforced: oversized instruction blocks are cut with an explicit truncation marker, so many enabled skills can't grow the prompt without bound |
 | `ENABLE_AGENT_CHAT` | `true` | Enable agent-based chat mode (required for skills in chat) |
 | `RESEARCHER_MAX_ITERATIONS_SPEED` | `3` | Max agent loop iterations in speed/chat mode |
-| `RESEARCHER_MAX_ITERATIONS_QUALITY` | `8` | Max agent loop iterations in quality/deep research mode |
+| `RESEARCHER_MAX_ITERATIONS_QUALITY` | `5` | Max agent loop iterations in quality/deep research mode |
 
 ### Docker Persistence
 
