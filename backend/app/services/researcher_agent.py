@@ -815,10 +815,31 @@ async def _run_researcher_loop(
             break
 
         if not response.choices:
+            # Some providers return 200 with an empty choices list under load
+            # (observed live on deepseek-v4-flash). One retry, then degrade to
+            # the writer with what was gathered — same path as an API error —
+            # instead of crashing on choices[0].
             logger.error(
-                "LLM returned no choices; raw response: %s",
+                "LLM returned no choices on iteration %d; raw response: %s",
+                iteration + 1,
                 response.model_dump_json() if hasattr(response, "model_dump_json") else response,
             )
+            try:
+                response = await client.chat.completions.create(
+                    model=llm_config.model,
+                    messages=call_messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    **build_chat_params(llm_config.model, temperature=0.2),
+                )
+            except Exception as e:
+                logger.error(f"Retry after empty-choices response failed: {e}")
+            if not response.choices:
+                yield {
+                    "type": "thinking",
+                    "content": "Research encountered an error, generating answer with available information...",
+                }
+                break
 
         assistant_message = response.choices[0].message
 
