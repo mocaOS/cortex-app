@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -200,6 +201,7 @@ async def stream_question(
     budget_s: float,
     hard_cap_s: float,
     top_k: int = 5,
+    agentic: bool = False,
 ) -> dict:
     """Stream one question over the chat path and capture timing/snappiness.
 
@@ -234,7 +236,7 @@ async def stream_question(
         # can't bound a silently-reasoning model — the wall-clock wait_for
         # below is the real cap. The httpx timeout is just a backstop.
         async for ev in cx.ask_stream_events(
-            q["question"], use_agentic=False, top_k=top_k,
+            q["question"], use_agentic=agentic, top_k=top_k,
             use_graph=True, use_reranking=True, timeout_s=hard_cap_s + 15,
         ):
             now = time.monotonic()
@@ -305,22 +307,119 @@ async def run_snappiness_set(
     budget_s: float,
     hard_cap_s: float,
     top_k: int = 5,
+    agentic: bool = False,
+    label: str = "qa",
 ) -> list[dict]:
     """Stream every question sequentially (chat is one-at-a-time per user)."""
     out: list[dict] = []
     for q in questions:
         rec = await stream_question(
-            cx, q, budget_s=budget_s, hard_cap_s=hard_cap_s, top_k=top_k
+            cx, q, budget_s=budget_s, hard_cap_s=hard_cap_s, top_k=top_k,
+            agentic=agentic,
         )
         ttft = rec["ttft_ms"]
         print(
-            f"[qa] {q['id']:>4} {rec['status']:>11}  "
+            f"[{label}] {q['id']:>4} {rec['status']:>11}  "
             f"ttft={ttft if ttft is not None else '-':>6}ms  "
             f"total={rec['total_ms']:>6}ms  {rec['answer_chars']:>5} chars",
             file=sys.stderr,
         )
         out.append(rec)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Deep-research (quality mode) — researcher-loop telemetry from backend logs
+# ---------------------------------------------------------------------------
+
+_ROUND_RE = re.compile(
+    r"Researcher round (\d+) novelty: (\d+)/(\d+) new chunks \(stale=(\d+)\)"
+)
+_WALL_CLOCK_RE = re.compile(r"Researcher loop hit wall-clock budget")
+
+
+def parse_researcher_telemetry(
+    log_text: str, *, max_iterations: int, stale_limit: int = 2
+) -> list[dict]:
+    """Segment researcher-loop log lines into per-question runs.
+
+    `Researcher round N novelty: X/Y new chunks (stale=S)` restarts at round 1
+    for every /api/ask/stream request, so a non-increasing round number opens a
+    new run. Questions that never search (memory fast-path) produce no run —
+    len(runs) may be < questions asked. Stop-reason inference per run:
+
+      wall_clock — the wall-clock-budget warning fired during the run
+      novelty    — the last round's stale counter reached the stop threshold
+      cap        — the loop used every allowed iteration
+      done       — the model stopped on its own (called `done` / prose end)
+    """
+    runs: list[dict] = []
+    cur: Optional[dict] = None
+    for line in log_text.splitlines():
+        if _WALL_CLOCK_RE.search(line):
+            if cur is not None:
+                cur["wall_clock"] = True
+            continue
+        m = _ROUND_RE.search(line)
+        if not m:
+            continue
+        rnd, new, total, stale = (int(g) for g in m.groups())
+        if cur is None or rnd <= cur["rounds"][-1]["round"]:
+            cur = {"rounds": [], "wall_clock": False}
+            runs.append(cur)
+        cur["rounds"].append(
+            {"round": rnd, "new": new, "total": total, "stale": stale}
+        )
+    for r in runs:
+        rounds = r["rounds"]
+        last = rounds[-1]
+        r["iterations"] = last["round"]
+        r["search_rounds"] = len(rounds)
+        r["chunks_new"] = sum(x["new"] for x in rounds)
+        r["chunks_seen"] = sum(x["total"] for x in rounds)
+        if r["wall_clock"]:
+            r["stop_reason"] = "wall_clock"
+        elif stale_limit > 0 and last["stale"] >= stale_limit:
+            r["stop_reason"] = "novelty"
+        elif last["round"] >= max_iterations:
+            r["stop_reason"] = "cap"
+        else:
+            r["stop_reason"] = "done"
+    return runs
+
+
+def aggregate_deep(model_id: str, answers: list[dict],
+                   telemetry: list[dict]) -> dict:
+    """Reduce deep-research answers + researcher telemetry to one summary dict."""
+    base = aggregate_model(model_id, 0, answers)
+    iters = [t["iterations"] for t in telemetry]
+    stops = [t["stop_reason"] for t in telemetry]
+    srcs = [a["sources_count"] for a in answers if a.get("sources_count")]
+    novelty_last = [
+        t["rounds"][-1]["new"] / t["rounds"][-1]["total"]
+        for t in telemetry if t["rounds"][-1]["total"] > 0
+    ]
+    return {
+        "n": base["n"],
+        "errors": base["errors"],
+        "timeouts": base["timeouts"],
+        "over_budget": base["over_budget"],
+        "ttft_p50_ms": base["ttft_p50_ms"],
+        "total_p50_ms": base["total_p50_ms"],
+        "total_p95_ms": base["total_p95_ms"],
+        "total_mean_ms": base["total_mean_ms"],
+        "answer_chars_mean": base["answer_chars_mean"],
+        "sources_mean": round(sum(srcs) / len(srcs), 1) if srcs else 0.0,
+        "telemetry_runs": len(telemetry),
+        "iterations_mean": round(sum(iters) / len(iters), 1) if iters else 0.0,
+        "iterations_max": max(iters) if iters else 0,
+        "novelty_at_stop_mean": round(
+            sum(novelty_last) / len(novelty_last), 2) if novelty_last else 0.0,
+        "stops": {k: stops.count(k) for k in ("done", "novelty", "cap", "wall_clock")},
+        "quality": {d: 0.0 for d in _QUALITY_DIMS},
+        "quality_overall": 0.0,
+        "quality_summary": "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -378,21 +477,40 @@ def aggregate_model(model_id: str, context: int, answers: list[dict]) -> dict:
     }
 
 
+def _mean_scores(scores: list[dict]) -> tuple[dict[str, float], float]:
+    means: dict[str, float] = {}
+    for dim in _QUALITY_DIMS:
+        vals = [float(s[dim]) for s in scores
+                if isinstance(s.get(dim), (int, float)) and 1 <= s[dim] <= 5]
+        means[dim] = round(sum(vals) / len(vals), 2) if vals else 0.0
+    non_zero = [v for v in means.values() if v > 0]
+    overall = round(sum(non_zero) / len(non_zero), 2) if non_zero else 0.0
+    return means, overall
+
+
 def apply_quality(rows: list[dict], judge_output: dict) -> None:
     """Merge judge scores (speed mode) into each model row, in place."""
     by_run = (judge_output or {}).get("by_run", {}) or {}
     for row in rows:
         speed = (by_run.get(row["model"], {}) or {}).get("speed", {}) or {}
-        scores = speed.get("scores", []) or []
-        means: dict[str, float] = {}
-        for dim in _QUALITY_DIMS:
-            vals = [float(s[dim]) for s in scores
-                    if isinstance(s.get(dim), (int, float)) and 1 <= s[dim] <= 5]
-            means[dim] = round(sum(vals) / len(vals), 2) if vals else 0.0
+        means, overall = _mean_scores(speed.get("scores", []) or [])
         row["quality"] = means
-        non_zero = [v for v in means.values() if v > 0]
-        row["quality_overall"] = round(sum(non_zero) / len(non_zero), 2) if non_zero else 0.0
+        row["quality_overall"] = overall
         row["quality_summary"] = speed.get("summary", "") or ""
+
+
+def apply_deep_quality(rows: list[dict], judge_output: dict) -> None:
+    """Merge judge scores (quality mode) into each row's `deep` dict, in place."""
+    by_run = (judge_output or {}).get("by_run", {}) or {}
+    for row in rows:
+        deep = row.get("deep")
+        if not deep:
+            continue
+        quality = (by_run.get(row["model"], {}) or {}).get("quality", {}) or {}
+        means, overall = _mean_scores(quality.get("scores", []) or [])
+        deep["quality"] = means
+        deep["quality_overall"] = overall
+        deep["quality_summary"] = quality.get("summary", "") or ""
 
 
 def score_and_flag(rows: list[dict], *, budget_s: float) -> None:
@@ -473,7 +591,51 @@ def build_report_md(
         for r in flagged:
             L.append(f"- `{r['model']}` — {r['overthinking_reason']}.")
         L.append("")
-    L.append("## Quality detail (1–5)")
+    deep_rows = [r for r in rows if r.get("deep")]
+    if deep_rows:
+        dr = sorted(
+            deep_rows,
+            key=lambda r: (r["deep"]["quality_overall"], -r["deep"]["total_p50_ms"]),
+            reverse=True,
+        )
+        L.append("## Deep research (use_agentic=true, retrieval quality)")
+        L.append("")
+        L.append(
+            "Ranked by judged quality (latency is the tie-breaker, not the "
+            "score — deep research is the thoroughness arm). `Stops` shows "
+            "how each model's researcher loop ended across the question set: "
+            "on its own (done) / retrieval converged (novelty) / iteration "
+            "cap / wall clock."
+        )
+        L.append("")
+        L.append("| # | Model | Quality /5 | Total p50/p95 | Iter mean/max | Sources | Novelty@stop | Stops d/n/c/w | Timeouts |")
+        L.append("|---|-------|-----------:|---------------|---------------|--------:|-------------:|:-------------:|---------:|")
+        for i, r in enumerate(dr, 1):
+            d = r["deep"]
+            s = d["stops"]
+            L.append(
+                f"| {i} | `{r['model']}` | **{d['quality_overall']}** | "
+                f"{d['total_p50_ms']}/{d['total_p95_ms']}ms | "
+                f"{d['iterations_mean']}/{d['iterations_max']} | "
+                f"{d['sources_mean']} | {d['novelty_at_stop_mean']} | "
+                f"{s['done']}/{s['novelty']}/{s['cap']}/{s['wall_clock']} | "
+                f"{d['timeouts']}/{d['n']} |"
+            )
+        L.append("")
+        L.append("| Model | Faithful | Complete | Grounded | Concise |")
+        L.append("|-------|---------:|---------:|---------:|--------:|")
+        for r in dr:
+            qd = r["deep"]["quality"]
+            L.append(
+                f"| `{r['model']}` | {qd['faithfulness']} | {qd['completeness']} | "
+                f"{qd['groundedness']} | {qd['conciseness']} |"
+            )
+        L.append("")
+        for r in dr:
+            if r["deep"].get("quality_summary"):
+                L.append(f"- `{r['model']}` — judge: {r['deep']['quality_summary']}")
+        L.append("")
+    L.append("## Quality detail (speed mode, 1–5)")
     L.append("")
     L.append("| Model | Faithful | Complete | Grounded | Concise |")
     L.append("|-------|---------:|---------:|---------:|--------:|")

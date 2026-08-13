@@ -382,6 +382,9 @@ python bench/run_qa_bench.py --dry-run
 
 # Wiring test against the already-running backend (no per-model recreate):
 python bench/run_qa_bench.py --models minimax-m3 --count 2 --no-recreate
+
+# Add the deep-research arm (use_agentic=true + researcher-loop telemetry):
+python bench/run_qa_bench.py --modes speed,quality --deep-count 8
 ```
 
 Prereqs: the local stack up with a **non-empty graph** (it queries
@@ -406,6 +409,15 @@ snappy graph-chat path), per model × question:
 **Question bank** is generated once from the graph itself (samples entities +
 community summaries; no `bench/files/` needed) and cached so every model answers
 the identical set.
+
+**Deep-research arm** (`--modes speed,quality`): additionally streams the first
+`--deep-count` bank questions through deep research (`use_agentic=true`, its own
+`--deep-budget`/`--deep-hard-cap`) and parses the backend logs for
+researcher-loop telemetry — iterations used, sources gathered, novelty at stop,
+and how each run ended (model called `done` / novelty stop / iteration cap /
+wall clock). Your `RESEARCHER_*` caps in `.env` apply identically to every
+candidate, so this compares models as the *researcher* under a fixed budget.
+The report gains a "Deep research" leaderboard ranked by judged answer quality.
 
 **Outputs** (gitignored): `bench/logs/qa-chat-report-<batch>.md` — a leaderboard
 ranking models on a speed×quality blend with overthinkers flagged 🚩 — and

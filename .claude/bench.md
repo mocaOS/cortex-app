@@ -14,7 +14,7 @@ Operator drops `.md` docs into `bench/files/`, picks combos in `bench/combos.yam
 
 | File | Status | Content |
 |---|---|---|
-| `bench/models.yaml.example` | **committed** | Public template — the curated model registry (currently 58 entries spanning Venice's open-weight matrix + proprietary passthroughs). Safe to edit and PR. |
+| `bench/models.yaml.example` | **committed** | Public template — the curated model registry (currently 61 entries spanning Venice's open-weight matrix + proprietary passthroughs). Safe to edit and PR. |
 | `bench/models.yaml` | **gitignored** | Operator's local copy. Edit freely — including pasting literal `api_key:` values. Auto-created from `.example` on first run. |
 | `bench/combos.yaml.example` | **committed** | 12-combo curated matrix from the Venice catalog audit. |
 | `bench/combos.yaml` | **gitignored** | Operator's active combo list. Seeded with 3 session replays + a qwen3-6-27b test. |
@@ -250,7 +250,34 @@ the operator's model in the `finally` block.
 **CLI:** `--models a,b,c` (overrides `qa_models.yaml`) · `--count` (bank size,
 default 12) · `--budget` (snappy seconds, default 60) · `--hard-cap` (per-Q wall
 clock, default 180) · `--context` (default from yaml/198000) · `--reasoning-mode
-{leave,off,auto,on}` · `--skip-judge` · `--no-recreate` · `--dry-run`.
+{leave,off,auto,on}` · `--skip-judge` · `--no-recreate` · `--dry-run` ·
+`--modes speed,quality` (default `speed`) · `--deep-count` (quality-arm bank
+subset, default 8; 0 = full bank) · `--deep-budget` (default 90) ·
+`--deep-hard-cap` (default 300).
+
+**Deep-research arm (`--modes speed,quality`, added 2026-08).** After each
+model's speed set, the same bank subset streams through `use_agentic=true`
+(deep research) with its own budget/hard-cap, and the researcher loop's
+behaviour is captured from `docker logs --since <deep-arm-start>` (RFC3339 `Z`
+timestamp — a naive local-time string shifts the window on non-UTC hosts and
+pulls in the speed arm's rounds):
+
+- `qa_snappiness.parse_researcher_telemetry` segments `Researcher round N
+  novelty: X/Y new chunks (stale=S)` lines into per-question runs (round
+  numbers restart at 1 per request; a non-increasing round number opens a new
+  run) and infers a stop reason per run: `wall_clock` (budget warning fired) /
+  `novelty` (last round's stale counter ≥ `RESEARCHER_NOVELTY_STALE_ROUNDS`) /
+  `cap` (used every allowed iteration) / `done` (model stopped on its own).
+  Questions that never search (memory fast-path) produce no run.
+- The operator's `RESEARCHER_*` caps are read once from `.env` and are
+  identical for every candidate (`apply_model_to_env` only rewrites `OPENAI_*`)
+  — the arm compares candidates as the RESEARCHER under a fixed budget.
+- `aggregate_deep` adds `row["deep"]` (iterations mean/max, stop-reason
+  counts, sources mean, novelty-at-stop, latency percentiles);
+  `apply_deep_quality` merges the judge's quality-mode scores into it
+  (`judge_answers` already scores the `quality` list). The report gains a
+  "Deep research" leaderboard ranked by judged quality; the speed-based
+  `combined_score` is unchanged. `--rejudge` re-scores both modes.
 
 **Chat-path snappiness learnings (from the first QA-bench batches).** The
 initial batch surfaced widespread *empty* answers (e.g. gemma 8/10, minimax-m27

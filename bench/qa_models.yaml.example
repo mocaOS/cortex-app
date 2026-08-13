@@ -24,3 +24,7 @@ models:
   - xiaomi-mimo-v2-5
   - nvidia-nemotron-cascade-2-30b-a3b
   - qwen3-5-35b-a3b
+  # 2026-08 primary-model shootout (cloud runs qwen3-6 via OpenRouter; benched on Venice)
+  - qwen3-6-35b-a3b
+  - deepseek-v4-flash-0731-fast
+  - nvidia-nemotron-3-5-lightning-30b-a3b

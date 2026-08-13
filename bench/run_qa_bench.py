@@ -20,9 +20,16 @@ The .env is backed up at start (EnvSwapper) and restored on exit / Ctrl-C; the
 live backend is recreated back onto the operator's model at the end. A BatchLock
 prevents colliding with a running `run_bench.py` (both force-recreate backend).
 
+A second arm (`--modes speed,quality`) additionally streams a bank subset
+through deep research (`use_agentic=true`) and captures researcher-loop
+telemetry from the backend logs (iterations, per-round novelty, stop reason:
+done/novelty/cap/wall_clock) — comparing candidates as the RESEARCHER, under
+the operator's fixed RESEARCHER_* caps.
+
 Usage:
   python bench/run_qa_bench.py                 # all models in qa_models.yaml
   python bench/run_qa_bench.py --models minimax-m3,qwen3-5-35b-a3b
+  python bench/run_qa_bench.py --modes speed,quality --deep-count 8
   python bench/run_qa_bench.py --dry-run       # print plan, no docker/LLM calls
 """
 
@@ -42,8 +49,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from cortex_client import CortexClient, CortexError  # noqa: E402
 from run_bench import (  # noqa: E402
     EnvFile, EnvSwapper, BatchLock, BatchLockError,
-    recreate_backend, ENV_PATH, LOGS_DIR,
+    recreate_backend, ENV_PATH, LOGS_DIR, CONTAINER_NAME,
 )
+from log_parser import fetch_container_logs  # noqa: E402
 from qa_evaluator import judge_answers  # noqa: E402
 import qa_snappiness as qs  # noqa: E402
 
@@ -170,9 +178,11 @@ async def rejudge(args) -> int:
            "api_key": env.get("OPENAI_API_KEY") or ""}
     print(f"[rejudge] judging {len(rows)} models with `{cfg['model']}`…", file=sys.stderr)
 
-    qa_by_run = {m: {"speed": v.get("speed", []), "quality": []} for m, v in raw.items()}
+    qa_by_run = {m: {"speed": v.get("speed", []), "quality": v.get("quality", [])}
+                 for m, v in raw.items()}
     judge_out = await judge_all(qa_by_run, bank, cfg)
     qs.apply_quality(rows, judge_out)
+    qs.apply_deep_quality(rows, judge_out)
     qs.score_and_flag(rows, budget_s=budget_s)
 
     report = qs.build_report_md(
@@ -191,6 +201,10 @@ async def rejudge(args) -> int:
 
 async def run(args) -> int:
     batch_id = args.batch_id or datetime.now(timezone.utc).strftime("qa_%Y-%m-%d_%H-%M")
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    bad = [m for m in modes if m not in ("speed", "quality")]
+    if bad or not modes:
+        raise SystemExit(f"--modes must be a comma-list of speed,quality (got {args.modes!r})")
 
     # EnvSwapper backs up .env immediately and restores on exit / signal.
     swapper = EnvSwapper(ENV_PATH, batch_id)
@@ -201,7 +215,8 @@ async def run(args) -> int:
     models, baseline = load_models(args, backup_cfg)
 
     print(f"[plan] batch={batch_id}  models={len(models)}  questions={args.count}  "
-          f"budget={args.budget}s  hard_cap={args.hard_cap}s  reasoning={args.reasoning_mode}",
+          f"modes={'+'.join(modes)}  budget={args.budget}s  hard_cap={args.hard_cap}s  "
+          f"reasoning={args.reasoning_mode}",
           file=sys.stderr)
     for m in models:
         tag = "  (baseline)" if m["model_id"] == baseline else ""
@@ -238,6 +253,13 @@ async def run(args) -> int:
             cx, backup_cfg, count=args.count, cache_path=bank_path,
         )
 
+        # Stop-reason inference for deep-research telemetry reads the
+        # operator's researcher caps (apply_model_to_env never touches them,
+        # so they're identical for every candidate — that's the point).
+        _env = EnvFile.load(ENV_PATH)
+        max_iter_quality = int(_env.get("RESEARCHER_MAX_ITERATIONS_QUALITY") or 8)
+        stale_limit = int(_env.get("RESEARCHER_NOVELTY_STALE_ROUNDS") or 2)
+
         for idx, m in enumerate(models, 1):
             print(f"\n[model {idx}/{len(models)}] {m['model_id']} "
                   f"(ctx={m['context']})", file=sys.stderr)
@@ -248,12 +270,45 @@ async def run(args) -> int:
                 recreate_backend()
                 await cx.wait_until_ready(timeout_s=180)
 
-            answers = await qs.run_snappiness_set(
-                cx, bank, budget_s=args.budget, hard_cap_s=args.hard_cap,
-                top_k=args.top_k,
-            )
-            rows.append(qs.aggregate_model(m["model_id"], m["context"], answers))
+            answers: list[dict] = []
+            if "speed" in modes:
+                answers = await qs.run_snappiness_set(
+                    cx, bank, budget_s=args.budget, hard_cap_s=args.hard_cap,
+                    top_k=args.top_k,
+                )
+            row = qs.aggregate_model(m["model_id"], m["context"], answers)
+            rows.append(row)
             qa_by_run[m["model_id"]] = {"speed": answers, "quality": []}
+
+            if "quality" in modes:
+                deep_bank = bank[: args.deep_count] if args.deep_count else bank
+                print(f"[deep] {len(deep_bank)} questions, use_agentic=true "
+                      f"(hard cap {int(args.deep_hard_cap)}s)…", file=sys.stderr)
+                # Capture window for researcher telemetry. RFC3339 with Z —
+                # a naive local-time string would shift the window on
+                # non-UTC hosts and pull in the speed arm's rounds.
+                since_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                deep_answers = await qs.run_snappiness_set(
+                    cx, deep_bank, budget_s=args.deep_budget,
+                    hard_cap_s=args.deep_hard_cap, top_k=args.top_k,
+                    agentic=True, label="deep",
+                )
+                telemetry: list[dict] = []
+                try:
+                    log_text = fetch_container_logs(CONTAINER_NAME, since_iso)
+                    telemetry = qs.parse_researcher_telemetry(
+                        log_text, max_iterations=max_iter_quality,
+                        stale_limit=stale_limit,
+                    )
+                except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+                    print(f"[deep] telemetry capture failed: {exc}", file=sys.stderr)
+                row["deep"] = qs.aggregate_deep(
+                    m["model_id"], deep_answers, telemetry)
+                qa_by_run[m["model_id"]]["quality"] = deep_answers
+                d = row["deep"]
+                print(f"[deep] iter mean {d['iterations_mean']} · stops "
+                      f"{d['stops']} · sources mean {d['sources_mean']}",
+                      file=sys.stderr)
             # Persist incrementally so a crash/Ctrl-C keeps captured data.
             _write_results(results_path, {
                 "batch_id": batch_id, "baseline": baseline,
@@ -267,6 +322,7 @@ async def run(args) -> int:
             print("\n[judge] scoring answers…", file=sys.stderr)
             judge_out = await judge_all(qa_by_run, bank, backup_cfg)
             qs.apply_quality(rows, judge_out)
+            qs.apply_deep_quality(rows, judge_out)
 
         qs.score_and_flag(rows, budget_s=args.budget)
 
@@ -313,6 +369,16 @@ def main() -> int:
     p.add_argument("--hard-cap", type=float, default=180.0, dest="hard_cap",
                     help="Per-question transport read timeout in seconds (default 180)")
     p.add_argument("--top-k", type=int, default=5, dest="top_k", help="Retrieval top_k (default 5)")
+    p.add_argument("--modes", default="speed",
+                    help="Comma-list of arms to run: speed (chat), quality "
+                         "(deep research w/ researcher telemetry). Default: speed")
+    p.add_argument("--deep-count", type=int, default=8, dest="deep_count",
+                    help="Quality mode runs only the first N bank questions "
+                         "(default 8; 0 = full bank)")
+    p.add_argument("--deep-budget", type=float, default=90.0, dest="deep_budget",
+                    help="Deep-research over_budget threshold in seconds (default 90)")
+    p.add_argument("--deep-hard-cap", type=float, default=300.0, dest="deep_hard_cap",
+                    help="Deep-research per-question wall clock in seconds (default 300)")
     p.add_argument("--reasoning-mode", default="leave",
                     choices=["leave", "off", "auto", "on"],
                     help="Set DEFAULT_REASONING_MODE for all models, or leave .env as-is (default)")

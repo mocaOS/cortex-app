@@ -338,6 +338,12 @@ on FOUR dimensions, integer 1–5:
 If an answer is empty or errored (`error` field set), score 1 on every
 dimension and set `notes` to a one-line reason.
 
+A mode may deliberately cover only a SUBSET of the question bank (e.g. the
+slow quality mode runs the first N questions). Score and summarize ONLY the
+(question, answer) pairs present in that mode's list — a question id absent
+from the list was never asked in that mode and must not be scored, counted
+as missing, or mentioned in the summary.
+
 For each `<run_id>.<mode>` combination, also write a `summary` (2 sentences)
 capturing how that combo handled the question set in that mode — strengths,
 weaknesses, recurring failure modes.
