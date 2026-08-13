@@ -73,6 +73,17 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE}
       - OPENAI_MODEL=${OPENAI_MODEL}
+      # --- Researcher loop tuning (optional) ---
+      # Latency/cost dial for deep research, worth matching to the primary
+      # model's search temperament: thorough searchers (e.g. deepseek-v4-flash
+      # keeps surfacing >35% new chunks per round) never trip the novelty stop
+      # and ride the iteration cap, so the cap and wall clock ARE the latency
+      # ceiling. Every :- default equals backend/app/config.py's built-in default.
+      - RESEARCHER_MAX_ITERATIONS_SPEED=${RESEARCHER_MAX_ITERATIONS_SPEED:-3}
+      - RESEARCHER_MAX_ITERATIONS_QUALITY=${RESEARCHER_MAX_ITERATIONS_QUALITY:-8}
+      - RESEARCHER_WALL_CLOCK_SECONDS=${RESEARCHER_WALL_CLOCK_SECONDS:-120}
+      - RESEARCHER_NOVELTY_MIN_NEW_RATIO=${RESEARCHER_NOVELTY_MIN_NEW_RATIO:-0.35}
+      - RESEARCHER_NOVELTY_STALE_ROUNDS=${RESEARCHER_NOVELTY_STALE_ROUNDS:-2}
       # --- Observability (Langfuse) — optional (no keys = no tracing) ---
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}

@@ -59,6 +59,15 @@ services:
       - GRAPH_EXTRACTION_MODEL=${GRAPH_EXTRACTION_MODEL:-}
       - VISION_MODEL=${VISION_MODEL:-}
       - ENABLE_RERANKING=${ENABLE_RERANKING:-true}
+      # Researcher loop tuning — deep-research latency/cost dial. Thorough
+      # searchers (e.g. deepseek-v4-flash) rarely trip the novelty stop, so the
+      # iteration cap + wall clock are the effective latency ceiling. Defaults
+      # equal the backend's built-ins.
+      - RESEARCHER_MAX_ITERATIONS_SPEED=${RESEARCHER_MAX_ITERATIONS_SPEED:-3}
+      - RESEARCHER_MAX_ITERATIONS_QUALITY=${RESEARCHER_MAX_ITERATIONS_QUALITY:-8}
+      - RESEARCHER_WALL_CLOCK_SECONDS=${RESEARCHER_WALL_CLOCK_SECONDS:-120}
+      - RESEARCHER_NOVELTY_MIN_NEW_RATIO=${RESEARCHER_NOVELTY_MIN_NEW_RATIO:-0.35}
+      - RESEARCHER_NOVELTY_STALE_ROUNDS=${RESEARCHER_NOVELTY_STALE_ROUNDS:-2}
       - BATCH_PROCESSING_CONCURRENCY=${BATCH_PROCESSING_CONCURRENCY:-2}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}

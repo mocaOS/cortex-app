@@ -814,6 +814,12 @@ async def _run_researcher_loop(
             }
             break
 
+        if not response.choices:
+            logger.error(
+                "LLM returned no choices; raw response: %s",
+                response.model_dump_json() if hasattr(response, "model_dump_json") else response,
+            )
+
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
