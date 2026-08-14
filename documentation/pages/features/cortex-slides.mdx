@@ -1,0 +1,58 @@
+---
+title: Cortex Slides
+description: Generate presentation decks from your knowledge base — a Cortex-grounded outline you approve word by word, fully AI-painted slides in a design system you confirm from one paid sample, delivered as .pptx with speaker notes plus PDF, with a cost gate before anything is spent
+---
+
+[**Cortex Slides**](https://github.com/mocaOS/cortex-slides) is a standalone application (currently in **beta**) that turns the domain knowledge inside your Cortex instance into presentation decks — pitch, training, or report, 6 to 30 slides — delivered as a `.pptx` with speaker notes in the notes pane plus a PDF. Like [Cortex Chat](/features/cortex-chat) it runs as its own deployment and connects to your instance purely through the REST API with a scoped key (a **standalone app**, as opposed to [Apps](/features/apps) hosted inside an instance). It is the third sibling of [Cortex Trainings](/features/cortex-trainings) and [Cortex Videogen](/features/cortex-videogen), built on the same architecture: a resumable file-backed pipeline, human gates before every spend, per-artefact caching, and two-channel research grounding.
+
+## Full-image slides
+
+Slides are **full-image**: gpt-image-2 (via Venice.ai) paints each entire slide — typography included — from a prompt assembled out of four owned parts: the layout's composition brief, the slide's exact approved text quoted verbatim, its artwork concept, and a deck-wide design system. The result is a maximally designed page on every slide, in a class generative layout engines and template decks don't reach.
+
+The trade is explicit: the text on the slides is painted pixels, not editable PowerPoint text (the speaker notes remain real, editable text in the notes pane). Painted text can come out wrong, so the pipeline is built around it — every word is approved before generation, QA tells you to proofread instead of pretending to verify pixels, and any single slide regenerates for the price of one image.
+
+## How it works
+
+A production run has six steps and **three human gates** — content, look, and money:
+
+1. **Research** *(free)* — two-channel grounding against your instance: agentic Deep Research writes the argument, verbatim evidence excerpts from hybrid search preserve exact names and numbers through summarization, and the graph's topic communities are appended as outline fuel. Sectioned decks get one research pass per section.
+2. **Outline** *(content gate)* — the whole deck is drafted across 8 layouts (title, section, bullets, statement, image-full, two-column, quote, data), each slide with a takeaway title, its text, spoken-word speaker notes, and an artwork concept. You review it next to the research it is grounded in — approve (optionally with per-slide hand edits, applied verbatim), regenerate with feedback, or re-run the research with steering. All free, unlimited rounds. This gate matters more than in any sibling app: every word approved here is painted into pixels.
+3. **Style** *(look gate)* — the app proposes three of its ~12 design-system presets with rationale, then paints the deck's most representative slide **in full** as a sample — one paid image, cached per preset so flipping between styles never re-pays. What you approve is exactly a finished page, not a swatch. Approved styles can be saved to a cross-project style library.
+4. **Visuals** *(cost gate)* — every missing slide is quoted against Venice.ai's live pricing and the run pauses with the total; nothing is generated until you confirm. The approved sample already counts as done. Optional subject and style reference images condition every slide so a product or mascot stays recognizable and the aesthetic stays locked.
+5. **Assembly** — pure packaging: the slide images become the `.pptx` (full-bleed image per slide, speaker notes in the notes pane) and the PDF. No generation happens here.
+6. **QA** — structural probes (slide count, notes present, PDF pages), ending with what it deliberately does *not* claim: painted text cannot be machine-verified — proofread the deck, and regenerate individual slides to fix errors.
+
+Everything is cached per artefact: a crashed or resumed run never pays for the same slide twice. After delivery, speaker-note edits are free, and a text or artwork fix on one slide quotes and repaints just that slide.
+
+## Setup
+
+Cortex Slides is a Node.js application (Node 22+). You need a Venice.ai API key for generation and a read-scoped API key for your Cortex instance:
+
+```bash
+git clone https://github.com/mocaOS/cortex-slides
+cd cortex-slides
+npm install
+cp .env.example .env    # fill in the three keys below
+npm run dev             # http://localhost:3020
+```
+
+| Variable | What it is |
+|----------|-----------|
+| `VENICE_API_KEY` | Venice.ai key — pays for research/outline LLM calls and slide images |
+| `CORTEX_BASE_URL` | Your instance, e.g. `https://cortex.example.com` |
+| `CORTEX_API_KEY` | A **read**-scoped [API key](/guides/authentication) for it |
+
+Optional: `ACCENT_COLOR` (hex) and `BRAND_NAME` brand the presets that use them; `APP_LANG` switches the UI (en/de) — the deck's content language is chosen per project; `IMAGE_RESOLUTION` (1K/2K) and `IMAGE_QUALITY` pick the image tier. `npm run smoke` renders a synthetic all-layouts deck through the real packaging path for $0 — the instance needs `ENABLE_AGENTIC_RAG` and `ENABLE_AGENT_RESEARCH` for the research step.
+
+Create a project in the form: topic, audience, purpose (pitch/training/report), target language, slide count, text density, optional call-to-action (carried verbatim onto the final slide), optional sections for long trainings, optional subject/style reference images, optional collection scope.
+
+## Costs
+
+Slide images are the only real spend; research and outline are cents of LLM tokens. Reference: **~$0.50 per slide** on gpt-image-2 at 2K/high, so a 12-slide deck lands around **$6** — the quote gate shows the exact number before anything is generated, the style sample costs one image per round, and fixing one slide later costs one image.
+
+## Learn more
+
+- [Repository & full docs](https://github.com/mocaOS/cortex-slides) — pipeline internals, Venice provider notes, the full-image design rationale
+- [Cortex Trainings](/features/cortex-trainings) — the sibling app for interactive training courses
+- [Cortex Videogen](/features/cortex-videogen) — the sibling app for marketing videos
+- [Apps](/features/apps) — the in-instance app system this is *not* (Slides runs standalone)

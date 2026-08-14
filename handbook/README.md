@@ -45,6 +45,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 26 | [Self-Hosting](26-self-hosting.md) | `26-self-hosting.md` | Administrators |
 | 27 | [Cortex Trainings](27-cortex-trainings.md) | `27-cortex-trainings.md` | Everyone |
 | 28 | [Cortex Videogen](28-cortex-videogen.md) | `28-cortex-videogen.md` | Everyone |
+| 29 | [Cortex Slides](29-cortex-slides.md) | `29-cortex-slides.md` | Everyone |
 
 ## Quick Links
 
@@ -60,6 +61,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 - **I want to give my team a ready-made chat interface** — See [Chapter 25: Cortex Chat](25-cortex-chat.md)
 - **I want to turn my knowledge base into interactive trainings** — See [Chapter 27: Cortex Trainings](27-cortex-trainings.md)
 - **I want to generate marketing videos from my knowledge base** — See [Chapter 28: Cortex Videogen](28-cortex-videogen.md)
+- **I want to generate presentation decks from my knowledge base** — See [Chapter 29: Cortex Slides](29-cortex-slides.md)
 - **Something isn't working** — See [Chapter 19: Troubleshooting](19-troubleshooting.md)
 - **I want to understand the philosophy behind Cortex** — Read [Chapter 22: The Cortex Standard](22-the-cortex-standard.md)
 

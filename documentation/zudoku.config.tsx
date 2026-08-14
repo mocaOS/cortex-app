@@ -101,6 +101,7 @@ const config: ZudokuConfig = {
             "/features/cortex-chat",
             "/features/cortex-trainings",
             "/features/cortex-videogen",
+            "/features/cortex-slides",
             "/features/git-integration",
             "/features/web-import",
             "/features/x402-payments",

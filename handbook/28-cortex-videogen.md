@@ -62,6 +62,7 @@ One operator note that applies to Trainings just as much: **content quality in =
 ## Where to go next
 
 - [Chapter 27: Cortex Trainings](27-cortex-trainings.md) — the sibling standalone app, for interactive courses
+- [Chapter 29: Cortex Slides](29-cortex-slides.md) — the sibling standalone app, for presentation decks
 - [Chapter 25: Cortex Chat](25-cortex-chat.md) — the standalone app for everyday question answering
 - [Chapter 10: Ask AI](10-ask-ai.md) — the deep-research capability the research step builds on
 - [Chapter 5: Security](05-security.md) — API keys, scopes, and collection-scoped access
