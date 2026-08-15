@@ -23,6 +23,8 @@ import {
   AlertTriangle,
   ShieldAlert,
   CirclePause,
+  FileX,
+  FileLock2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -54,6 +56,8 @@ interface Document {
   source?: string;
   entity_count?: number;
   unembedded_chunk_count?: number;
+  content_status?: "empty" | "encrypted" | null;
+  content_note?: string;
   injection_flagged?: boolean;
   injection_reason?: string;
   processing_paused?: boolean;
@@ -85,11 +89,19 @@ const isProcessing = (status: string, doc?: Document) => {
   return false;
 };
 
+// Nothing to ingest: the source file is empty / zero-page, or a locked PDF.
+// Terminal — the backend completes these instead of failing them, because no
+// reprocess can produce content that isn't in the file.
+const isNoContentDoc = (doc: Document): boolean => !!doc.content_status;
+
 // Degraded: completed (and past image analysis) but extraction produced 0
 // entities, or chunks are missing embeddings. entity_count must be exactly 0 —
 // the backend sends -1 for "unknown" (extraction disabled / pre-backfill).
 const isDegradedDoc = (doc: Document): boolean => {
   if (doc.processing_status !== "completed") return false;
+  // A file with no content has nothing to extract or embed — complete, not
+  // degraded, and no amount of reprocessing would change that.
+  if (isNoContentDoc(doc)) return false;
   const total = doc.image_progress_total ?? 0;
   if (total > 0 && doc.image_progress_current !== total) return false;
   return doc.entity_count === 0 || (doc.unembedded_chunk_count ?? 0) > 0;
@@ -151,6 +163,23 @@ const getStatusConfig = (status: string, doc?: Document) => {
       bgColor: "bg-amber-500/10",
       label: "Interrupted",
     };
+  }
+  // Converted fine, but the file holds nothing to ingest. Neutral, not red:
+  // this is a property of the source document, not a pipeline error.
+  if (status === "completed" && doc?.content_status) {
+    return doc.content_status === "encrypted"
+      ? {
+          icon: FileLock2,
+          color: "text-muted-foreground",
+          bgColor: "bg-foreground/5",
+          label: "Protected",
+        }
+      : {
+          icon: FileX,
+          color: "text-muted-foreground",
+          bgColor: "bg-foreground/5",
+          label: "No Content",
+        };
   }
   if (status === "completed" && doc) {
     const hasImages = (doc.image_progress_total ?? 0) > 0;
@@ -444,6 +473,18 @@ export function DocumentCard({
           {/* Error message */}
           {doc.processing_status === "failed" && doc.error_message && (
             <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{doc.error_message}</p>
+          )}
+
+          {/* Nothing to ingest — say what, and what would help */}
+          {isNoContentDoc(doc) && (
+            <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+              {doc.content_status === "encrypted" ? (
+                <FileLock2 className="w-3 h-3 shrink-0" />
+              ) : (
+                <FileX className="w-3 h-3 shrink-0" />
+              )}
+              {doc.content_note || "No content could be extracted from this file"}
+            </p>
           )}
 
           {/* Interrupted with a surviving checkpoint */}

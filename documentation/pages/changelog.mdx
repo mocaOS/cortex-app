@@ -7,6 +7,33 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## August 15, 2026
+
+Two independent cleanups: documents that hold nothing to ingest stop being treated as failures, and deep research stops paying for hidden thinking it never uses.
+
+### Deep research runs non-thinking by default
+
+Thinking-by-default models make hidden reasoning expensive in a way the researcher loop gains nothing from: the trace is discarded between chat-completion turns, so it is re-paid every iteration while accumulating nothing, and it competes with the visible output for the same `max_tokens` budget. Qwen3.8 ships `reasoning_effort=xhigh` by default — enough to spend an entire 16k completion cap on a trace that gets cut mid-thought. Deliberation in that loop is already explicit: the `reasoning` tool, which the forced-reflection micro-call pins `tool_choice` to, produces the thought with or without hidden thinking, and *that* thought persists in the message history and steers the next round.
+
+- **New `RESEARCH_REASONING_MODE`** (default `off`) — the deep-research (quality) researcher loop, previously hardcoded to `auto`. Set to `auto` to restore provider-default thinking if a model's tool-calling regresses without it. The chat path keeps its own `DEFAULT_REASONING_MODE`, and the final writer stays reasoning-off in both modes as before.
+- **Retry paths no longer drop reasoning params** — the researcher loop's empty-choices, `tool_choice=required`, nudge, and empty-response retries called the API directly, so on a thinking model the retry ran *with* thinking while the call it retried ran without it. All loop calls now go through one wrapper.
+- **App-task `llm` steps** run on the extraction tier but called the API bare, spending the step's whole token budget on hidden CoT and returning truncated text on a thinking model. They now carry `EXTRACTION_REASONING_MODE` like every other extraction-tier call.
+- No API or schema breakage; `RESEARCH_REASONING_MODE=auto` restores the previous behavior exactly.
+
+### Empty and password-protected documents get a terminal state
+
+Documents that hold nothing to ingest are no longer failures. A zero-byte export, a PDF with no pages, or a password-protected PDF produces the identical result on every retry — so parking them in `failed` left large archive imports with permanently-red documents no reprocess could ever clear (reported from a self-hosted 3.6k-document Paperless library, where 21 of 24 failed documents were exactly this). They now finish as `completed` carrying a reason flag, and the UI badges them neutrally instead of red.
+
+- **New document fields** — `content_status` (`"empty"` | `"encrypted"`, absent for normal documents) and `content_note`, a human-readable sentence. Returned by `GET /api/documents` and `GET /api/documents/{id}`.
+- **Detected before conversion** — a pre-flight probe catches zero-byte files (any type), PDFs with an empty page tree, and PDFs needing a password Cortex does not have, so Docling never pays a model load for a file it cannot read. Post-conversion empty output (including after the scanned-PDF OCR retry) lands in the same state.
+- **Deliberately conservative** — only a positive identification counts. A malformed PDF, or anything the probe cannot answer, takes the normal conversion path and a genuine conversion failure is still reported as `failed`.
+- **Password-protected PDFs are called out separately** — these often hold real content (a locked multi-page scan), so the note says what to do: re-upload a decrypted copy. PDFs with an owner password but an empty user password are unaffected and convert as before.
+- **UI** — grey **No Content** / **Protected** badge with the explanation inline on the card, a **No Content** status filter that appears once a library has any, and exclusion from both the *Completed* count and the failed/degraded needs-attention banner and its bulk-reprocess selection. Empty documents also no longer show up as *Degraded*.
+- **Operator surfaces** — `GET /api/ingestion/status` counts them in a separate `no_content` bucket; the `cortex_documents_processed_total` metric gains a `status="no_content"` label; the `document.processed` webhook carries `content_status`.
+- **No migration needed** — reprocessing an affected document reclassifies it, and the flag is cleared at the start of every run, so re-uploading a decrypted or non-empty replacement ingests normally. No API or schema breakage.
+
+---
+
 ## August 14, 2026
 
 Cortex Slides joins the ecosystem as a **beta release**: a standalone app that turns the domain knowledge inside a Cortex instance into presentation decks — pitch, training or report, 6 to 30 slides — delivered as a `.pptx` plus a PDF. Slides are **full-image**: gpt-image-2 (via Venice.ai) paints each entire slide, typography included, from the layout's composition brief, the slide's exact approved text, its artwork concept and a deck-wide design system — maximally designed pages instead of a filled template. The one slide approved at the style gate then anchors the rest: it travels along as a reference image so every page shares a single visual system. The trade is explicit: on-slide text is painted pixels, so the pipeline approves every word before generation, tells you to proofread instead of pretending to verify pixels, and repaints any single slide for the price of one image. Like Cortex Chat, Cortex Trainings and Cortex Videogen it runs as its own deployment and connects purely through the REST API with a read-scoped key.

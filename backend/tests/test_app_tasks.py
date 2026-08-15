@@ -488,6 +488,8 @@ def fake_llm(monkeypatch, tasks_env):
 
     async def fake_create(*, model, messages, **params):
         calls["n"] += 1
+        calls["last_params"] = params
+        calls["last_model"] = model
         prompt = messages[-1]["content"]
         chunk = prompt.split("\n\n", 1)[1]
         if "GARBLED" in chunk:
@@ -565,6 +567,36 @@ def test_llm_call_cap_fails_item(tasks_env, fake_llm, monkeypatch):
     task = run_and_wait(tasks_env, defn)
     assert task["counts"]["failed"] == 1
     assert "llm call cap" in task["items"][0]["error"]
+
+
+def test_llm_step_suppresses_thinking(tasks_env, fake_llm, monkeypatch):
+    """llm steps run on the extraction tier and must carry its reasoning params.
+
+    A bare create() sends none, so on a thinking-by-default model (Qwen3.8
+    ships reasoning_effort=xhigh) the step spends its whole token budget on
+    hidden CoT and returns truncated text.
+    """
+    from app.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "graph_extraction_model", "qwen3-8-27b-fp8")
+    monkeypatch.setattr(s, "graph_extraction_api_base", "http://vllm.local/v1")
+    monkeypatch.setattr(s, "extraction_reasoning_mode", "off")
+
+    async def fake_http(app_id, *, method, url, body=None, content_type=None, extra_headers=None):
+        return httpx.Response(200, json={"transcript": "uh hello there " * 30},
+                              request=httpx.Request(method, url))
+
+    monkeypatch.setattr("app.services.app_task_service.execute_app_http", fake_http)
+    defn = {**YT_BATCH, "items": [YT_BATCH["items"][0]]}
+    task = run_and_wait(tasks_env, defn)
+
+    assert task["status"] == "completed", task
+    assert fake_llm["last_model"] == "qwen3-8-27b-fp8"
+    assert (
+        fake_llm["last_params"]["extra_body"]["chat_template_kwargs"]["enable_thinking"]
+        is False
+    )
 
 
 def test_step_output_size_cap(tasks_env, monkeypatch):

@@ -2751,6 +2751,18 @@ components:
         source:
           type: string
           description: Origin of the document (e.g. 'upload', 'custom_input', or a custom source set via API)
+        content_status:
+          type: string
+          nullable: true
+          enum: [empty, encrypted]
+          description: >-
+            Set when the source file yielded nothing to ingest — 'empty'
+            (zero bytes / no pages / no text) or 'encrypted' (password-protected
+            PDF). Such documents are 'completed', not 'failed': the outcome is
+            terminal and no reprocess can change it. Absent for normal documents.
+        content_note:
+          type: string
+          description: Human-readable explanation of content_status (empty string when unset)
 
     DocumentList:
       type: object

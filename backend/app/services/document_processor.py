@@ -787,6 +787,77 @@ class CancellationRequested(Exception):
     pass
 
 
+class NoExtractableContent(Exception):
+    """The source file holds nothing this pipeline can ever ingest.
+
+    Terminal, but NOT a failure: a zero-byte file, a PDF with an empty page
+    tree, or a password-protected PDF produces the identical result on every
+    retry. Landing those in FAILED turns an archive import into permanent red
+    noise no reprocess can clear (observed live: 21 of 24 failed documents in
+    a 3.6k-document Paperless import). The handler in _process_document marks
+    the document COMPLETED with a content_status flag instead.
+
+    reason: 'empty' | 'encrypted'. note: the operator-facing sentence.
+    """
+
+    def __init__(self, reason: str, note: str):
+        super().__init__(note)
+        self.reason = reason
+        self.note = note
+
+
+def _probe_no_content(file_path: str, ext: str) -> Optional[NoExtractableContent]:
+    """Identify files that can never yield content, before conversion runs.
+
+    Deliberately conservative — only a *positive* identification counts. A
+    malformed xref, an unknown pypdf error, or anything that is merely
+    suspicious returns None and takes the normal conversion path, where a real
+    conversion failure is still a real failure. The cost of a false positive
+    here (a recoverable document silently marked "no content") is much higher
+    than the cost of a miss (one more entry in the failed list).
+    """
+    try:
+        if Path(file_path).stat().st_size == 0:
+            return NoExtractableContent("empty", "File is empty (0 bytes).")
+    except OSError:
+        return None
+
+    if ext != ".pdf":
+        return None
+
+    try:
+        from pypdf import PdfReader
+        from pypdf.errors import EmptyFileError
+    except ImportError:  # pragma: no cover — pypdf ships with docling
+        return None
+
+    try:
+        with open(file_path, "rb") as fh:
+            reader = PdfReader(fh)
+            if reader.is_encrypted:
+                # Owner-password-only PDFs unlock with an empty user password
+                # and convert normally. One that needs a real password cannot
+                # be recovered here — and its content is often a scan worth
+                # many pages, so say *why* rather than "no content extracted".
+                try:
+                    unlocked = reader.decrypt("")
+                except Exception:  # noqa: BLE001 — any failure means locked
+                    unlocked = 0
+                if not unlocked:
+                    return NoExtractableContent(
+                        "encrypted",
+                        "PDF is password-protected — Cortex cannot unlock it. "
+                        "Re-upload a decrypted copy to ingest its contents.",
+                    )
+            if len(reader.pages) == 0:
+                return NoExtractableContent("empty", "PDF contains no pages.")
+    except EmptyFileError:
+        return NoExtractableContent("empty", "PDF contains no pages.")
+    except Exception as exc:  # noqa: BLE001 — inconclusive, let docling try
+        logger.debug(f"No-content probe inconclusive for {Path(file_path).name}: {exc}")
+    return None
+
+
 class DocumentProcessor:
     """Process documents using Haystack components with GraphRAG extraction."""
 
@@ -2112,6 +2183,15 @@ class DocumentProcessor:
                 )
             except Exception as e:  # noqa: BLE001 — UI flag is best-effort
                 logger.debug(f"Could not clear resume flag for {doc_id}: {e}")
+            try:
+                # A new run supersedes the previous classification: a document
+                # re-uploaded with a decrypted copy must lose its "no content"
+                # badge instead of carrying it into a successful ingest.
+                await asyncio.to_thread(
+                    self.neo4j.set_document_content_status, doc_id, None, ""
+                )
+            except Exception as e:  # noqa: BLE001 — UI flag is best-effort
+                logger.debug(f"Could not clear content status for {doc_id}: {e}")
 
             # Ingest resume: decide up front how much of an earlier run this
             # one can build on (stored chunks with embeddings, extraction
@@ -2163,6 +2243,23 @@ class DocumentProcessor:
             # chunks ARE the conversion output — skip Docling entirely (the
             # single biggest redo cost on large documents).
             ext = file_type.lower()
+
+            # Files that can never yield content (zero-byte, zero-page PDF,
+            # locked PDF) are identified up front: docling would pay a model
+            # load only to fail, and the outcome is terminal either way.
+            # Skipped on resume-reuse — the stored chunks already prove there
+            # was content — and on unsupported extensions, which deserve their
+            # own error rather than "empty".
+            if not resume_reuse and (
+                ext in self.RAW_TEXT_EXTENSIONS or ext in self.DOCLING_EXTENSIONS
+            ):
+                probe = await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(_probe_no_content, file_path, ext),
+                )
+                if probe is not None:
+                    raise probe
+
             if resume_reuse:
                 use_vision = False
                 md_text = ""
@@ -2175,7 +2272,9 @@ class DocumentProcessor:
                     functools.partial(self._read_raw_text_file, file_path, ext),
                 )
                 if not md_text or not md_text.strip():
-                    raise ValueError("No content extracted from file")
+                    raise NoExtractableContent(
+                        "empty", "File contains no text."
+                    )
                 filename = Path(file_path).name
                 conversion_result = {"markdown": md_text, "filename": filename, "images": []}
             elif ext in self.DOCLING_EXTENSIONS:
@@ -2186,7 +2285,16 @@ class DocumentProcessor:
                 )
                 md_text = conversion_result["markdown"]
                 if not md_text:
-                    raise ValueError("No content extracted from file")
+                    # The scanned-PDF OCR retry has already run by now (see
+                    # _convert_document_subprocess), so an empty result here is
+                    # the document, not the conversion settings.
+                    image_count = len(conversion_result.get("images") or [])
+                    raise NoExtractableContent(
+                        "empty",
+                        f"The converter found {image_count} image(s) but no text."
+                        if image_count
+                        else "The converter extracted no text from this file.",
+                    )
                 filename = conversion_result.get("filename", Path(file_path).name)
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
@@ -3111,6 +3219,62 @@ class DocumentProcessor:
             logger.info(f"Processing task cancelled for document {doc_id}")
             # Don't update status here - the cancel method handles it
             raise  # Re-raise to properly cancel the task
+        except NoExtractableContent as e:
+            # Terminal, but not a failure — see NoExtractableContent. The
+            # document lands in COMPLETED (chunkless, so invisible to every
+            # retrieval query, all of which join through HAS_CHUNK) carrying a
+            # content_status flag that the UI badges and filters on.
+            logger.info(
+                f"Document {doc_id}: no extractable content ({e.reason}) — {e.note}"
+            )
+            try:
+                await asyncio.to_thread(
+                    self.neo4j.set_document_pause_state, doc_id, False
+                )
+            except Exception as flag_err:  # noqa: BLE001 — UI flag is best-effort
+                logger.debug(f"Could not clear pause state for {doc_id}: {flag_err}")
+            try:
+                from app.metrics import DOCUMENTS_PROCESSED
+                DOCUMENTS_PROCESSED.labels(status="no_content").inc()
+            except Exception:
+                pass
+            try:
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_progress,
+                        doc_id, 100, 100, e.note,
+                    ),
+                )
+                await loop.run_in_executor(
+                    _get_processing_executor(),
+                    functools.partial(
+                        self.neo4j.update_document_status,
+                        doc_id,
+                        ProcessingStatus.COMPLETED,
+                        chunk_count=0,
+                        progress_message=e.note,
+                    ),
+                )
+                # entity_count stays unset on purpose: 0 entities would read as
+                # "extraction ran and found nothing" (the degraded signal), and
+                # a document with no text is not degraded — it is complete.
+                await asyncio.to_thread(
+                    self.neo4j.set_document_content_status, doc_id, e.reason, e.note
+                )
+            except Exception as status_err:  # noqa: BLE001
+                logger.critical(
+                    f"Could not mark document {doc_id} as no-content "
+                    f"({status_err}); leaving it for the stranded-document sweep"
+                )
+            from app.services.webhook_service import emit_event
+            emit_event("document.processed", {
+                "document_id": doc_id,
+                "chunks": 0,
+                "entities": 0,
+                "relationships": 0,
+                "content_status": e.reason,
+            })
         except Exception as e:
             logger.error(f"Error processing document {doc_id}: {e}")
             error_message = str(e)

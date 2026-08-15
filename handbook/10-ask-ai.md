@@ -24,10 +24,18 @@ chain-of-thought in a side channel the user never sees — adding seconds before
 the first answer token and, across the agent loop, sometimes exhausting the
 budget into an empty answer. With it off, the first token arrives in well under
 a second on a capable model, and the chat writer is tuned to lead with the
-answer and stay concise. Deep Research (quality) mode is unaffected — it keeps
-reasoning for thorough, multi-hop work. To restore provider-default thinking on
-chat (e.g. on OpenAI models that disable parallel tool calls at low reasoning),
-set `DEFAULT_REASONING_MODE=auto`. See Chapter 4 and Chapter 22.
+answer and stay concise. To restore provider-default thinking on chat (e.g. on
+OpenAI models that disable parallel tool calls at low reasoning), set
+`DEFAULT_REASONING_MODE=auto`. See Chapter 4 and Chapter 22.
+
+Deep Research runs without hidden thinking too (`RESEARCH_REASONING_MODE=off`),
+and loses nothing by it: that loop already reflects **out loud** — the steps you
+see in the stream are a real `reasoning` tool call the loop forces after any
+round that searched without pausing to think, and that reflection is what steers
+the next round. Hidden chain-of-thought, by contrast, is thrown away between
+rounds while still being charged against the same output budget as the answer.
+Set `RESEARCH_REASONING_MODE=auto` if a particular model gets worse at calling
+tools without it.
 
 ## How the Pipeline Works
 
@@ -291,9 +299,9 @@ GRAPH_WEIGHT=0.2
 
 # Reasoning control + visibility
 DEFAULT_REASONING_MODE=off       # Chat: suppress hidden thinking → snappy, no empty answers
-                                 # (the deep-research *researcher loop* stays AUTO; the final
-                                 #  writer always runs with reasoning off in both modes, so the
-                                 #  whole token budget goes to the visible answer)
+RESEARCH_REASONING_MODE=off      # Deep research: same, the loop reflects out loud instead
+                                 # (the final writer always runs with reasoning off in both
+                                 #  modes, so the whole token budget goes to the visible answer)
 STREAM_REASONING_STEPS=true      # Show researcher steps in stream
 SHOW_RETRIEVAL_STATS=true        # Show retrieval stats
 

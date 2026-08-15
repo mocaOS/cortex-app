@@ -225,6 +225,11 @@ class DocumentMetadata(BaseModel):
     processing_status: ProcessingStatus = ProcessingStatus.PENDING
     error_message: Optional[str] = None
     source: str = Field(default="upload", description="Origin of the document (e.g. 'upload', 'custom_input', or a custom source set via API)")
+    # Terminal "nothing to ingest" states. The document is COMPLETED (not
+    # FAILED): no retry can change the outcome, so it must not sit in the
+    # failed list forever.
+    content_status: Optional[str] = Field(default=None, description="'empty' (zero-byte / zero-page / no text) or 'encrypted' (password-protected PDF) when the source file yielded no content; unset for normal documents")
+    content_note: str = Field(default="", description="Operator-facing explanation of content_status (e.g. 'PDF is password-protected — Cortex cannot unlock it')")
     # Progress tracking fields
     progress_current: int = Field(default=0, description="Current step in processing")
     progress_total: int = Field(default=0, description="Total steps in processing")

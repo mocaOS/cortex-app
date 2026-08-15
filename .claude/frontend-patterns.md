@@ -44,11 +44,15 @@ Document row with view button: `.md` files open in an in-app Markdown viewer mod
 
 ## Document Filters
 
-Filter dropdowns: Collection, Status, Source. Source filter auto-shown when documents have 2+ distinct sources. Status includes a virtual **Degraded** option (not a backend status): `isDegraded(doc)` in `DocumentList.tsx` = effective status `completed` (so docs still analyzing images are excluded) AND (`entity_count === 0` — exactly 0, backend sends `-1` for unknown — OR `unembedded_chunk_count > 0`). See [`domain/document-pipeline.md`](domain/document-pipeline.md#degraded-document-signals) for the backend signals.
+Filter dropdowns: Collection, Status, Source. Source filter auto-shown when documents have 2+ distinct sources. Status includes a virtual **Degraded** option (not a backend status): `isDegraded(doc)` in `DocumentList.tsx` = effective status `completed` (so docs still analyzing images are excluded) AND not `isNoContent(doc)` AND (`entity_count === 0` — exactly 0, backend sends `-1` for unknown — OR `unembedded_chunk_count > 0`). A second virtual option, **No Content** (`isNoContent` = completed + `content_status` set), appears only once the corpus contains such docs; they are excluded from the Completed count/filter so "completed" means completed *with* content. See [`domain/document-pipeline.md`](domain/document-pipeline.md#degraded-document-signals) for the backend signals.
 
 ## Degraded Documents UI
 
 `DocumentCard` shows an amber `AlertTriangle` "Degraded" badge (tooltip + inline reason line: "0 entities extracted" / "N chunks missing embeddings — reprocess to retry"); the existing completed-doc reprocess button is the one-click fix. `DocumentList` renders a single combined needs-attention banner ("N failed / M degraded documents") with a **Select all** button that selects failed + degraded for bulk reprocess; `selectAllDegraded` mirrors `selectAllFailed`.
+
+## No-Content Documents UI
+
+Terminal, not broken: `DocumentCard` shows a neutral grey badge — `FileX` "No Content" (`content_status === "empty"`) or `FileLock2` "Protected" (`"encrypted"`) — plus an inline line carrying `content_note` (e.g. "PDF is password-protected — Cortex cannot unlock it. Re-upload a decrypted copy to ingest its contents."). No retry prompt, and these docs are deliberately kept out of the failed/degraded needs-attention banner and its bulk-reprocess selection — no reprocess can put content into a file that has none. Backend contract: [`domain/document-pipeline.md`](domain/document-pipeline.md#no-content-documents-empty--password-protected).
 
 ## Paused / Interrupted Documents UI
 

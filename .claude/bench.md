@@ -294,7 +294,8 @@ initial batch surfaced widespread *empty* answers (e.g. gemma 8/10, minimax-m27
   only. Fix: route the speed-researcher loop + writer (`researcher_agent.py`)
   and the non-agentic + fast streaming writers (`main.py`) through
   `safe_chat_completion` with `DEFAULT_REASONING_MODE` (now default **off** →
-  Venice `disable_thinking`). Quality/deep-research stays AUTO. See
+  Venice `disable_thinking`). Quality/deep-research follows
+  `RESEARCH_REASONING_MODE` (also default off since 2026-08-15). See
   `.claude/environment.md` → `DEFAULT_REASONING_MODE`.
 - **Residual snappiness lever = the agent loop, not the model.** With thinking
   off a single model call is <1s, but the speed chat still runs

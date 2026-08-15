@@ -49,6 +49,8 @@ interface Document {
   source?: string;
   entity_count?: number;
   unembedded_chunk_count?: number;
+  content_status?: "empty" | "encrypted" | null;
+  content_note?: string;
   injection_flagged?: boolean;
   injection_reason?: string;
   processing_paused?: boolean;
@@ -86,6 +88,12 @@ const effectiveStatus = (doc: Document): string => {
   return doc.processing_status;
 };
 
+// Terminal "nothing to ingest": zero-byte / zero-page file, or a locked PDF.
+// The backend completes these rather than failing them — reprocessing cannot
+// produce content the file does not contain.
+const isNoContent = (doc: Document): boolean =>
+  effectiveStatus(doc) === "completed" && !!doc.content_status;
+
 // Completed but unusable for retrieval: extraction ran and produced 0 entities,
 // or chunks are missing embeddings. entity_count must be exactly 0 — the backend
 // sends -1 for "unknown" (extraction disabled / pre-backfill), which is never
@@ -93,6 +101,10 @@ const effectiveStatus = (doc: Document): string => {
 // so docs still analyzing images are not flagged.
 const isDegraded = (doc: Document): boolean => {
   if (effectiveStatus(doc) !== "completed") return false;
+  // Empty / password-protected sources have nothing to extract or embed —
+  // complete, not degraded. Without this they would trade red "failed" noise
+  // for amber "degraded" noise and be swept into every bulk reprocess.
+  if (isNoContent(doc)) return false;
   return doc.entity_count === 0 || (doc.unembedded_chunk_count ?? 0) > 0;
 };
 
@@ -310,6 +322,12 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
       if (filterStatus === null) return true;
       if (filterStatus === "degraded") return isDegraded(doc);
       if (filterStatus === "flagged") return isInjectionFlagged(doc);
+      if (filterStatus === "no_content") return isNoContent(doc);
+      // "Completed" means completed with content — the empty ones have their
+      // own bucket rather than padding the healthy count.
+      if (filterStatus === "completed") {
+        return effectiveStatus(doc) === "completed" && !isNoContent(doc);
+      }
       return effectiveStatus(doc) === filterStatus;
     })();
 
@@ -341,12 +359,15 @@ export default function DocumentList({ onDelete }: DocumentListProps) {
 
   // Status counts (using effective status so image-analyzing docs count as in_progress)
   const statusCounts = {
-    completed: documents.filter((d) => effectiveStatus(d) === "completed").length,
+    completed: documents.filter(
+      (d) => effectiveStatus(d) === "completed" && !isNoContent(d)
+    ).length,
     in_progress: documents.filter((d) => effectiveStatus(d) === "in_progress").length,
     pending: documents.filter((d) => effectiveStatus(d) === "pending").length,
     failed: documents.filter((d) => effectiveStatus(d) === "failed").length,
     degraded: documents.filter(isDegraded).length,
     flagged: documents.filter(isInjectionFlagged).length,
+    no_content: documents.filter(isNoContent).length,
   };
 
   const availableTargetCollections = collections.filter(

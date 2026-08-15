@@ -143,6 +143,10 @@ A document with `status: "completed"` may still have background image analysis r
 :::
 
 :::note
+**No-content documents:** A file that can never yield content — zero bytes, a PDF with no pages, or a password-protected PDF — finishes as `completed` with `content_status` set to `"empty"` or `"encrypted"` (plus a human-readable `content_note`), **not** as `failed`. Retrying such a file always produces the same result, so failing it would leave permanent noise in the failed list. These documents hold no chunks and never appear in search results; `GET /api/ingestion/status` counts them in a separate `no_content` bucket. The flag is cleared at the start of every processing run, so re-uploading a decrypted or non-empty replacement ingests normally.
+:::
+
+:::note
 **Degraded-document detection:** Reprocessing an unchanged file with unchanged config normally short-circuits (delta-skip) to avoid redundant work. A document is treated as **degraded** — and always fully reprocessed regardless of the delta-skip — when it reached `completed` but yielded **zero extracted entities** or still has **chunks missing embeddings**. This ensures a document that processed incompletely (e.g. a transient LLM/embedding failure) is repaired on the next reprocess rather than silently skipped.
 :::
 

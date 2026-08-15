@@ -309,6 +309,16 @@ class Settings(BaseSettings):
     # (quality) mode is unaffected and keeps reasoning. Set to `auto` to restore
     # provider-default thinking on chat.
     default_reasoning_mode: str = Field(default="off")
+    # Deep-research (quality) researcher loop. OFF since 2026-08-15: the loop
+    # already forces EXPLICIT reflection via the `reasoning` tool, whose thought
+    # lands in the message history and steers the next round — while hidden
+    # chain-of-thought is discarded between chat-completion turns, so it is paid
+    # for every iteration and never accumulates. On thinking-by-default models
+    # it also shares the `max_tokens` budget with the visible output (Qwen3.8
+    # defaults to reasoning_effort=xhigh: observed 16k-token completions capped
+    # mid-thought after 4+ minutes). Set to `auto` to restore provider-default
+    # thinking if a model's tool-calling regresses without it.
+    research_reasoning_mode: str = Field(default="off")
     extraction_reasoning_mode: str = Field(default="off")
     relationship_reasoning_mode: str = Field(default="off")
     vision_reasoning_mode: str = Field(default="off")

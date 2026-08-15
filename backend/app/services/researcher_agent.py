@@ -50,9 +50,17 @@ def _chat_reasoning_mode(mode: str, settings, model: str = "") -> ReasoningMode:
     """Reasoning level for the researcher-loop LLM calls.
 
     Speed/chat → DEFAULT_REASONING_MODE (default OFF → Venice disable_thinking,
-    snappy first token). Deep-research (quality) → AUTO (provider default;
-    hidden reasoning preserved — the forced-reflection micro-call depends on the
-    model actually thinking). See config.default_reasoning_mode.
+    snappy first token). Deep-research (quality) → RESEARCH_REASONING_MODE
+    (default OFF since 2026-08-15; `auto` restores provider-default thinking).
+
+    Quality mode does not need hidden reasoning: deliberation here is
+    *explicit*, through the `reasoning` tool — and the forced-reflection
+    micro-call below pins `tool_choice` to it, so the thought is produced
+    whether or not the model thinks internally. That thought persists in the
+    message history and steers the next round, whereas hidden chain-of-thought
+    is discarded between chat-completion turns: paid for every iteration,
+    accumulating nothing. On thinking-by-default models it also competes with
+    the visible output for the same `max_tokens` budget.
 
     Exception: OpenAI GPT-5+/o-series models are always OFF, in both modes.
     The researcher loop sends function tools, and newer OpenAI chat-completions
@@ -69,7 +77,7 @@ def _chat_reasoning_mode(mode: str, settings, model: str = "") -> ReasoningMode:
         return ReasoningMode.OFF
     if mode == "speed":
         return ReasoningMode.parse(getattr(settings, "default_reasoning_mode", "off"))
-    return ReasoningMode.AUTO
+    return ReasoningMode.parse(getattr(settings, "research_reasoning_mode", "off"))
 
 
 def _writer_reasoning_mode(mode: str, settings) -> ReasoningMode:
@@ -720,6 +728,24 @@ async def _run_researcher_loop(
         time.monotonic() + _wall_clock_budget if _wall_clock_budget > 0 else None
     )
 
+    async def _loop_completion(**create_kwargs):
+        """Every researcher-loop call, retries included.
+
+        Routing the retries through here too is not cosmetic: a bare
+        `create()` sends no reasoning params, so on a thinking-by-default
+        model the retry silently runs WITH thinking while the call it is
+        retrying ran without — the slowest path taken exactly when the model
+        is already misbehaving.
+        """
+        return await safe_chat_completion(
+            client.chat.completions.create,
+            base_url=llm_config.base_url,
+            model=llm_config.model,
+            reasoning_mode=_chat_reasoning_mode(mode, settings, llm_config.model),
+            overrides=settings.parsed_reasoning_overrides,
+            **create_kwargs,
+        )
+
     for iteration in range(max_iterations):
         if _deadline is not None and time.monotonic() >= _deadline:
             logger.info(
@@ -788,12 +814,7 @@ async def _run_researcher_loop(
             }
 
         try:
-            response = await safe_chat_completion(
-                client.chat.completions.create,
-                base_url=llm_config.base_url,
-                model=llm_config.model,
-                reasoning_mode=_chat_reasoning_mode(mode, settings, llm_config.model),
-                overrides=settings.parsed_reasoning_overrides,
+            response = await _loop_completion(
                 messages=call_messages,
                 tools=tools,
                 tool_choice="auto",
@@ -825,8 +846,7 @@ async def _run_researcher_loop(
                 response.model_dump_json() if hasattr(response, "model_dump_json") else response,
             )
             try:
-                response = await client.chat.completions.create(
-                    model=llm_config.model,
+                response = await _loop_completion(
                     messages=call_messages,
                     tools=tools,
                     tool_choice="auto",
@@ -866,8 +886,7 @@ async def _run_researcher_loop(
                 retry_msg = None
                 # 1) Best-effort: tool_choice="required" (some providers support it).
                 try:
-                    response = await client.chat.completions.create(
-                        model=llm_config.model,
+                    response = await _loop_completion(
                         messages=call_messages,
                         tools=tools,
                         tool_choice="required",
@@ -882,8 +901,7 @@ async def _run_researcher_loop(
                 # 2) Fallback: corrective nudge + tool_choice="auto".
                 if retry_msg is None or not retry_msg.tool_calls:
                     try:
-                        response = await client.chat.completions.create(
-                            model=llm_config.model,
+                        response = await _loop_completion(
                             messages=call_messages + [nudge],
                             tools=tools,
                             tool_choice="auto",
@@ -902,8 +920,7 @@ async def _run_researcher_loop(
                     "content": "Retrying...",
                 }
                 try:
-                    response = await client.chat.completions.create(
-                        model=llm_config.model,
+                    response = await _loop_completion(
                         messages=call_messages,
                         tools=tools,
                         tool_choice="auto",
@@ -1752,12 +1769,7 @@ async def _run_researcher_loop(
             and (_deadline is None or time.monotonic() < _deadline - 20)
         ):
             try:
-                _reflect_response = await safe_chat_completion(
-                    client.chat.completions.create,
-                    base_url=llm_config.base_url,
-                    model=llm_config.model,
-                    reasoning_mode=_chat_reasoning_mode(mode, settings, llm_config.model),
-                    overrides=settings.parsed_reasoning_overrides,
+                _reflect_response = await _loop_completion(
                     messages=messages + [{
                         "role": "system",
                         "content": (

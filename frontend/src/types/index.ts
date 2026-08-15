@@ -21,6 +21,10 @@ export interface Document {
   collection_name?: string | null;
   // Source tracking
   source?: string;
+  // Terminal "nothing to ingest" states. Status stays "completed" — no retry
+  // can change the outcome — and these carry the reason for the badge.
+  content_status?: "empty" | "encrypted" | null;
+  content_note?: string;
   // Degraded-document signals (-1 entity_count = unknown / extraction disabled)
   entity_count?: number;
   unembedded_chunk_count?: number;

@@ -1106,6 +1106,7 @@ class AppTaskService:
             get_extraction_llm_config,
             make_async_openai_client,
         )
+        from app.services.reasoning_config import safe_chat_completion
 
         # Extraction tier, not the chat model: llm task steps are bulk
         # mechanical work (transcript cleanup, summarization) — the chat
@@ -1134,8 +1135,18 @@ class AppTaskService:
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}
             ]
-            response = await client.chat.completions.create(
-                model=config.model, messages=messages, **params
+            # Through the reasoning wrapper, not a bare create(): llm steps are
+            # bulk mechanical work, and on a thinking-by-default model (Qwen3.8
+            # ships reasoning_effort=xhigh) a bare call spends the step's whole
+            # token budget on hidden CoT and returns a truncated string.
+            response = await safe_chat_completion(
+                client.chat.completions.create,
+                base_url=config.base_url,
+                model=config.model,
+                reasoning_mode=config.reasoning_mode,
+                overrides=self.settings.parsed_reasoning_overrides,
+                messages=messages,
+                **params,
             )
             return (response.choices[0].message.content or "").strip()
 

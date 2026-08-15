@@ -35,12 +35,14 @@ class FakeClient:
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = 0
+        self.call_kwargs = []
         self.chat = SimpleNamespace(
             completions=SimpleNamespace(create=self._create)
         )
 
     async def _create(self, **kwargs):
         self.calls += 1
+        self.call_kwargs.append(kwargs)
         if not self._responses:
             # Out of script — behave like a model that just calls done.
             return _assistant(
@@ -208,3 +210,57 @@ async def test_entity_hints_skip_extraction_and_reach_search(loop_settings):
     assert processor.search_calls, "search must run"
     _, precomputed = processor.search_calls[0]
     assert precomputed == ["Cortex", "Neo4j"]
+
+
+def _thinking_suppressed(kwargs: dict) -> bool:
+    """True when a recorded call carried reasoning-suppression params.
+
+    The fake llm_config uses model "m" on a plain OpenAI-compatible base_url,
+    which resolves to the defensive both-keys payload.
+    """
+    return "enable_thinking" in (
+        (kwargs.get("extra_body") or {}).get("chat_template_kwargs") or {}
+    )
+
+
+async def test_quality_mode_suppresses_thinking_by_default(loop_settings):
+    """Deep research runs non-thinking unless RESEARCH_REASONING_MODE says otherwise.
+
+    Deliberation in this loop is explicit (the `reasoning` tool, forced by the
+    reflection micro-call) and persists in the message history; hidden CoT is
+    discarded between turns while competing for the same token budget.
+    """
+    client = FakeClient([_assistant([_tool_call("z", "done", '{"summary": "ok"}')])])
+    await _drive(client, FakeProcessor(), loop_settings, mode="quality")
+
+    assert client.call_kwargs, "the loop must have called the LLM"
+    assert _thinking_suppressed(client.call_kwargs[0])
+
+
+async def test_research_reasoning_mode_auto_restores_thinking(loop_settings):
+    """The escape hatch reaches the wire, not just the mode helper."""
+    saved = loop_settings.research_reasoning_mode
+    loop_settings.research_reasoning_mode = "auto"
+    try:
+        client = FakeClient([_assistant([_tool_call("z", "done", '{"summary": "ok"}')])])
+        await _drive(client, FakeProcessor(), loop_settings, mode="quality")
+    finally:
+        loop_settings.research_reasoning_mode = saved
+
+    assert not _thinking_suppressed(client.call_kwargs[0])
+
+
+async def test_empty_choices_retry_keeps_reasoning_params(loop_settings):
+    """The retry paths must not silently drop suppression.
+
+    A bare create() on the retry runs WITH thinking on a thinking-by-default
+    model — the slowest path taken exactly when the model is already flaky.
+    """
+    client = FakeClient([
+        SimpleNamespace(choices=[]),  # provider returned 200 with no choices
+        _assistant([_tool_call("z", "done", '{"summary": "ok"}')]),
+    ])
+    await _drive(client, FakeProcessor(), loop_settings, mode="quality")
+
+    assert client.calls == 2, "the empty-choices retry must have fired"
+    assert all(_thinking_suppressed(kw) for kw in client.call_kwargs)

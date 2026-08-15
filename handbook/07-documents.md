@@ -366,6 +366,17 @@ A document can finish processing "successfully" yet still be incomplete — for 
 
 The signals behind the badge (`entity_count`, unembedded chunk count) are computed during processing and backfilled once at startup for existing libraries.
 
+### Documents With No Content
+
+Some files simply have nothing to ingest — a zero-byte export, a PDF with no pages, or a password-protected PDF Cortex cannot unlock. These are **not** failures: retrying them produces the same result every time, so they would otherwise sit in the failed list forever (a large archive import can easily contribute dozens).
+
+Cortex finishes these documents instead of failing them, with a neutral grey badge and a one-line explanation on the card:
+
+- **No Content** — the file is empty, has no pages, or the converter found no text in it.
+- **Protected** — the PDF is password-protected. Cortex cannot unlock it; re-upload a decrypted copy if you want its contents ingested. (This is the case worth acting on: a locked scan can hold many pages of real content.)
+
+These documents are kept out of the failed/degraded banner and its bulk-reprocess selection, and out of the **Completed** count — they get their own **No Content** status filter, which appears once your library contains any. They hold no chunks, so they never appear in search or answers; the original file stays downloadable. Reprocessing one is harmless but changes nothing unless you replaced the file first.
+
 ### Paused and Interrupted Documents
 
 Long-running processing survives LLM endpoint hiccups (for example a litellm router restart) instead of failing or silently losing work:

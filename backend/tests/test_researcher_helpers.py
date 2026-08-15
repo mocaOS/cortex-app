@@ -331,8 +331,10 @@ def test_quality_iteration_directive_shapes():
 # budget as the visible answer, so a reasoning writer truncates deep-research
 # answers mid-word (measured on qwen3-6-35b-a3b: 2.7k-4.3k trace tokens against
 # a 4000 cap, sometimes leaving zero visible prose). The writer is therefore
-# always OFF, while the researcher loop must keep AUTO in quality mode — the
-# forced-reflection micro-call depends on the model actually thinking.
+# always OFF. The researcher loop follows RESEARCH_REASONING_MODE in quality
+# mode (OFF by default since 2026-08-15): deliberation there is explicit via the
+# `reasoning` tool, which the forced-reflection micro-call pins `tool_choice` to,
+# so it does not depend on hidden thinking.
 
 def test_writer_reasoning_is_off_in_both_modes():
     from app.services.reasoning_config import ReasoningMode
@@ -345,17 +347,45 @@ def test_writer_reasoning_is_off_in_both_modes():
     assert _writer_reasoning_mode("speed", S()) is ReasoningMode.OFF
 
 
-def test_researcher_loop_keeps_reasoning_in_quality_mode():
+def test_researcher_loop_modes_follow_their_own_settings():
+    from app.services.reasoning_config import ReasoningMode
+    from app.services.researcher_agent import _chat_reasoning_mode
+
+    class S:
+        default_reasoning_mode = "off"
+        research_reasoning_mode = "off"
+
+    # quality reads RESEARCH_REASONING_MODE, not DEFAULT_REASONING_MODE
+    assert _chat_reasoning_mode("quality", S()) is ReasoningMode.OFF
+    # speed follows the configured default
+    assert _chat_reasoning_mode("speed", S()) is ReasoningMode.OFF
+
+
+def test_research_reasoning_mode_can_restore_thinking():
+    # The documented escape hatch: a model whose tool-calling regresses without
+    # hidden reasoning gets it back with RESEARCH_REASONING_MODE=auto, no code
+    # change — and speed mode is unaffected by it.
+    from app.services.reasoning_config import ReasoningMode
+    from app.services.researcher_agent import _chat_reasoning_mode
+
+    class S:
+        default_reasoning_mode = "off"
+        research_reasoning_mode = "auto"
+
+    assert _chat_reasoning_mode("quality", S()) is ReasoningMode.AUTO
+    assert _chat_reasoning_mode("speed", S()) is ReasoningMode.OFF
+
+
+def test_research_reasoning_mode_defaults_off_when_setting_absent():
+    # Settings objects predating the field (and the getattr fallback) must not
+    # silently reintroduce provider-default thinking.
     from app.services.reasoning_config import ReasoningMode
     from app.services.researcher_agent import _chat_reasoning_mode
 
     class S:
         default_reasoning_mode = "off"
 
-    # quality ignores DEFAULT_REASONING_MODE and stays AUTO
-    assert _chat_reasoning_mode("quality", S()) is ReasoningMode.AUTO
-    # speed follows the configured default
-    assert _chat_reasoning_mode("speed", S()) is ReasoningMode.OFF
+    assert _chat_reasoning_mode("quality", S()) is ReasoningMode.OFF
 
 
 def test_researcher_loop_forces_reasoning_off_for_openai_gpt_models():
@@ -368,9 +398,10 @@ def test_researcher_loop_forces_reasoning_off_for_openai_gpt_models():
 
     class S:
         default_reasoning_mode = "auto"
+        research_reasoning_mode = "auto"
 
     for model in ("gpt-5.6-luna", "gpt-5.1", "gpt-5-mini", "o3-mini"):
         assert _chat_reasoning_mode("quality", S(), model) is ReasoningMode.OFF
         assert _chat_reasoning_mode("speed", S(), model) is ReasoningMode.OFF
-    # non-OpenAI models keep the existing behavior
+    # non-OpenAI models keep the configured mode
     assert _chat_reasoning_mode("quality", S(), "qwen3-32b") is ReasoningMode.AUTO

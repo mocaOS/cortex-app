@@ -3569,6 +3569,11 @@ async def get_ingestion_status(auth: AuthResult = Depends(require_read_permissio
             # "queued" (the additive flag the UI uses), not "processing".
             if status == "processing" and d.get("processing_queued"):
                 status = "queued"
+            # Completed-but-empty (zero-page / password-protected source) gets
+            # its own bucket: it is neither a failure to retry nor a document
+            # with retrievable content.
+            elif status == "completed" and d.get("content_status"):
+                status = "no_content"
             counts[status] = counts.get(status, 0) + 1
 
         live_ids = set(get_active_processing_ids())

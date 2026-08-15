@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, AlertTriangle, ShieldAlert, FolderOpen, X, Globe } from "lucide-react";
+import { Filter, ChevronDown, Check, Clock, CheckCircle2, Loader2, XCircle, AlertTriangle, ShieldAlert, FolderOpen, X, Globe, FileX } from "lucide-react";
 import type { Collection } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +17,7 @@ interface StatusCounts {
   failed: number;
   degraded: number;
   flagged: number;
+  no_content: number;
 }
 
 interface DocumentFiltersProps {
@@ -146,6 +147,11 @@ export function DocumentFilters({
     { value: "pending", label: "Pending", count: statusCounts.pending, icon: Clock },
     { value: "failed", label: "Failed", count: statusCounts.failed, icon: XCircle },
     { value: "degraded", label: "Degraded", count: statusCounts.degraded, icon: AlertTriangle },
+    // Empty / password-protected sources: terminal, and never worth a retry —
+    // offered only once the corpus actually contains some.
+    ...(statusCounts.no_content > 0
+      ? [{ value: "no_content", label: "No Content", count: statusCounts.no_content, icon: FileX }]
+      : []),
     // Only offered when the experimental ingestion injection scan has actually
     // flagged something — with the feature off (the default) it never appears.
     ...(statusCounts.flagged > 0

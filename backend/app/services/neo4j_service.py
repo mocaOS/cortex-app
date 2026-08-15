@@ -550,6 +550,29 @@ class Neo4jService:
         with self.driver.session() as session:
             session.run(query, **params)
 
+    def set_document_content_status(
+        self, doc_id: str, status: Optional[str], note: str = ""
+    ) -> None:
+        """Flag a document that converted cleanly but holds nothing to ingest.
+
+        status is 'empty' (zero-byte / zero-page / no text) or 'encrypted'
+        (password-protected PDF) — both terminal states that no reprocess can
+        change, which is why the document is COMPLETED rather than FAILED.
+        Passing status=None clears the flag, which every processing run does up
+        front so a re-uploaded (decrypted, non-empty) file starts clean.
+        """
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (d:Document {id: $id})
+                SET d.content_status = $status,
+                    d.content_note = $note
+                """,
+                id=doc_id,
+                status=status or None,
+                note=note or "",
+            )
+
     def set_document_injection_flag(
         self, doc_id: str, flagged: bool, reason: str = ""
     ) -> None:
@@ -1172,6 +1195,8 @@ class Neo4jService:
                        coalesce(d.entity_count, -1) as entity_count,
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
+                       d.content_status as content_status,
+                       coalesce(d.content_note, '') as content_note,
                        coalesce(d.processing_paused, false) as processing_paused,
                        coalesce(d.processing_queued, false) as processing_queued,
                        coalesce(d.paused_reason, '') as paused_reason,
@@ -1222,6 +1247,8 @@ class Neo4jService:
                        coalesce(d.entity_count, -1) as entity_count,
                        coalesce(d.injection_flagged, false) as injection_flagged,
                        coalesce(d.injection_reason, '') as injection_reason,
+                       d.content_status as content_status,
+                       coalesce(d.content_note, '') as content_note,
                        coalesce(d.processing_paused, false) as processing_paused,
                        coalesce(d.processing_queued, false) as processing_queued,
                        coalesce(d.paused_reason, '') as paused_reason,

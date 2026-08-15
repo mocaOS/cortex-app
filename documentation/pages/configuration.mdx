@@ -246,9 +246,15 @@ VISION_REASONING_MODE=off
 # Chat/answer path. Default OFF: reasoning-capable models (esp. Venice) stream
 # hidden chain-of-thought in a separate channel, adding seconds before the first
 # answer token and causing empty/timeout answers under the agent loop. OFF
-# (Venice disable_thinking) → sub-second first token. Deep-research stays AUTO.
+# (Venice disable_thinking) → sub-second first token.
 # On OpenAI GPT-5/o-series, OFF can disable parallel tool calls — set =auto there.
 DEFAULT_REASONING_MODE=off
+
+# Deep-research (quality) researcher loop. Default OFF: that loop forces explicit
+# reflection through the `reasoning` tool, whose thought persists in the message
+# history, while hidden chain-of-thought is discarded between turns and competes
+# for the same max_tokens budget. Set =auto to restore provider-default thinking.
+RESEARCH_REASONING_MODE=off
 
 # Escape hatch for novel models the heuristics get wrong.
 # Format: "model1:mode1,model2:mode2"
@@ -872,6 +878,7 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RELATIONSHIP_REASONING_MODE` | No | `off` | Force reasoning OFF on candidate scan + relationship extraction. Same values as above |
 | `VISION_REASONING_MODE` | No | `off` | Force reasoning OFF on the vision model's image-description call. Same values as above |
 | `DEFAULT_REASONING_MODE` | No | `off` | Reasoning mode for the Q&A/answer path. Same values as above |
+| `RESEARCH_REASONING_MODE` | No | `off` | Reasoning mode for the deep-research (quality) researcher loop. Same values as above |
 | `REASONING_MODEL_OVERRIDES` | No | empty | Per-model override. Format: `model1:mode1,model2:mode2`. Example: `gpt-5.8:none,custom:minimal` |
 | `ENABLE_HYBRID_SEARCH` | No | `true` | Enable hybrid search |
 | `ENABLE_RERANKING` | No | `true` | Enable re-ranking |

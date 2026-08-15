@@ -225,6 +225,36 @@ stuck at 8/2023 images). Since 2026-07-10 the lifespan startup also calls
   errors leave the counters stuck for retry on the next startup.
 - Tests: `backend/tests/test_image_analysis_resume.py`.
 
+### No-content documents (empty / password-protected)
+
+Files that can never yield content are terminal but **not failures** — retrying
+produces the identical result forever, so they must not accumulate in the failed
+list (observed live: 21 of 24 failed docs in a 3.6k-document Paperless import).
+
+- `_probe_no_content(file_path, ext)` runs in `_process_document` **before**
+  conversion (skipped on resume-reuse): zero-byte file (any type), PDF with an
+  empty page tree, or a PDF needing a non-empty user password (pypdf
+  `is_encrypted` + failed `decrypt("")`). Deliberately conservative — a
+  malformed PDF or any inconclusive pypdf error returns `None` and takes the
+  normal conversion path, where a real failure is still a failure.
+- Post-conversion empty output (raw-text branch, or docling returning no
+  markdown *after* the scanned-PDF OCR retry) raises the same
+  `NoExtractableContent(reason, note)`.
+- The dedicated `except NoExtractableContent` handler in `_process_document`
+  marks the doc `COMPLETED` with `chunk_count=0`, clears `error_message`, and
+  writes `set_document_content_status(doc_id, reason, note)`. `entity_count`
+  stays **unset** — 0 would read as the degraded signal. Metric:
+  `DOCUMENTS_PROCESSED{status="no_content"}`; webhook: `document.processed`
+  with `content_status`.
+- Persisted: `Document.content_status` (`empty` | `encrypted`, absent when the
+  doc has content) + `content_note`, returned by `get_all_documents` /
+  `get_document`. Every run clears the pair up front, so a re-uploaded
+  decrypted copy starts clean.
+- Chunkless, so invisible to retrieval (every search query joins through
+  `HAS_CHUNK`). `GET /api/ingestion/status` buckets these as `no_content`
+  rather than `completed`.
+- Tests: `backend/tests/test_no_content_documents.py`.
+
 ### Degraded-document signals
 
 A document can "complete" while being useless for retrieval (e.g. extraction
@@ -238,8 +268,11 @@ chunks without embeddings). Two persisted signals make this visible:
 - `Chunk.has_embedding` — boolean mirror written by `store_chunk`, so
   embedding coverage is queryable without streaming vectors.
 
-**Degraded** = status `completed` AND (`entity_count == 0` OR any chunk with
-`has_embedding = false`). `get_all_documents`/`get_document` return
+**Degraded** = status `completed` AND **no** `content_status` AND
+(`entity_count == 0` OR any chunk with `has_embedding = false`). The
+no-content exclusion matters: an empty file has nothing to extract or embed,
+so without it every empty doc would trade red "failed" noise for amber
+"degraded" noise and be swept into bulk reprocesses. `get_all_documents`/`get_document` return
 `entity_count` + `unembedded_chunk_count` (only `false` counts — `NULL`
 pre-backfill chunks don't false-positive).
 
