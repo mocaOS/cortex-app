@@ -83,6 +83,28 @@ def get_relationship_llm_config() -> LLMConfig:
     )
 
 
+def get_writer_llm_config(base: Optional[LLMConfig] = None, settings=None) -> LLMConfig:
+    """
+    Get LLM config for the writer stage of the research pipeline.
+
+    Optional dedicated writer model (WRITER_MODEL / WRITER_API_BASE /
+    WRITER_API_KEY): the researcher loop needs strong tool calling, the writer
+    only composes prose from already-gathered context, so they can run on
+    different models. Each property falls back independently to ``base`` (the
+    researcher's config, else the main chat config), so setting just
+    WRITER_MODEL reuses the primary gateway and key — same idiom as the
+    extraction/relationship tiers.
+    """
+    settings = settings or get_settings()
+    base = base or get_llm_config()
+    return LLMConfig(
+        api_key=getattr(settings, "writer_api_key", "") or base.api_key,
+        base_url=getattr(settings, "writer_api_base", "") or base.base_url,
+        model=getattr(settings, "writer_model", "") or base.model,
+        reasoning_mode=base.reasoning_mode,
+    )
+
+
 def build_chat_params(
     model: str,
     *,

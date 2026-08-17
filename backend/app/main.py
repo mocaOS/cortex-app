@@ -123,7 +123,7 @@ from app.services.prompt_security import (
     get_safe_refusal_message,
     wrap_untrusted,
 )
-from app.services.llm_config import get_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
+from app.services.llm_config import get_llm_config, get_writer_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
 from app.services import usage_meter
 from app.services.prompt_guard_client import guard_user_question
 from app.services.observability import traced_sse
@@ -4889,8 +4889,11 @@ Question: {processed_question}"""
             )
             messages.append({"role": "user", "content": prompt})
 
-            # Stream the response using async client
-            llm_config = get_llm_config()
+            # Stream the response using async client. Same writer-model
+            # override as the agent pipeline (WRITER_MODEL/_API_BASE/_API_KEY,
+            # falling back to the primary config) — this is the legacy path's
+            # writer stage.
+            llm_config = get_writer_llm_config()
             client = make_async_openai_client(
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,

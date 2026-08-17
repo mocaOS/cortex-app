@@ -101,7 +101,12 @@ from app.services.prompt_security import (
     validate_and_process_input,
     wrap_untrusted,
 )
-from app.services.llm_config import build_chat_params, make_async_openai_client, stream_usage_kwargs
+from app.services.llm_config import (
+    build_chat_params,
+    get_writer_llm_config,
+    make_async_openai_client,
+    stream_usage_kwargs,
+)
 from app.services.context_curator import (
     build_context,
     clamp_memory_blob,
@@ -2198,22 +2203,35 @@ async def run_research_pipeline(
 
     writer_messages.append({"role": "user", "content": writer_user})
 
+    # Optional dedicated writer model (WRITER_MODEL / WRITER_API_BASE /
+    # WRITER_API_KEY); each property falls back to the researcher's config,
+    # so the default deployment reuses the exact same client below.
+    writer_llm = get_writer_llm_config(base=llm_config, settings=settings)
+    writer_client = (
+        client
+        if (writer_llm.api_key, writer_llm.base_url)
+        == (llm_config.api_key, llm_config.base_url)
+        else make_async_openai_client(
+            api_key=writer_llm.api_key, base_url=writer_llm.base_url
+        )
+    )
+
     try:
         # Writer composes the final answer from already-gathered context — it
         # never needs hidden reasoning, so suppress it in BOTH modes for a snappy
         # first token and so the whole token budget goes to the visible answer.
         # See _writer_reasoning_mode.
         stream = await safe_chat_completion(
-            client.chat.completions.create,
-            base_url=llm_config.base_url,
-            model=llm_config.model,
+            writer_client.chat.completions.create,
+            base_url=writer_llm.base_url,
+            model=writer_llm.model,
             reasoning_mode=_writer_reasoning_mode(mode, settings),
             overrides=settings.parsed_reasoning_overrides,
             messages=writer_messages,
             stream=True,
             **stream_usage_kwargs(),
             **build_chat_params(
-                llm_config.model, temperature=0.3, max_tokens=writer_max_tokens
+                writer_llm.model, temperature=0.3, max_tokens=writer_max_tokens
             ),
         )
 

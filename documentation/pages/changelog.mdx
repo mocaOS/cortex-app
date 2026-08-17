@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## August 17, 2026
+
+### Dedicated writer model
+
+The two halves of an answer have different demands: the researcher loop needs strong, reliable tool calling, while the writer only composes prose from the context the loop already gathered. Until now both ran on `OPENAI_MODEL`. A new optional tier lets them differ — keep a fast tool-caller researching and hand synthesis to a better prose stylist, or a cheaper model.
+
+- **New `WRITER_MODEL`, `WRITER_API_BASE`, `WRITER_API_KEY`** — each falls back independently to the primary config, so setting just `WRITER_MODEL` reuses the primary gateway and key (same idiom as the extraction and relationship tiers).
+- **Applies everywhere an answer is written** — the agent pipeline's writer stage (Chat and Deep Research) and the legacy non-agent streaming writer.
+- **Everything else about the writer is unchanged** — reasoning stays suppressed regardless of model, and the `WRITER_MAX_TOKENS_*` limits, citation guards and truncation notice apply as before. Unset, behavior is byte-identical to previous releases.
+
+---
+
 ## August 15, 2026
 
 Two independent cleanups: documents that hold nothing to ingest stop being treated as failures, and deep research stops paying for hidden thinking it never uses.

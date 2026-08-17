@@ -220,6 +220,9 @@ For multi-instance deployments (e.g. many isolated customer stacks on one host),
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | `5` | Max agent loop iterations for Deep Research (quality). |
 | `WRITER_MAX_TOKENS_SPEED` | `1200` | Max output tokens for Chat answers. |
 | `WRITER_MAX_TOKENS_QUALITY` | `8000` | Max output tokens for Deep Research answers. |
+| `WRITER_MODEL` | — | Optional dedicated model for the answer-writing stage. The researcher keeps `OPENAI_MODEL` for tool calling; this model composes the final answer. Empty = use the primary model. |
+| `WRITER_API_BASE` | — | API base for the writer model. Empty = `OPENAI_API_BASE`. |
+| `WRITER_API_KEY` | — | API key for the writer model. Empty = `OPENAI_API_KEY`. |
 | `RESEARCHER_SPEED_EARLY_WRITE` | `true` | Chat mode skips the agent's final "research complete" confirmation call once a search has produced sources (and no skill/git action ran) — one full LLM round-trip less per chat turn. |
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | `true` | Run read-only tool calls (knowledge/community/entity searches) issued in one agent turn concurrently instead of one after another. Skill and git actions always stay sequential. |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | `true` | Let the agent pass entity names directly on its search calls, skipping the separate query entity-extraction LLM call. |

@@ -276,6 +276,11 @@ RESEARCHER_MAX_ITERATIONS_QUALITY=5  # Research: up to 5 iterations
 WRITER_MAX_TOKENS_SPEED=1200     # Chat answers
 WRITER_MAX_TOKENS_QUALITY=8000   # Research answers
 
+# Optional dedicated writer model (researcher keeps OPENAI_MODEL for tool calling)
+# WRITER_MODEL=                  # Defaults to OPENAI_MODEL
+# WRITER_API_BASE=               # Defaults to OPENAI_API_BASE
+# WRITER_API_KEY=                # Defaults to OPENAI_API_KEY
+
 # Loop efficiency (all default true)
 RESEARCHER_SPEED_EARLY_WRITE=true     # Chat: skip the final confirmation LLM call
 RESEARCHER_PARALLEL_TOOL_CALLS=true   # Concurrent read-only searches per agent turn

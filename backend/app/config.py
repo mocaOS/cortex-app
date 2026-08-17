@@ -656,6 +656,18 @@ class Settings(BaseSettings):
     #   feeds the writer; benched at 5: models stop on their own (`done`)
     #   on most questions with no quality loss. Raise for exhaustive
     #   research on very large corpora.
+    writer_model: str = Field(
+        default=""
+    )  # Dedicated model for the writer stage (defaults to OPENAI_MODEL if empty).
+    #   The researcher loop needs strong tool calling; the writer only composes
+    #   prose from gathered context — this lets a better prose stylist (or a
+    #   cheaper model) handle synthesis without changing the researcher.
+    writer_api_base: str = Field(
+        default=""
+    )  # API base for the writer model (defaults to OPENAI_API_BASE if empty)
+    writer_api_key: str = Field(
+        default=""
+    )  # API key for the writer model (defaults to OPENAI_API_KEY if empty)
     writer_max_tokens_speed: int = Field(
         default=1200
     )  # Max output tokens for writer in speed mode

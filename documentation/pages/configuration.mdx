@@ -481,6 +481,14 @@ ENABLE_AGENT_CHAT=true
 # WRITER_MAX_TOKENS_SPEED=1200           # Chat mode
 # WRITER_MAX_TOKENS_QUALITY=4000         # Deep research mode
 
+# Optional dedicated writer model — the researcher keeps OPENAI_MODEL for tool
+# calling while a different model composes the final answer. Each property
+# falls back to the primary config, so setting just WRITER_MODEL reuses the
+# primary gateway and key.
+# WRITER_MODEL=                          # Defaults to OPENAI_MODEL
+# WRITER_API_BASE=                       # Defaults to OPENAI_API_BASE
+# WRITER_API_KEY=                        # Defaults to OPENAI_API_KEY
+
 # Loop efficiency (all default true; set false to restore legacy behavior)
 # RESEARCHER_SPEED_EARLY_WRITE=true      # Chat: skip the final "research complete" confirmation LLM call
 # RESEARCHER_PARALLEL_TOOL_CALLS=true    # Run read-only searches from one agent turn concurrently
@@ -899,6 +907,9 @@ MAX_QUERIES_PER_MONTH=0  # Monthly quota, measured in internal LLM completions (
 | `RESEARCHER_MAX_ITERATIONS_QUALITY` | No | `5` | Agent loop iterations for deep research |
 | `WRITER_MAX_TOKENS_SPEED` | No | `1200` | Max output tokens for chat answers |
 | `WRITER_MAX_TOKENS_QUALITY` | No | `4000` | Max output tokens for deep research answers |
+| `WRITER_MODEL` | No | `OPENAI_MODEL` | Dedicated model for the answer-writing stage (researcher keeps the primary model) |
+| `WRITER_API_BASE` | No | `OPENAI_API_BASE` | API base for the writer model |
+| `WRITER_API_KEY` | No | `OPENAI_API_KEY` | API key for the writer model |
 | `RESEARCHER_SPEED_EARLY_WRITE` | No | `true` | Chat skips the agent's final confirmation LLM call after a fruitful search |
 | `RESEARCHER_PARALLEL_TOOL_CALLS` | No | `true` | Read-only searches from one agent turn run concurrently |
 | `RESEARCHER_TOOL_ENTITY_HINTS` | No | `true` | Agent passes entities on search calls, skipping the extraction LLM call |
