@@ -246,6 +246,10 @@ curl http://localhost:8000/api/graph/entity-types \
 curl "http://localhost:8000/api/graph/relationships?skip=0&limit=50&rel_type=USES" \
   -H "X-API-Key: your-api-key"
 
+# Relationships a specific document contributed (each row includes source_document_id)
+curl "http://localhost:8000/api/graph/relationships?document_id=<doc-uuid>" \
+  -H "X-API-Key: your-api-key"
+
 # Distinct relationship types
 curl http://localhost:8000/api/graph/relationship-types \
   -H "X-API-Key: your-api-key"

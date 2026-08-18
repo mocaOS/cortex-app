@@ -1381,7 +1381,17 @@ class Neo4jService:
                 """, names=orphaned_entities)
                 orphaned_count = len(orphaned_entities)
                 logger.info(f"Deleted {orphaned_count} orphaned entities for document {doc_id}")
-            
+
+            # Step 2.5: Scrub this document's id from provenance on surviving
+            # entities. Reprocessing re-adds the id for entities the new
+            # extraction actually finds; without the scrub, entities dropped by
+            # the re-extraction keep a stale source_documents claim on this doc.
+            session.run("""
+                MATCH (e:Entity)
+                WHERE $id IN coalesce(e.source_documents, [])
+                SET e.source_documents = [x IN e.source_documents WHERE x <> $id]
+            """, id=doc_id)
+
             # Step 3: Delete only the chunks (not the document)
             result = session.run("""
                 MATCH (d:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)
@@ -1457,7 +1467,18 @@ class Neo4jService:
                 """, names=orphaned_entities)
                 orphaned_entity_count = len(orphaned_entities)
                 logger.info(f"Deleted {orphaned_entity_count} orphaned entities for document {doc_id}")
-            
+
+            # Step 2.5: Scrub this document's id from provenance on surviving
+            # (shared) entities. Entities kept because other documents mention
+            # them would otherwise carry a source_documents entry pointing at a
+            # document that no longer exists. Removes only the provenance
+            # pointer — never the entity.
+            session.run("""
+                MATCH (e:Entity)
+                WHERE $id IN coalesce(e.source_documents, [])
+                SET e.source_documents = [x IN e.source_documents WHERE x <> $id]
+            """, id=doc_id)
+
             # Step 3: Delete orphaned communities (communities with no remaining members)
             orphaned_community_result = session.run("""
                 MATCH (com:Community)
@@ -4736,13 +4757,16 @@ class Neo4jService:
         limit: int = 50,
         search: str = None,
         rel_type: str = None,
-        allowed_collection_ids: Optional[List[str]] = None
+        allowed_collection_ids: Optional[List[str]] = None,
+        document_id: str = None
     ) -> dict:
         """List relationships with server-side pagination, search, and filtering.
-        
+
         Args:
             allowed_collection_ids: If provided, scope to relationships where at least one
                 endpoint entity is from these collections (4-hop pattern).
+            document_id: If provided, only relationships this document contributed
+                (matched via the source_document_id property on the edge).
         """
         with self.driver.session() as session:
             params = {"skip": skip, "limit": limit}
@@ -4753,6 +4777,10 @@ class Neo4jService:
             if rel_type:
                 where_parts.append("type(r) = $rel_type")
                 params["rel_type"] = rel_type
+
+            if document_id:
+                where_parts.append("r.source_document_id = $document_id")
+                params["document_id"] = document_id
 
             if search:
                 where_parts.append("(toLower(s.name) CONTAINS toLower($search) OR toLower(t.name) CONTAINS toLower($search) OR toLower(coalesce(r.description, '')) CONTAINS toLower($search))")
@@ -4799,11 +4827,12 @@ class Neo4jService:
                 {where_clause}
                 {collection_filter_clause}
                 WITH s.name as source, t.name as target, type(r) as rel_type,
-                     r.description as description, r.weight as weight
+                     r.description as description, r.weight as weight,
+                     r.source_document_id as source_document_id
                 {order_clause}
                 SKIP $skip
                 LIMIT $limit
-                RETURN source, target, rel_type as type, description, weight
+                RETURN source, target, rel_type as type, description, weight, source_document_id
             """
             relationships = [dict(record) for record in session.run(data_query, **params)]
 

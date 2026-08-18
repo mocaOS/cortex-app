@@ -418,8 +418,9 @@ When a document is deleted, the Library performs thorough cleanup:
 1. **Task Cancellation** — Active processing tasks are stopped immediately (cancellation flag + asyncio.Task.cancel with 10s timeout)
 2. **Chunk Removal** — All text and image chunks are deleted
 3. **Orphaned Entity Cleanup** — Entities only mentioned by this document are removed (entities shared with other documents are preserved)
-4. **Relationship Cleanup** — Relationships to deleted entities are automatically removed (via DETACH DELETE)
-5. **Community Cleanup** — Communities with no remaining member entities are deleted
+4. **Relationship Cleanup** — Relationships this document contributed (tracked via `source_document_id`) are removed, as are relationships to deleted entities (via DETACH DELETE)
+5. **Provenance Scrub** — Surviving shared entities have the deleted document's id removed from their `source_documents` list, so no entity keeps a provenance pointer at a document that no longer exists
+6. **Community Cleanup** — Communities with no remaining member entities are deleted
 
 The response includes cleanup statistics:
 

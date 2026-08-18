@@ -11,7 +11,7 @@ Entity extraction runs in two surfaces — per-document text extraction (Phase A
 - When `ENABLE_SEMANTIC_ENTITY_RESOLUTION=true` (default), entities are batch-embedded via `generate_entity_embeddings_batch_async()` and stored via `store_entity_with_embedding()`, which queries the `entity_embedding` vector index first and falls back to Levenshtein for typo variants. Catches semantic duplicates like "Museum of Crypto Art" / "MOCA" that string similarity misses.
 - When the flag is off (or the embedding batch fails), entities fall through to `store_entity_with_resolution()` — Levenshtein 85% only.
 - Image entities reach this path through `store_graph_extraction()` (`neo4j_service.py`), which accepts an optional `entity_embeddings` list aligned with `extraction.entities`. The image pipeline computes embeddings per image before calling it; text-entity batching happens one level up at the document scope.
-- Provenance fields (`document_id`, `source_documents`, `extraction_count`, `last_extracted_at`) are tracked identically by both store paths.
+- Provenance fields (`document_id`, `source_documents`, `extraction_count`, `last_extracted_at`) are tracked identically by both store paths. On document delete/reprocess, `delete_document`/`delete_document_chunks` scrub the doc's id from `source_documents` on surviving shared entities (Step 2.5) — upserts only ever append, so without the scrub entities claim documents that no longer exist. `GET /api/graph/relationships` accepts `document_id` (filters on the edge's `source_document_id`, also returned per row).
 
 ## Type Normalization
 

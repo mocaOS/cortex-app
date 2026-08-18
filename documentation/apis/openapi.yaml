@@ -1070,6 +1070,11 @@ paths:
           schema:
             type: string
           description: Search in source, target, and description
+        - name: document_id
+          in: query
+          schema:
+            type: string
+          description: Filter to relationships this document contributed (matched via the source_document_id stored on each edge)
         - name: skip
           in: query
           schema:
@@ -3536,6 +3541,10 @@ components:
                 type: string
               weight:
                 type: number
+              source_document_id:
+                type: string
+                nullable: true
+                description: Id of the document this relationship was extracted from
         total:
           type: integer
           description: Total number of matching relationships

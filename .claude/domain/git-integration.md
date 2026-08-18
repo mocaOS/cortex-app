@@ -53,7 +53,7 @@ PAT is encrypted at rest (`enc:`-prefixed Fernet ciphertext via `crypto_service.
 **Wiki**: GitHub → clone `repo.wiki.git`, paths prefixed `wiki/`. GitLab/Gitea → Wikis API. Both paths use a content hash (`_wiki_sha`) as the pseudo blob sha; `_ingest_raw` skips unchanged pages, and pages removed from the wiki are flagged orphaned (the main fulltree sweep deliberately leaves `wiki/` paths to this sweep).
 
 ### Global stale-relationship fix
-Relationships carry `source_document_id` but previously survived reprocess/delete unless an endpoint entity fully orphaned. `delete_relationships_by_source_document` + an inline cleanup step now run in `delete_document_chunks` and `delete_document` — fixing stale `RELATES_TO` edges for **all** documents (uploads/custom-inputs/git), not just git.
+Relationships carry `source_document_id` but previously survived reprocess/delete unless an endpoint entity fully orphaned. `delete_relationships_by_source_document` + an inline cleanup step now run in `delete_document_chunks` and `delete_document` — fixing stale `RELATES_TO` edges for **all** documents (uploads/custom-inputs/git), not just git. The same two methods also scrub the doc's id from `Entity.source_documents` on surviving shared entities (see [`entities.md`](entities.md)).
 
 ## Write tool (`git_repo`, researcher agent)
 

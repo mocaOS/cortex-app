@@ -5093,17 +5093,18 @@ async def list_relationships(
     limit: int = Query(default=50, ge=1, le=1000),
     skip: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None, description="Search in source, target, description"),
+    document_id: Optional[str] = Query(default=None, description="Filter to relationships this document contributed (source_document_id)"),
     auth: AuthResult = Depends(require_read_permission)
 ):
     """List relationships with server-side pagination and search.
-    
+
     For restricted API keys, results are scoped to accessible collections.
     """
     try:
         neo4j = get_neo4j_service()
         collection_filter = auth.get_collection_filter()
         result = await asyncio.to_thread(
-            neo4j.list_relationships_paginated, skip, limit, search, rel_type, collection_filter
+            neo4j.list_relationships_paginated, skip, limit, search, rel_type, collection_filter, document_id
         )
         return result
     except Exception as e:
