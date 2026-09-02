@@ -606,6 +606,34 @@ class Settings(BaseSettings):
     vector_weight: float = Field(default=0.5)  # Weight for vector search in hybrid
     keyword_weight: float = Field(default=0.3)  # Weight for keyword search in hybrid
     graph_weight: float = Field(default=0.2)  # Weight for graph context in hybrid
+    # --- 2026-09 retrieval recall fixes: each has a revert switch so a fleet
+    #     rollout can back one out per tenant without a redeploy. ---
+    enable_query_entity_resolution: bool = Field(
+        default=True
+    )  # Resolve query-side entity mentions (LLM extraction / researcher hints)
+    #   onto stored Entity.name values (exact → case-insensitive name/alias →
+    #   fulltext on name) before graph traversal. Off → traversal matches the
+    #   raw names exactly (pre-2026-09 behavior; graph leg mostly silent).
+    #   Results are cached in-process for 60s per name set.
+    vector_scoped_overfetch: int = Field(
+        default=10
+    )  # When a collection/filter scope applies, ask the vector index for this
+    #   many × top_k candidates (capped at 200) before post-filtering — Neo4j
+    #   5.x vector indexes cannot pre-filter. 1 = off (legacy: scoped searches
+    #   returned a fraction of top_k). Unscoped searches are unaffected.
+    enable_parallel_search_legs: bool = Field(
+        default=True
+    )  # Run the vector / keyword / graph legs of one hybrid query concurrently
+    #   on a dedicated thread pool. Off → sequential legs (legacy). Turn off on
+    #   memory-starved tenant Neo4j containers if concurrent query load bites.
+    enable_ranked_graph_traversal: bool = Field(
+        default=True
+    )  # Graph leg of hybrid search uses `traverse_for_retrieval`: Entity-only
+    #   neighbor expansion (typed relationships, per-start cap) and chunks
+    #   RANKED by how many query entities they mention, with the limit pushed
+    #   into Cypher. Off → legacy `traverse_from_entities` (paths through
+    #   Chunk nodes = co-mention noise; every chunk of every neighbor pulled
+    #   with content, first 10 kept in arbitrary order; ~0.4s on a hub).
     max_conversation_history: int = Field(
         default=6
     )  # Max messages to include from conversation (legacy truncation; used when no conversation_memory blob)
@@ -758,7 +786,9 @@ class Settings(BaseSettings):
     rerank_top_k: int = Field(
         default=15
     )  # Candidates kept per knowledge_search after pooling the parallel
-    #   queries; also the rerank input size. Lower it on remote rerankers
+    #   queries. The per-query fetch depth is derived from it so the pool is
+    #   ~2× this value (see _per_query_candidate_k in researcher_agent.py) —
+    #   the reranker selects, not just reorders. Lower it on remote rerankers
     #   (RERANKER_SERVICE_URL) to trade recall for latency.
     ask_deadline_seconds: int = Field(
         default=28

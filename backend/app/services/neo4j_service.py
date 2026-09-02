@@ -17,6 +17,8 @@ import time
 import numpy as np
 from contextlib import asynccontextmanager
 import uuid
+import re
+from concurrent.futures import ThreadPoolExecutor
 
 from app.config import get_settings
 from app.models import (
@@ -71,9 +73,75 @@ def retry_on_transient(fn):
     return wrapper
 
 
+# =============================================================================
+# Retrieval helpers (pure; unit-tested in tests/test_search_helpers.py)
+# =============================================================================
+
+# Lucene boolean operators are only operators when upper-case; as bare tokens
+# in an OR-joined query they would break parsing ("foo OR OR OR bar").
+_LUCENE_OPERATOR_TOKENS = frozenset({"AND", "OR", "NOT"})
+_LUCENE_MAX_TERMS = 32
+
+
+def lucene_or_terms(text: Optional[str], max_terms: int = _LUCENE_MAX_TERMS) -> Optional[str]:
+    """Turn free text into a parse-safe Lucene query: word tokens joined by OR.
+
+    `db.index.fulltext.queryNodes` runs the classic Lucene query parser, so a
+    raw question containing `/`, `:`, unbalanced parentheses, a leading `-` or
+    a stray `NOT` throws a ParseException and the whole keyword leg silently
+    returns nothing. Reducing the text to `\\w+` tokens keeps exactly the
+    semantics the standard analyzer applies to a plain query (tokenize, OR),
+    minus the failure class. Returns None when nothing searchable remains.
+    """
+    if not text:
+        return None
+    tokens = [t for t in re.findall(r"\w+", text) if t not in _LUCENE_OPERATOR_TOKENS]
+    if not tokens:
+        return None
+    return " OR ".join(tokens[:max_terms])
+
+
+def query_entity_name_tokens(name: Optional[str]) -> set:
+    """Lower-cased word tokens of an entity name (for containment checks)."""
+    if not name:
+        return set()
+    return {t.lower() for t in re.findall(r"\w+", name)}
+
+
+# Neo4j 5.x vector indexes cannot pre-filter: `queryNodes(k)` returns the k
+# nearest chunks GLOBALLY and the collection / status filter runs afterwards,
+# so a scoped search for k=15 in a collection holding 10% of the corpus yields
+# ~1-2 rows. Over-fetch from the ANN when any filter is active, then LIMIT.
+_SCOPED_ANN_OVERFETCH = 10
+_SCOPED_ANN_MAX = 200
+
+
+def scoped_ann_k(top_k: int, scoped: bool, factor: int = _SCOPED_ANN_OVERFETCH) -> int:
+    """ANN candidate count for `vector_search`: `top_k` unscoped, over-fetched when scoped.
+
+    `factor` comes from `VECTOR_SCOPED_OVERFETCH`; 1 (or less) disables over-fetch.
+    """
+    if not scoped or factor <= 1:
+        return top_k
+    return max(top_k, min(top_k * factor, _SCOPED_ANN_MAX))
+
+
+# resolve_query_entity_names cache: the researcher hands the SAME hint list to
+# each of a search's (≤3) queries and often re-searches the same entities in
+# the next iteration; without this every query paid the resolution passes.
+_QUERY_ENTITY_CACHE_TTL = 60.0
+_QUERY_ENTITY_CACHE_MAX = 512
+
+
+# Runs the three hybrid-search legs (vector / keyword / graph) of ONE query
+# concurrently. `hybrid_search_rrf` itself executes on the asyncio default
+# executor, never on this pool, so there is no nested-wait deadlock.
+_search_leg_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="search-leg")
+
+
 class Neo4jService:
     """Service for interacting with Neo4j database."""
-    
+
     def __init__(self):
         self.settings = get_settings()
         self._driver = None
@@ -82,7 +150,12 @@ class Neo4jService:
         # Surfaced in get_stats() so operators can see it.
         self._vector_search_failures = 0
         self._vector_search_failure_warned = False
-    
+        self._query_entity_cache: dict = {}
+
+    def _setting(self, name: str, default):
+        """Settings lookup tolerant of partially-constructed instances (tests)."""
+        return getattr(getattr(self, "settings", None), name, default)
+
     @property
     def driver(self):
         if self._driver is None:
@@ -1139,9 +1212,17 @@ class Neo4jService:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
             elif allowed_collection_ids:
                 collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
-            
+
+            # The ANN call cannot pre-filter; when a scope/filter applies,
+            # over-fetch candidates so post-filtering still leaves top_k rows.
+            ann_k = scoped_ann_k(
+                top_k,
+                bool(collection_clause or filter_clause),
+                int(self._setting("vector_scoped_overfetch", _SCOPED_ANN_OVERFETCH)),
+            )
+
             result = session.run(f"""
-                CALL db.index.vector.queryNodes('chunk_embedding', $top_k, $embedding)
+                CALL db.index.vector.queryNodes('chunk_embedding', $ann_k, $embedding)
                 YIELD node as chunk, score
                 MATCH (d:Document)-[:HAS_CHUNK]->(chunk)
                 WHERE d.processing_status = 'completed' {filter_clause}
@@ -1156,6 +1237,7 @@ class Neo4jService:
                 LIMIT $top_k
             """,
                 embedding=query_embedding,
+                ann_k=ann_k,
                 top_k=top_k,
                 file_type=filters.get("file_type") if filters else None,
                 collection_id=collection_id,
@@ -2174,6 +2256,269 @@ class Neo4jService:
                 return [dict(record) for record in result]
     
     @retry_on_transient
+    def resolve_query_entity_names(
+        self,
+        names: List[str],
+        max_per_name: int = 2,
+    ) -> List[str]:
+        """Map query-side entity mentions onto stored ``Entity.name`` values.
+
+        Graph traversal matches ``start.name IN $names`` exactly, while the
+        names arrive from an LLM (query extraction or researcher hints) —
+        aliases, partial names and casing never matched, so the graph leg of
+        hybrid search stayed silent. Three passes, cheapest first, each only
+        for names the previous pass left unresolved:
+
+        1. exact name (unique-constraint index lookup)
+        2. case-insensitive name or alias (`e.aliases`, maintained by dedup,
+           merge and rename but never read at query time before) — one label
+           scan
+        3. fulltext on the ``name`` field, accepting a hit only when the
+           stored name contains every token of the mention ("Polygon" →
+           "Polygon Network", but not "Ethereum Foundation" → "Ethereum")
+
+        Returns the input names (deduped, order kept) plus the resolved
+        canonical names; an unmatched raw name is harmless downstream. Never
+        raises — on any error the raw names are returned.
+        """
+        cleaned: List[str] = []
+        for n in names or []:
+            if isinstance(n, str) and n.strip() and n.strip() not in cleaned:
+                cleaned.append(n.strip())
+        cleaned = cleaned[:10]
+        if not cleaned:
+            return []
+
+        # In-process TTL cache (see _QUERY_ENTITY_CACHE_TTL): the same name set
+        # arrives once per query of a search and again on the next iteration.
+        cache = getattr(self, "_query_entity_cache", None)
+        if cache is None:
+            cache = self._query_entity_cache = {}
+        cache_key = tuple(cleaned)
+        now = time.monotonic()
+        hit = cache.get(cache_key)
+        if hit is not None and now - hit[0] < _QUERY_ENTITY_CACHE_TTL:
+            return list(hit[1])
+
+        out = self._resolve_query_entity_names_uncached(cleaned, max_per_name)
+
+        if len(cache) >= _QUERY_ENTITY_CACHE_MAX:
+            cache.clear()
+        cache[cache_key] = (now, list(out))
+        return out
+
+    def _resolve_query_entity_names_uncached(
+        self, cleaned: List[str], max_per_name: int
+    ) -> List[str]:
+        resolved: dict = {}
+        try:
+            with self.driver.session() as session:
+                # Pass 1: exact (index-backed via the Entity.name constraint)
+                rows = session.run(
+                    "UNWIND $names AS q MATCH (e:Entity {name: q}) RETURN q, e.name AS name",
+                    names=cleaned,
+                )
+                for r in rows:
+                    resolved.setdefault(r["q"], []).append(r["name"])
+
+                # Pass 2: case-insensitive name / alias (one scan, unresolved only)
+                pending = [n for n in cleaned if n not in resolved]
+                if pending:
+                    lowers = [n.lower() for n in pending]
+                    rows = list(session.run("""
+                        MATCH (e:Entity)
+                        WHERE toLower(e.name) IN $lowers
+                           OR any(a IN coalesce(e.aliases, []) WHERE toLower(a) IN $lowers)
+                        RETURN e.name AS name,
+                               toLower(e.name) AS name_lower,
+                               [a IN coalesce(e.aliases, []) | toLower(a)] AS alias_lowers
+                    """, lowers=lowers))
+                    for n in pending:
+                        nl = n.lower()
+                        hits = [
+                            r["name"] for r in rows
+                            if r["name_lower"] == nl or nl in (r["alias_lowers"] or [])
+                        ]
+                        if hits:
+                            resolved[n] = hits[:max_per_name]
+
+                # Pass 3: fulltext on the name field (unresolved only)
+                pending = [n for n in cleaned if n not in resolved]
+                for n in pending:
+                    terms = lucene_or_terms(n)
+                    if not terms:
+                        continue
+                    mention_tokens = query_entity_name_tokens(n)
+                    rows = session.run("""
+                        CALL db.index.fulltext.queryNodes(
+                            'entity_name_fulltext', $q, {limit: 10}
+                        )
+                        YIELD node, score
+                        RETURN node.name AS name
+                    """, q=f"name:({terms})")
+                    hits = [
+                        r["name"] for r in rows
+                        if mention_tokens <= query_entity_name_tokens(r["name"])
+                    ]
+                    if hits:
+                        resolved[n] = hits[:max_per_name]
+        except Exception as e:
+            logger.warning(f"Query entity resolution failed; using raw names: {e}")
+            return cleaned
+
+        out: List[str] = []
+        for n in cleaned:
+            for cand in [n] + resolved.get(n, []):
+                if cand not in out:
+                    out.append(cand)
+        if out != cleaned:
+            logger.debug(f"Resolved query entities {cleaned} -> {out}")
+        return out
+
+    @retry_on_transient
+    def traverse_for_retrieval(
+        self,
+        entity_names: List[str],
+        max_hops: int = 2,
+        limit: int = 50,
+        chunk_limit: int = 10,
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """Graph leg of hybrid search: neighbors + RANKED chunks for query entities.
+
+        Retrieval-specific sibling of `traverse_from_entities` (which stays as
+        is — `/api/graph/entity/{name}` returns its output verbatim). Differences:
+
+        - Neighbors follow **Entity→Entity relationships only** (1 hop, plus a
+          2-hop ring when max_hops ≥ 2), each ring capped per start entity.
+          The legacy traversal walked through Chunk nodes too, so "neighbors"
+          were everything co-mentioned in any chunk ("Age", "Mirror", "close").
+        - Chunks are **ranked** by the query entities they mention — a mention
+          of a start (query) entity weighs 3, a neighbor 1 — and the limit is
+          applied in Cypher, so a chunk naming two query entities beats one
+          naming a single neighbor. The legacy query pulled the full content
+          of every chunk of every neighbor and kept the first 10 unranked.
+        - Chunks carry their real `chunk_index` and a `score` (the rank
+          score), so RRF's rank position for the graph leg is meaningful.
+        - Only chunks of completed documents; collection scoping as elsewhere.
+
+        Returns the same shape as `traverse_from_entities`:
+        ``{"entities": [...], "relationships": [...], "chunks": [...]}``.
+        """
+        names = [n for n in dict.fromkeys(entity_names or []) if isinstance(n, str) and n]
+        if not names:
+            return {"entities": [], "relationships": [], "chunks": []}
+
+        collection_clause = ""
+        if collection_id:
+            collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
+        elif allowed_collection_ids:
+            collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
+
+        with self.driver.session() as session:
+            # 1. Start entities + Entity-only neighbor rings (per-start caps).
+            #    `CALL { WITH start ... }` (not the 5.23+ `CALL (start)` form)
+            #    for compatibility with the 5.x range self-hosters run.
+            rows = session.run("""
+                MATCH (start:Entity)
+                WHERE start.name IN $names
+                CALL {
+                    WITH start
+                    MATCH (start)-[]-(n1:Entity)
+                    WHERE n1 <> start
+                    RETURN n1 AS related, 1 AS hop
+                    LIMIT $limit
+                    UNION
+                    WITH start
+                    MATCH (start)-[]-(m:Entity)-[]-(n2:Entity)
+                    WHERE $max_hops >= 2 AND m <> start AND n2 <> start AND n2 <> m
+                    RETURN n2 AS related, 2 AS hop
+                    LIMIT $limit2
+                }
+                WITH start, related, min(hop) AS hop
+                ORDER BY hop ASC
+                RETURN start.name AS start_name,
+                       start.type AS start_type,
+                       start.description AS start_description,
+                       collect({name: related.name, type: related.type,
+                                description: related.description, hop: hop})[..$limit] AS related
+            """, names=names, limit=limit, limit2=max(1, limit // 2), max_hops=int(max_hops))
+
+            entities: List[dict] = []
+            seen = set()
+            related_rows: List[dict] = []
+            for r in rows:
+                if r["start_name"] not in seen:
+                    seen.add(r["start_name"])
+                    entities.append({
+                        "name": r["start_name"],
+                        "type": r["start_type"],
+                        "description": r["start_description"],
+                    })
+                related_rows.extend(r["related"] or [])
+            # Neighbors after all starts, nearest ring first, deduped.
+            for rel in sorted(related_rows, key=lambda x: x.get("hop", 9)):
+                if rel["name"] not in seen and len(entities) < 20:
+                    seen.add(rel["name"])
+                    entities.append({
+                        "name": rel["name"], "type": rel["type"],
+                        "description": rel["description"],
+                    })
+            if not entities:
+                return {"entities": [], "relationships": [], "chunks": []}
+
+            start_names = [e["name"] for e in entities if e["name"] in names]
+            all_names = [e["name"] for e in entities]
+
+            # 2. Ranked chunks: start-entity mentions weigh 3, neighbors 1.
+            #    Aggregation happens on (chunk, entity) rows without touching
+            #    chunk content; content is read only for the LIMIT'ed rows.
+            chunk_rows = session.run(f"""
+                MATCH (e:Entity)
+                WHERE e.name IN $all_names
+                MATCH (c:Chunk)-[:MENTIONS]->(e)
+                MATCH (d:Document)-[:HAS_CHUNK]->(c)
+                WHERE d.processing_status = 'completed'
+                {collection_clause}
+                WITH c, d,
+                     sum(CASE WHEN e.name IN $start_names THEN 3 ELSE 1 END) AS rank_score,
+                     count(DISTINCT e) AS entity_hits
+                ORDER BY rank_score DESC, entity_hits DESC, c.chunk_index ASC
+                LIMIT $chunk_limit
+                RETURN c.id AS chunk_id,
+                       c.content AS content,
+                       c.chunk_index AS chunk_index,
+                       d.id AS document_id,
+                       d.filename AS filename,
+                       rank_score AS score
+            """, all_names=all_names, start_names=start_names, chunk_limit=chunk_limit,
+                collection_id=collection_id, allowed_collection_ids=allowed_collection_ids)
+            chunks = [dict(r) for r in chunk_rows]
+
+            # 3. Relationships among the found entities (same as legacy).
+            relationships: List[dict] = []
+            if len(all_names) > 1:
+                rel_rows = session.run("""
+                    MATCH (s:Entity)-[r]->(t:Entity)
+                    WHERE s.name IN $names AND t.name IN $names
+                    RETURN s.name AS source, t.name AS target,
+                           type(r) AS relationship_type, r.description AS description,
+                           r.type AS sub_type
+                    LIMIT 30
+                """, names=all_names)
+                relationships = [
+                    {
+                        "source": r["source"], "target": r["target"],
+                        "type": r["sub_type"] or r["relationship_type"],
+                        "description": r["description"],
+                    }
+                    for r in rel_rows
+                ]
+
+            return {"entities": entities, "relationships": relationships, "chunks": chunks}
+
+    @retry_on_transient
     def traverse_from_entities(
         self,
         entity_names: List[str],
@@ -2310,18 +2655,21 @@ class Neo4jService:
         """
         Perform full-text keyword search on chunk content, optionally scoped to a collection or list of collections.
         """
+        # Parse-safe query (see lucene_or_terms): a raw question with `/`,
+        # `:` or unbalanced parens used to throw inside Lucene and drop the
+        # whole keyword leg with only a warning in the log.
+        escaped_query = lucene_or_terms(query_text)
+        if not escaped_query:
+            return []
         with self.driver.session() as session:
             try:
-                # Escape special characters for Lucene query
-                escaped_query = query_text.replace('"', '\\"').replace('~', '\\~')
-                
                 # Collection scoping
                 collection_clause = ""
                 if collection_id:
                     collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
                 elif allowed_collection_ids:
                     collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
-                
+
                 result = session.run(f"""
                     CALL db.index.fulltext.queryNodes('chunk_content', $search_text)
                     YIELD node as chunk, score
@@ -2505,18 +2853,60 @@ class Neo4jService:
         Returns:
             Dict with 'results' (RRF-fused) and 'graph_context'
         """
-        # 1. Vector search
-        vector_results = self.vector_search(query_embedding, top_k * 3, collection_id=collection_id,
-                                            allowed_collection_ids=allowed_collection_ids)
-        
-        # 2. Keyword/full-text search
-        keyword_results = self.fulltext_search(query_text, top_k * 3, collection_id=collection_id,
-                                               allowed_collection_ids=allowed_collection_ids)
-        
-        # 3. Graph traversal for context
-        graph_context = self.traverse_from_entities(entity_names, max_hops, collection_id=collection_id,
-                                                    allowed_collection_ids=allowed_collection_ids)
-        
+        # The three legs are independent Bolt round-trips; run them
+        # concurrently instead of serially (each opens its own session).
+        # Any leg exception propagates exactly as it did in the serial code.
+        resolved_names: List[str] = list(entity_names or [])
+
+        def _graph_leg():
+            # Map query-side mentions ("Polygon", "polygon network") onto the
+            # stored Entity.name values (exact / case-insensitive / alias /
+            # fulltext-on-name); traversal itself matches names exactly.
+            # ENABLE_QUERY_ENTITY_RESOLUTION=false restores raw-name matching.
+            nonlocal resolved_names
+            if self._setting("enable_query_entity_resolution", True):
+                resolved_names = self.resolve_query_entity_names(entity_names)
+            if self._setting("enable_ranked_graph_traversal", True):
+                return self.traverse_for_retrieval(
+                    resolved_names, max_hops,
+                    chunk_limit=max(10, 2 * top_k),
+                    collection_id=collection_id,
+                    allowed_collection_ids=allowed_collection_ids,
+                )
+            return self.traverse_from_entities(
+                resolved_names, max_hops, collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
+            )
+
+        if self._setting("enable_parallel_search_legs", True):
+            f_vector = _search_leg_executor.submit(
+                self.vector_search, query_embedding, top_k * 3,
+                collection_id=collection_id, allowed_collection_ids=allowed_collection_ids,
+            )
+            f_keyword = _search_leg_executor.submit(
+                self.fulltext_search, query_text, top_k * 3,
+                collection_id=collection_id, allowed_collection_ids=allowed_collection_ids,
+            )
+            f_graph = _search_leg_executor.submit(_graph_leg)
+
+            # 1. Vector search
+            vector_results = f_vector.result()
+            # 2. Keyword/full-text search
+            keyword_results = f_keyword.result()
+            # 3. Graph traversal for context
+            graph_context = f_graph.result()
+        else:
+            # ENABLE_PARALLEL_SEARCH_LEGS=false: legacy sequential legs.
+            vector_results = self.vector_search(
+                query_embedding, top_k * 3,
+                collection_id=collection_id, allowed_collection_ids=allowed_collection_ids,
+            )
+            keyword_results = self.fulltext_search(
+                query_text, top_k * 3,
+                collection_id=collection_id, allowed_collection_ids=allowed_collection_ids,
+            )
+            graph_context = _graph_leg()
+
         # 4. Get chunks from graph context
         graph_chunks = graph_context.get("chunks", [])
         # Convert graph chunks to same format as vector results
@@ -2528,8 +2918,10 @@ class Neo4jService:
                     "filename": chunk.get("filename", ""),
                     "chunk_id": chunk.get("chunk_id", ""),
                     "content": chunk.get("content", ""),
-                    "chunk_index": 0,
-                    "score": 1.0  # Default score for graph results
+                    # traverse_for_retrieval supplies real index + rank score
+                    # (already rank-ordered); legacy traversal has neither.
+                    "chunk_index": chunk.get("chunk_index") or 0,
+                    "score": float(chunk.get("score") or 1.0),
                 })
         
         # 5. Apply RRF fusion
@@ -2543,7 +2935,9 @@ class Neo4jService:
             "graph_context": graph_context,
             "vector_count": len(vector_results),
             "keyword_count": len(keyword_results),
-            "graph_chunk_count": len(graph_chunk_results)
+            "graph_chunk_count": len(graph_chunk_results),
+            "query_entity_count": len(entity_names or []),
+            "resolved_entity_count": len(resolved_names),
         }
     
     @retry_on_transient
@@ -5158,6 +5552,10 @@ class Neo4jService:
             allowed_collection_ids: If provided, only return communities with at least one
                 member entity from these collections.
         """
+        # Same parse-safety as fulltext_search: the researcher passes free text.
+        query = lucene_or_terms(query)
+        if not query:
+            return []
         with self.driver.session() as session:
             try:
                 if allowed_collection_ids:

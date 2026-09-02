@@ -499,7 +499,11 @@ Hardening & operations:
 | `AUTO_RESUME_IMAGE_ANALYSIS` | `true` | Resume image analysis killed by a restart. A restart leaves completed documents with unfinished image analysis stuck forever (the counters freeze at `current < total`); on boot Cortex re-extracts their images via local Docling re-conversion (no LLM cost) and analyzes **only** the images not yet stored — already-analyzed images are never re-paid for. Set `false` to require a manual reprocess instead. |
 | `ENABLE_AUDIT_LOG` / `AUDIT_LOG_PATH` | `false` / `./logs/audit.log` | Append-only JSONL audit trail (metadata only, never content). |
 | `RESEARCHER_WALL_CLOCK_SECONDS` | `60` | Time budget for deep research (0 = unlimited); on expiry the writer synthesizes from what was gathered, so an answer always starts even when the LLM provider is queueing. |
-| `RERANK_TOP_K` | `15` | Rerank candidate pool size. |
+| `RERANK_TOP_K` | `15` | Candidates kept per `knowledge_search` after reranking. Also sets the per-query fetch depth so the pooled candidate set is about twice this value (3 queries → 10 each, floor 5, cap 12). Lower it on a remote reranker to trade recall for latency. |
+| `ENABLE_QUERY_ENTITY_RESOLUTION` | `true` | Resolve entity names in a query to the stored entities (including aliases) before graph traversal. `false` restores exact-name matching only. |
+| `VECTOR_SCOPED_OVERFETCH` | `10` | For collection-scoped searches, ask the vector index for this many × the requested candidates (capped at 200) before filtering. `1` disables over-fetch. |
+| `ENABLE_RANKED_GRAPH_TRAVERSAL` | `true` | Graph leg follows entity-to-entity relationships only and ranks passages by how many of the question's entities they mention. `false` restores the old traversal (slower, unranked passages). |
+| `ENABLE_PARALLEL_SEARCH_LEGS` | `true` | Run the vector, keyword and graph legs of a hybrid query concurrently. `false` runs them one after another (lighter on a small Neo4j). |
 | `HELPER_STRICT_REMOTE` | `false` | Never fall back to local docling when the shared helper is configured. |
 | `INSTANCE_ID` | hostname | Tenant identity for helper fair-queuing. |
 | `NEO4J_MAX_POOL_SIZE` / `NEO4J_CONNECTION_TIMEOUT` / `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | `100` / `10` / `60` | Database driver pool tuning. |

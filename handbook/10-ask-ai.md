@@ -64,18 +64,20 @@ The reflect-between-rounds rhythm (step 3) is **enforced by the loop**, not left
 
 **`knowledge_search`** — Primary information gathering tool
 - Input: 1-3 search queries (keywords and entity names, not full sentences)
-- Executes all queries in parallel via hybrid RRF search
-- Applies cross-encoder re-ranking against the original question
-- Returns top 15 deduplicated results with scores, entities, and relationships
+- Executes all queries in parallel via hybrid RRF search; each query fetches enough candidates that the pooled set is about twice `RERANK_TOP_K`
+- Deduplicates the pool by chunk, then applies cross-encoder re-ranking against the original question
+- Returns the top `RERANK_TOP_K` (default 15) results with scores, entities, and relationships
+- Entity names in the queries (or the `entities` hint) are resolved to stored entities — including their aliases — before graph traversal
+- The graph leg follows entity-to-entity relationships (one hop plus a capped second ring) and contributes passages ranked by how many of the query's entities they mention, so a passage naming two of them outranks one naming a single neighbor
 
 **`community_search`** — Thematic context discovery (Quality mode only)
 - Input: Topic keyword query
-- Searches community summary full-text index
+- Searches community summary full-text index, scoped to the active collection (or the API key's allowed collections)
 - Returns up to 3 matching communities with names, member counts, and summaries
 
 **`entity_lookup`** — Detailed entity exploration (Quality mode only)
 - Input: Up to 5 entity names (supports partial matching)
-- Returns entity descriptions, types, and connection counts
+- Returns entity descriptions, types, and connection counts, scoped like `community_search`
 - Useful for exploring entities discovered during knowledge_search
 
 **`reasoning`** — Transparent thinking (Quality mode only)

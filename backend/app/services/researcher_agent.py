@@ -466,10 +466,19 @@ async def _execute_knowledge_search(
             per_query_entities = [None] * len(queries)
             per_query_embeddings = [None] * len(queries)
 
+    # Per-query candidate depth. The pooled candidates are what the
+    # cross-encoder gets to choose from, so the pool must be LARGER than what
+    # it keeps (rerank_top_k) — with the old fixed 5 per query, 3 queries
+    # pooled ≤15 candidates and the reranker only ever reordered them; RRF's
+    # per-query top-5 was the recall ceiling. Aim for ~2× rerank_top_k pooled,
+    # bounded so a single query doesn't triple the Neo4j leg sizes.
+    rerank_top_k = getattr(settings, "rerank_top_k", 15)
+    per_query_k = _per_query_candidate_k(rerank_top_k, len(queries))
+
     # Execute all queries in parallel
     tasks = [
         processor.graph_search_async(
-            q, top_k=5, use_hybrid_rrf=True, collection_id=collection_id,
+            q, top_k=per_query_k, use_hybrid_rrf=True, collection_id=collection_id,
             allowed_collection_ids=allowed_collection_ids,
             precomputed_entities=per_query_entities[i],
             precomputed_embedding=per_query_embeddings[i],
@@ -480,6 +489,9 @@ async def _execute_knowledge_search(
 
     all_results = []
     merged_ctx = {"entities": [], "relationships": [], "chunks": []}
+    _legs = []  # per-query (vector, keyword, graph) hit counts — for the log line
+    _q_entities = 0
+    _resolved_entities = 0
 
     for result in search_results:
         if isinstance(result, Exception):
@@ -487,9 +499,20 @@ async def _execute_knowledge_search(
             continue
         all_results.extend(result.get("results", []))
         _merge_graph_context(merged_ctx, result.get("graph_context", {}))
+        _legs.append(
+            f"{result.get('vector_count', 0)}/{result.get('keyword_count', 0)}"
+            f"/{result.get('graph_chunk_count', 0)}"
+        )
+        _q_entities += result.get("query_entity_count", 0)
+        _resolved_entities += result.get("resolved_entity_count", 0)
+
+    pooled = len(all_results)
+    # Deduplicate by chunk_id BEFORE reranking: the same chunk surfacing for
+    # two queries must not occupy two rerank slots (or two rerank pairs).
+    all_results = _deduplicate_sources(all_results)
+    unique_count = len(all_results)
 
     # Rerank all results together against the original question
-    rerank_top_k = getattr(settings, "rerank_top_k", 15)
     if settings.enable_reranking and all_results:
         try:
             all_results = await processor.rerank_results_async(
@@ -505,10 +528,35 @@ async def _execute_knowledge_search(
             all_results, key=lambda x: x.get("score", 0), reverse=True
         )[:rerank_top_k]
 
-    # Deduplicate by chunk_id
+    # Final ordering by best available score (skill sources first)
     unique = _deduplicate_sources(all_results)
 
+    # One line per search so the leg contribution (esp. the graph leg, which
+    # depends on entity resolution) and hint usage are visible in production
+    # logs without tracing.
+    logger.info(
+        "knowledge_search: queries=%d hints=%d per_query_k=%d scoped=%s "
+        "legs(vector/keyword/graph)=%s entities(query/resolved)=%d/%d "
+        "pooled=%d unique=%d kept=%d",
+        len(queries), len(_hints), per_query_k,
+        bool(collection_id or allowed_collection_ids),
+        ",".join(_legs) or "-", _q_entities, _resolved_entities,
+        pooled, unique_count, len(unique),
+    )
+
     return unique, merged_ctx
+
+
+def _per_query_candidate_k(rerank_top_k: int, n_queries: int) -> int:
+    """Candidates requested per query so the pooled set is ~2× what rerank keeps.
+
+    Floor 5 (legacy value), cap 12 (each unit costs 3 vector + 3 keyword
+    candidates inside hybrid_search_rrf). rerank_top_k=15: 3 queries → 10
+    (pool 30), 2 → 12 (pool 24), 1 → 12.
+    """
+    n = max(1, n_queries)
+    target = -(-2 * max(1, rerank_top_k) // n)  # ceil division
+    return min(12, max(5, target))
 
 
 # =============================================================================
@@ -713,6 +761,12 @@ async def _run_researcher_loop(
     # formatted tool text. A repeat returns instantly with a nudge to try a
     # different angle instead of paying the full retrieval pipeline again.
     _search_cache: dict = {}
+    # Collection scope for the community_search / entity_lookup tools. The
+    # request's collection_id (already validated against the key's
+    # restriction upstream) is the narrower scope when present; otherwise the
+    # key restriction applies. knowledge_search passes both to the Cypher and
+    # lets collection_id take precedence — this is the same resolution.
+    _tool_scope = [collection_id] if collection_id else allowed_collection_ids
     _novelty = _NoveltyTracker(
         min_new_ratio=getattr(settings, "researcher_novelty_min_new_ratio", 0.2),
         stale_limit=getattr(settings, "researcher_novelty_stale_rounds", 2),
@@ -1017,13 +1071,14 @@ async def _run_researcher_loop(
                             return None
                         return await asyncio.to_thread(
                             neo4j_service.search_communities_by_content,
-                            query, limit=3,
+                            query, limit=3, allowed_collection_ids=_tool_scope,
                         )
                     names = tc_args.get("names", [])
                     if not (names and neo4j_service):
                         return None
                     return await asyncio.to_thread(
-                        neo4j_service.find_entities_by_name, names[:5]
+                        neo4j_service.find_entities_by_name, names[:5],
+                        allowed_collection_ids=_tool_scope,
                     )
 
                 yield {
@@ -1179,6 +1234,7 @@ async def _run_researcher_loop(
                                 neo4j_service.search_communities_by_content,
                                 query,
                                 limit=3,
+                                allowed_collection_ids=_tool_scope,
                             )
                     except Exception as e:
                         logger.warning(f"Community search failed: {e}")
@@ -1221,7 +1277,8 @@ async def _run_researcher_loop(
                             # Sync neo4j driver — offload so it doesn't block the
                             # event loop and starve other in-flight requests.
                             entities = await asyncio.to_thread(
-                                neo4j_service.find_entities_by_name, names[:5]
+                                neo4j_service.find_entities_by_name, names[:5],
+                                allowed_collection_ids=_tool_scope,
                             )
                     except Exception as e:
                         logger.warning(f"Entity lookup failed: {e}")

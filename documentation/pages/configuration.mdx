@@ -394,6 +394,21 @@ GRAPH_WEIGHT=0.2
 # Batch a search's queries into one entity-extraction + one embedding call
 # (instead of one each per query) to cut round-trips during deep research.
 ENABLE_BATCHED_QUERY_EXTRACTION=true
+
+# Resolve entity names in a query to stored entities (incl. aliases) before
+# graph traversal. false = exact-name matching only.
+ENABLE_QUERY_ENTITY_RESOLUTION=true
+
+# Collection-scoped vector search: fetch this × the requested candidates from
+# the index (cap 200) before filtering, since the index cannot pre-filter. 1 = off.
+VECTOR_SCOPED_OVERFETCH=10
+
+# Graph leg: entity-to-entity neighbors + passages ranked by mentioned query
+# entities (fast, relevant). false = legacy unranked traversal.
+ENABLE_RANKED_GRAPH_TRAVERSAL=true
+
+# Run the vector / keyword / graph legs of one query concurrently. false = sequential.
+ENABLE_PARALLEL_SEARCH_LEGS=true
 ```
 
 ### Re-ranking
@@ -402,6 +417,11 @@ ENABLE_BATCHED_QUERY_EXTRACTION=true
 # Enable cross-encoder re-ranking for precision
 ENABLE_RERANKING=true
 RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+
+# Candidates kept per knowledge_search after reranking. Also drives the
+# per-query fetch depth so the pooled, deduplicated candidate set is about
+# twice this value — the reranker selects rather than reorders.
+RERANK_TOP_K=15
 
 # Lifecycle (per-instance footprint tuning)
 RERANKER_PRELOAD=false          # eager-load at startup; off = lazy, leaner idle instances

@@ -38,7 +38,7 @@ Your query is converted to an embedding and compared against all chunk embedding
 
 ### Keyword Search (Full-Text)
 
-Full-text search using Neo4j's Lucene-based index on chunk content. Special characters are escaped for safe querying.
+Full-text search using Neo4j's Lucene-based index on chunk content. The query is reduced to its word tokens before it reaches the index, so punctuation that Lucene treats as syntax (`/`, `:`, parentheses, a leading `-`, bare `AND`/`OR`/`NOT`) can never break the keyword leg — it used to fail silently on such input.
 
 **Strengths:** Finds exact term matches. "ERC-721" finds all mentions of that specific standard.
 
@@ -46,7 +46,11 @@ Full-text search using Neo4j's Lucene-based index on chunk content. Special char
 
 ### Graph Traversal
 
-Entities mentioned in your query are identified, then their relationships in the knowledge graph are followed to find connected chunks.
+Entities mentioned in your query are identified, resolved to the entities stored in the graph, then their relationships in the knowledge graph are followed to find connected chunks.
+
+Resolution is what makes this leg fire reliably: the graph stores one canonical name per entity, while the names in your query come from an LLM. A mention is matched first by exact name, then case-insensitively against the name **or any alias** the entity has collected through deduplication, merges and renames, and finally by a fulltext match on the name that only accepts a stored name containing every word of the mention ("Polygon" → "Polygon Network", but not "Ethereum Foundation" → "Ethereum").
+
+Neighbors are found by following the typed relationships between entities (one hop, plus a capped second ring), not by co-occurrence in text — so asking about a character surfaces the people and factions the graph actually links to them, not every word that happened to appear in the same paragraph. The passages this leg contributes are ranked by how many of your question's entities they mention, with the entities you named outweighing their neighbors, so a passage that mentions two of them beats one that mentions a single neighbor.
 
 **Strengths:** Discovers content that is contextually related through entity connections, even if it doesn't directly contain your search terms. Asking about "Vitalik Buterin" can surface content about "Ethereum" through the CREATED_BY relationship.
 
@@ -60,11 +64,11 @@ RRF combines results from all three methods into a unified ranking:
 RRF_score(chunk) = Σ (weight_i / (60 + rank_i))
 ```
 
-This formula ensures that chunks appearing in multiple result sets rank higher, while the weights control each method's influence.
+This formula ensures that chunks appearing in multiple result sets rank higher, while the weights control each method's influence. The three legs run concurrently for each query.
 
 ### Cross-Encoder Re-Ranking
 
-After RRF, the top results are optionally re-scored by a cross-encoder model that evaluates each (query, chunk) pair directly. This provides more precise relevance scores than the initial retrieval methods.
+After RRF, the top results are optionally re-scored by a cross-encoder model that evaluates each (query, chunk) pair directly. This provides more precise relevance scores than the initial retrieval methods. The reranker is always given more candidates than it keeps (about twice `RERANK_TOP_K`, pooled across a search's queries and deduplicated first), so it selects rather than merely reorders.
 
 Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2`
 
@@ -116,6 +120,8 @@ curl -X POST http://localhost:8000/api/search \
     "collection_id": "financial-reports"
   }'
 ```
+
+Scoping is applied to every leg. Because Neo4j's vector index cannot filter while it searches, a scoped vector search asks the index for many more nearest neighbours than requested (10×, capped at 200) and filters afterwards — otherwise a small collection inside a large library would get only the handful of its chunks that happened to rank in the global top results.
 
 ### Search Within Ask AI
 

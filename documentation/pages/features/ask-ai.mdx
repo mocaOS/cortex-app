@@ -74,9 +74,9 @@ The researcher agent has access to these tools:
 
 | Tool | Speed Mode | Quality Mode | Description |
 |------|:----------:|:------------:|-------------|
-| `knowledge_search` | 1 call | 3-5+ calls | Hybrid RRF search (vector + keyword + graph) with cross-encoder reranking. Up to 3 queries per call. |
-| `community_search` | - | Yes | Search entity community summaries for thematic context |
-| `entity_lookup` | - | Yes | Look up specific entities by name for deeper exploration |
+| `knowledge_search` | 1 call | 3-5+ calls | Hybrid RRF search (vector + keyword + graph) with cross-encoder reranking. Up to 3 queries per call; the pooled candidates are deduplicated and about twice `RERANK_TOP_K` deep, and query entities are resolved to stored entities (including aliases) before graph traversal. The graph leg follows entity-to-entity relationships and ranks its passages by how many query entities they mention. |
+| `community_search` | - | Yes | Search entity community summaries for thematic context (honors the collection scope) |
+| `entity_lookup` | - | Yes | Look up specific entities by name for deeper exploration (honors the collection scope) |
 | `reasoning` | - | Yes | Plan next research step (streamed to UI as thinking events) |
 | `done` | Yes | Yes | Signal research completion with a summary for the writer |
 
@@ -327,7 +327,7 @@ curl -X POST "http://localhost:8000/api/ask/stream" \
   }' --no-buffer
 ```
 
-When `collection_id` is omitted (or `null`), all collections are searched. When provided, all retrieval steps (vector search, keyword search, and graph traversal) are filtered to that collection's data. Collection scoping works identically in both Chat and Deep Research modes.
+When `collection_id` is omitted (or `null`), all collections are searched. When provided, all retrieval steps (vector search, keyword search, graph traversal, and in Deep Research also `community_search` and `entity_lookup`) are filtered to that collection's data. Scoped vector search over-fetches from the index (10×, capped at 200) before filtering, since Neo4j vector indexes cannot pre-filter — so a small collection in a large library still receives a full candidate set. Collection scoping works identically in both Chat and Deep Research modes.
 
 **In the UI:** Click the Settings (cog) icon next to the send button and use the **Collection Scope** dropdown. The dropdown defaults to **All Collections** and shows a persistent indicator below the input confirming the active scope. Select a specific collection to filter, or select "All Collections" to search everything.
 

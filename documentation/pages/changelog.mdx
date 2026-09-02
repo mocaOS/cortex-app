@@ -7,6 +7,32 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 2, 2026
+
+A recall pass over the retrieval that feeds every answer. Walking the hybrid-search path end to end turned up four places where candidates were silently lost before the reranker ever saw them — the graph leg only fired on an exact entity-name match, collection-scoped vector search returned a fraction of what it was asked for, a stray `/` or `:` in a query dropped the whole keyword leg, and the reranker was handed exactly as many candidates as it keeps. Each is fixed inside the search layer; the API surface, response shapes and environment variables are unchanged.
+
+### Hybrid search recall
+
+- **Entity aliases now count at query time** — graph traversal matches stored entity names exactly, while the names it receives come from an LLM (query extraction or the researcher's own hints). "polygon" or a merged alias never matched `Polygon Network`, so the graph leg of hybrid search — and the entities and relationships the writer sees — stayed empty. Query entities are now resolved first: exact name, then case-insensitive name **or alias** (the alias list that dedup, merge and rename already maintain), then a fulltext match on the name field that only accepts a stored name containing every word of the mention.
+- **Collection-scoped vector search over-fetches** — Neo4j vector indexes cannot pre-filter, so a scoped request for 15 candidates fetched the 15 nearest chunks across the *whole* library and then discarded the ones outside the collection, often leaving one or two. When a collection scope or filter applies, the index is now asked for 10× the candidates (capped at 200) before filtering. Unscoped queries are unchanged.
+- **Keyword search is parse-safe** — questions containing `/`, `:`, unbalanced parentheses, a leading `-` or a stray `NOT` threw inside the Lucene parser and the keyword leg returned nothing, with only a warning in the log. Queries are now reduced to their word tokens before reaching the index; the same guard covers community-summary search.
+- **The reranker selects instead of reordering** — each of a search's queries fetched 5 fused candidates, so three queries pooled at most 15, which is exactly what `RERANK_TOP_K` keeps. The per-query depth is now derived from `RERANK_TOP_K` (three queries → 10 each, floor 5, cap 12) so the pool is about twice what is kept, and duplicates across queries are collapsed *before* reranking so the same chunk never occupies two slots.
+- **Graph traversal is ranked and about ten times faster** — the old traversal walked two hops through *any* node, so a character's "neighbors" were every word co-mentioned in the same paragraph ("Age", "Mirror", "close"), and it pulled the full text of every passage of every neighbor only to keep the first ten in arbitrary order. The new traversal follows entity-to-entity relationships only (one hop plus a capped second ring), ranks passages by how many of the question's entities they mention — the entities you asked about weigh more than their neighbors — and applies the limit inside the database. On the reference graph a hub entity went from 350ms to 30ms and a two-entity question from 774ms to 21ms, while the neighbors became the people and factions the graph actually links. The entity detail endpoint keeps the previous traversal and is unchanged.
+- **The three legs run concurrently** — vector, keyword and graph traversal for one query were three sequential round-trips; they now run in parallel on a dedicated thread pool.
+
+### Deep research tools honor the collection scope
+
+`community_search` and `entity_lookup` ran without the request's collection or the API key's collection restriction, unlike `knowledge_search`. Both now receive the same scope — the request's collection when set, otherwise the key's allowed collections. Before, out-of-scope community summaries could reach a scoped client through the `graph_context` event.
+
+### Operator visibility
+
+- **One log line per `knowledge_search`** (`INFO`) — queries, whether the researcher supplied entity hints, per-query depth, scope, per-query vector/keyword/graph hit counts, query vs. resolved entity counts, and pooled/unique/kept candidate counts. This is the way to see how often the graph leg actually contributes on a given library.
+- `RERANK_TOP_K` (default `15`) keeps its meaning — candidates kept per search — and additionally drives the per-query fetch depth.
+- **Revert switches** — each behavior change can be backed out per instance without a redeploy: `ENABLE_QUERY_ENTITY_RESOLUTION=false` (exact-name matching only), `VECTOR_SCOPED_OVERFETCH=1` (no over-fetch), `ENABLE_RANKED_GRAPH_TRAVERSAL=false` (legacy traversal), `ENABLE_PARALLEL_SEARCH_LEGS=false` (sequential legs). Entity resolution results are cached in-process for 60 seconds per name set, so a search's parallel queries and the next research iteration reuse them.
+- No API or schema breakage; the `/api/graph/search` and `/api/graph/entity/{name}` endpoints keep their existing ordering and output.
+
+---
+
 ## August 17, 2026
 
 ### Dedicated writer model

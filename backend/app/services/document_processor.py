@@ -4968,6 +4968,8 @@ class QueryProcessor:
                 "vector_count": hybrid_result.get("vector_count", 0),
                 "keyword_count": hybrid_result.get("keyword_count", 0),
                 "graph_chunk_count": hybrid_result.get("graph_chunk_count", 0),
+                "query_entity_count": hybrid_result.get("query_entity_count", 0),
+                "resolved_entity_count": hybrid_result.get("resolved_entity_count", 0),
             }
         else:
             # Legacy hybrid search — no collection filter available here, falls back to full scan
