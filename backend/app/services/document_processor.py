@@ -5250,6 +5250,16 @@ Response Style:
                 )
 
             answer = response.choices[0].message.content
+            # Surface a token-limit cut instead of returning it as a complete
+            # answer: the endpoint maps finish_reason == "length" to
+            # `truncated: true` (the streaming writer appends a visible note).
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+            if finish_reason == "length":
+                logger.warning(
+                    "Non-streaming answer hit the output token limit "
+                    "(max_tokens=1200, chars=%d) — answer truncated.",
+                    len(answer or ""),
+                )
 
             structured = None
             if response_format and answer:
@@ -5268,6 +5278,7 @@ Response Style:
                 "reranked": reranked,
                 "reasoning_steps": None,
                 "structured": structured,
+                "finish_reason": finish_reason,
                 **search_metadata,
             }
 
@@ -5717,8 +5728,8 @@ Response Style:
             logger.warning(
                 f"Blocked potential prompt injection in agentic RAG: {reason}"
             )
-            yield {"content": get_safe_refusal_message()}
-            yield {"done": True}
+            yield {"content": get_safe_refusal_message(), "refused": True}
+            yield {"done": True, "refused": True}
             return
 
         # Resolve the LLM config from settings

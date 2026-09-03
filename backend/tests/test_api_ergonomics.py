@@ -357,3 +357,73 @@ class TestDepthParam:
         )
         assert r.status_code == 400
         assert r.json()["detail"]["error"] == "agentic_requires_streaming"
+
+
+# ---------------------------------------------------------------------------
+# /api/ask answer-quality flags (truncated / refused) + structured 500
+# ---------------------------------------------------------------------------
+
+def _rag(answer, **extra):
+    return {
+        "question": "q", "answer": answer, "sources": [], "graph_context": None,
+        "reranked": False, "reasoning_steps": None, **extra,
+    }
+
+
+class TestAskAnswerFlags:
+    def test_complete_answer_has_clean_flags(self, client, mock_processors):
+        mock_processors.query.rag_query = AsyncMock(
+            return_value=_rag("a real answer", finish_reason="stop")
+        )
+        body = client.post("/api/ask", json={"question": "q"}).json()
+        assert body["truncated"] is False
+        assert body["refused"] is False
+        assert body["finish_reason"] == "stop"
+
+    def test_length_finish_reason_flags_truncated(self, client, mock_processors):
+        # A token-limit cut used to be indistinguishable from a complete answer.
+        mock_processors.query.rag_query = AsyncMock(
+            return_value=_rag("cut off mid-sent", finish_reason="length")
+        )
+        body = client.post("/api/ask", json={"question": "q"}).json()
+        assert body["truncated"] is True
+        assert body["finish_reason"] == "length"
+        assert body["answer"] == "cut off mid-sent"  # text untouched
+
+    def test_canned_refusal_flags_refused(self, client, mock_processors):
+        from app.services.prompt_security import get_safe_refusal_message
+
+        mock_processors.query.rag_query = AsyncMock(
+            return_value=_rag(get_safe_refusal_message())
+        )
+        assert client.post("/api/ask", json={"question": "q"}).json()["refused"] is True
+
+        # The variant the anti-injection system prompt tells the MODEL to emit.
+        mock_processors.query.rag_query = AsyncMock(return_value=_rag(
+            "I'm here to help with questions about your documents. How can I assist you?"
+        ))
+        assert client.post("/api/ask", json={"question": "q"}).json()["refused"] is True
+
+    def test_generic_failure_is_structured_500(self, client, mock_processors, monkeypatch):
+        from app.config import get_settings
+
+        mock_processors.query.rag_query = AsyncMock(side_effect=RuntimeError("bolt://u:hunter2@neo4j"))
+
+        monkeypatch.setattr(get_settings(), "environment", "production")
+        r = client.post("/api/ask", json={"question": "q"})
+        assert r.status_code == 500
+        detail = r.json()["detail"]
+        assert detail["error"] == "ask_failed"
+        assert detail["use_endpoint"] == "/api/ask/stream"
+        assert "hunter2" not in json.dumps(r.json())  # no internals in production
+        assert "request_id" in r.json()
+
+        monkeypatch.setattr(get_settings(), "environment", "development")
+        detail = client.post("/api/ask", json={"question": "q"}).json()["detail"]
+        assert detail["error"] == "ask_failed" and "hunter2" in detail["exception"]
+
+    def test_refusal_frames_carry_refused_and_keep_type(self):
+        content = json.loads(sse_frame({"content": "nope", "refused": True})[6:])
+        done = json.loads(sse_frame({"done": True, "refused": True})[6:])
+        assert content["type"] == "content" and content["refused"] is True
+        assert done["type"] == "done" and done["refused"] is True

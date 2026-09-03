@@ -126,6 +126,12 @@ export interface RAGResponse {
   graph_context?: GraphContext;
   reranked?: boolean;
   reasoning_steps?: string[];
+  /** Provider finish reason of the answer ("stop", "length", ...). */
+  finish_reason?: string | null;
+  /** The answer hit the output-token cap and is cut short. */
+  truncated?: boolean;
+  /** The answer is the prompt-injection safe refusal, not knowledge. */
+  refused?: boolean;
 }
 
 // =============================================================================

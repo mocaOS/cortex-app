@@ -523,6 +523,11 @@ paths:
           description: >-
             Agentic mode requested on the non-streaming endpoint —
             `{"error": "agentic_requires_streaming", "use_endpoint": "/api/ask/stream"}`
+        '500':
+          description: >-
+            The ask failed before an answer was produced —
+            `{"detail": {"error": "ask_failed", "message": "...", "use_endpoint": "/api/ask/stream"}}`
+            (structured in production too); retry on `/api/ask/stream`
         '504':
           description: >-
             Server-side deadline exceeded (`ASK_DEADLINE_SECONDS`, default 28s) —
@@ -2971,6 +2976,26 @@ components:
                 type: object
         retrieval_stats:
           type: object
+        collection_id:
+          type: string
+          nullable: true
+          description: The collection scope actually applied (request or key restriction)
+        structured:
+          type: object
+          nullable: true
+          description: Parsed JSON answer when `response_format` was set and parsing succeeded
+        finish_reason:
+          type: string
+          nullable: true
+          description: Provider finish reason of the answer (`stop`, `length`, ...)
+        truncated:
+          type: boolean
+          default: false
+          description: The answer hit the output-token cap (`finish_reason == "length"`) and is cut short
+        refused:
+          type: boolean
+          default: false
+          description: The answer is the prompt-injection safe refusal, not knowledge — rephrase as a plain question
 
     GraphStatus:
       type: object

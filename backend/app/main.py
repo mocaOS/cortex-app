@@ -121,6 +121,7 @@ from app.services.prompt_security import (
     get_anti_injection_instruction,
     filter_stream,
     get_safe_refusal_message,
+    is_refusal_message,
     wrap_untrusted,
 )
 from app.services.llm_config import get_llm_config, get_writer_llm_config, build_chat_params, make_async_openai_client, stream_usage_kwargs
@@ -1403,12 +1404,37 @@ def _sanitized_error_response(status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
+def _structured_5xx_detail(
+    error: str, message: str, exc: Optional[BaseException] = None, **extra
+) -> dict:
+    """Detail for a *deliberate* 5xx: a stable `error` code agents can branch
+    on, a curated human message, and the exception text only outside
+    production. The sanitizer below passes such dicts through — only free-text
+    ``detail=str(e)`` bodies are what leak internals."""
+    detail = {"error": error, "message": message, **extra}
+    if exc is not None and not get_settings().is_production:
+        detail["exception"] = f"{type(exc).__name__}: {exc}"
+    return detail
+
+
 @app.exception_handler(StarletteHTTPException)
 async def sanitized_http_exception_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code >= 500 and get_settings().is_production:
         logger.error(
             f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
         )
+        detail = exc.detail
+        if isinstance(detail, dict) and isinstance(detail.get("error"), str):
+            # A handler that raised a dict with an `error` code authored that
+            # body on purpose (e.g. 504 deadline_exceeded, 500 ask_failed) —
+            # keep it so clients can act on the code; still tag the request id.
+            rid = get_request_id()
+            body = {"detail": detail}
+            headers = {}
+            if rid:
+                body["request_id"] = rid
+                headers["X-Request-ID"] = rid
+            return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
         return _sanitized_error_response(exc.status_code)
     return await _default_http_exception_handler(request, exc)
 
@@ -4428,6 +4454,12 @@ async def ask_question(
             except Exception as persist_err:  # noqa: BLE001
                 logger.warning(f"Session turn persistence failed: {persist_err}")
 
+        # Answer-quality flags: a token-limit cut used to look exactly like a
+        # complete answer, and a canned injection refusal like a real one.
+        finish_reason = result.get("finish_reason")
+        truncated = finish_reason == "length"
+        refused = is_refusal_message(result.get("answer"))
+
         return RAGResponse(
             question=result["question"],
             answer=result["answer"],
@@ -4439,6 +4471,9 @@ async def ask_question(
             # restriction) — this used to always read null.
             collection_id=effective_collection_id,
             structured=result.get("structured"),
+            finish_reason=finish_reason,
+            truncated=truncated,
+            refused=refused,
         )
     except asyncio.TimeoutError:
         deadline = get_settings().ask_deadline_seconds
@@ -4464,7 +4499,20 @@ async def ask_question(
         raise
     except Exception as e:
         logger.error(f"Error in GraphRAG query: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Structured, so an agent can branch on the code and fall back to the
+        # SSE endpoint automatically instead of parsing a bare 500.
+        raise HTTPException(
+            status_code=500,
+            detail=_structured_5xx_detail(
+                "ask_failed",
+                "The non-streaming ask failed before an answer was produced. "
+                "Retry, or use POST /api/ask/stream (SSE): it streams "
+                "incrementally, is not bound by the ask deadline, and is the "
+                "recommended endpoint for agents.",
+                exc=e,
+                use_endpoint="/api/ask/stream",
+            ),
+        )
 
 
 @app.post("/api/ask/stream")
@@ -4610,8 +4658,8 @@ async def ask_question_stream(
                 
                 if was_blocked:
                     logger.warning(f"Blocked potential prompt injection: {reason}")
-                    yield sse_frame({'content': get_safe_refusal_message()})
-                    yield sse_frame({'done': True, 'fast_mode': True})
+                    yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
+                    yield sse_frame({'done': True, 'fast_mode': True, 'refused': True})
                     return
 
                 # Query-time prompt-guard classifier (shared cortex-helper).
@@ -4620,8 +4668,8 @@ async def ask_question_stream(
                 )
                 if guard_blocked:
                     logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                    yield sse_frame({'content': get_safe_refusal_message()})
-                    yield sse_frame({'done': True, 'fast_mode': True})
+                    yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
+                    yield sse_frame({'done': True, 'fast_mode': True, 'refused': True})
                     return
 
                 processor = get_query_processor()
@@ -4744,8 +4792,8 @@ Question: {processed_question}"""
 
             if was_blocked:
                 logger.warning(f"Blocked potential prompt injection: {reason}")
-                yield sse_frame({'content': get_safe_refusal_message()})
-                yield sse_frame({'done': True})
+                yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
+                yield sse_frame({'done': True, 'refused': True})
                 return
 
             # Query-time prompt-guard classifier (shared cortex-helper).
@@ -4754,8 +4802,8 @@ Question: {processed_question}"""
             )
             if guard_blocked:
                 logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                yield sse_frame({'content': get_safe_refusal_message()})
-                yield sse_frame({'done': True})
+                yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
+                yield sse_frame({'done': True, 'refused': True})
                 return
 
             processor = get_query_processor()
@@ -7540,6 +7588,40 @@ def _crawl_slugify(text: str) -> str:
     return (text or "page")[:100]
 
 
+def _crawl_page_title(page: dict) -> Optional[str]:
+    """Distinctive title of a single crawled page, or None when the crawl
+    title is just the URL fallback (host, last path segment, "o.html", …).
+
+    Used only for single-page imports: repeated one-essay imports from the same
+    host used to yield N documents all named ``host.md`` — search results and
+    citations then read identically and the real title hid in chunk 0.
+    Multi-page site imports keep the plain domain title (see below)."""
+    title = " ".join((page.get("title") or "").split()).strip(" -–—|:")
+    if not title:
+        return None
+    url = page.get("url") or ""
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    last_seg = parsed.path.rstrip("/").rsplit("/", 1)[-1].lower()
+    lowered = title.lower()
+    if lowered in {host, host.removeprefix("www."), last_seg, url.lower()}:
+        return None
+    if re.fullmatch(r"[\w.-]+\.(html?|php|aspx?|md|pdf|txt)", lowered):
+        return None
+    if " " not in title and len(title) < 8:
+        return None
+    return title[:120]
+
+
+def _crawl_doc_filename(safe_domain: str, page_title: Optional[str]) -> str:
+    """``host.md`` for site imports; ``host - Page Title.md`` for a titled page."""
+    if not page_title:
+        return f"{safe_domain}.md"
+    safe_title = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", page_title)
+    safe_title = " ".join(safe_title.split())[:80].strip(" .")
+    return f"{safe_domain} - {safe_title}.md" if safe_title else f"{safe_domain}.md"
+
+
 def _format_crawl_markdown(title: str, url: str, body: str) -> str:
     """Wrap crawled markdown with the canonical MDHarvest provenance header."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -7653,12 +7735,16 @@ async def _run_web_import_task(
     for domain, pages in by_domain.items():
         # Homepage-first, deterministic ordering within the site.
         pages.sort(key=lambda p: (len(urlparse(p["url"]).path.rstrip("/")), p["url"]))
-        # Name/title the document by its DOMAIN, never a page title — crawl4ai
-        # often falls back to the URL path for a title (e.g. "o.html"), which
-        # would make the filename and every citation read as a random page.
+        # Name/title the document by its DOMAIN first — crawl4ai often falls
+        # back to the URL path for a title (e.g. "o.html"), which would make
+        # the filename and every citation read as a random page. A SINGLE page
+        # with a real title appends it ("host - Title"), so repeated one-page
+        # imports from one host stay distinguishable in search results.
+        page_title = _crawl_page_title(pages[0]) if len(pages) == 1 else None
         if len(pages) == 1:
             file_content = _format_crawl_markdown(
-                domain, pages[0]["url"], pages[0]["markdown"]
+                f"{domain} - {page_title}" if page_title else domain,
+                pages[0]["url"], pages[0]["markdown"],
             )
         else:
             file_content = _format_crawl_site_markdown(domain, pages)
@@ -7666,7 +7752,7 @@ async def _run_web_import_task(
         # Keep the domain readable in the filename (dots are filesystem-safe),
         # e.g. "nurecas.com" -> "nurecas.com.md".
         safe_domain = re.sub(r"[^a-z0-9.-]+", "-", domain.lower()).strip("-.") or "site"
-        filename = f"{safe_domain}.md"
+        filename = _crawl_doc_filename(safe_domain, page_title)
         file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
         try:
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:

@@ -247,7 +247,9 @@ reads Settings (`.env`-aware) with a raw-env fallback, and runs in `main.py`
 **before** `app = FastAPI(...)` so the SDK's Starlette/FastAPI integrations
 hook app construction — they capture unhandled exceptions *before* the
 sanitizing 5xx handlers run, so tracking and client-facing sanitization
-coexist. The logging integration (SDK default) turns any `logger.error/
+coexist. (The sanitizer replaces free-text 5xx details only; a dict detail
+carrying an `error` code — `deadline_exceeded`, `ask_failed` — is passed
+through with `request_id`, see `_structured_5xx_detail` in `main.py`.) The logging integration (SDK default) turns any `logger.error/
 exception` — background pipeline, flush loops, the docling worker (which calls
 `init_sentry(service="docling-worker")` in its `main()`) — into events.
 A `before_send` hook stamps the `request_id` tag from the logging contextvar

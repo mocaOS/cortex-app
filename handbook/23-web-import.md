@@ -1,6 +1,6 @@
 # Chapter 23: Web Import (MDHarvest powered by Crawl4ai)
 
-Web Import turns web pages into knowledge. You give Cortex a list of URLs — or let it discover the links on a page — and it crawls each one, extracts the readable content as clean markdown, and ingests it: converted, chunked, embedded, and run through entity/relationship extraction. Pages from the **same site are aggregated into one document per domain** (titled and filed by the domain, e.g. `example.com.md`), so a site's subpages read as a single related work rather than scattered fragments. Once imported, the content is searchable and queryable in Search, Ask AI, and the knowledge graph, alongside everything else.
+Web Import turns web pages into knowledge. You give Cortex a list of URLs — or let it discover the links on a page — and it crawls each one, extracts the readable content as clean markdown, and ingests it: converted, chunked, embedded, and run through entity/relationship extraction. Pages from the **same site are aggregated into one document per domain** (titled and filed by the domain, e.g. `example.com.md`), so a site's subpages read as a single related work rather than scattered fragments. A one-page import with a real page title is filed as `example.com - Page Title.md`, so repeated single-page imports from one site stay distinguishable in search results. Once imported, the content is searchable and queryable in Search, Ask AI, and the knowledge graph, alongside everything else.
 
 This feature supersedes the standalone `mdharvest` tool. The crawling is performed by [**crawl4ai**](https://github.com/unclecode/crawl4ai), an open-source web crawler built for LLM pipelines. Cortex itself never runs a browser — it calls a crawl4ai service over HTTP. You run crawl4ai once and point Cortex at it; a single crawl4ai instance can serve many Cortex deployments.
 
@@ -20,7 +20,7 @@ It is disabled by default. An administrator enables it by setting `ENABLE_WEB_CR
 5. Click **Import from Web**. Cortex crawls the pages (several at a time), showing a live progress bar.
 6. As soon as the pages are staged and grouped into per-domain documents, the modal reports how many pages were imported, into how many documents (and any failures). Close it — the new documents are on the Documents page, where they continue **processing (extraction + graph build) in the background** as a regular processing task you can watch and, if needed, resume. The import doesn't block on the full pipeline.
 
-Each per-domain document opens with a provenance header (source site, page count, extraction date) and carries one section per page recording that page's source URL, so every part's origin is traceable.
+Each per-domain document opens with a provenance header (source site, page count, extraction date) and carries one section per page recording that page's source URL, so every part's origin is traceable. A single-page import has a simpler header — `# example.com - Page Title` (or just `# example.com` when the crawl only yielded a URL-style title such as `o.html`) plus its `> Source:` line.
 
 ## Self-hosting the crawler
 

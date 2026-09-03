@@ -104,7 +104,10 @@ INGESTION_INJECTION_SCAN=true   # LLM-classifier default once enabled; admin-tog
 
 When an attack is detected — by the regex layer or the Prompt Guard classifier —
 Cortex returns a safe refusal instead of processing the question, and logs the
-detection with the matched pattern (or the classifier's label + score).
+detection with the matched pattern (or the classifier's label + score). The
+refusal is flagged for API clients: `refused: true` rides on the streaming
+`content` and `done` frames and on the non-streaming `/api/ask` response, so an
+agent can rephrase instead of presenting the canned text as an answer.
 
 ## API Key Security
 

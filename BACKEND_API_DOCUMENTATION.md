@@ -214,6 +214,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 
 **Constraints**:
 - Bounded by a server-side wall-clock deadline (`ASK_DEADLINE_SECONDS`, default 28s, kept just below the edge-proxy read timeout). On expiry the request returns `504 {"error": "deadline_exceeded"}` with guidance to retry, simplify, or switch to `/api/ask/stream` (which is not subject to this deadline).
+- Any other failure before an answer is produced returns `500 {"detail": {"error": "ask_failed", "message": ..., "use_endpoint": "/api/ask/stream"}}` (plus `exception` outside production). Both structured 5xx bodies survive production sanitization (dict details carrying an `error` code are passed through; free-text details are still replaced by the generic message). Every 5xx carries `request_id`.
 
 **Response**: `RAGResponse`
 - `question`: str
@@ -225,7 +226,11 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `sub_questions`: Optional[List[str]]
 - `communities_used`: Optional[List[int]]
 - `retrieval_stats`: Optional[dict]
-- `collection_id`: Optional[str]
+- `collection_id`: Optional[str] — the scope actually applied (request or key restriction)
+- `structured`: Optional[dict] — parsed JSON answer when `response_format` was set
+- `finish_reason`: Optional[str] — provider finish reason of the answer (`stop`, `length`, …)
+- `truncated`: bool — `true` when the answer hit the 1,200-token chat cap (`finish_reason == "length"`)
+- `refused`: bool — `true` when `answer` is the prompt-injection safe refusal rather than knowledge
 
 #### `POST /api/ask/stream`
 **Description**: Stream RAG response (Server-Sent Events) — **the primary retrieval endpoint**. "Ask the Cortex" / "find something in the Cortex" should start here with `use_agentic: true` (streaming Deep Research); the SSE heartbeats keep long agentic runs alive where the non-streaming endpoint would time out.  
@@ -687,6 +692,10 @@ Returns current system settings grouped into:
 - `communities_used`: Optional[List[int]]
 - `retrieval_stats`: Optional[dict]
 - `collection_id`: Optional[str]
+- `structured`: Optional[dict]
+- `finish_reason`: Optional[str]
+- `truncated`: bool (default: false)
+- `refused`: bool (default: false)
 
 ### Custom Input Models
 

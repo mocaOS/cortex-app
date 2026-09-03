@@ -1992,8 +1992,8 @@ async def run_research_pipeline(
     )
     if _was_blocked:
         logger.warning(f"Blocked potential prompt injection in research pipeline: {_reason}")
-        yield {"content": get_safe_refusal_message()}
-        yield {"done": True}
+        yield {"content": get_safe_refusal_message(), "refused": True}
+        yield {"done": True, "refused": True}
         return
     question = _processed_question
 
@@ -2006,8 +2006,8 @@ async def run_research_pipeline(
     )
     if _guard_blocked:
         logger.warning(f"Prompt-guard blocked question in research pipeline: {_guard_reason}")
-        yield {"content": get_safe_refusal_message()}
-        yield {"done": True}
+        yield {"content": get_safe_refusal_message(), "refused": True}
+        yield {"done": True, "refused": True}
         return
 
     # Bound the client-carried memory blob before anything trusts it (a buggy
@@ -2273,6 +2273,9 @@ async def run_research_pipeline(
         )
     )
 
+    # Set when the writer hits its output-token cap; surfaced on the `done`
+    # frame as `truncated: true` so machine clients need not parse the note.
+    _answer_truncated = False
     try:
         # Writer composes the final answer from already-gathered context — it
         # never needs hidden reasoning, so suppress it in BOTH modes for a snappy
@@ -2318,6 +2321,7 @@ async def run_research_pipeline(
         # indistinguishable in the UI from a complete response — and silent in
         # the logs. Both the notice and the warning are the diagnostic.
         if finish_reason == "length":
+            _answer_truncated = True
             logger.warning(
                 "Writer hit the output token limit (mode=%s, max_tokens=%d, "
                 "visible_chars=%d) — answer truncated. Raise %s.",
@@ -2348,6 +2352,8 @@ async def run_research_pipeline(
     # Update the client-carried memory blob AFTER streaming (zero added latency on
     # the answer path). Only when the client opted in by sending a blob.
     _done_event = {"done": True, "communities_used": list(set(communities_used))}
+    if _answer_truncated:
+        _done_event["truncated"] = True
     _memory_enabled = conversation_memory is not None and getattr(
         settings, "enable_conversation_memory", True
     )

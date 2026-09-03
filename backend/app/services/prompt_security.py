@@ -502,6 +502,25 @@ def get_safe_refusal_message() -> str:
     return "I'm here to help with questions about your documents and knowledge base. How can I assist you today?"
 
 
+# Shared stem of both canned refusals: the validator's message above and the
+# one the anti-injection system prompt instructs the model to emit.
+_REFUSAL_PREFIX = "i'm here to help with questions about your documents"
+
+
+def is_refusal_message(text: Optional[str]) -> bool:
+    """True when `text` is the canned prompt-injection refusal.
+
+    Lets the non-streaming answer path stamp `refused: true` on a response the
+    model deflected (the prompt tells it to answer instruction-shaped requests
+    with the canned line), so an agent can rephrase instead of shipping the
+    refusal as if it were an answer. Tolerates quoting and curly apostrophes.
+    """
+    if not text:
+        return False
+    normalized = text.strip().strip('"\'').replace("\u2019", "'").lower()
+    return normalized.startswith(_REFUSAL_PREFIX)
+
+
 def validate_and_process_input(
     user_input: str,
     strict_mode: bool = False,

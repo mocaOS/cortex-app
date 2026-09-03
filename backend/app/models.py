@@ -429,6 +429,20 @@ class RAGResponse(BaseModel):
         default=None,
         description="Parsed JSON answer when request.response_format was set and the model returned valid JSON",
     )
+    # Answer-quality flags. Without these a token-limit cut or a canned
+    # injection refusal is indistinguishable from a complete, real answer.
+    finish_reason: Optional[str] = Field(
+        default=None,
+        description="Provider finish_reason of the answer completion ('stop', 'length', …) when reported",
+    )
+    truncated: bool = Field(
+        default=False,
+        description="True when the answer hit the writer's output-token cap (finish_reason == 'length') and is cut short",
+    )
+    refused: bool = Field(
+        default=False,
+        description="True when the answer is the prompt-injection safe refusal rather than a knowledge answer — rephrase as a plain question",
+    )
 
 
 class GraphStatsResponse(BaseModel):

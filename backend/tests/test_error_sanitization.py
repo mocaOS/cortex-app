@@ -36,3 +36,26 @@ class TestDevelopment:
         resp = client.post("/api/search", json={"query": "hello"})
         assert resp.status_code == 500
         assert SECRET in resp.json()["detail"]
+
+
+class TestStructured5xxPassThrough:
+    """A handler that raises a dict detail with an `error` code authored that
+    body deliberately (504 deadline_exceeded, 500 ask_failed) — production must
+    keep it, or the documented codes never reach clients."""
+
+    def test_structured_detail_survives_production(self, client, mock_processors, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr(get_settings(), "environment", "production")
+        mock_processors.query.rag_query = AsyncMock(side_effect=asyncio.TimeoutError())
+        resp = client.post("/api/ask", json={"question": "hello"})
+        assert resp.status_code == 504
+        body = resp.json()
+        assert body["detail"]["error"] == "deadline_exceeded"
+        assert "request_id" in body
+
+    def test_free_text_500_still_sanitized(self, client, mock_processors, monkeypatch):
+        monkeypatch.setattr(get_settings(), "environment", "production")
+        _force_search_500(mock_processors)
+        assert client.post("/api/search", json={"query": "x"}).json()["detail"] == GENERIC

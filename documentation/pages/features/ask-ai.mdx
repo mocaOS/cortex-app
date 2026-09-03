@@ -236,6 +236,8 @@ Every event is a JSON object on a `data:` line. Each event contains exactly one 
 | `retrieval_stats` | `object` | Deep Research | Summary: `total_sources`, `unique_sources`, `communities_used` |
 | `done` | `boolean` | All | `true` when the answer is complete. On memory-carrying turns it includes `pending_memory: true` — a `memory_update` event still follows before the stream closes |
 | `pending_memory` | `boolean` | On the `done` event | Present (`true`) when a `memory_update` will follow the `done` event — keep reading the stream |
+| `refused` | `boolean` | On the refusal `content` frame and its `done` event | Present (`true`) when the prompt-injection defenses answered with the safe refusal instead of knowledge — rephrase as a plain question rather than showing the canned text as an answer |
+| `truncated` | `boolean` | On the `done` event | Present (`true`) when the writer hit its output-token cap (`WRITER_MAX_TOKENS_*`); the answer also ends with a visible "cut short" note |
 | `error` | `string` | All | Error message if something went wrong |
 | `communities_used` | `number[]` | Deep Research | Community IDs used, included in the `done` event |
 | `memory_update` | `object` | When `conversation_memory` sent | Updated memory blob to store and replay next turn — **emitted after `done`** by default (see [Conversation Memory](#conversation-memory)) |
@@ -582,4 +584,6 @@ When enabled:
 - Validates and sanitizes user input
 - Injects anti-manipulation instructions into the system prompt
 - Filters potentially harmful outputs
-- Returns safe refusal messages when attacks are detected
+- Returns safe refusal messages when attacks are detected — flagged with `refused: true` on the streaming `content`/`done` frames and as a top-level field of the non-streaming response, so clients can distinguish a refusal from an answer without matching the text
+
+The non-streaming `POST /api/ask` response additionally carries `finish_reason` and `truncated` (the 1,200-token chat cap was hit), and a failure before an answer is produced returns a structured `500 {"detail": {"error": "ask_failed", "use_endpoint": "/api/ask/stream"}}` — like the `504 deadline_exceeded`, a signal to retry on the streaming endpoint.

@@ -180,7 +180,7 @@ All streaming endpoints use Server-Sent Events. Each event is a JSON object:
 
 | Event | Content | When |
 |-------|---------|------|
-| `content` | `{"content": "answer text chunk"}` | Writer is generating the answer |
+| `content` | `{"content": "answer text chunk"}` | Writer is generating the answer. A prompt-injection refusal is a single `content` frame with the safe-refusal text and `refused: true` |
 | `sources` | `{"sources": [{chunk_id, content, score, metadata}]}` | Sources retrieved |
 | `graph_context` | `{"graph_context": {entities, relationships, communities}}` | Graph context used |
 | `thinking` | `{"thinking": "reasoning text"}` | Agent reasoning (thinking endpoint) |
@@ -189,7 +189,7 @@ All streaming endpoints use Server-Sent Events. Each event is a JSON object:
 | `retrieval_stats` | `{"retrieval_stats": {total, unique, searches, communities}}` | Final search stats |
 | `communities_used` | `{"communities_used": [1, 3]}` | Community IDs used |
 | `memory_update` | `{"memory_update": {...}}` | Updated conversation-memory blob (only when `conversation_memory` was sent). Arrives **after** `done` by default — keep reading until the stream closes |
-| `done` | `{"done": true}` | Answer complete. Carries `pending_memory: true` when a `memory_update` still follows |
+| `done` | `{"done": true}` | Answer complete. Carries `pending_memory: true` when a `memory_update` still follows; `refused: true` when the stream was a prompt-injection refusal; `truncated: true` when the writer hit its output-token cap |
 | `error` | `{"error": "message"}` | Error occurred |
 
 ### Non-Streaming
@@ -205,6 +205,8 @@ curl -X POST http://localhost:8000/api/ask \
     "use_agentic": false
   }'
 ```
+
+The JSON response carries `answer`, `sources`, `graph_context`, the applied `collection_id`, and three answer-quality flags: `finish_reason` (the provider's, e.g. `stop`/`length`), `truncated` (the answer hit the 1,200-token chat cap and is cut short) and `refused` (the answer is the prompt-injection safe refusal, not knowledge — rephrase as a plain question). A failure before an answer is produced returns `500 {"detail": {"error": "ask_failed", "use_endpoint": "/api/ask/stream"}}`; a slow backend returns `504 {"detail": {"error": "deadline_exceeded"}}`. Either way, retry on the streaming endpoint.
 
 ### Conversation History
 
@@ -318,4 +320,4 @@ PROMPT_SECURITY=true             # Injection protection in prompts
 
 ### If an answer looks cut off
 
-Answers are capped by the writer limits above. When a response reaches its cap, Cortex ends it with a visible note saying it was cut short — so a truncated answer is never presented as a complete one — and logs a warning naming the limit to raise. If you see that note regularly on Deep Research, either ask narrower questions or raise `WRITER_MAX_TOKENS_QUALITY`. An answer that stops mid-sentence *without* that note is a different problem (usually a network or proxy timeout), not the token limit.
+Answers are capped by the writer limits above. When a response reaches its cap, Cortex ends it with a visible note saying it was cut short — so a truncated answer is never presented as a complete one — and logs a warning naming the limit to raise. If you see that note regularly on Deep Research, either ask narrower questions or raise `WRITER_MAX_TOKENS_QUALITY`. API clients get the same signal as data: the `done` frame carries `truncated: true`, and the non-streaming response `truncated: true` with `finish_reason: "length"`. An answer that stops mid-sentence *without* that note or flag is a different problem (usually a network or proxy timeout), not the token limit.

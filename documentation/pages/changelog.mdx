@@ -9,6 +9,21 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## September 3, 2026
 
+Three fixes driven by field reports: an agent researching against a public Cortex found that a cut-off answer and a canned prompt-injection refusal both looked exactly like a complete answer, that a failed non-streaming ask came back as a bare 500, and that fifteen essays crawled one at a time from the same site all carried the same document name; a self-host operator hit a TLS error cloning from a plain-HTTP forge.
+
+### Ask AI: answer-quality flags and structured failures
+
+Machine clients can now tell a real answer from a deflected or clipped one without parsing prose, and can fall back to the streaming endpoint automatically.
+
+- **`refused: true`** — when the prompt-injection defenses answer with the safe refusal instead of knowledge, the streaming `content` and `done` frames carry the flag, and the non-streaming `POST /api/ask` response has a top-level `refused`. The refusal text itself is unchanged.
+- **`truncated: true`** — when the writer hits its output-token cap (`WRITER_MAX_TOKENS_SPEED` / `WRITER_MAX_TOKENS_QUALITY`), the `done` frame carries the flag alongside the existing visible "cut short" note; the non-streaming response adds `truncated` plus the provider's `finish_reason`.
+- **Structured `500` on `POST /api/ask`** — a failure before an answer is produced now returns `{"detail": {"error": "ask_failed", "message": …, "use_endpoint": "/api/ask/stream"}}` (exception text included outside production only). Production error sanitization keeps deliberately structured 5xx bodies — those carrying an `error` code — so the documented `504 deadline_exceeded` now also reaches clients in production instead of being replaced by the generic message. Free-text 5xx details are still sanitized; every 5xx still carries `request_id`.
+- **No API or schema breakage** — all new fields are additive and default to `false`/`null`; SSE frames keep their flat keys and `type` stamp.
+
+### Web Import: titled single-page documents
+
+A one-page import whose crawl yields a real page title is now filed as `host - Page Title.md` with a matching `# host - Page Title` heading, so repeated single-page imports from one site (a newsletter's essays, a blog's posts) stay distinguishable in search results and citations. URL-fallback "titles" such as `o.html` keep the plain `host.md`, and multi-page site imports are unchanged: still one document per domain, titled by the domain.
+
 ### Git Integration: plain-HTTP self-hosted forges
 
 A self-hosted Gitea or GitLab reached over plain `http://` (the normal case for a LAN install) could be connected and verified, but every sync then failed at `git clone` with `GnuTLS, handshake failed: An unexpected TLS packet was received`. The REST client honored the scheme of the connection's `base_url`, while the clone-URL builder kept only the host and re-attached a literal `https://`. Clone and wiki-clone URLs — and the tokenless remote written back after cloning — now take their scheme from `base_url`, defaulting to `https` when none is set, so GitHub cloud and existing https connections are unchanged. Reported by a self-host operator.

@@ -274,7 +274,7 @@ PROMPT_GUARD_THRESHOLD=0.5   # injection-class probability cutoff (lower = stric
 
 When an injection is detected on a user question (the chat and research
 entry points run in **strict mode**):
-- The request is **blocked** — a safe refusal message is returned instead of processing the question
+- The request is **blocked** — a safe refusal message is returned instead of processing the question, flagged for API clients with `refused: true` (on the streaming `content` and `done` frames, and as a top-level field of the non-streaming response) so an agent can rephrase instead of treating the refusal as an answer
 - A log entry records the detection and the matched pattern
 
 The softer sanitize-and-proceed behavior is the non-strict fallback exposed by

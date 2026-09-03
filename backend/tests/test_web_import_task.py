@@ -192,3 +192,35 @@ async def test_all_urls_fail_marks_task_failed(monkeypatch, tmp_path):
     assert cap["failed"]["tid"] == "web-2"
     assert cap["completed"] == {}
     assert cap["spawned"] == []  # no processing hand-off when nothing staged
+
+
+@pytest.mark.asyncio
+async def test_single_titled_page_is_named_domain_dash_title(monkeypatch, tmp_path):
+    """Repeated one-essay imports from one host used to yield N documents all
+    named host.md — indistinguishable in search results and citations."""
+    async def crawl(url, content_filter=None, query=None):
+        return {"url": url, "title": "The DeCC0s: A Field Guide / Part 1", "markdown": "body"}
+
+    cap = _patch_common(monkeypatch, tmp_path, crawl)
+    await main._run_web_import_task(
+        task_id="web-5", urls=["https://museumofcrypto.substack.com/p/decc0s"],
+        collection_id=None, content_filter="fit", query=None,
+    )
+    doc = cap["staged"][0]
+    assert doc["filename"] == "museumofcrypto.substack.com - The DeCC0s A Field Guide Part 1.md"
+    assert doc["source"] == "crawl:museumofcrypto.substack.com"
+    with open(doc["file_path"], encoding="utf-8") as f:
+        assert f.read().startswith("# museumofcrypto.substack.com - The DeCC0s: A Field Guide / Part 1\n")
+
+
+@pytest.mark.asyncio
+async def test_single_page_with_url_fallback_title_stays_domain_named(monkeypatch, tmp_path):
+    async def crawl(url, content_filter=None, query=None):
+        return {"url": url, "title": "o.html", "markdown": "body"}  # crawl4ai path fallback
+
+    cap = _patch_common(monkeypatch, tmp_path, crawl)
+    await main._run_web_import_task(
+        task_id="web-6", urls=["https://x.com/o.html"],
+        collection_id=None, content_filter="fit", query=None,
+    )
+    assert cap["staged"][0]["filename"] == "x.com.md"
