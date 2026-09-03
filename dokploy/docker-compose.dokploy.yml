@@ -427,11 +427,21 @@ services:
     #   - "traefik.docker.network=dokploy-network"
 
   chat:
-    build:
-      # Cortex Chat lives in its own public repo — BuildKit clones it as a
-      # remote build context. No build args: all config is runtime env.
-      context: https://github.com/mocaOS/cortex-chat.git#main
-      dockerfile: Dockerfile
+    # Cortex Chat lives in its own public repo and publishes a release image
+    # (its release.yml pushes ghcr.io/mocaos/cortex-chat on every v* tag).
+    # Pinned to an exact release: bump this tag to roll chat forward on the
+    # tenants' next deploy. Until 2026-09-03 this was a remote git build
+    # context (https://github.com/mocaOS/cortex-chat.git#main). BuildKit
+    # fetches such a context anonymously from the Dokploy host — Dokploy's
+    # authenticated clone of THIS repo does not cover it — and GitHub's
+    # per-IP throttle on unauthenticated downloads failed concurrent tenant
+    # builds with "could not read Username for 'https://github.com'".
+    # Caveat: the published image is built with NEXT_PUBLIC_SENTRY_DISABLED=1
+    # (self-hosters' browser errors must never reach the maintainers'
+    # GlitchTip), so browser-side error reporting from tenant chats is off;
+    # server-side reporting is unaffected. No build args were ever passed
+    # here: all config is runtime env.
+    image: ghcr.io/mocaos/cortex-chat:1.2.0
     environment:
       # Cortex backend over the internal compose network (server-side only —
       # the browser talks to chat, chat proxies to the backend).

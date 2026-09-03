@@ -139,7 +139,7 @@ Crash/error reporting to a self-hosted [GlitchTip](https://glitchtip.com) instan
 
 ### Chat
 
-The `chat` service runs [Cortex Chat](https://github.com/mocaOS/cortex-chat), built from its public repo as a remote build context. It reuses `ADMIN_API_KEY`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` (the chat superadmin signs in with the same credentials as Cortex), so only one extra variable is needed:
+The `chat` service runs [Cortex Chat](https://github.com/mocaOS/cortex-chat), run from the published `ghcr.io/mocaos/cortex-chat` image pinned in the compose file (bump that tag to roll chat forward; it replaced a remote git build context on 2026-09-03 because GitHub throttles the anonymous fetch). It reuses `ADMIN_API_KEY`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` (the chat superadmin signs in with the same credentials as Cortex), so only one extra variable is needed:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
