@@ -29,7 +29,7 @@ class GitHubProvider(GitProvider):
         return f"x-access-token:{self._token}"
 
     def wiki_clone_url(self, owner: str, name: str) -> Optional[str]:
-        return f"https://{self._clone_userinfo()}@{self.host}/{owner}/{name}.wiki.git"
+        return f"{self.clone_scheme}://{self._clone_userinfo()}@{self.host}/{owner}/{name}.wiki.git"
 
     def _auth_headers(self) -> dict:
         return {

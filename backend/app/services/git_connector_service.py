@@ -51,6 +51,12 @@ class GitSyncError(Exception):
     """Raised when a sync cannot proceed (clone failure, size guard, etc.)."""
 
 
+def _strip_userinfo(url: str) -> str:
+    """Drop the `user:token@` part of a clone URL while preserving its scheme."""
+    scheme, sep, rest = url.partition("://")
+    return f"{scheme}://{rest.split('@', 1)[-1]}" if sep else url.split("@", 1)[-1]
+
+
 def _wiki_sha(content: bytes) -> str:
     """Content-derived pseudo blob sha for wiki pages (stable across syncs)."""
     return "wiki:" + hashlib.sha256(content).hexdigest()[:16]
@@ -185,9 +191,8 @@ class GitConnectorService:
                 token=token,
             )
             # Scrub the token out of the persisted remote.
-            clean_url = clone_url.split("@", 1)[-1]
             await self._git(["-C", str(repo_dir), "remote", "set-url", "origin",
-                             f"https://{clean_url}"], token=token)
+                             _strip_userinfo(clone_url)], token=token)
         else:
             await self._git(
                 tls + ["-C", str(repo_dir), "fetch", "--depth", str(depth), clone_url, branch],
@@ -577,7 +582,7 @@ class GitConnectorService:
                 await self._git(tls + ["clone", "--depth", "1", wiki_clone, str(wiki_dir)], token=token)
                 # Scrub the token out of the persisted remote (mirrors _clone_or_fetch).
                 await self._git(["-C", str(wiki_dir), "remote", "set-url", "origin",
-                                 f"https://{wiki_clone.split('@', 1)[-1]}"], token=token)
+                                 _strip_userinfo(wiki_clone)], token=token)
             else:
                 await self._git(tls + ["-C", str(wiki_dir), "fetch", wiki_clone], token=token)
                 await self._git(["-C", str(wiki_dir), "reset", "--hard", "FETCH_HEAD"], token=token)

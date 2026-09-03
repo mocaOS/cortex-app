@@ -21,7 +21,7 @@ A repo's content is chunked, embedded, and run through entity/relationship extra
 ## Connecting a repository
 
 1. Go to **Settings → Git Integration** and click **Connect repository**.
-2. Pick a **provider** (GitHub / GitLab / Gitea). For self-hosted GitLab/Gitea, fill in the API base URL.
+2. Pick a **provider** (GitHub / GitLab / Gitea). For self-hosted GitLab/Gitea, fill in the API base URL. Its scheme (`http://` or `https://`) is honored for both the REST API and `git clone`, so a plain-HTTP LAN instance works without any TLS allowlist.
 3. Paste a **personal access token**. The form shows an inline, vendor-specific guide telling you exactly which token to create — always the **least-privilege** option — with a direct link to the right settings page. Click **Test** to verify it.
 4. Enter the **owner/org** and **repository**.
 5. Choose the **access level**.

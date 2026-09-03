@@ -57,6 +57,32 @@ def test_gitea_self_hosted_and_token_clone():
     assert p.wiki_clone_url("o", "r") is None
 
 
+def test_plain_http_base_url_scheme_preserved_in_clone_urls():
+    """Self-hosted forges on plain http (LAN Gitea/GitLab) must not be cloned over https."""
+    gitea = GiteaProvider(token="tok", base_url="http://192.168.68.57:3009")
+    assert gitea.clone_scheme == "http"
+    assert gitea.api_root == "http://192.168.68.57:3009/api/v1"
+    assert gitea.authenticated_clone_url("r21337", "obsidian-r2") == \
+        "http://tok@192.168.68.57:3009/r21337/obsidian-r2.git"
+
+    gitlab = GitLabProvider(token="glpat", base_url="http://gitlab.lan/")
+    assert gitlab.authenticated_clone_url("group", "repo") == "http://oauth2:glpat@gitlab.lan/group/repo.git"
+
+    ghe = GitHubProvider(token="t", base_url="http://ghe.lan")
+    assert ghe.authenticated_clone_url("o", "r") == "http://x-access-token:t@ghe.lan/o/r.git"
+    assert ghe.wiki_clone_url("o", "r") == "http://x-access-token:t@ghe.lan/o/r.wiki.git"
+
+    # No base_url -> vendor default stays https.
+    assert GitHubProvider(token="t", base_url=None).clone_scheme == "https"
+
+
+def test_strip_userinfo_preserves_scheme():
+    from app.services.git_connector_service import _strip_userinfo
+    assert _strip_userinfo("http://tok@192.168.68.57:3009/o/r.git") == "http://192.168.68.57:3009/o/r.git"
+    assert _strip_userinfo("https://x-access-token:t@github.com/o/r.git") == "https://github.com/o/r.git"
+    assert _strip_userinfo("https://github.com/o/r.git") == "https://github.com/o/r.git"
+
+
 def test_tls_verification_respects_insecure_hosts():
     secure = GitLabProvider(token="t", base_url="https://git.internal", insecure_hosts=set())
     insecure = GitLabProvider(token="t", base_url="https://git.internal",

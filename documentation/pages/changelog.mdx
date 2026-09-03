@@ -7,6 +7,14 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 3, 2026
+
+### Git Integration: plain-HTTP self-hosted forges
+
+A self-hosted Gitea or GitLab reached over plain `http://` (the normal case for a LAN install) could be connected and verified, but every sync then failed at `git clone` with `GnuTLS, handshake failed: An unexpected TLS packet was received`. The REST client honored the scheme of the connection's `base_url`, while the clone-URL builder kept only the host and re-attached a literal `https://`. Clone and wiki-clone URLs — and the tokenless remote written back after cloning — now take their scheme from `base_url`, defaulting to `https` when none is set, so GitHub cloud and existing https connections are unchanged. Reported by a self-host operator.
+
+---
+
 ## September 2, 2026
 
 A recall pass over the retrieval that feeds every answer. Walking the hybrid-search path end to end turned up four places where candidates were silently lost before the reranker ever saw them — the graph leg only fired on an exact entity-name match, collection-scoped vector search returned a fraction of what it was asked for, a stray `/` or `:` in a query dropped the whole keyword leg, and the reranker was handed exactly as many candidates as it keeps. Each is fixed inside the search layer; the API surface, response shapes and environment variables are unchanged.

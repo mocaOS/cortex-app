@@ -32,7 +32,7 @@ Connect repo (read/write)
 
 From **Settings → Git Integration**, click **Connect repository**:
 
-1. **Provider** — GitHub, GitLab, or Gitea. For self-hosted GitLab/Gitea, enter the API base URL (e.g. `https://git.example.com`); leave it blank for github.com/gitlab.com.
+1. **Provider** — GitHub, GitLab, or Gitea. For self-hosted GitLab/Gitea, enter the API base URL (e.g. `https://git.example.com`); leave it blank for github.com/gitlab.com. The URL's scheme is used for both API calls and `git clone`, so a LAN forge on plain `http://` works as-is — no TLS allowlist needed.
 2. **Personal access token** — paste a token (see [Choosing a token](#choosing-a-token) below). The form shows step-by-step, provider-specific instructions and a direct link to the right settings page. Click **Test** to confirm the token works ("Authenticated as …").
 3. **Owner/org** and **Repository** — e.g. `mocaOS` and `cortex-skills`.
 4. **Access level** — read-only (ingest) or read/write (agent can open PRs).
@@ -121,7 +121,7 @@ Expand any connection and click **Edit** to change its access level, branch, aut
 
 - **Single-tenant, token-per-connection.** Each connection holds its own personal access token. There's no OAuth flow; you supply a token you control.
 - **Least privilege.** Use the narrowest token scope for your needs — read-only for ingestion, and only grant write/PR scopes if you want the agent to propose changes.
-- **Self-hosted TLS.** For self-hosted GitLab/Gitea with self-signed certificates, an administrator can allowlist specific hosts via `GIT_HTTP_INSECURE_HOSTS`. This is opt-in and per-host; all other hosts are verified.
+- **Self-hosted TLS.** For self-hosted GitLab/Gitea with self-signed certificates, an administrator can allowlist specific hosts via `GIT_HTTP_INSECURE_HOSTS`. This is opt-in and per-host; all other hosts are verified. This concerns certificate *verification* only; a plain `http://` base URL needs no allowlist entry.
 
 ## Related chapters
 

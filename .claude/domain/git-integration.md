@@ -18,7 +18,7 @@ The PAT lives in the provider instance / connection node and is injected server-
 
 ## Provider abstraction (`services/git_providers/`)
 
-`base.py` defines the `GitProvider` ABC + dataclasses (`GitRepoRef`, `GitWriteResult`, `VerifyResult`, `WikiPage`). `get_provider(vendor, token, base_url)` (in `__init__.py`) wires timeout + TLS policy from settings. Methods: `verify`, `list_repos`, `default_branch`, `get_file_content`, `authenticated_clone_url`, `wiki_clone_url` (GitHub only; GL/Gitea return None), `list_wiki_pages` (GL/Gitea API), and writes `create_branch` / `commit_files` / `open_pull_request` / `comment`.
+`base.py` defines the `GitProvider` ABC + dataclasses (`GitRepoRef`, `GitWriteResult`, `VerifyResult`, `WikiPage`). `get_provider(vendor, token, base_url)` (in `__init__.py`) wires timeout + TLS policy from settings. Methods: `verify`, `list_repos`, `default_branch`, `get_file_content`, `authenticated_clone_url`, `wiki_clone_url` (GitHub only; GL/Gitea return None) — both take their scheme from `clone_scheme` (the `base_url` scheme, default https) so plain-`http://` LAN forges clone correctly; `_strip_userinfo` in the connector keeps that scheme when scrubbing the token from the persisted remote, `list_wiki_pages` (GL/Gitea API), and writes `create_branch` / `commit_files` / `open_pull_request` / `comment`.
 
 **GitLab specifics**: repos→projects (URL-encoded `namespace/path` id), PRs→merge_requests (`iid`), clone user literal `oauth2`, multi-file commit = single atomic `actions[]` payload.
 

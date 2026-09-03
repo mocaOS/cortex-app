@@ -107,6 +107,13 @@ class GitProvider(ABC):
         return self.default_host
 
     @property
+    def clone_scheme(self) -> str:
+        """URL scheme for git clone/fetch — honours a plain-http self-hosted base_url."""
+        if self._base_url:
+            return urlparse(self._base_url).scheme or "https"
+        return "https"
+
+    @property
     def api_root(self) -> str:
         """Full API root URL."""
         if self._base_url:
@@ -118,8 +125,10 @@ class GitProvider(ABC):
         return self.host not in self._insecure_hosts
 
     def authenticated_clone_url(self, owner: str, name: str) -> str:
-        """https URL with the PAT embedded, per the vendor's clone-auth scheme."""
-        return f"https://{self._clone_userinfo()}@{self.host}/{owner}/{name}.git"
+        """Clone URL with the PAT embedded, per the vendor's clone-auth scheme.
+
+        The scheme follows base_url (http for LAN forges), defaulting to https."""
+        return f"{self.clone_scheme}://{self._clone_userinfo()}@{self.host}/{owner}/{name}.git"
 
     @abstractmethod
     def _clone_userinfo(self) -> str:
