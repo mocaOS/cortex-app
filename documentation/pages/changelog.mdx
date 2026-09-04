@@ -7,6 +7,25 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 4, 2026
+
+Cortex Chat catches up with the last month of backend releases: a compatibility fix for Cortex 1.2.0+, the September 3 answer-quality flags surfaced in the chat UI, and the August 15 no-content document state in the library console. Everything below is on cortex-chat `main` for the next Chat release; the stack pin stays where it is until that tag exists. The MOCA Library — the museum's public Cortex chat, forked from Cortex Chat — picked up the same answer-quality handling.
+
+### Cortex Chat: non-streaming chat against Cortex 1.2.0+
+
+- **Fix: the chat's own `session_id` no longer reaches the backend.** Cortex Chat tags every turn with its chat-session id (`session_id`, the relay target that lets project members watch a teammate's answer stream in). Since the August 10 server-side sessions work that name is a real ask-request field, so the non-streaming path — the one taken when a user switches off *Stream responses* in the chat settings — failed on every Cortex 1.2.0+ backend: `403 Sessions are disabled` with `ENABLE_SESSIONS` off, `400 session_conflict` with it on. The streaming proxy already stripped the chat-app fields before forwarding; the generic proxy now strips `session_id`, `assistant_id` and `project_id` ahead of `POST /api/ask` as well.
+
+### Cortex Chat: answer-quality flags in the UI
+
+- **Refusals and cut-off answers are labeled.** The chat reads the September 3 `refused` / `truncated` flags from the `done` frame (and from the non-streaming response) and shows a neutral notice under the answer: declined by the safety filter, rephrase as a plain question — or cut short at the length limit, regenerate or narrow the question. The flags persist with the message like the thumbs rating, so the notice survives reload and device switch. Against older backends the chat falls back to matching the canned refusal text.
+- **The personality generator skips refused research answers.** Its benign research questions ride `/api/ask/stream`; a safety-filter deflection is now dropped from the findings via the flag instead of a text heuristic alone. The research asks also stop sending an empty `conversation_memory`, which only bought a discarded post-answer compaction call per question.
+
+### Cortex Chat: no-content documents in the library console
+
+- **Grey "No content" / "Protected" chips.** The Documents tab reads the August 15 `content_status` / `content_note` fields: zero-byte, zero-page and password-protected sources get a grey chip beside their status with the backend's explanation as tooltip, and are excluded from the client-side *Degraded* heuristic — so an empty file never shows up as a broken pipeline.
+
+---
+
 ## September 3, 2026
 
 Three fixes driven by field reports: an agent researching against a public Cortex found that a cut-off answer and a canned prompt-injection refusal both looked exactly like a complete answer, that a failed non-streaming ask came back as a bare 500, and that fifteen essays crawled one at a time from the same site all carried the same document name; a self-host operator hit a TLS error cloning from a plain-HTTP forge.
