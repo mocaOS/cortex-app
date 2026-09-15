@@ -4332,6 +4332,35 @@ async def search(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _screen_question(
+    question: str, settings
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Pre-retrieval prompt-injection gates, shared by every ask entry point so
+    the streaming and non-streaming paths refuse the exact same inputs.
+
+    Two layers, in order: the regex heuristic (``validate_and_process_input``,
+    strict mode) and the prompt-guard classifier (``guard_user_question`` —
+    cortex-helper, toggle-gated, fail-open). Returns
+    ``(processed_question, blocked_by, reason)``: ``blocked_by`` is ``None``
+    when the question may proceed, ``"heuristic"`` when the pattern validator
+    fired, or ``"classifier"`` when the model-based guard flagged it. Clients
+    receive it as ``refusal_source`` so a UI can tell the user WHICH safeguard
+    fired (and that a classifier verdict may be a false positive worth a
+    rephrase) instead of showing a bare deflection.
+    """
+    processed, was_blocked, reason = validate_and_process_input(
+        question, strict_mode=True, enabled=settings.prompt_security
+    )
+    if was_blocked:
+        return question, "heuristic", reason
+    guard_blocked, guard_reason = await guard_user_question(
+        processed, settings, get_neo4j_service()
+    )
+    if guard_blocked:
+        return processed, "classifier", guard_reason
+    return processed, None, None
+
+
 @app.post("/api/ask", response_model=RAGResponse)
 async def ask_question(
     request: RAGRequest,
@@ -4419,6 +4448,29 @@ async def ask_question(
                 },
             )
 
+        # Same pre-retrieval injection gates as the SSE endpoint (pattern
+        # validator + prompt-guard classifier). This path used to run neither,
+        # so a question the streaming endpoint refused was answered here simply
+        # by setting stream:false — the gates must not be bypassable by
+        # transport. Refusals return a normal 200 RAGResponse flagged
+        # refused=true (+ refusal_source), mirroring the SSE refusal frames.
+        processed_question, blocked_by, block_reason = await _screen_question(
+            request.question, settings
+        )
+        if blocked_by:
+            logger.warning(
+                f"Blocked potential prompt injection on /api/ask ({blocked_by}): {block_reason}"
+            )
+            return RAGResponse(
+                question=request.question,
+                answer=get_safe_refusal_message(),
+                sources=[],
+                collection_id=effective_collection_id,
+                finish_reason="stop",
+                refused=True,
+                refusal_source=blocked_by,
+            )
+
         # Legacy path for non-agent requests. Bound it with an app-level
         # deadline so a slow request returns a clean 504 JSON {detail} rather
         # than letting the edge proxy (Traefik) cut the silent socket and emit
@@ -4429,7 +4481,7 @@ async def ask_question(
         deadline = settings.ask_deadline_seconds
         result = await asyncio.wait_for(
             processor.rag_query(
-                question=request.question,
+                question=processed_question,
                 top_k=request.top_k,
                 use_graph=request.use_graph,
                 max_hops=request.max_hops,
@@ -4494,6 +4546,9 @@ async def ask_question(
             finish_reason=finish_reason,
             truncated=truncated,
             refused=refused,
+            # Input gates returned above; reaching here with a refusal means
+            # the writer itself emitted the canned deflection.
+            refusal_source="model" if refused else None,
         )
     except asyncio.TimeoutError:
         deadline = get_settings().ask_deadline_seconds
@@ -4671,25 +4726,15 @@ async def ask_question_stream(
     if request.use_fast_search:
         async def generate_fast():
             try:
-                # Validate user input for prompt injection (if enabled)
-                processed_question, was_blocked, reason = validate_and_process_input(
-                    request.question, strict_mode=True, enabled=settings.prompt_security
+                # Pre-retrieval injection gates (pattern validator + prompt-guard
+                # classifier) — shared with POST /api/ask via _screen_question.
+                processed_question, blocked_by, reason = await _screen_question(
+                    request.question, settings
                 )
-                
-                if was_blocked:
-                    logger.warning(f"Blocked potential prompt injection: {reason}")
-                    yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
-                    yield sse_frame({'done': True, 'fast_mode': True, 'refused': True})
-                    return
-
-                # Query-time prompt-guard classifier (shared cortex-helper).
-                guard_blocked, guard_reason = await guard_user_question(
-                    processed_question, settings, get_neo4j_service()
-                )
-                if guard_blocked:
-                    logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                    yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
-                    yield sse_frame({'done': True, 'fast_mode': True, 'refused': True})
+                if blocked_by:
+                    logger.warning(f"Blocked potential prompt injection ({blocked_by}): {reason}")
+                    yield sse_frame({'content': get_safe_refusal_message(), 'refused': True, 'refusal_source': blocked_by})
+                    yield sse_frame({'done': True, 'fast_mode': True, 'refused': True, 'refusal_source': blocked_by})
                     return
 
                 processor = get_query_processor()
@@ -4805,25 +4850,15 @@ Question: {processed_question}"""
     # Standard streaming RAG — optionally uses speed mode agent pipeline
     async def generate():
         try:
-            # Validate user input for prompt injection (if enabled)
-            processed_question, was_blocked, reason = validate_and_process_input(
-                request.question, strict_mode=True, enabled=settings.prompt_security
+            # Pre-retrieval injection gates (pattern validator + prompt-guard
+            # classifier) — shared with POST /api/ask via _screen_question.
+            processed_question, blocked_by, reason = await _screen_question(
+                request.question, settings
             )
-
-            if was_blocked:
-                logger.warning(f"Blocked potential prompt injection: {reason}")
-                yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
-                yield sse_frame({'done': True, 'refused': True})
-                return
-
-            # Query-time prompt-guard classifier (shared cortex-helper).
-            guard_blocked, guard_reason = await guard_user_question(
-                processed_question, settings, get_neo4j_service()
-            )
-            if guard_blocked:
-                logger.warning(f"Prompt-guard blocked question: {guard_reason}")
-                yield sse_frame({'content': get_safe_refusal_message(), 'refused': True})
-                yield sse_frame({'done': True, 'refused': True})
+            if blocked_by:
+                logger.warning(f"Blocked potential prompt injection ({blocked_by}): {reason}")
+                yield sse_frame({'content': get_safe_refusal_message(), 'refused': True, 'refusal_source': blocked_by})
+                yield sse_frame({'done': True, 'refused': True, 'refusal_source': blocked_by})
                 return
 
             processor = get_query_processor()

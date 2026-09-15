@@ -231,6 +231,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `finish_reason`: Optional[str] — provider finish reason of the answer (`stop`, `length`, …)
 - `truncated`: bool — `true` when the answer hit the 1,200-token chat cap (`finish_reason == "length"`)
 - `refused`: bool — `true` when `answer` is the prompt-injection safe refusal rather than knowledge
+- `refusal_source`: Optional[str] — set when `refused`: `heuristic` (pattern validator), `classifier` (prompt-guard model — may be a false positive, rephrase), or `model` (the writer emitted the canned deflection itself). Both input gates run on this endpoint exactly as on `/api/ask/stream`; a refused ask is a normal `200` with empty `sources` and `finish_reason: "stop"`.
 
 #### `POST /api/ask/stream`
 **Description**: Stream RAG response (Server-Sent Events) — **the primary retrieval endpoint**. "Ask the Cortex" / "find something in the Cortex" should start here with `use_agentic: true` (streaming Deep Research); the SSE heartbeats keep long agentic runs alive where the non-streaming endpoint would time out.  
@@ -697,6 +698,7 @@ Returns current system settings grouped into:
 - `finish_reason`: Optional[str]
 - `truncated`: bool (default: false)
 - `refused`: bool (default: false)
+- `refusal_source`: Optional[str] — `heuristic` | `classifier` | `model`, set when `refused` (on the streaming `content` and `done` refusal frames as well)
 
 ### Custom Input Models
 

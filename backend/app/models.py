@@ -443,6 +443,15 @@ class RAGResponse(BaseModel):
         default=False,
         description="True when the answer is the prompt-injection safe refusal rather than a knowledge answer — rephrase as a plain question",
     )
+    refusal_source: Optional[str] = Field(
+        default=None,
+        description=(
+            "Set when refused: which safeguard produced the refusal — "
+            "'heuristic' (pattern validator), 'classifier' (prompt-guard model, "
+            "a false positive is possible: rephrase), or 'model' (the writer "
+            "emitted the canned deflection itself)"
+        ),
+    )
 
 
 class GraphStatsResponse(BaseModel):

@@ -1992,8 +1992,8 @@ async def run_research_pipeline(
     )
     if _was_blocked:
         logger.warning(f"Blocked potential prompt injection in research pipeline: {_reason}")
-        yield {"content": get_safe_refusal_message(), "refused": True}
-        yield {"done": True, "refused": True}
+        yield {"content": get_safe_refusal_message(), "refused": True, "refusal_source": "heuristic"}
+        yield {"done": True, "refused": True, "refusal_source": "heuristic"}
         return
     question = _processed_question
 
@@ -2006,8 +2006,8 @@ async def run_research_pipeline(
     )
     if _guard_blocked:
         logger.warning(f"Prompt-guard blocked question in research pipeline: {_guard_reason}")
-        yield {"content": get_safe_refusal_message(), "refused": True}
-        yield {"done": True, "refused": True}
+        yield {"content": get_safe_refusal_message(), "refused": True, "refusal_source": "classifier"}
+        yield {"done": True, "refused": True, "refusal_source": "classifier"}
         return
 
     # Bound the client-carried memory blob before anything trusts it (a buggy

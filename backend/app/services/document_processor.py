@@ -5728,8 +5728,26 @@ Response Style:
             logger.warning(
                 f"Blocked potential prompt injection in agentic RAG: {reason}"
             )
-            yield {"content": get_safe_refusal_message(), "refused": True}
-            yield {"done": True, "refused": True}
+            yield {"content": get_safe_refusal_message(), "refused": True, "refusal_source": "heuristic"}
+            yield {"done": True, "refused": True, "refusal_source": "heuristic"}
+            return
+        question = processed_question
+
+        # Second gate: the prompt-guard classifier (shared cortex-helper),
+        # fail-open + toggle-gated. The researcher path already ran it; this
+        # legacy agentic path (ENABLE_AGENT_RESEARCH off) did not, so the two
+        # deep-research modes refused different inputs.
+        from app.services.prompt_guard_client import guard_user_question
+
+        guard_blocked, guard_reason = await guard_user_question(
+            question, self.settings, self.neo4j
+        )
+        if guard_blocked:
+            logger.warning(
+                f"Prompt-guard blocked question in agentic RAG: {guard_reason}"
+            )
+            yield {"content": get_safe_refusal_message(), "refused": True, "refusal_source": "classifier"}
+            yield {"done": True, "refused": True, "refusal_source": "classifier"}
             return
 
         # Resolve the LLM config from settings

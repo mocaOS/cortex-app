@@ -242,7 +242,12 @@ The system detects and blocks 25+ attack patterns and heuristics including:
 
 5. **Prompt-Guard classifier** (`prompt_guard_client.guard_user_question`):
    - A model-based second gate that runs **after** the regex detection and
-     **before** retrieval, on all three query paths (fast, standard, research).
+     **before** retrieval, on every ask entry point: the non-streaming
+     `POST /api/ask` and all three streaming paths (fast, standard, research —
+     including the legacy agentic stream with `ENABLE_AGENT_RESEARCH=false`).
+     The two `main.py` endpoints share one screen (`_screen_question`), so a
+     question refused over SSE is refused with `stream: false` too — the gates
+     are not bypassable by transport.
    - Sends the question to the shared **cortex-helper** `/classify` endpoint
      (PIGuard — an MIT-licensed deberta-v3 classifier whose ACL 2025 paper
      specifically reduces *over-defense*, so it flags fewer legitimate questions
@@ -275,6 +280,7 @@ PROMPT_GUARD_THRESHOLD=0.5   # injection-class probability cutoff (lower = stric
 When an injection is detected on a user question (the chat and research
 entry points run in **strict mode**):
 - The request is **blocked** — a safe refusal message is returned instead of processing the question, flagged for API clients with `refused: true` (on the streaming `content` and `done` frames, and as a top-level field of the non-streaming response) so an agent can rephrase instead of treating the refusal as an answer
+- `refusal_source` names the gate that fired: `heuristic` (regex validator), `classifier` (prompt-guard model) or `model` (the writer emitted the canned deflection itself, caught by `is_refusal_message`). UIs can tell the user which safeguard blocked the question — the classifier verdict in particular can be a false positive on ordinary phrasings ("where are the docs deployed?" is flagged while "where are the docs?" passes), and the right response is a rephrase or a threshold/toggle change, not "no data"
 - A log entry records the detection and the matched pattern
 
 The softer sanitize-and-proceed behavior is the non-strict fallback exposed by
