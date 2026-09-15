@@ -21,6 +21,7 @@ import {
   Save,
   GitPullRequest,
   BookOpen,
+  KeyRound,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -61,6 +62,9 @@ function originOf(baseUrl: string, fallback: string): string {
   }
 }
 
+type PermissionItem = { name: string; why: string; optional?: boolean };
+type PermissionGroup = { label: string; items: PermissionItem[] };
+
 // Per-vendor token-generation guidance. We always recommend the least-privilege
 // option for each provider and link straight to the right settings page.
 const VENDOR_TOKEN_GUIDES: Record<
@@ -71,6 +75,9 @@ const VENDOR_TOKEN_GUIDES: Record<
     steps: string[];
     writeNote: string;
     caveat?: string;
+    /** Exact permissions to tick, per access level. Rendered as chips under the
+     *  guide so nobody has to guess which boxes the connect step will need. */
+    permissions: Record<GitAccessLevel, PermissionGroup[]>;
   }
 > = {
   github: {
@@ -87,6 +94,27 @@ const VENDOR_TOKEN_GUIDES: Record<
       "For read/write (agent opens PRs): set Contents → Read and write, plus Pull requests → Read and write.",
     caveat:
       "To ingest the wiki, use a classic token with the repo scope — fine-grained tokens don't cover wikis.",
+    permissions: {
+      read: [
+        {
+          label: "Fine-grained token → Repository permissions",
+          items: [
+            { name: "Contents: Read-only", why: "clone + read files" },
+            { name: "Metadata: Read-only", why: "added automatically" },
+          ],
+        },
+      ],
+      read_write: [
+        {
+          label: "Fine-grained token → Repository permissions",
+          items: [
+            { name: "Contents: Read and write", why: "branches + commits" },
+            { name: "Pull requests: Read and write", why: "open PRs + comment" },
+            { name: "Metadata: Read-only", why: "added automatically" },
+          ],
+        },
+      ],
+    },
   },
   gitlab: {
     tokenType: "Project Access Token (least privilege)",
@@ -94,13 +122,55 @@ const VENDOR_TOKEN_GUIDES: Record<
     steps: [
       "Your project → Settings → Access Tokens",
       "Role: Reporter (read-only)",
-      "Scopes: read_api + read_repository (enough for ingestion — read_api resolves the project, read_repository clones it)",
+      "Scopes: read_api + read_repository (see the permission list below)",
       "Set an expiry, then create the token",
     ],
     writeNote:
       "For read/write (agent opens merge requests): use Role Developer with scopes api + write_repository.",
     caveat:
-      "No project-token access? A Personal Access Token (User settings → Access tokens) with the same scopes works across all your projects — the button below opens it. Using a fine-grained personal access token (GitLab 18.10+)? Grant Code: Download, Project: Read and Repository: Read on the repository (plus Wiki: Read to ingest the wiki). User: Read is not needed — the Test button then reports the token as accepted without a username.",
+      "No project-token access? A Personal Access Token (User settings → Access tokens) works across all your projects — the button below opens it. For a fine-grained personal access token, tick exactly the permissions listed below on the repository. User: Read is not needed; Test then reports \"Token accepted\" without a username.",
+    permissions: {
+      read: [
+        {
+          label: "Fine-grained personal access token (GitLab 18.10+) → Group and project",
+          items: [
+            { name: "Code: Download", why: "git clone / fetch" },
+            { name: "Project: Read", why: "resolve the project + default branch on connect" },
+            { name: "Repository: Read", why: "read files via API" },
+            { name: "Wiki: Read", why: "only if you ingest the wiki", optional: true },
+          ],
+        },
+        {
+          label: "Classic project / personal access token → Scopes",
+          items: [
+            { name: "read_api", why: "resolve the project, browse, wiki" },
+            { name: "read_repository", why: "git clone / fetch" },
+          ],
+        },
+      ],
+      read_write: [
+        {
+          label: "Fine-grained personal access token (GitLab 18.10+) → Group and project",
+          items: [
+            { name: "Code: Download", why: "git clone / fetch" },
+            { name: "Project: Read", why: "resolve the project + default branch" },
+            { name: "Repository: Read", why: "read files via API" },
+            { name: "Branch: Create", why: "agent branch" },
+            { name: "Commit: Create", why: "agent commits" },
+            { name: "Merge Request: Create", why: "open merge requests" },
+            { name: "Work Item: Create", why: "comment on merge requests" },
+            { name: "Wiki: Read", why: "only if you ingest the wiki", optional: true },
+          ],
+        },
+        {
+          label: "Classic project / personal access token → Scopes (role Developer)",
+          items: [
+            { name: "api", why: "project lookup + merge requests" },
+            { name: "write_repository", why: "branches + commits" },
+          ],
+        },
+      ],
+    },
   },
   gitea: {
     tokenType: "Scoped personal access token (least privilege)",
@@ -112,6 +182,23 @@ const VENDOR_TOKEN_GUIDES: Record<
     ],
     writeNote:
       "For read/write (agent opens PRs): set Repository: Read and Write, plus Issue: Read and Write (for PR comments).",
+    permissions: {
+      read: [
+        {
+          label: "Scoped token → Permissions",
+          items: [{ name: "Repository: Read", why: "clone, files, wiki" }],
+        },
+      ],
+      read_write: [
+        {
+          label: "Scoped token → Permissions",
+          items: [
+            { name: "Repository: Read and Write", why: "branches, commits, PRs" },
+            { name: "Issue: Read and Write", why: "PR comments" },
+          ],
+        },
+      ],
+    },
   },
 };
 
@@ -753,6 +840,36 @@ function ConnectForm({
                   <li key={i}>{s}</li>
                 ))}
               </ol>
+              <div className="mt-1 p-2 rounded-md bg-background/60 border border-[var(--accent)]/20 space-y-1.5">
+                <p className="flex items-center gap-1 text-foreground font-medium">
+                  <KeyRound className="w-3 h-3 text-[var(--accent)]" />
+                  Required permissions for {accessLevel === "read_write" ? "read/write" : "read-only"} access
+                </p>
+                {guide.permissions[accessLevel].map((group) => (
+                  <div key={group.label} className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{group.label}</p>
+                    <ul className="flex flex-wrap gap-1">
+                      {group.items.map((item) => (
+                        <li
+                          key={item.name}
+                          title={item.why}
+                          className={`inline-flex items-baseline gap-1 px-1.5 py-0.5 rounded border text-[10.5px] ${
+                            item.optional
+                              ? "border-border text-muted-foreground"
+                              : "border-[var(--accent)]/40 bg-[var(--accent)]/10 text-foreground"
+                          }`}
+                        >
+                          <code className="font-mono">{item.name}</code>
+                          <span className="text-muted-foreground">· {item.why}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <p className="text-muted-foreground">
+                  The connect step fails with a 403 naming the missing permission if any of the highlighted ones is left out.
+                </p>
+              </div>
               <p className="text-muted-foreground">{guide.writeNote}</p>
               {guide.caveat && (
                 <p className="text-amber-400/80 flex items-start gap-1">
