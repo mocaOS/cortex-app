@@ -94,13 +94,13 @@ const VENDOR_TOKEN_GUIDES: Record<
     steps: [
       "Your project → Settings → Access Tokens",
       "Role: Reporter (read-only)",
-      "Scopes: read_repository (enough for ingestion)",
+      "Scopes: read_api + read_repository (enough for ingestion — read_api resolves the project, read_repository clones it)",
       "Set an expiry, then create the token",
     ],
     writeNote:
       "For read/write (agent opens merge requests): use Role Developer with scopes api + write_repository.",
     caveat:
-      "No project-token access? A Personal Access Token (User settings → Access tokens) with the same scopes works across all your projects — the button below opens it.",
+      "No project-token access? A Personal Access Token (User settings → Access tokens) with the same scopes works across all your projects — the button below opens it. Using a fine-grained personal access token (GitLab 18.10+)? Grant Code: Download, Project: Read and Repository: Read on the repository (plus Wiki: Read to ingest the wiki). User: Read is not needed — the Test button then reports the token as accepted without a username.",
   },
   gitea: {
     tokenType: "Scoped personal access token (least privilege)",
@@ -713,7 +713,9 @@ function ConnectForm({
             {verifyResult.valid ? (
               <>
                 <CheckCircle2 className="w-3 h-3" />
-                Authenticated as {verifyResult.login}
+                {verifyResult.login
+                  ? `Authenticated as ${verifyResult.login}`
+                  : verifyResult.message || "Token accepted"}
               </>
             ) : (
               <>

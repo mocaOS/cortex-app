@@ -26,8 +26,8 @@ class GiteaProvider(GitProvider):
         return {"Authorization": f"token {self._token}", "Accept": "application/json"}
 
     async def verify(self) -> VerifyResult:
-        resp = await self._request("GET", "/user")
-        return VerifyResult(valid=True, login=resp.json().get("login"))
+        # /user needs the `read:user` scope, which repo-only tokens lack.
+        return await self._verify_identity("/user", "login")
 
     async def list_repos(self, page: int = 1) -> list[GitRepoRef]:
         resp = await self._request("GET", "/user/repos", params={"limit": 50, "page": page})

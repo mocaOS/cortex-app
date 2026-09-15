@@ -33,7 +33,7 @@ A repo's content is chunked, embedded, and run through entity/relationship extra
 Cortex always recommends the most narrowly-scoped token that works:
 
 - **GitHub** — a **fine-grained personal access token** scoped to the one repo, with **Contents: Read-only** for ingestion. For read/write, add **Contents: Read and write** + **Pull requests: Read and write**. (To ingest a GitHub **wiki**, use a classic token with the `repo` scope — fine-grained tokens don't cover wikis.)
-- **GitLab** — a **Project Access Token** with role **Reporter** and scope `read_repository`. For merge requests, use role **Developer** with `api` + `write_repository`.
+- **GitLab** — a **Project Access Token** with role **Reporter** and scopes `read_api` + `read_repository` (`read_repository` covers the clone, `read_api` lets Cortex resolve the project, browse your projects and read the wiki). For merge requests, use role **Developer** with `api` + `write_repository`. With a **fine-grained personal access token** (GitLab 18.10+), grant **Code: Download**, **Project: Read** and **Repository: Read** on the repository, plus **Wiki: Read** for the wiki — **User: Read** is not needed; the **Test** button then shows "Token accepted" without a username.
 - **Gitea** — a scoped personal access token with **Repository: Read**. For pull requests, **Repository: Read and Write** plus **Issue: Read and Write** (for PR comments).
 
 The token is stored server-side, masked in the UI (`••••abcd`), injected automatically into every git and API call, and never exposed to the agent or written into logs.

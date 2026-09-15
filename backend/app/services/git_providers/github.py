@@ -39,9 +39,7 @@ class GitHubProvider(GitProvider):
         }
 
     async def verify(self) -> VerifyResult:
-        resp = await self._request("GET", "/user")
-        data = resp.json()
-        return VerifyResult(valid=True, login=data.get("login"))
+        return await self._verify_identity("/user", "login")
 
     async def list_repos(self, page: int = 1) -> list[GitRepoRef]:
         resp = await self._request(

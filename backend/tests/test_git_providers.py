@@ -165,3 +165,40 @@ def test_gitlab_commit_files_mixes_create_and_update():
     commit = [c for c in calls if c["method"] == "POST"][-1]
     actions = {a["file_path"]: a["action"] for a in commit["json"]["actions"]}
     assert actions == {"exists.md": "update", "new.md": "create"}
+
+
+# ----- verify(): least-privilege tokens that can't read /user ------------------
+
+
+def test_verify_accepts_token_without_profile_permission():
+    """A 403 on /user (GitLab fine-grained w/o User: Read, Gitea w/o read:user)
+    means the token authenticated but may not read the profile — still valid."""
+    import asyncio
+    from app.services.git_providers.base import GitProviderError
+    from app.services.git_providers.gitea import GiteaProvider
+    for provider in (GitLabProvider(token="t"), GiteaProvider(token="t"), GitHubProvider(token="t")):
+        _capture_requests(provider, {
+            ("GET", "/user"): GitProviderError("insufficient_granular_scope", status_code=403),
+        })
+        result = asyncio.run(provider.verify())
+        assert result.valid is True
+        assert result.login is None
+        assert "accepted" in (result.message or "")
+
+
+def test_verify_returns_login_when_profile_readable():
+    import asyncio
+    p = GitLabProvider(token="t")
+    _capture_requests(p, {("GET", "/user"): _FakeResp({"username": "octo"})})
+    result = asyncio.run(p.verify())
+    assert (result.valid, result.login) == (True, "octo")
+
+
+def test_verify_still_rejects_unauthenticated_token():
+    import asyncio
+    import pytest
+    from app.services.git_providers.base import GitProviderError
+    p = GitLabProvider(token="bad")
+    _capture_requests(p, {("GET", "/user"): GitProviderError("401 Unauthorized", status_code=401)})
+    with pytest.raises(GitProviderError):
+        asyncio.run(p.verify())

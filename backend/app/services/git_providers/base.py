@@ -189,6 +189,33 @@ class GitProvider(ABC):
     def _b64(content: str) -> str:
         return base64.b64encode(content.encode("utf-8")).decode("ascii")
 
+    async def _verify_identity(self, path: str, login_key: str) -> VerifyResult:
+        """Shared `verify()` body: GET the token owner's profile.
+
+        Least-privilege tokens frequently can't read the profile at all — a
+        GitLab fine-grained token without *User: Read* (or a classic one
+        without `read_user`), a Gitea token without `read:user`. The forge
+        answers 403 (`insufficient_granular_scope` / `insufficient_scope`):
+        the token *was* authenticated, it just isn't allowed to say who it is.
+        Ingestion never needs that, so a 403 counts as valid-without-login and
+        the real access check is the project lookup at connection time. A 401
+        (bad, revoked or expired token) still fails.
+        """
+        try:
+            resp = await self._request("GET", path)
+        except GitProviderError as e:
+            if e.status_code == 403:
+                return VerifyResult(
+                    valid=True,
+                    login=None,
+                    message=(
+                        "Token accepted. It can't read the account profile, so the "
+                        "username isn't shown; repository access is checked when you connect."
+                    ),
+                )
+            raise
+        return VerifyResult(valid=True, login=resp.json().get(login_key))
+
     # ----- read interface ----------------------------------------------------
 
     @abstractmethod

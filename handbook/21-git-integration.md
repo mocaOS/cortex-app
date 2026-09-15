@@ -46,8 +46,10 @@ Cortex always recommends the **least-privilege** token that does the job:
 | Provider | Read-only (ingest) | Read/write (open PRs) |
 |---|---|---|
 | **GitHub** | Fine-grained token, scoped to the repo, **Contents: Read** | Add **Contents: Read and write** + **Pull requests: Read and write** |
-| **GitLab** | Project Access Token, role **Reporter**, scope `read_repository` | Role **Developer**, scopes `api` + `write_repository` |
+| **GitLab** | Project Access Token, role **Reporter**, scopes `read_api` + `read_repository` | Role **Developer**, scopes `api` + `write_repository` |
 | **Gitea** | Scoped token, **Repository: Read** | **Repository: Read and Write** + **Issue: Read and Write** |
+
+> **GitLab scopes:** `read_repository` alone only covers `git clone` and the repository-files API; `read_api` is what lets Cortex resolve the project (default branch, browse list, wiki pages). With a **fine-grained personal access token** (GitLab 18.10+) grant **Code: Download**, **Project: Read** and **Repository: Read** on the repository, plus **Wiki: Read** if you ingest the wiki. **User: Read** is *not* required: Cortex checks the token by reading the account profile, and a token that isn't allowed to do so is still accepted — the **Test** button then reports "Token accepted" without a username, and the real access check happens when you connect the repository.
 
 > **GitHub wiki note:** GitHub wikis are cloned via a separate git endpoint that fine-grained tokens don't cover. To ingest a GitHub wiki, use a **classic** token with the `repo` scope.
 

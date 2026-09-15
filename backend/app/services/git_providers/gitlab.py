@@ -33,8 +33,9 @@ class GitLabProvider(GitProvider):
         return quote(f"{owner}/{name}", safe="")
 
     async def verify(self) -> VerifyResult:
-        resp = await self._request("GET", "/user")
-        return VerifyResult(valid=True, login=resp.json().get("username"))
+        # /user needs `read_user` (classic) or *User: Read* (fine-grained) —
+        # neither is required for ingestion; _verify_identity tolerates the 403.
+        return await self._verify_identity("/user", "username")
 
     async def list_repos(self, page: int = 1) -> list[GitRepoRef]:
         resp = await self._request(
