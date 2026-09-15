@@ -7,6 +7,18 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 15, 2026
+
+Fix for the personality generator hanging at "Writing the SOUL.md…": the raw completion endpoint Cortex Chat writes through now suppresses hidden reasoning the same way the chat path does. With the default Qwen3.6 model the research phase finished and the writer never produced a line.
+
+### `POST /api/llm/completions` follows `DEFAULT_REASONING_MODE`
+
+- **The failure** — the admin-gated raw completion endpoint (July, built for Cortex Chat's personality generator) called the model directly and skipped the per-provider reasoning dispatch every other completion goes through. On thinking-by-default models (Qwen3.x on Venice, vLLM, OpenRouter) the writer spent minutes — and its whole `max_tokens` budget — in the hidden `reasoning_content` channel, then ended the stream with zero visible content. The caller saw a silent, empty answer.
+- **The fix** — the endpoint now runs through `safe_chat_completion` with `DEFAULT_REASONING_MODE` (default `off`: Venice `disable_thinking`, vLLM `enable_thinking=False`, OpenAI `reasoning_effort`) and the same per-model overrides and reject-and-retry fallback as `/api/ask`. Set the mode to `auto` to restore provider-default thinking on this endpoint too.
+- **Cortex Chat side (on `main` for the next Chat release)** — the generator route keeps the browser connection alive with SSE comment lines while the writer works (nothing reached the browser between the last research step and the first token before, so proxy idle timeouts could cut the run), bounds the writer at 5 minutes, shows a "Model is reasoning…" status line if thought does stream through, and turns an empty answer into an explicit error naming the cause instead of finishing with a blank draft. These guards work against older backends as well.
+
+---
+
 ## September 4, 2026
 
 Cortex Chat catches up with the last month of backend releases: a compatibility fix for Cortex 1.2.0+, the September 3 answer-quality flags surfaced in the chat UI, and the August 15 no-content document state in the library console. Everything below is on cortex-chat `main` for the next Chat release; the stack pin stays where it is until that tag exists.

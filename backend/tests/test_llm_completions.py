@@ -140,3 +140,79 @@ def test_quota_gate_returns_429(client, fake_llm, monkeypatch):
     )
     assert resp.status_code == 429
     assert "Retry-After" in resp.headers
+
+
+class _RecordingCompletions(_FakeCompletions):
+    """Fake that records the kwargs passed to create()."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def create(self, *, stream=False, **kwargs):
+        self.calls.append({"stream": stream, **kwargs})
+        return await super().create(stream=stream, **kwargs)
+
+
+@pytest.fixture
+def recording_llm(monkeypatch):
+    """Venice + thinking-by-default Qwen: the config that hung cortex-chat's
+    personality generator (hidden reasoning ate the whole token budget)."""
+    from app.services import reasoning_config
+    from app.services.llm_config import LLMConfig
+
+    client = _FakeClient()
+    client.chat.completions = _RecordingCompletions()
+    monkeypatch.setattr("app.main.make_async_openai_client", lambda **kw: client)
+    monkeypatch.setattr(
+        "app.main.get_llm_config",
+        lambda fast_mode=False: LLMConfig(
+            api_key="k", base_url="https://api.venice.ai/api/v1", model="qwen3-6-35b-a3b"
+        ),
+    )
+    reasoning_config._unsupported_reasoning_models.clear()
+    return client.chat.completions
+
+
+def test_applies_default_reasoning_mode_like_chat(client, recording_llm, monkeypatch):
+    """The passthrough must follow DEFAULT_REASONING_MODE (default OFF) exactly
+    like /api/ask — otherwise Qwen-class models think for minutes in a
+    `reasoning_content` channel the caller never sees."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "default_reasoning_mode", "off")
+
+    resp = client.post(
+        "/api/llm/completions",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["content"] == "Hello world"
+
+    (call,) = recording_llm.calls
+    assert call["model"] == "qwen3-6-35b-a3b"
+    assert call["extra_body"]["venice_parameters"]["disable_thinking"] is True
+
+    # Streaming takes the same path.
+    with client.stream(
+        "POST",
+        "/api/llm/completions",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    ) as resp:
+        assert resp.status_code == 200
+        "".join(resp.iter_text())
+    assert recording_llm.calls[-1]["stream"] is True
+    assert recording_llm.calls[-1]["extra_body"]["venice_parameters"]["disable_thinking"] is True
+
+
+def test_reasoning_mode_auto_injects_nothing(client, recording_llm, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "default_reasoning_mode", "auto")
+    resp = client.post(
+        "/api/llm/completions",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": False},
+    )
+    assert resp.status_code == 200
+    (call,) = recording_llm.calls
+    assert "extra_body" not in call
+    assert "reasoning_effort" not in call

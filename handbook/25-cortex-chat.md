@@ -191,7 +191,7 @@ Worth knowing as an operator, even though none of it needs configuration: Cortex
 
 ### Prerequisites
 
-- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working.
+- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working. That endpoint follows `DEFAULT_REASONING_MODE` (default `off`); on a thinking-by-default model (Qwen3.x) with reasoning left on, the writer can spend its whole token budget on hidden reasoning and the run ends with an "empty answer" error — keep the default or pick a non-thinking model.
 - An **admin-tier API key** (`moca_admin_...`) generated in that instance — see [Chapter 17: Administration](17-administration.md)
 - Node.js 18+ if running from source, or Docker
 

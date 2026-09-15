@@ -79,6 +79,10 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 **Always read**: `architecture.md` (gives you the lay of the land for any task)
 **Read on demand**: All other files, based on the routing table above
 
+## Anonymize customer-facing references
+
+Commits, `documentation/pages/changelog.mdx`, handbook pages, code comments, tests, and fixtures never name a tenant, customer, client, instance hostname, or deployment — no company names, no tenant domains, no API keys or IDs from a real instance. Describe the trigger generically ("a deployment running the default model", "a thinking-by-default model"); the technical cause is the record, not who hit it. Debugging against a live tenant is fine; what lands in git is scrubbed.
+
 ## Meta: Maintaining These Docs
 
 When making significant changes, update the relevant `.claude/` subfile(s) per the routing table. If adding a new subfile, add it to the Navigation Map and File-Path Routing above. Keep subfiles 50–300 lines. See [`.claude/maintenance.md`](.claude/maintenance.md) for full sync rules across all documentation layers (README, documentation/, handbook/, design-system/).

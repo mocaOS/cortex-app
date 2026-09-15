@@ -85,7 +85,7 @@ Permission levels per endpoint are noted as: **Public** (no auth), **Read**, **M
 |--------|----------|------|-------------|
 | `POST` | `/api/llm/completions` | **Admin** | Raw chat completion on the instance's primary model — no retrieval, no prompt security. Body: `LLMCompletionRequest` |
 
-Built for trusted first-party services (Cortex Chat's personality generator) so operators keep one model configuration. Admin-gated precisely because prompt security is bypassed; completions draw from the monthly quota and are metered/traced like every other completion.
+Built for trusted first-party services (Cortex Chat's personality generator) so operators keep one model configuration. Admin-gated precisely because prompt security is bypassed; completions draw from the monthly quota and are metered/traced like every other completion. Hidden reasoning follows `DEFAULT_REASONING_MODE` (default `off`) like the chat path, so thinking-by-default models answer instead of spending the token budget on thought.
 
 **LLMCompletionRequest body:**
 

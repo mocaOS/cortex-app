@@ -1170,8 +1170,10 @@ async def llm_completions(
     """Raw chat completion on the instance's primary model (admin-only).
 
     Bypasses the RAG pipeline entirely — no retrieval, no prompt security, no
-    sources; the caller owns the full prompt. Built for trusted first-party
-    services (e.g. cortex-chat's personality generator) so operators keep ONE
+    sources; the caller owns the full prompt. Hidden reasoning follows
+    DEFAULT_REASONING_MODE like the chat path (default OFF), so thinking-by-
+    default models answer instead of spending the token budget on thought.
+    Built for trusted first-party services (e.g. cortex-chat's personality generator) so operators keep ONE
     model configuration; the app-facing variant on the roadmap can extend this
     with app-token auth later (see .claude/domain/apps.md). Admin-gated
     precisely BECAUSE prompt security is bypassed: minted read/manage keys and
@@ -1190,6 +1192,7 @@ async def llm_completions(
     """
     await enforce_query_quota()
 
+    settings = get_settings()
     config = get_llm_config()
     client = make_async_openai_client(api_key=config.api_key, base_url=config.base_url)
     params = build_chat_params(
@@ -1199,11 +1202,30 @@ async def llm_completions(
     )
     messages = [{"role": m.role, "content": m.content} for m in request_body.messages]
 
+    # Same hidden-reasoning policy as the chat path (DEFAULT_REASONING_MODE,
+    # default OFF — Venice `disable_thinking`, vLLM `enable_thinking=False`,
+    # OpenAI `reasoning_effort`, …). Without it, thinking-by-default models
+    # (Qwen3.x) spend minutes — and the whole `max_tokens` budget — in a
+    # `reasoning_content` channel the caller never sees, so the stream ends
+    # with zero visible content (cortex-chat's personality generator hung at
+    # "Writing the SOUL.md…" on exactly this). Auto-falls-back if a gateway
+    # rejects the reasoning params.
+    reasoning_mode = ReasoningMode.parse(settings.default_reasoning_mode)
+
+    def _create(**kwargs):
+        return safe_chat_completion(
+            client.chat.completions.create,
+            base_url=config.base_url,
+            model=config.model,
+            reasoning_mode=reasoning_mode,
+            overrides=settings.parsed_reasoning_overrides,
+            messages=messages,
+            **kwargs,
+        )
+
     if not request_body.stream:
         try:
-            completion = await client.chat.completions.create(
-                model=config.model, messages=messages, **params
-            )
+            completion = await _create(**params)
         except Exception as e:
             logger.error(f"LLM completion failed: {e}")
             raise HTTPException(status_code=502, detail="LLM completion failed")
@@ -1214,9 +1236,7 @@ async def llm_completions(
 
     async def generate():
         try:
-            stream = await client.chat.completions.create(
-                model=config.model,
-                messages=messages,
+            stream = await _create(
                 stream=True,
                 **stream_usage_kwargs(),
                 **params,
