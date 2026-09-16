@@ -9,6 +9,12 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## September 16, 2026
 
+### Cortex Chat: download a single message as Markdown
+
+- **New message action** — every chat message, question or answer, now has a **Download** button beside **Copy** in its hover action row (always visible on touch devices). It saves that one message as a `.md` file, so a single well-sourced answer can go straight into a wiki page, a ticket or a document without exporting the whole conversation and trimming it by hand.
+- **Same format as the chat export** — the file is one section of the full-transcript export: a role heading, the message text verbatim with its `[src_N]` citation markers, and — for answers — a numbered **Sources** footnote list of the cited documents, so the download stays self-contained. The filename is taken from the message's first line, so several downloads from one chat stay distinguishable.
+- Client-side only, no backend or configuration change. On cortex-chat `main` for the next Chat release.
+
 ### Git connections sync into a chosen collection
 
 - **The gap** — a connected repository always landed in the default collection. The API had accepted a target `collection_id` since launch, but the Settings form never exposed it, so every synced repo was mixed into the same bucket as ad-hoc uploads.
