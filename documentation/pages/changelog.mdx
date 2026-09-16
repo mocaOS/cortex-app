@@ -9,11 +9,13 @@ All notable changes to Cortex are documented here, organized by date.
 
 ## September 16, 2026
 
+Cortex Chat **1.3.0** is tagged and on GHCR. It collects everything since 1.2.0 that the entries below and the September 4 and 15 notes described as "on `main` for the next Chat release": the non-streaming fix against Cortex 1.2.0+, the answer-quality and `refusal_source` notices, the personality-generator hang guards, and today's per-message download. The Dokploy compose pin moves to `ghcr.io/mocaos/cortex-chat:1.3.0`; the self-host stack pin is bumped separately with the next stack release.
+
 ### Cortex Chat: download a single message as Markdown
 
 - **New message action** — every chat message, question or answer, now has a **Download** button beside **Copy** in its hover action row (always visible on touch devices). It saves that one message as a `.md` file, so a single well-sourced answer can go straight into a wiki page, a ticket or a document without exporting the whole conversation and trimming it by hand.
 - **Same format as the chat export** — the file is one section of the full-transcript export: a role heading, the message text verbatim with its `[src_N]` citation markers, and — for answers — a numbered **Sources** footnote list of the cited documents, so the download stays self-contained. The filename is taken from the message's first line, so several downloads from one chat stay distinguishable.
-- Client-side only, no backend or configuration change. On cortex-chat `main` for the next Chat release.
+- Client-side only, no backend or configuration change. Ships in Cortex Chat 1.3.0.
 
 ### Git connections sync into a chosen collection
 

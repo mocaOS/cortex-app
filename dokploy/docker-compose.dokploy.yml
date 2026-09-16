@@ -441,7 +441,7 @@ services:
     # GlitchTip), so browser-side error reporting from tenant chats is off;
     # server-side reporting is unaffected. No build args were ever passed
     # here: all config is runtime env.
-    image: ghcr.io/mocaos/cortex-chat:1.2.0
+    image: ghcr.io/mocaos/cortex-chat:1.3.0
     environment:
       # Cortex backend over the internal compose network (server-side only —
       # the browser talks to chat, chat proxies to the backend).
