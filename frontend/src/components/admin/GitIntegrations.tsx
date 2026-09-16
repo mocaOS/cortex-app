@@ -22,9 +22,11 @@ import {
   GitPullRequest,
   BookOpen,
   KeyRound,
+  FolderOpen,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
+  Collection,
   GitConnection,
   GitVendor,
   GitAccessLevel,
@@ -244,8 +246,53 @@ function AccessLevelNote({ level }: { level: GitAccessLevel }) {
   );
 }
 
-export function GitIntegrations() {
+const DEFAULT_COLLECTION_VALUE = "";
+
+/** Target-collection picker shared by the connect + edit forms. Hidden when
+ *  collections are disabled or none could be loaded — the backend then files
+ *  synced documents into the default collection. */
+function CollectionPicker({
+  collections,
+  value,
+  onChange,
+  inputCls,
+  hint,
+}: {
+  collections: Collection[];
+  value: string;
+  onChange: (id: string) => void;
+  inputCls: string;
+  hint?: string;
+}) {
+  if (collections.length === 0) return null;
+  return (
+    <div>
+      <label className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+        <FolderOpen className="w-3 h-3" />
+        Collection
+      </label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+        <option value={DEFAULT_COLLECTION_VALUE}>Default collection</option>
+        {collections.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      {hint && <p className="mt-1 text-[10px] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function collectionName(collections: Collection[], id?: string | null): string {
+  if (!id) return "default";
+  return collections.find((c) => c.id === id)?.name ?? id;
+}
+
+export function GitIntegrations({ collectionsEnabled = true }: { collectionsEnabled?: boolean } = {}) {
   const [connections, setConnections] = useState<GitConnection[]>([]);
+  // Collections the synced documents can be filed into (empty = picker hidden).
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -285,6 +332,23 @@ export function GitIntegrations() {
   useEffect(() => {
     fetchConnections();
   }, [fetchConnections]);
+
+  useEffect(() => {
+    if (!collectionsEnabled) return;
+    let cancelled = false;
+    api
+      .getCollections()
+      .then((res) => {
+        if (!cancelled) setCollections(res.collections);
+      })
+      .catch(() => {
+        // Collections unavailable → keep the picker hidden; sync still works.
+        if (!cancelled) setCollections([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionsEnabled]);
 
   const pollSync = useCallback(
     async (connectionId: string, taskId: string) => {
@@ -391,12 +455,7 @@ export function GitIntegrations() {
       </div>
 
       <div className="p-6 space-y-4">
-        {error && (
-          <div className="flex items-center gap-2 text-xs text-red-400 p-2 rounded bg-red-500/10 border border-red-500/20">
-            <AlertCircle className="w-3 h-3 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        {error && <GitErrorNotice message={error} />}
 
         {/* Connect form */}
         <AnimatePresence>
@@ -408,6 +467,7 @@ export function GitIntegrations() {
               className="overflow-hidden"
             >
               <ConnectForm
+                collections={collections}
                 onCreated={() => {
                   setShowForm(false);
                   fetchConnections();
@@ -517,6 +577,7 @@ export function GitIntegrations() {
                         <div className="px-3 py-2 border-t border-border/30 bg-muted/30 space-y-2 text-xs">
                           {editingId === conn.id ? (
                             <EditForm
+                              collections={collections}
                               conn={conn}
                               onSaved={(updated) => {
                                 setConnections((prev) =>
@@ -550,6 +611,14 @@ export function GitIntegrations() {
                               <span className="text-muted-foreground">Wiki: </span>
                               <span className="text-foreground">{conn.wiki_enabled ? "yes" : "no"}</span>
                             </div>
+                            {collections.length > 0 && (
+                              <div className="col-span-2">
+                                <span className="text-muted-foreground">Collection: </span>
+                                <span className="text-foreground">
+                                  {collectionName(collections, conn.collection_id)}
+                                </span>
+                              </div>
+                            )}
                             {conn.last_synced_sha && (
                               <div className="col-span-2">
                                 <span className="text-muted-foreground">Last commit: </span>
@@ -648,17 +717,153 @@ export function GitIntegrations() {
 }
 
 // =============================================================================
+// Provider error translation
+// =============================================================================
+//
+// The backend forwards the forge's own error text verbatim (token scrubbed),
+// e.g. `gitlab GET …/projects/x → HTTP 403: {"error":"insufficient_scope",…}`.
+// That is precise but opaque to someone who just created their first token.
+// Match the well-known signatures and say what was set up wrong and how to
+// fix it; the raw text stays available underneath for support.
+
+type GitErrorExplanation = { title: string; fix: string };
+
+const GITLAB_READ_FG = "Code: Download, Project: Read and Repository: Read (plus Wiki: Read for the wiki)";
+
+function explainGitError(raw: string): GitErrorExplanation | null {
+  const m = raw;
+  const lower = m.toLowerCase();
+
+  // GitLab fine-grained PAT (18.10+): names the exact missing permission.
+  if (lower.includes("insufficient_granular_scope")) {
+    const perm = m.match(/\[([^\]]+)\]/)?.[1];
+    if (perm && /user:\s*read/i.test(perm)) {
+      return {
+        title: "GitLab asked for User: Read, which Cortex no longer needs.",
+        fix: "Your Cortex backend is older than the git connector fix that tolerates profile-less tokens. Update Cortex, or grant User: Read on the token as a workaround.",
+      };
+    }
+    return {
+      title: perm
+        ? `Your GitLab fine-grained token is missing the permission ${perm}.`
+        : "Your GitLab fine-grained token is missing a permission.",
+      fix: `In GitLab open the token → Group and project → tick ${perm ?? "the named permission"} for this repository, then retry. Read-only ingestion needs ${GITLAB_READ_FG}; read/write adds Branch, Commit, Merge Request and Work Item: Create.`,
+    };
+  }
+
+  // GitLab classic scopes: lists the scopes the endpoint would accept.
+  if (lower.includes("insufficient_scope")) {
+    const scopes = m.match(/"scope"\s*:\s*"([^"]+)"/)?.[1];
+    const wantsWrite = /write_repository|\bapi\b(?!.*read_api)/.test(scopes ?? "") && !/read_api/.test(scopes ?? "");
+    return {
+      title: "Your GitLab token is missing an API scope.",
+      fix: scopes
+        ? `GitLab accepts one of: ${scopes.split(/\s+/).join(", ")}. ${
+            wantsWrite
+              ? "This is a write action — the token needs the api scope (role Developer)."
+              : "For read-only ingestion add read_api to the token: read_repository alone only covers git clone, not the project lookup Cortex does on connect."
+          } Edit the token's scopes in GitLab or create a new one, then retry.`
+        : "Add read_api (read-only) or api (read/write) to the token and retry.",
+    };
+  }
+
+  // Gitea scoped tokens.
+  if (lower.includes("required scope") || lower.includes("token does not have")) {
+    return {
+      title: "Your Gitea token is missing a scope.",
+      fix: "Edit the token and grant Repository: Read. For read/write (pull requests + comments) grant Repository: Read and Write plus Issue: Read and Write.",
+    };
+  }
+
+  // GitHub fine-grained token not covering this repo / permission.
+  if (lower.includes("resource not accessible by personal access token")) {
+    return {
+      title: "The GitHub token can't reach this repository.",
+      fix: "Edit the fine-grained token → Repository access → include this repository, and make sure Contents: Read-only is granted (Read and write plus Pull requests for read/write).",
+    };
+  }
+
+  // Bad / expired / revoked token. (Provider 401 reaches the UI as a 403 so it is
+  // never confused with an expired Cortex session.)
+  if (/http 401|bad credentials|invalid_token|token is expired|token has expired|401 unauthorized|\b401\b/.test(lower)) {
+    return {
+      title: "The token was rejected as invalid or expired.",
+      fix: "Check it was pasted completely (no leading or trailing spaces), that it hasn't expired or been revoked, and that the base URL points at the right server. Then Test again.",
+    };
+  }
+
+  // Repository lookups: forges answer 404 for repos the token isn't allowed to see.
+  if (/http 404/.test(lower) && /\/projects\/|\/repos\//.test(lower)) {
+    const gitlab = lower.startsWith("gitlab");
+    return {
+      title: "Repository not found — or the token isn't allowed to see it.",
+      fix: gitlab
+        ? "Check the spelling: Owner is the full namespace (group/subgroup), Repository the project path. A project access token only sees its own project; a fine-grained personal token must have this repository selected. GitLab answers 404 instead of 403 for projects a token can't see."
+        : "Check the owner and repository spelling. For a private repository the token must include it (GitHub fine-grained: Repository access → select this repository). GitHub answers 404 instead of 403 for repositories a token can't see.",
+    };
+  }
+
+  // git clone / fetch authentication failures during sync.
+  if (/git (clone|fetch|ls-remote) failed/.test(lower) && /authentication failed|access denied|could not read username|repository not found|403|401/.test(lower)) {
+    return {
+      title: "git could not authenticate against the repository during sync.",
+      fix: "The token needs clone permission: GitLab read_repository (classic) or Code: Download (fine-grained); GitHub Contents: Read; Gitea Repository: Read. If the token was rotated or expired, paste a new one under Edit.",
+    };
+  }
+
+  // Network / SSRF guard.
+  if (lower.includes("request blocked") || lower.includes("request failed") || /http 502/.test(lower)) {
+    return {
+      title: "Cortex couldn't reach the git server.",
+      fix: "Check the base URL. For a self-hosted server on a private address the backend needs GIT_HTTP_ALLOW_PRIVATE=true; for a self-signed certificate add the host to GIT_HTTP_INSECURE_HOSTS.",
+    };
+  }
+
+  return null;
+}
+
+function GitErrorNotice({ message, compact = false }: { message: string; compact?: boolean }) {
+  const explained = explainGitError(message);
+  if (!explained) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-red-400 p-2 rounded bg-red-500/10 border border-red-500/20">
+        <AlertCircle className="w-3 h-3 shrink-0" />
+        <span>{message}</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`text-xs p-2 rounded bg-red-500/10 border border-red-500/20 space-y-1 ${compact ? "text-[11px]" : ""}`}>
+      <p className="flex items-start gap-2 text-red-400 font-medium">
+        <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+        <span>{explained.title}</span>
+      </p>
+      <p className="text-foreground/90 pl-5">{explained.fix}</p>
+      <details className="pl-5">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground text-[10px]">
+          Show the provider&rsquo;s response
+        </summary>
+        <code className="block mt-1 font-mono text-[10px] text-muted-foreground break-all whitespace-pre-wrap">{message}</code>
+      </details>
+    </div>
+  );
+}
+
+// =============================================================================
 // Connect form
 // =============================================================================
 
 function ConnectForm({
+  collections,
   onCreated,
   onError,
 }: {
+  collections: Collection[];
   onCreated: () => void;
   onError: (msg: string | null) => void;
 }) {
   const [vendor, setVendor] = useState<GitVendor>("github");
+  const [collectionId, setCollectionId] = useState(DEFAULT_COLLECTION_VALUE);
   const [baseUrl, setBaseUrl] = useState("");
   const [pat, setPat] = useState("");
   const [owner, setOwner] = useState("");
@@ -727,6 +932,7 @@ function ConnectForm({
         exclude_globs: excludeGlobs.split(",").map((g) => g.trim()).filter(Boolean),
         wiki_enabled: wikiEnabled,
         sync_interval_minutes: syncInterval,
+        collection_id: collectionId || null,
       });
       onCreated();
     } catch (err) {
@@ -791,26 +997,18 @@ function ConnectForm({
             {verifying ? <Loader2 className="w-3 h-3 animate-spin" /> : "Test"}
           </button>
         </div>
-        {verifyResult && (
-          <p
-            className={`text-[11px] mt-1 flex items-center gap-1 ${
-              verifyResult.valid ? "text-emerald-400" : "text-red-400"
-            }`}
-          >
-            {verifyResult.valid ? (
-              <>
-                <CheckCircle2 className="w-3 h-3" />
-                {verifyResult.login
-                  ? `Authenticated as ${verifyResult.login}`
-                  : verifyResult.message || "Token accepted"}
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-3 h-3" />
-                {verifyResult.message || "Invalid credentials"}
-              </>
-            )}
+        {verifyResult && verifyResult.valid && (
+          <p className="text-[11px] mt-1 flex items-center gap-1 text-emerald-400">
+            <CheckCircle2 className="w-3 h-3" />
+            {verifyResult.login
+              ? `Authenticated as ${verifyResult.login}`
+              : verifyResult.message || "Token accepted"}
           </p>
+        )}
+        {verifyResult && !verifyResult.valid && (
+          <div className="mt-1">
+            <GitErrorNotice message={verifyResult.message || "Invalid credentials"} compact />
+          </div>
         )}
 
         {/* Per-vendor token-generation guide */}
@@ -907,6 +1105,14 @@ function ConnectForm({
           <AccessLevelNote level={accessLevel} />
         </div>
       </div>
+
+      <CollectionPicker
+        collections={collections}
+        value={collectionId}
+        onChange={setCollectionId}
+        inputCls={inputCls}
+        hint="Every file and wiki page synced from this repository is filed into this collection."
+      />
 
       {/* Curated documents-only default */}
       <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
@@ -1025,16 +1231,19 @@ function ConnectForm({
 
 function EditForm({
   conn,
+  collections,
   onSaved,
   onCancel,
   onError,
 }: {
   conn: GitConnection;
+  collections: Collection[];
   onSaved: (updated: GitConnection) => void;
   onCancel: () => void;
   onError: (msg: string | null) => void;
 }) {
   const [accessLevel, setAccessLevel] = useState<GitAccessLevel>(conn.access_level);
+  const [collectionId, setCollectionId] = useState(conn.collection_id ?? DEFAULT_COLLECTION_VALUE);
   const [branch, setBranch] = useState(conn.branch || "");
   const [syncInterval, setSyncInterval] = useState(conn.sync_interval_minutes);
   const [restrictToDocs, setRestrictToDocs] = useState(isDocDefault(conn.include_globs));
@@ -1078,6 +1287,9 @@ function EditForm({
       };
       if (branch.trim()) update.branch = branch.trim();
       if (pat.trim()) update.pat = pat.trim();
+      if (collectionId !== (conn.collection_id ?? DEFAULT_COLLECTION_VALUE)) {
+        update.collection_id = collectionId || null;
+      }
       const updated = await api.updateGitConnection(conn.id, update);
       onSaved(updated);
     } catch (err) {
@@ -1118,6 +1330,18 @@ function EditForm({
       </div>
 
       <AccessLevelNote level={accessLevel} />
+
+      <CollectionPicker
+        collections={collections}
+        value={collectionId}
+        onChange={setCollectionId}
+        inputCls={inputCls}
+        hint={
+          collectionId && collectionId !== (conn.collection_id ?? DEFAULT_COLLECTION_VALUE)
+            ? "Saving moves the documents already synced from this repository into the selected collection."
+            : "New and updated files from this repository are filed into this collection."
+        }
+      />
 
       <div>
         <label className="text-[10px] text-muted-foreground uppercase tracking-wider">

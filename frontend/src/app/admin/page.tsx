@@ -412,7 +412,7 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.115 }}
           >
-            <GitIntegrations />
+            <GitIntegrations collectionsEnabled={config.enable_collections} />
           </motion.div>
         )}
 

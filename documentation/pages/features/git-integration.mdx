@@ -25,8 +25,9 @@ A repo's content is chunked, embedded, and run through entity/relationship extra
 3. Paste a **personal access token**. The form shows an inline, vendor-specific guide telling you exactly which token to create — always the **least-privilege** option — with a direct link to the right settings page. Click **Test** to verify it.
 4. Enter the **owner/org** and **repository**.
 5. Choose the **access level**.
-6. Leave the default **"Only ingest `.pdf` and `.md` files"** checked, or uncheck it to set custom filters (see [Filtering](#filtering-what-gets-ingested)).
-7. Click **Connect**, then **Sync** to ingest.
+6. Pick the **collection** the repository's files (and wiki pages) should be filed into. Leave it on *Default collection* to use the instance default. The picker only appears when collections are enabled.
+7. Leave the default **"Only ingest `.pdf` and `.md` files"** checked, or uncheck it to set custom filters (see [Filtering](#filtering-what-gets-ingested)).
+8. Click **Connect**, then **Sync** to ingest.
 
 ### Which token to create
 
@@ -81,7 +82,9 @@ Safety is enforced in code, not just by prompt: every write creates a new `corte
 
 ## Editing & removing connections
 
-Expand a connection to **Edit** it — change access level, branch, auto-sync interval, filters, wiki ingestion, or rotate the token. Toggling away from the `.pdf`/`.md` default when you have custom filters defined asks for confirmation first.
+Expand a connection to **Edit** it — change access level, branch, collection, auto-sync interval, filters, wiki ingestion, or rotate the token. Toggling away from the `.pdf`/`.md` default when you have custom filters defined asks for confirmation first.
+
+Changing the **collection** moves every document already synced from that repository into the new collection on save, so a repo never ends up split across two collections. Switching back to *Default collection* only affects files synced from then on; existing documents stay where they are.
 
 **Delete** offers two options: keep the already-ingested documents, or purge them along with the connection.
 

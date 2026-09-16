@@ -7,6 +7,16 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 16, 2026
+
+### Git connections sync into a chosen collection
+
+- **The gap** — a connected repository always landed in the default collection. The API had accepted a target `collection_id` since launch, but the Settings form never exposed it, so every synced repo was mixed into the same bucket as ad-hoc uploads.
+- **The fix** — the **Connect repository** and **Edit** forms on Admin → Git Integration now have a **Collection** picker (shown whenever collections are enabled). Every file and wiki page synced from that repository is filed into the selected collection; the connection details list it alongside branch and schedule. An unknown collection id is rejected with a 400 on create and update.
+- **Moving a connection** — choosing a different collection on an existing connection relocates the documents it already synced, so a repository is never split between two collections. Switching back to *Default collection* leaves existing documents in place and only affects future syncs.
+
+---
+
 ## September 15, 2026
 
 Fix for the personality generator hanging at "Writing the SOUL.md…": the raw completion endpoint Cortex Chat writes through now suppresses hidden reasoning the same way the chat path does. With the default Qwen3.6 model the research phase finished and the writer never produced a line.
@@ -22,6 +32,8 @@ Fix for the personality generator hanging at "Writing the SOUL.md…": the raw c
 - **The failure** — connecting a repository verified the token by reading the account profile (`GET /user`). A GitLab **fine-grained personal access token** scoped to repositories, or a classic token without `read_user`, is not allowed to do that and the forge answered `403 insufficient_granular_scope … requires … [User: Read]`, so a perfectly usable token was rejected before the repository was ever looked at. Gitea tokens without `read:user` hit the same wall.
 - **The fix** — a 403 on the profile read now counts as *authenticated*: the token is accepted, the **Test** button reports "Token accepted" without a username, and the real access check is the project lookup when you connect. A 401 (bad or expired token) still fails. Applies to GitHub, GitLab and Gitea alike.
 - **Required permissions, spelled out in the connect form** — the token guide on Admin → Git now shows a "Required permissions" block with the exact boxes to tick for the selected access level (read-only or read/write), per token type: GitLab fine-grained (**Code: Download**, **Project: Read**, **Repository: Read**, optional **Wiki: Read**; for read/write also **Branch / Commit / Merge Request / Work Item: Create**), GitLab classic scopes, GitHub fine-grained repository permissions and Gitea scopes. Each chip says what it is used for; leaving one out fails the connect step with a 403 that names it.
+- **Errors say what to fix** — a failed Test, Connect, Edit or Sync now shows a plain-language diagnosis with the fix instead of the forge's raw JSON: a GitLab fine-grained token missing *Project: Read* is told exactly which box to tick; a classic token that only has `read_repository` is told to add `read_api` and why; likewise Gitea scopes, GitHub fine-grained repository access, invalid or expired tokens, repositories the token can't see (which forges report as 404), clone authentication failures during sync, and unreachable self-hosted servers. The provider's original response stays one click away under "Show the provider's response".
+- **Bad token no longer logs you out** — a token the forge rejected came back from Connect and Browse as HTTP 401, which the admin UI reads as an expired Cortex session. It is now a 403.
 - **Docs correction** — the recommended read-only GitLab token was listed as `read_repository` only, which covers `git clone` but not the project lookup Cortex does on connect. The minimum is `read_api` + `read_repository`; for fine-grained tokens grant **Code: Download**, **Project: Read** and **Repository: Read** (plus **Wiki: Read** for the wiki). **User: Read** is never required.
 
 ### Prompt-injection gates are identical on every ask path

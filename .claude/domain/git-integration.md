@@ -22,11 +22,15 @@ The PAT lives in the provider instance / connection node and is injected server-
 
 **`verify` is tolerant of profile-less tokens.** All three providers implement it via `GitProvider._verify_identity("/user", login_key)`. Least-privilege tokens often can't read the account profile (GitLab fine-grained without *User: Read* → `insufficient_granular_scope`; classic GitLab without `read_user`; Gitea without `read:user`) and answer **403** — the token *is* authenticated, so that maps to `VerifyResult(valid=True, login=None, message=…)` and the UI shows "Token accepted" instead of "Authenticated as …". **401** still fails. The real access check is `default_branch()` (`GET /projects/:id`) in `create_git_connection`. Minimum GitLab scopes for ingestion are therefore `read_api` (project lookup / browse / wikis) + `read_repository` (clone + files API); fine-grained: Code: Download + Project: Read + Repository: Read (+ Wiki: Read). Never require `read_user` / User: Read.
 
+**Provider errors are explained in the UI.** `_git_upstream_http_error` forwards provider 4xx as the same status **except 401 → 403**: the admin API client treats any 401 as an expired Cortex session and logs the user out, so a bad PAT must not look like one. In `GitIntegrations.tsx`, `explainGitError()` pattern-matches the forwarded text (GitLab `insufficient_granular_scope` → names the missing fine-grained permission; `insufficient_scope` → lists accepted scopes and says add `read_api`; Gitea `required scope`; GitHub `Resource not accessible…`; 401/expired; 404 on `/projects/` or `/repos/` = repo hidden from the token; `git clone failed` auth; network/SSRF) and `GitErrorNotice` renders title + fix with the raw provider response in a `<details>`. Used for the page-level error banner (connect, edit, sync) and the Test-button failure. Add a branch there whenever a new forge error shape shows up in support.
+
 **GitLab specifics**: repos→projects (URL-encoded `namespace/path` id), PRs→merge_requests (`iid`), clone user literal `oauth2`, multi-file commit = single atomic `actions[]` payload.
 
 ## Data model
 
 `(:GitConnection)` Neo4j node (CRUD in `neo4j_service.py`): `id, vendor, base_url, repo_owner, repo_name, pat, pat_last4, access_level (read|read_write), branch, default_branch, include_globs, exclude_globs, wiki_enabled, collection_id, sync_interval_minutes, last_synced_sha, last_synced_wiki_sha, last_synced_at, next_sync_due, sync_status`. Constraint on `id` + composite index `(d.git_connection_id, d.git_path)` added in `initialize_schema`.
+
+**Target collection.** `collection_id` is the collection every synced file/wiki page is filed into (`store_file_only(..., collection_id)`; `None` → `DEFAULT_COLLECTION`). The create/PATCH endpoints normalise it via `_git_resolve_collection` (blank → `None`, unknown id → 400). **PATCH to a different non-null collection relocates the connection's already-synced documents** (`list_documents_for_git_connection` → `move_documents_to_collection`) so a repo is never split across two collections; clearing back to default leaves existing documents in place. The UI picker (`CollectionPicker` in `GitIntegrations.tsx`, connect + edit forms, hidden when `enable_collections` is off or `/api/collections` fails) sends `""`/`null` for "Default collection".
 
 **Document git-provenance** (optional props on `Document`, set via `store_document`): `git_connection_id, git_path, git_blob_sha, git_commit_sha, git_sync_status`. These — not filename+filesize — are the sync key. `find_git_document(connection_id, git_path)` is the keyed lookup.
 
@@ -83,7 +87,7 @@ A lifespan asyncio loop (`_git_sync_scheduler` in `main.py`, every `GIT_SYNC_POL
 
 ## Frontend
 
-`components/admin/GitIntegrations.tsx` on the Settings page (gated by `config.enable_git_integration`): connect flow (provider + base_url + PAT → Test/verify → owner/repo + access-level + globs + wiki + interval), connection list with sync status + "Sync now" (polls the task), expandable details with the orphaned-documents review panel and delete (keep / purge documents).
+`components/admin/GitIntegrations.tsx` on the Settings page (gated by `config.enable_git_integration`; receives `collectionsEnabled={config.enable_collections}`): connect flow (provider + base_url + PAT → Test/verify → owner/repo + access-level + target collection + globs + wiki + interval), connection list with sync status + "Sync now" (polls the task), expandable details with the orphaned-documents review panel and delete (keep / purge documents).
 
 ## Deps & ops
 

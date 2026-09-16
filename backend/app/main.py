@@ -8004,6 +8004,11 @@ def _git_upstream_http_error(e: Exception) -> HTTPException:
     tracker, where a bad PAT was being reported twice as a server fault.
     """
     code = getattr(e, "status_code", None)
+    if code == 401:
+        # The *provider* rejected the PAT. Our own 401 means "Cortex session
+        # expired" and the admin UI logs the user out on it — so a mistyped
+        # token must not masquerade as that. 403 keeps it a client error.
+        return HTTPException(status_code=403, detail=str(e))
     if code is not None and 400 <= code < 500:
         return HTTPException(status_code=code, detail=str(e))
     return HTTPException(status_code=502, detail=str(e))
@@ -8013,6 +8018,21 @@ def _mask_pat(pat: Optional[str]) -> str:
     if not pat:
         return "••••"
     return "••••" + pat[-4:]
+
+
+def _git_resolve_collection(neo4j, collection_id: Optional[str]) -> Optional[str]:
+    """Normalise + validate the target collection for a git connection.
+
+    Empty string → None (the UI's "default collection" choice). A non-empty id
+    must name an existing Collection, otherwise 400 — a typo here would silently
+    drop every synced document into the default collection on the next sync.
+    """
+    if collection_id is None or not str(collection_id).strip():
+        return None
+    collection_id = str(collection_id).strip()
+    if not neo4j.get_collection(collection_id):
+        raise HTTPException(status_code=400, detail=f"Collection not found: {collection_id}")
+    return collection_id
 
 
 def _git_conn_response(node: dict) -> GitConnectionResponse:
@@ -8095,6 +8115,7 @@ async def create_git_connection(
     _require_git_enabled()
     from app.services.git_providers import get_provider, GitProviderError
     neo4j = get_neo4j_service()
+    collection_id = await asyncio.to_thread(_git_resolve_collection, neo4j, request.collection_id)
     try:
         provider = get_provider(request.vendor.value, request.pat, request.base_url)
         verify = await provider.verify()
@@ -8123,7 +8144,7 @@ async def create_git_connection(
         "include_globs": request.include_globs,
         "exclude_globs": request.exclude_globs,
         "wiki_enabled": request.wiki_enabled,
-        "collection_id": request.collection_id,
+        "collection_id": collection_id,
         "sync_interval_minutes": request.sync_interval_minutes,
         "last_synced_sha": None,
         "last_synced_at": None,
@@ -8174,13 +8195,37 @@ async def update_git_connection(
         props["pat"] = get_crypto_service().encrypt(data["pat"])
         props["pat_last4"] = data["pat"][-4:]
     for key in ("branch", "include_globs", "exclude_globs", "wiki_enabled",
-                "collection_id", "sync_interval_minutes"):
+                "sync_interval_minutes"):
         if key in data:
             props[key] = data[key]
     if "access_level" in data and data["access_level"] is not None:
         props["access_level"] = data["access_level"].value if hasattr(data["access_level"], "value") else data["access_level"]
 
+    move_to: Optional[str] = None
+    if "collection_id" in data:
+        new_collection = await asyncio.to_thread(_git_resolve_collection, neo4j, data["collection_id"])
+        props["collection_id"] = new_collection
+        # Re-pointing the connection at another collection also relocates
+        # what it already synced — otherwise the repo would be split across two
+        # collections (old files here, files added after the change there).
+        # Clearing to "default" (None) leaves existing documents where they are.
+        if new_collection and new_collection != existing.get("collection_id"):
+            move_to = new_collection
+
     node = await asyncio.to_thread(neo4j.update_git_connection, connection_id, props)
+
+    if move_to:
+        def _relocate() -> int:
+            docs = neo4j.list_documents_for_git_connection(connection_id)
+            ids = [d["id"] for d in docs if d.get("id")]
+            if not ids:
+                return 0
+            return neo4j.move_documents_to_collection(ids, move_to).get("moved_count", 0)
+        moved = await asyncio.to_thread(_relocate)
+        logger.info(
+            "Git connection %s moved to collection %s (%d synced document(s) relocated)",
+            connection_id, move_to, moved,
+        )
     return _git_conn_response(node)
 
 

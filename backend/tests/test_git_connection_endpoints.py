@@ -53,13 +53,15 @@ _CREATE_BODY = {
 
 
 class TestCreateConnectionStatusMapping:
-    def test_bad_pat_returns_401_not_502(self, client, monkeypatch, git_enabled):
+    def test_bad_pat_returns_403_not_502(self, client, monkeypatch, git_enabled):
+        # Provider 401 → our 403: a Cortex 401 means "session expired" and the
+        # admin UI logs the user out on it, so a bad PAT must not look like one.
         _patch_provider(monkeypatch, GitProviderError(
             "github GET https://api.github.com/user → HTTP 401: Bad credentials",
             status_code=401,
         ))
         resp = client.post("/api/integrations/git/connections", json=_CREATE_BODY)
-        assert resp.status_code == 401
+        assert resp.status_code == 403
         assert "Bad credentials" in resp.json()["detail"]
 
     def test_forbidden_returns_403(self, client, monkeypatch, git_enabled):
@@ -79,13 +81,13 @@ class TestCreateConnectionStatusMapping:
 
 
 class TestBrowseStatusMapping:
-    def test_browse_bad_pat_returns_401(self, client, monkeypatch, git_enabled):
+    def test_browse_bad_pat_returns_403(self, client, monkeypatch, git_enabled):
         _patch_provider(monkeypatch, GitProviderError("bad creds", status_code=401))
         resp = client.get(
             "/api/integrations/git/browse",
             params={"vendor": "github", "pat": "ghp_badtoken12345"},
         )
-        assert resp.status_code == 401
+        assert resp.status_code == 403
 
     def test_browse_bad_input_valueerror_returns_400(self, client, monkeypatch, git_enabled):
         def _raise(*a, **k):
@@ -96,3 +98,136 @@ class TestBrowseStatusMapping:
             params={"vendor": "github", "pat": "ghp_badtoken12345"},
         )
         assert resp.status_code == 400
+
+
+# -----------------------------------------------------------------------------
+# Target collection: validated on create/update, synced documents follow a move
+# -----------------------------------------------------------------------------
+
+class _OkProvider:
+    async def verify(self):
+        from app.services.git_providers.base import VerifyResult
+        return VerifyResult(valid=True, login="octocat")
+
+    async def default_branch(self, owner, name):
+        return "main"
+
+
+def _patch_ok_provider(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.git_providers.get_provider",
+        lambda *a, **k: _OkProvider(),
+    )
+
+
+_EXISTING = {
+    "id": "git_abc123def456",
+    "vendor": "github",
+    "repo_owner": "octocat",
+    "repo_name": "hello-world",
+    "pat": "ghp_sometoken1234",
+    "pat_last4": "1234",
+    "access_level": "read",
+    "branch": "main",
+    "default_branch": "main",
+    "include_globs": [],
+    "exclude_globs": [],
+    "wiki_enabled": False,
+    "collection_id": "col_old",
+    "sync_interval_minutes": 0,
+}
+
+
+class TestTargetCollection:
+    def test_create_rejects_unknown_collection(self, client, mock_neo4j, monkeypatch, git_enabled):
+        _patch_ok_provider(monkeypatch)
+        mock_neo4j.get_collection.return_value = None
+        resp = client.post(
+            "/api/integrations/git/connections",
+            json={**_CREATE_BODY, "collection_id": "col_missing"},
+        )
+        assert resp.status_code == 400
+        assert "col_missing" in resp.json()["detail"]
+        mock_neo4j.create_git_connection.assert_not_called()
+
+    def test_create_stores_valid_collection(self, client, mock_neo4j, monkeypatch, git_enabled):
+        _patch_ok_provider(monkeypatch)
+        mock_neo4j.get_collection.return_value = {"id": "col_docs", "name": "Docs"}
+        mock_neo4j.create_git_connection.side_effect = lambda props: props
+        resp = client.post(
+            "/api/integrations/git/connections",
+            json={**_CREATE_BODY, "collection_id": "col_docs"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["collection_id"] == "col_docs"
+        stored = mock_neo4j.create_git_connection.call_args.args[0]
+        assert stored["collection_id"] == "col_docs"
+
+    def test_create_blank_collection_means_default(self, client, mock_neo4j, monkeypatch, git_enabled):
+        _patch_ok_provider(monkeypatch)
+        mock_neo4j.create_git_connection.side_effect = lambda props: props
+        resp = client.post(
+            "/api/integrations/git/connections",
+            json={**_CREATE_BODY, "collection_id": "   "},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["collection_id"] is None
+        mock_neo4j.get_collection.assert_not_called()
+
+    def test_update_moves_synced_documents_to_new_collection(self, client, mock_neo4j, git_enabled):
+        mock_neo4j.get_git_connection.return_value = dict(_EXISTING)
+        mock_neo4j.get_collection.return_value = {"id": "col_new", "name": "New"}
+        mock_neo4j.update_git_connection.side_effect = (
+            lambda cid, props: {**_EXISTING, **props}
+        )
+        mock_neo4j.list_documents_for_git_connection.return_value = [
+            {"id": "doc_1", "git_path": "README.md"},
+            {"id": "doc_2", "git_path": "docs/a.md"},
+        ]
+        mock_neo4j.move_documents_to_collection.return_value = {"moved_count": 2}
+
+        resp = client.patch(
+            f"/api/integrations/git/connections/{_EXISTING['id']}",
+            json={"collection_id": "col_new"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["collection_id"] == "col_new"
+        mock_neo4j.move_documents_to_collection.assert_called_once_with(
+            ["doc_1", "doc_2"], "col_new",
+        )
+
+    def test_update_same_collection_does_not_move(self, client, mock_neo4j, git_enabled):
+        mock_neo4j.get_git_connection.return_value = dict(_EXISTING)
+        mock_neo4j.get_collection.return_value = {"id": "col_old", "name": "Old"}
+        mock_neo4j.update_git_connection.side_effect = (
+            lambda cid, props: {**_EXISTING, **props}
+        )
+        resp = client.patch(
+            f"/api/integrations/git/connections/{_EXISTING['id']}",
+            json={"collection_id": "col_old", "wiki_enabled": True},
+        )
+        assert resp.status_code == 200, resp.text
+        mock_neo4j.move_documents_to_collection.assert_not_called()
+
+    def test_update_to_default_keeps_documents_in_place(self, client, mock_neo4j, git_enabled):
+        mock_neo4j.get_git_connection.return_value = dict(_EXISTING)
+        mock_neo4j.update_git_connection.side_effect = (
+            lambda cid, props: {**_EXISTING, **props}
+        )
+        resp = client.patch(
+            f"/api/integrations/git/connections/{_EXISTING['id']}",
+            json={"collection_id": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["collection_id"] is None
+        mock_neo4j.move_documents_to_collection.assert_not_called()
+
+    def test_update_rejects_unknown_collection(self, client, mock_neo4j, git_enabled):
+        mock_neo4j.get_git_connection.return_value = dict(_EXISTING)
+        mock_neo4j.get_collection.return_value = None
+        resp = client.patch(
+            f"/api/integrations/git/connections/{_EXISTING['id']}",
+            json={"collection_id": "col_missing"},
+        )
+        assert resp.status_code == 400
+        mock_neo4j.update_git_connection.assert_not_called()

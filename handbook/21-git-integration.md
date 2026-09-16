@@ -36,8 +36,9 @@ From **Settings → Git Integration**, click **Connect repository**:
 2. **Personal access token** — paste a token (see [Choosing a token](#choosing-a-token) below). The form shows step-by-step, provider-specific instructions and a direct link to the right settings page. Click **Test** to confirm the token works ("Authenticated as …").
 3. **Owner/org** and **Repository** — e.g. `mocaOS` and `cortex-skills`.
 4. **Access level** — read-only (ingest) or read/write (agent can open PRs).
-5. **File filter** — leave **"Only ingest .pdf and .md files"** checked (recommended), or uncheck it to define custom globs.
-6. Click **Connect**, then **Sync** to ingest.
+5. **Collection** — where the repository's files and wiki pages are filed. Leave it on *Default collection* to use the instance default. (Shown only when collections are enabled.)
+6. **File filter** — leave **"Only ingest .pdf and .md files"** checked (recommended), or uncheck it to define custom globs.
+7. Click **Connect**, then **Sync** to ingest.
 
 ### Choosing a token
 
@@ -112,7 +113,9 @@ So even with read/write enabled, nothing lands in your repository without your e
 
 ## Editing and removing connections
 
-Expand any connection and click **Edit** to change its access level, branch, auto-sync interval, file filters, wiki ingestion, or to **rotate the token** (leave the token field blank to keep the current one). Provider, owner, and repository can't be changed — create a new connection to point elsewhere.
+Expand any connection and click **Edit** to change its access level, branch, collection, auto-sync interval, file filters, wiki ingestion, or to **rotate the token** (leave the token field blank to keep the current one). Provider, owner, and repository can't be changed — create a new connection to point elsewhere.
+
+Picking a different **collection** moves everything already synced from that repository into it when you save, so the repo stays together. Switching back to *Default collection* leaves existing documents where they are and only affects files synced afterwards.
 
 **Delete** offers two choices:
 
