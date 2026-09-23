@@ -56,11 +56,13 @@ export const config = {
     /*
      * Match all request paths except:
      * - api (API routes)
+     * - mcp (remote MCP endpoint, rewritten to the backend; API-key auth,
+     *   never a browser session)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico, sitemap.xml, robots.txt (metadata files)
      * - public folder files
      */
-    "/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\.png$|.*\\.jpg$|.*\\.svg$).*)",
+    "/((?!api|mcp|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\.png$|.*\\.jpg$|.*\\.svg$).*)",
   ],
 };

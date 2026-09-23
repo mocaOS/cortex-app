@@ -31,10 +31,22 @@ const nextConfig = {
     // - /apps/:appId/:path* → backend static app serving + token proxy
     //                         (/apps/{id}/api/cortex/*).
     // - /a/:path*           → backend share-link shell (/a/{id}?g=...).
+    // - /mcp                → backend remote MCP endpoint (ENABLE_REMOTE_MCP).
+    //                         The docs promise `https://your-instance/mcp`,
+    //                         and on split-domain deployments (UI + api-*
+    //                         host) "your instance" is this UI domain — so
+    //                         the MCP path must reach FastAPI from here too,
+    //                         not only via the backend hostname. Streams
+    //                         (deep research over SSE) proxy the same way
+    //                         /api/ask/stream already does.
     return [
       {
         source: "/api/:path*",
         destination: `${backend}/api/:path*`,
+      },
+      {
+        source: "/mcp",
+        destination: `${backend}/mcp`,
       },
       {
         source: "/apps/:appId((?!launch(?:/|$))[a-z0-9-]+)/:path*",

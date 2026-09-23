@@ -644,6 +644,19 @@ Run crawl4ai with `docker run -d -p 11235:11235 --shm-size=1g -e CRAWL4AI_API_TO
 
 ---
 
+## MCP Server (instance-hosted)
+
+```bash
+# Serve the Model Context Protocol from the instance itself at /mcp
+# (streamable HTTP, stateless). Off by default — when unset the endpoint
+# does not exist (404). Clients connect with the URL + an API key; tool
+# calls run through the instance's own REST API, so key permissions,
+# collection scoping and quotas apply unchanged.
+ENABLE_REMOTE_MCP=true
+```
+
+See [MCP Server](/features/mcp-server) for client setup (Claude Code, Cursor, Claude Desktop) and the tool list.
+
 ## x402 Payments
 
 Monetize the retrieval endpoints with pay-per-query micropayments via the open [x402 standard](https://github.com/x402-foundation/x402). See the [x402 Payments feature guide](/features/x402-payments) for the full walkthrough.

@@ -97,6 +97,7 @@ const config: ZudokuConfig = {
             "/features/collections",
             "/features/communities",
             "/features/skills",
+            "/features/mcp-server",
             "/features/apps",
             "/features/cortex-chat",
             "/features/cortex-trainings",

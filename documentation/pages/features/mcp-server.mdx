@@ -1,0 +1,141 @@
+---
+title: MCP Server
+description: Connect Claude Code, Cursor and any other MCP client to your Cortex instance — hosted by the instance itself (ENABLE_REMOTE_MCP) or through the npm stdio server
+---
+
+Cortex speaks the [Model Context Protocol](https://modelcontextprotocol.io), so an AI assistant can search, ask, read documents and walk the knowledge graph directly instead of you copy-pasting between windows. There are two ways to connect, and they expose the same tools:
+
+| | Remote (instance-hosted) | Local (npm, stdio) |
+|---|---|---|
+| **What runs** | Nothing extra — the instance serves MCP at `/mcp` | `npx @mocaos/cortex-mcp`, a small Node process on your machine |
+| **Enable** | `ENABLE_REMOTE_MCP=true` on the backend, then redeploy | Nothing on the server; needs Node.js ≥ 18 locally |
+| **Connect with** | URL + API key | `CORTEX_BASE_URL` + `CORTEX_API_KEY` env vars |
+| **Best for** | Teams, hosted instances, clients that support HTTP MCP (Claude Code, Cursor, …) | Clients that only support stdio, and conversation threads (client-side state the remote server does not keep) |
+| **Off by default?** | Yes — with the flag unset, `/mcp` returns 404 and does not exist | n/a |
+
+The rest of this page is about the **remote** server. The npm server is documented in the [MCP skill](https://cortexskills.org/mcp/SKILL.md) and its [source](https://github.com/mocaOS/cortex-skills/tree/main/mcp-server).
+
+## Enable it
+
+```bash
+ENABLE_REMOTE_MCP=true
+```
+
+Set it on the **backend** service and redeploy. The Coolify, Dokploy and self-host stacks already pass the variable through, so on those it is a plain environment-variable change. Nothing appears in the web UI — the feature is an endpoint, not a page.
+
+The endpoint is `https://your-instance/mcp`. On deployments where the UI and the API live on different hostnames (the Dokploy and Coolify stacks put the API on its own `api-…` domain), **both** serve it: the frontend forwards `/mcp` to the backend, exactly like it forwards `/api/*`. If the UI domain answers with an HTML 404 while the API domain works, the frontend image predates the forward (added September 23, 2026) and needs a rebuild — use the API hostname in the meantime.
+
+## Authentication and scoping
+
+MCP traffic **is** API traffic. Every tool call is dispatched through the instance's own REST API with the key you connected with, so:
+
+- You need an [API key](/guides/authentication) with at least `read` permission (`cortex_ro_…`). Create one under **Admin → API Keys**. Send it as `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+- `upload_document` needs a key with `manage` permission (`cortex_rw_…`). With a read-only key the tool returns an error result; nothing else changes.
+- **Collection-scoped keys** scope MCP the same way they scope the API: the assistant only sees the collections the key is allowed to see.
+- **Quotas and analytics** apply unchanged — calls count toward the key's monthly query limit and show up in the admin usage view like any other API request.
+
+There is no login form and no session cookie involved; the browser login of the web UI plays no role here.
+
+## Tools
+
+Thirteen tools, mirroring the npm server plus `get_context`:
+
+| Tool | What it does | Key needed |
+|------|--------------|------------|
+| `search_knowledge` | Hybrid search (vector + keyword + graph, reciprocal rank fusion). Returns the top chunks with filenames and scores. `top_k` 1–50, optional `collection_id`. | read |
+| `ask_question` | A cited answer from the RAG engine. `mode: "chat"` answers in seconds; `mode: "deep_research"` runs the agentic researcher and can take minutes — it is the first choice when the task is "find out what the knowledge base says". | read |
+| `get_context` | A token-budgeted context bundle (reranked chunks + graph context + community summaries) for your **own** prompt — retrieval without Cortex writing the answer. `max_tokens` 200–32000, default 4000. Backed by `POST /api/context`. | read |
+| `list_documents` | Documents, newest first, with optional `collection_id` / `status` filter and `limit` (max 500). The ground truth for "what is in here". | read |
+| `get_document` | Metadata and processing status of one document. | read |
+| `get_document_content` | The full text of one document (all chunks concatenated). | read |
+| `list_entities` | Knowledge-graph entities, optionally filtered by `entity_type` or a `search` string. | read |
+| `search_entities` | Fuzzy entity search by name — resolve the exact name before calling `get_entity`. | read |
+| `get_entity` | One entity by exact name with its relationship neighbourhood (`max_hops` 1–3). | read |
+| `list_collections` | The collections (document namespaces) the key can see. | read |
+| `list_communities` | Auto-detected entity communities with their summaries. | read |
+| `get_stats` | Counts of documents, chunks, entities, relationships and communities. | read |
+| `upload_document` | Saves a text/markdown document (`filename`, `content`, optional `collection_id`) and starts processing immediately. | **manage** (`cortex_rw_…`) |
+
+On connect, the server tells the assistant how to use them: prefer `ask_question` with `mode: "deep_research"` or `get_context` for retrieval questions, `search_knowledge` for verbatim chunks, and `list_documents` as the inventory of record.
+
+## Connect a client
+
+### Claude Code
+
+```bash
+claude mcp add --transport http cortex https://your-instance/mcp \
+  --header "X-API-Key: cortex_ro_your_key_here"
+```
+
+`claude mcp list` should then show `cortex` as connected, and `/mcp` inside a session lists the thirteen tools.
+
+### Cursor
+
+`.cursor/mcp.json` in the project (or the global Cursor MCP settings):
+
+```json
+{
+  "mcpServers": {
+    "cortex": {
+      "url": "https://your-instance/mcp",
+      "headers": { "X-API-Key": "cortex_ro_your_key_here" }
+    }
+  }
+}
+```
+
+### Claude Desktop and other clients without header support
+
+Claude Desktop's **Custom connectors** take a URL but cannot attach a custom header, so the API key has no place to go. Bridge through the community `mcp-remote` shim, which forwards the header for you, in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "cortex": {
+      "command": "npx",
+      "args": [
+        "mcp-remote", "https://your-instance/mcp",
+        "--header", "X-API-Key: cortex_ro_your_key_here"
+      ]
+    }
+  }
+}
+```
+
+Any client that speaks MCP over streamable HTTP and can send a header works the same way: URL `https://your-instance/mcp`, header `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
+
+### Check it from the shell
+
+```bash
+# initialize — answers as JSON with the server info and protocol version
+curl -s https://your-instance/mcp \
+  -H "Content-Type: application/json" -H "X-API-Key: cortex_ro_..." \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+
+# tools/list — the thirteen tool definitions
+curl -s https://your-instance/mcp \
+  -H "Content-Type: application/json" -H "X-API-Key: cortex_ro_..." \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+```
+
+## How the transport works
+
+The server implements the **streamable HTTP** transport (protocol versions 2024-11-05 through 2025-06-18) and is **stateless**: there are no sessions to create or terminate, so `GET /mcp` and `DELETE /mcp` answer 405. `initialize`, `ping` and `tools/list` return JSON immediately. `tools/call` returns JSON too, unless the client sends `Accept: text/event-stream` — then the result arrives as a single SSE event, with keep-alive comments in between so a multi-minute deep-research call is not cut by an idle proxy. Notifications are acknowledged with 202. JSON-RPC batching is rejected with 400, as the current MCP spec no longer allows it. Each tool call has a 300-second ceiling.
+
+## Troubleshooting
+
+| Symptom | Meaning |
+|---------|---------|
+| `POST /mcp` answers **404** (an HTML page) | Either the flag is off — with `ENABLE_REMOTE_MCP` unset the endpoint does not exist, by design — or the frontend serving that domain predates September 23, 2026 and does not forward `/mcp` yet. On a deployment with separate UI and API hostnames, try the API hostname (`https://api.your-instance/mcp`) directly; if that works, the backend is fine and the frontend needs a rebuild. |
+| `POST /mcp` answers **401** `API key required` / **403** | The flag is on and the endpoint is live; the key is missing, wrong, or lacks `read` permission. |
+| `GET /mcp` answers **405** | Normal. The server is stateless and offers no server-initiated stream; the MCP spec allows 405 here. Clients only POST. |
+| **400** `Batching is not supported` | The client sent a JSON-RPC array. Batching was removed from the MCP spec; send single messages. |
+| `upload_document` returns an error result | The key is read-only. Uploads need a `manage` key (`cortex_rw_…`). |
+| A deep-research call drops after ~60 s | A proxy in front of the instance is cutting idle streams. The server sends SSE keep-alives when the client accepts `text/event-stream`; make sure the client does, and raise the proxy's read timeout (Traefik `readTimeout`, nginx `proxy_read_timeout`) to several minutes. |
+
+## Related
+
+- [Authentication](/guides/authentication) — creating and scoping API keys
+- [Ask AI](/features/ask-ai) — what `chat` and `deep_research` do under the hood
+- [Agent Skills](/features/skills) — a different thing: skills extend Cortex's **own** researcher; MCP lets **your** assistant call Cortex
+- [Integrations](/examples/integration) — SDK, skills and the npm MCP server

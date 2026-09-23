@@ -7,6 +7,24 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## September 23, 2026
+
+The remote MCP server gets the documentation it never had, plus a routing fix that made it look switched off on hosted instances.
+
+### MCP Server documentation
+
+- **The gap** — since the August 10 release the only description of the instance-hosted MCP server was the changelog entry announcing it. There was no feature page, no handbook chapter, and `ENABLE_REMOTE_MCP` was missing from both configuration references, so an operator who set the flag had nothing to check against and no client setup to copy.
+- **New pages** — [MCP Server](/features/mcp-server) in the docs and **Chapter 30: MCP Server** in the handbook: remote vs. npm server side by side, how to enable it, which key permissions each of the thirteen tools needs and how collection scoping and quotas carry over, ready-to-paste setup for Claude Code, Cursor and Claude Desktop (via the `mcp-remote` bridge, since its custom connectors cannot send an API-key header), a `curl` smoke test, how the stateless streamable-HTTP transport behaves, and a symptom table for 404 / 401 / 405 / dropped deep-research streams.
+- **Configuration references** — `ENABLE_REMOTE_MCP` is now listed in the [Configuration](/configuration) page and in handbook Chapter 4, both linking to the new pages.
+
+### Remote MCP reachable on the UI domain
+
+- **The gap** — with `ENABLE_REMOTE_MCP=true` the backend served `/mcp`, but the frontend only forwarded `/api/*`, `/apps/*` and `/a/*` to it. On deployments where the UI and the API live on different hostnames (the Dokploy and Coolify stacks), `https://your-instance/mcp` — the URL the August release notes and the MCP skill promise — answered with the frontend's HTML 404, and the endpoint was only reachable on the API hostname. It looked like the flag had no effect.
+- **The fix** — the frontend now rewrites `/mcp` to the backend like the API paths, so both the UI domain and the API domain serve the endpoint; deep-research calls stream through the same proxy path as `/api/ask/stream`. The path is also excluded from the browser-session middleware — MCP is authenticated with an API key, never a login cookie. Requires a frontend rebuild (the rewrite is baked at build time).
+- **Nothing else changes** — when the flag is off, `/mcp` still returns 404 on both domains.
+
+---
+
 ## September 16, 2026
 
 Cortex Chat **1.3.0** is tagged and on GHCR. It collects everything since 1.2.0 that the entries below and the September 4 and 15 notes described as "on `main` for the next Chat release": the non-streaming fix against Cortex 1.2.0+, the answer-quality and `refusal_source` notices, the personality-generator hang guards, and today's per-message download. The Dokploy compose pin moves to `ghcr.io/mocaos/cortex-chat:1.3.0`; the self-host stack pin is bumped separately with the next stack release.

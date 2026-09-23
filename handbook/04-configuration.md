@@ -289,6 +289,14 @@ Web→markdown harvesting. Cortex calls a [crawl4ai](https://github.com/unclecod
 | `CRAWL_MAX_URLS_PER_JOB` | `100` | Maximum URLs accepted per import. `0` = unlimited. |
 | `CRAWL_DISCOVER_MAX_LINKS` | `200` | Cap on candidate links returned by the Discover sub-flow. |
 
+## MCP Server Configuration
+
+Lets the instance itself serve the Model Context Protocol at `/mcp`, so Claude Code, Cursor and other MCP clients connect with just the URL and an API key. See [Chapter 30: MCP Server](30-mcp-server.md) for client setup and the tool list.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_REMOTE_MCP` | `false` | Serve MCP (streamable HTTP, stateless) at `/mcp`. Off means the endpoint does not exist (404). Tool calls run through the instance's own REST API, so key permissions, collection scoping and quotas apply unchanged. Set on the backend service; the frontend forwards `/mcp` so the UI domain serves it too. |
+
 ## x402 Payments Configuration
 
 Pay-per-query monetization of the retrieval endpoints via the open [x402 standard](https://github.com/x402-foundation/x402). See [Chapter 17: Administration](17-administration.md#x402-payments-monetization) for the full guide.

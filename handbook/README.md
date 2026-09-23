@@ -46,6 +46,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 | 27 | [Cortex Trainings](27-cortex-trainings.md) | `27-cortex-trainings.md` | Everyone |
 | 28 | [Cortex Videogen](28-cortex-videogen.md) | `28-cortex-videogen.md` | Everyone |
 | 29 | [Cortex Slides](29-cortex-slides.md) | `29-cortex-slides.md` | Everyone |
+| 30 | [MCP Server](30-mcp-server.md) | `30-mcp-server.md` | Everyone |
 
 ## Quick Links
 
@@ -55,6 +56,7 @@ This handbook is the definitive guide to Cortex — the knowledge graph engine a
 - **I want to ask questions about my documents** — See [Chapter 10: Ask AI](10-ask-ai.md)
 - **I want to connect a GitHub/GitLab/Gitea repository** — See [Chapter 21: Git Integration](21-git-integration.md)
 - **I want to import web pages into my knowledge base** — See [Chapter 23: Web Import](23-web-import.md)
+- **I want Claude Code, Cursor or another AI assistant to use my Cortex directly** — See [Chapter 30: MCP Server](30-mcp-server.md)
 - **I want to integrate Cortex into my application** — See [Chapter 15: API Reference](15-api-reference.md) and [Chapter 16: Integrations](16-integrations.md)
 - **I want to extend the agent with custom skills** — See [Chapter 18: Agent Skills](18-skills.md)
 - **I want to run a web app inside my instance** — See [Chapter 24: Apps](24-apps.md)
