@@ -1,0 +1,113 @@
+{
+  "purpose": "Coordination contract for the OPT-IN consumer phase of the qa/restore disposable restore rehearsal. Storage-restore ownership: qa/restore (this repo). Runner ownership: backend-consumer.py = backendagent; chat/scripts/restore-consumer.mjs = chatagent. Gate semantics are never weakened to fit a candidate after a failure; schema/interface alignments to ACTUAL deliveries are recorded as decisions here.",
+  "schema_alignment_decision_2026_10_01": {
+    "decision": "consumer gate re-aligned from the earlier guessed surface (chat.upstream.baseUrl, check names proxy/collection/file_content) to the ACTUAL delivered chat receipt shape; the two exact real-observation check ids are the only required ids; reportOnly checks stay advisory except when carrying a required id (then fail); networkTripwire.blockedAttempts is an ARRAY and must be length 0 (integer 0 rejected as wrong type); failure gate strictness preserved or increased, never lowered.",
+    "superseded": ["required check names 'proxy','collection','file_content'", "chat.upstream.baseUrl field", "blockedAttempts numeric-0 semantics"]
+  },
+  "engine_preflight": {
+    "added": "preflight runs `docker info` (stdout+stderr captured to logs/engine-info.txt, no credentials involved) BEFORE image inspection and records the selected docker CLI path; an engine failure dies ENGINE-BLOCKED (never misclassified as image-not-present) and touches no resources; image inspection failure is classified separately as IMAGE-BLOCKED",
+    "motivation": "shared podman pause/resource errors made the old image-inspect-only preflight misreport an engine outage as a missing image; run restored-consumers-20261001-a failed preflight this way and is retained unchanged as failure evidence",
+    "infrastructure_pending": "lead provisions a private podman root + wrapper PATH via the infra agent so toolchain identities record the selected CLI path / engine root from docker info; qa/restore must not migrate, reset or prune unknown/shared resources"
+  },
+  "writer_hold": "qa/restore/** and runner scripts must not be edited while any rehearsal run is active anywhere: provenance hashes oracle.py/rehearsal.sh/runner scripts/production-source manifest at stage start and re-verifies at finalize; a mid-run edit fails the run's provenance (this exact failure hit run crr3-final-201857 on 2026-10-01 — failure evidence preserved, no pass claimed). Coordinate run windows through the lead.",
+  "harness_cli": {
+    "command": "qa/restore/rehearsal.sh --run-id <id> --consumers",
+    "optional": [
+      "--chat-consumer <path> (default ../cortex-chat/scripts/restore-consumer.mjs; passed to the backend runner as its --chat-consumer hook path)",
+      "--chat-app-node <path> (or env CORTEX_CHAT_APP_NODE): node binary for the chat app process, if provided; resolved to a realpath, must exist+executable (else preflight BLOCK), hashed in provenance, version-recorded unconditionally (no presumed runtime cause attached to set/unset) and passed to the backend runner as --chat-app-node for forwarding as the chat runner's --app-node; unset = recorded as unset, no cause assumed"
+    ],
+    "when": "consumer-journeys stage runs AFTER the healthy-restore oracle PASS and BEFORE the destructive incomplete control; failures fail closed and preserve healthy restored evidence",
+    "isolation": "consumer phase runs ONLY against a graph COPY (target neo4j data volume copied offline while the target is stopped; consumer container crr-<id>-neo4j-cons with bolt on a second random loopback port) + file-root copies at <workspace>/consumer-files/. Frozen-state hashes of the COPY (graph capture + per-root file manifests) are collected BEFORE any consumer write; after the consumer boot the ORIGINAL target graph and restored volumes are re-captured and must be byte-identical (isolation proof; breach = stage failure).",
+    "interpreter": "backend runner invoked with CORTEX_CONSUMER_PYTHON env if set, else /tmp/opencode/qa-venv/bin/python if present, else system python3; interpreter path + version + per-module dep identity recorded in <workspace>/consumer-results/interpreter.json. Missing deps are an environment block (runner exits 2 by design), never a product failure and never mocked. Installed: /tmp/opencode/qa-venv (python 3.13.5; fastapi 0.142.2, uvicorn 0.54.0, neo4j 6.3.1, httpx 0.28.1)."
+  },
+  "backend_runner_contract": {
+    "owner": "backendagent",
+    "path": "qa/restore/backend-consumer.py",
+    "cli_as_invoked_by_harness": "<consumer-python> qa/restore/backend-consumer.py --bolt-url bolt://127.0.0.1:<consumer-copy-port> --neo4j-user neo4j --neo4j-password <synthetic-run-password> --files-root <workspace>/consumer-files --admin-key fx-synthetic-admin-key-<run-id> --keys-json <workspace>/consumer-results/keys.json --chat-consumer <resolved-chat-runner-path> [--chat-app-node <resolved-node-binary>] --expect-document-id fx-source-0001 --expect-collection-id fx-collection-0001 --fulltext-term rehearsal --app-storage-id rehearsal-app --run-id <run-id> --out <workspace>/consumer-results",
+    "chat_hook": "runner accepts --chat-consumer (and --chat-app-node) and, while its uvicorn subprocess is live and healthy, invokes: node <chat-consumer> --state-dir <files-root>/chat --backend-url <its-own-base-url> --backend-admin-key <its-own-admin-key> --document-file <files-root>/uploads/fx-source-0001_fixture-source.md --app-node <chat-app-node if provided>; embeds the RAW chat result JSON verbatim under receipt key 'chat' and the wrapper process metadata under 'chat_execution'; stops the backend only after the chat phase. STATUS: backendagent is adding startup.baseUrl, boot_deltas_accepted (true after strict checks), the chat embedding and chat_execution.",
+    "keys_json": "generated by the harness from fixture-contract.json: [{id fx-backend-key-0001, role scoped, collection fx-collection-0001}, {id fx-backend-key-0002, role read}]",
+    "result_artifact": "<out>/backend-consumer-receipt.json (exit 0 required; receipt validated strictly, see consumer_gate)",
+    "required_receipt_fields": {
+      "failures": "absent or empty (zero errors)",
+      "boot_deltas": "present (pre/post boot graph capture diff)",
+      "boot_deltas_accepted": "exactly true, set only after strict check of the deltas (permitted: idempotent schema ensure at 8 dims, default-Collection MERGE, terminal-record reconcile, real-auth-chain key bookkeeping; anything unexpected must be reviewed, never waved through)",
+      "startup.baseUrl": "the backend's own base URL (http://127.0.0.1:<port>) — backend startup identity (being added by backendagent)",
+      "chat": "the RAW chat consumer receipt verbatim (shape below)",
+      "chat_execution": "wrapper process metadata of the chat execution (non-empty object; any url-identity field among backendUrl/backend_url/url/baseUrl must equal startup.baseUrl)"
+    }
+  },
+  "chat_runner_contract": {
+    "owner": "chatagent",
+    "path": "cortex-chat/scripts/restore-consumer.mjs (delivered)",
+    "cli_actual_flags": ["--state-dir", "--backend-url", "--backend-admin-key", "--document-file", "--app-node"],
+    "invocation_by_backend_runner": "node scripts/restore-consumer.mjs --state-dir <files-root>/chat --backend-url <backend base url> --backend-admin-key <runner's own admin key> --document-file <files-root>/uploads/fx-source-0001_fixture-source.md [--app-node <node binary>]",
+    "raw_receipt_shape_actual": {
+      "ok": "boolean, top level; gate requires exactly true",
+      "upstream": {"mode": "gate requires 'isolated-backend'", "url": "gate requires equality with backend startup.baseUrl"},
+      "checks": "[{id, ok, reportOnly?, status?}] — all non-reportOnly checks must pass; failing/blocked status overrides ok:true; required ids (gate v2): 'proxy-isolated-backend-collections-200-scoped' and 'proxy-isolated-backend-citation-content-exact' — the content-exact check must compare the citation text retrieved via GET /documents/{id}/content (chunk-sorted, joined '\\n\\n') against the fixture UTF-8 snapshot; the legacy 'proxy-isolated-backend-citation-file-exact' id is rejected wherever it appears (chat proxy /file is intentionally 404); --document-file remains the backend-side original raw-bytes proof, independent of the chat content-exact check",
+      "networkTripwire": {"clean": "must be exactly true", "blockedAttempts": "ARRAY (read from the delivered chat runner's tripwire log): must be present, an array, and length 0 — any entry is an attempted egress (fail); integer 0, strings, other types or a missing key are schema errors, not clean"},
+      "cleanup": {"stateDirUnchanged": "recorded decision: must be exactly true (consumer leaves the state copy unchanged); false/missing = fail"},
+      "failures": "must be empty"
+    }
+  },
+  "consumer_gate": {
+    "implemented_in": "qa/restore/oracle.py validate_consumer_receipt + hermetic selftest (35 malformed-receipt rejections incl. legacy-id rejection + valid raw-shape case + advisory reportOnly case + subprocess CLI transport wiring)",
+    "gate_version": 2,
+    "gate_version_record": {
+      "version": 2,
+      "date": "2026-10-02",
+      "accepted_by_lead_before_new_candidate": true,
+      "correction": "required chat check id 'proxy-isolated-backend-citation-file-exact' was a wrong invented entry: the chat proxy /file route is intentionally forbidden (404, PROXY_ALLOWLIST route.ts:16-22). The actual supported chat citation entry is the SourceModal viewer path GET /documents/{id}/content with chunk-sorted contents joined by '\\n\\n'. Required id is now 'proxy-isolated-backend-citation-content-exact'; the legacy file id is explicitly rejected wherever it appears (any reportOnly state).",
+      "desired_promise": "citation text retrieved through the supported chat entry matches the fixture UTF-8 snapshot (chunk content of fx-source-0001-chunk-0) and the restored source linkage",
+      "unchanged_hard_gates": [
+        "backend original raw file-bytes HTTP gate (backend runner --document-file) unchanged and independent",
+        "plaintext group key acceptance remains hard (unchanged)"
+      ],
+      "no_product_change": "no product permission change and no relaxed value oracle — pure gate-surface correction to the actual delivered chat surface",
+      "legacy_check_ids_rejected": ["proxy-isolated-backend-citation-file-exact"]
+    },
+    "overall_result_mode": "HTTP journeys only: no browser automation, no model/provider calls, no DNS-discovery claim in direct-ip transport; consumer journeys run against the isolated backend URL over the published loopback",
+    "required_chat_check_ids": [
+      "proxy-isolated-backend-collections-200-scoped",
+      "proxy-isolated-backend-citation-content-exact"
+    ],
+    "acceptance_rule": "exit 0 + strict receipt validation; a reportOnly check carrying a required id fails; a check with a legacy (gate-v1) id fails wherever it appears; mismatch/missing chat_execution metadata is no green; missing/false JSON fields are failures, never greens; the gate is not updated after a failure to merely fit a candidate",
+    "post_gate_isolation_proof": "after the runner exits, the harness re-captures the ORIGINAL target graph and all five ORIGINAL restored file roots and requires byte-identical equality with the pre-consumer captures; file isolation uses oracle.py isolation-compare against the ACTUAL EVID locator (original-files-after-consumers-<root>.json; run I failed on a WS-path locator mismatch — FileNotFoundError, not a measured mutation); missing/unreadable/malformed manifests classify GATE-ARTIFACT-MISSING / GATE-ARTIFACT-INVALID (cannot measure), real diffs still fail as ISOLATION-BREACH; all roots/bytes/dirs required"
+  },
+  "fixture_v2_delta_declared": {
+    "source_of_truth": "qa/restore/oracle.py gen-fixture emits fixture-contract.json alongside fixture.cypher (fixture_version 'storage-v2-consumers-ready')",
+    "delta_from_v1": [
+      "APIKey nodes aligned to the ACTUAL runtime auth contract: label APIKey (backend/app/services/neo4j_service.py:6873), key_prefix = plaintext[:12] = 'fx-synthetic', key_hash = sha256 hexdigest of the plaintext (auth_service.hash_api_key)",
+      "shared ids fixed and independent: read key fx-backend-key-0001 (plaintext fx-synthetic-backend-read-key-0001, permissions ['read'], restricted to fx-collection-0001 via HAS_ACCESS_TO), manage key fx-backend-key-0002 (plaintext fx-synthetic-backend-content-key-0002, permissions ['manage'], scope all)",
+      "citation source: Document id fx-source-0001, filename fixture-source.md, file bytes uploads/fx-source-0001_fixture-source.md (served for --document-file exact-bytes check), chunk fx-source-0001-chunk-0, linked to Collection fx-collection-0001 ('Fixture Collection') which the chat fixture's project references",
+      "scope-negative pair: col-crr-2 contains doc-crr-2 so the restricted read key must be denied there",
+      "fixture_version SystemMeta node 'storage-v2-consumers-ready'; all embeddings 8-dimensional (EMBEDDING_DIMENSION=8 required so no re-embed); ApiSession/usage log re-keyed to fx-backend-key-0001"
+    ],
+    "v1_preserved": "prior v1 fixture pack + storage runs (restore-final-20261001 and the 20261001-140923 smoke) remain untouched historic records; the crr3-final-201857 provenance failure is preserved as failure evidence and is NOT claimed as a pass"
+  },
+  "provenance_scope": "input files: ops/backup/{backup.sh,restore.sh,Dockerfile}, qa/restore/{rehearsal.sh,oracle.py}, backend-consumer.py, chat restore-consumer.mjs (when present), chat restore-fixture.mjs (full mode), chat-app-node binary (when provided); coarse code-manifest digest of actually-consumed production source: backend/app/**, backend/requirements*.txt, cortex-chat src/**, next.config.ts, tsconfig.json, drizzle.config.ts, package.json, package-lock.json; repo dirty status recorded, never hidden",
+  "node_binary": "harness --chat-app-node/CORTEX_CHAT_APP_NODE resolves, validates, hashes, version-records and forwards the binary whenever one is provided; when unset it is recorded as unset without any presumed runtime cause (top node stays v22, fixture ABI, CI-locked install — working default, no pending floor metadata)",
+  "transport_adapter": {
+    "flag": "--podman-no-dns or CORTEX_RESTORE_PODMAN_NO_DNS=1 (opt-in, fixture-mode only)",
+    "reason": "private podman 5.4.2 root provisioned by infra works with the default bridge and Neo4j, but user-defined named networks fail aardvark-DNS startup (systemd user bus unavailable); shared engine is never migrated/reset and real service configs are untouched",
+    "network_binding_decoder": "environmental decoder only (oracle.py network-binding): decodes the subnet from the ACTUAL docker network inspect payload of the run-owned network — Docker shape (Name/Id + IPAM.Config[].Subnet) and Podman shape (name/id + subnets[].subnet, observed on podman 5.4.2 where the .IPAM.Config template is unsupported) both supported; fails closed on orphan/name-mismatch, duplicate entries, missing Id, unknown driver shape, ambiguous subnets, invalid CIDR, non-private subnets and malformed JSON; no guessed fallbacks; both shapes agreeing recorded as 'docker-ipam+podman-subnets-agree'; run d failed here ('subnet inspect failed') because the Docker-only template hit the Podman schema — fixed before any pass claim",
+    "cli_call_protocol": "helpers accept the raw JSON via explicit flag (override) OR piped on stdin (how the harness pipes inspect output at every call site incl. refresh); empty/malformed stdin fails nonzero, no fallback; argparse flags no longer 'required' so the harness pipe cannot die with 'required --network-json missing' (run e failure); hermetic selftest includes real subprocess CLI tests with the exact harness argv for both Docker and Podman payloads plus negative exits (wrong id, out-of-subnet, orphan, malformed/empty stdin)",
+    "mechanism": "docker network create --disable-dns (podman-supported); source/target store INTERNAL IPs inspected from the run-owned network after start and validated (network id match + IP in decoded subnet, oracle.py transport-endpoint + hermetic selftest); backup.sh/restore.sh receive NEO4J_ADDRESS=bolt://<inspected-ip>:7687 via SOURCE_ADDRESS/TARGET_ADDRESS built fresh per stage and logged in every receipt; consumer bolt stays on the published 127.0.0.1 loopback; consumer graph copy joins the same private network; cypher-shell exec inside containers unchanged; no external providers",
+    "unchanged": "default (no flag) keeps name-based DNS; actual Neo4j/APOC/HTTP consumers unchanged; no checker assertion lowered; no production config/script changes",
+    "claim_limit": "direct-ip mode exercises no DNS-based service discovery and records none as evidence; engine that rejects --disable-dns dies TRANSPORT-BLOCKED (no silent fallback)",
+    "captured": "mode in provenance.json harness_meta; chosen endpoints in stage receipts, summary.json transport block, evidence/transport.json",
+    "endpoint_refresh": "container name/id is the stable identity, the internal IP is ephemeral (rootless podman may reassign across stop/start; a stale target IP could address the consumer-copy store): the harness re-inspects + re-validates the source endpoint before the snapshot and the target endpoint immediately after the consumer-phase restart and before each destructive restore (healthy/incomplete/refusals) with the same oracle transport validation; each resolved endpoint + container id is recorded in the stage receipts and logs/transport-refresh.log; no new gate assertions — the existing allowed-transport constraint enforced at the claimed operation; comparison oracles unchanged"
+  },
+  "fixture_pack_alignment": {
+    "accepted_producer_cardinality": "ONE chunk: main fixture source fixture-source.md, chunk fx-source-0001-chunk-0, text = the current declared source_text snapshot (fixture-contract.json fixture_pack.citation_source.snapshot_text); main fixture text/cardinality unchanged",
+    "chat_alignment_instruction": "align the CHAT fixture pack only to the actual main source above (the previously proposed two-chunk .txt pack is preserved as input-mismatch evidence, NOT integration evidence)",
+    "coherence_preflight": "harness stage cross-repo-coherence (after seed, before backup/consumer build) reads the seeded chat DB immutably and requires fx-msg-0002 metadata.sources[0] at the ACTUAL public typed Source boundary (chat src/types/index.ts): document_id == fx-source-0001, sid == fx-source-0001, chunk_id == fx-source-0001-chunk-0, NESTED metadata.filename == fixture-source.md (flat entry.filename is a legacy shape and rejected; outer message filename not read — no authority), content non-empty and contained in the declared snapshot (currently exact), typed finite numeric score (no arbitrary cap, no provider-derived values); expected fields: sid, document_id, chunk_id, content, score, metadata{filename}; failures are CROSS-REPO-INCOHERENCE and must be classified from receipts (run g's rejection was a GATE-SHAPE defect — flat-shape assumption — not a chat-pack problem); the memory/db sentinel verifier's own fixed checks stay unchanged",
+    "gate_correction_record": "coherence oracle corrected (main-only, recorded decision, no product change / no promise change): flat filename + outer-message filename assumptions removed; run g's false rejection preserved as bad-gate evidence; real read-only CLI coherence proof on the actual seeded g DB required before any new run"
+  },
+  "ownership_boundaries": {
+    "qa_restore": ["rehearsal.sh", "oracle.py", "README.md", "consumer-coordination.json"],
+    "backendagent": ["qa/restore/backend-consumer.py"],
+    "chatagent": ["cortex-chat/scripts/restore-consumer.mjs + its tests"],
+    "lead": "central docs/evidence; authorizes run execution windows"
+  }
+}

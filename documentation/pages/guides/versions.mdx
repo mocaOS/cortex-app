@@ -1,0 +1,59 @@
+---
+title: Versions & Compatibility
+description: Which versions the docs describe, where each component's version is pinned, how to check what you are running, and the compatibility you can rely on across upgrades
+---
+
+# Versions & Compatibility
+
+Cortex is a stack of independently versioned components. This page is the map: what is versioned where, how to check what you are actually running, and what holds across upgrades. The [changelog](/changelog) is the release-by-release record (including which features are "on `main` for the next release"); the [deployment guide](/guides/deployment) has the upgrade and backup/restore runbooks.
+
+## Where each version lives
+
+| Component | Versioned by | How to check |
+|---|---|---|
+| Cortex backend + frontend | The release tag, matching the repo's root `package.json` version; a version-sync check compares `package.json`, the frontend, the version `GET /health` reports, and the self-host stack's pinned image tags, and fails a release on disagreement | `GET /health` → `version` |
+| Self-host release stack (`npx @mocaos/cortex`) | One pinned stack per release: Cortex, Cortex Chat, Neo4j, and Caddy versions move together, and the stack declares a minimum installer version it requires | `npx @mocaos/cortex status` |
+| Cortex Chat | Its own release tags; Docker images are published at `ghcr.io/mocaos/cortex-chat` per release | the Chat release notes and the changelog's pin entries |
+| Cortex API contract | The OpenAPI document carries its own contract version, independent of the product release version | the version shown in the [API Reference](/api) |
+| Cortex Skills | A versioned manifest with per-skill versions and sha256 hashes | `https://cortexskills.org/index.json` |
+
+The installer uses a **declared component combination**, rather than assembling
+whatever is newest. Pin agreement and pullable images are release checks; they do
+not by themselves demonstrate every cross-version journey or recovery scenario.
+
+## What you are running
+
+- `GET /health` reports the Cortex release in `version`. Caveat: the field was hardcoded `1.0.0` through release v1.0.1 and only reports the real release on later builds.
+- `docker compose images` lists the stack's local images/IDs. Record the running
+  container's image ID and the corresponding image's `RepoDigests` using Docker
+  inspection when exact artifact identity matters; a mutable tag alone is insufficient.
+
+## What holds across upgrades
+
+- **Preserve supported API consumers.** Check release notes for accepted inputs,
+  defaults and compatibility flags. New fields or enum values still require
+  consumer checks; "additive" alone is not proof of compatibility. The changelog
+  records intended changes, while release-specific checks establish demonstrated
+  behavior. Rolling upgrades, mixed writers and downgrades need separate evidence.
+- **Deprecated environment variables stay honored as aliases for a stated window**, with a one-time startup `WARN` when used (e.g. `EXTRACTION_MAX_CONTEXT` → `GRAPH_EXTRACTION_MAX_CONTEXT`, value semantics identical). Renames and migration notes are recorded in the [configuration reference](/configuration).
+- **Released features are marked while pending.** The changelog flags features that are on `main` but not yet in a tagged release; feature pages state the release a capability first shipped when the release stack may not include it yet.
+- **Embedding model/dimension changes require a deliberate rebuild/re-embedding
+  plan** (the dimension is baked into the vector index). Equal dimensions do not
+  mean two models produce compatible vectors; do not assume changing configuration
+  automatically makes historical embeddings compatible.
+- **Cortex Chat keys are bound to one backend.** Re-pointing `CORTEX_API_URL` invalidates the minted keys; recovery is to recreate groups (which mints fresh keys) and reassign users — chat history survives because it is keyed by user, not group (see [Cortex Chat](/features/cortex-chat#the-key-model)).
+
+## What is explicitly not guaranteed
+
+- Running components from different release generations against each other (outside a pinned stack release).
+- Downgrading a deployment and continuing on state written by a newer version.
+- Automatic migrations for skipping multiple releases — the deployment guide's update path moves through the documented upgrade runbook.
+
+For recovery, distinguish an image rollback from restoration of a pre-upgrade
+snapshot: restoration can discard later valid writes. A library export carries
+curated knowledge and sanitized skills, not Chat's complete database, all backend
+keys or every application volume. Whole-stack recovery needs the graph, applicable
+file/SQLite volumes and separately retained encryption/configuration secrets.
+Stop all writers, including Chat, before restoring their files. Check restored
+records, identities and referenced bytes; job success and row counts alone do not
+establish complete recovery or an atomic snapshot of running services.

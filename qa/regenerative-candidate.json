@@ -1,0 +1,95 @@
+{
+  "record": "Cortex regenerative adoption 2026-10-01",
+  "playbook_version": "2.3.0",
+  "state": "historical adoption snapshot; some named inputs have since changed in the restore follow-up",
+  "superseded_for_current_recovery_evidence_by": "qa/restore/RESULTS.md",
+  "identity_algorithm": "From each repository root: SHA-256 of sha256sum output for files listed here, sorted by path with LC_ALL=C. Both contents and repo-relative names are bound. Base revision identifies all unchanged inputs.",
+  "replay": "jq -j --arg repo cortex-app '.repositories[$repo].files[] + \"\\u0000\"' /path/to/cortex-app/qa/regenerative-candidate.json | LC_ALL=C sort -zu | xargs -0 sha256sum | sha256sum",
+  "replay_note": "Run with bash pipefail; replace repo argument and working directory together. Compare with that repository's aggregate_sha256. These are trusted evidence identities, not tamper protection. Any candidate/gate edit makes the corresponding evidence stale.",
+  "excluded": [
+    "cortex-app/qa/regenerative-candidate.json",
+    "cortex-app/qa/REGENERATIVE_ADOPTION.md",
+    "ignored dependency/build artifacts and ephemeral harness logs"
+  ],
+  "repositories": {
+    "cortex-app": {
+      "base_revision": "bd6c1e035b3e6ece7741a0b733bfd8735145f846",
+      "aggregate_sha256": "de0b56a06314fcb0a86bceb5a592cc14b510113af1eeb313dc5ba6a60d5c61c3",
+      "files": [
+        ".claude/development.md",
+        ".claude/domain/rag-pipeline.md",
+        ".claude/maintenance.md",
+        ".claude/navigation.md",
+        ".claude/qa.md",
+        ".claude/regeneration.md",
+        ".claude/upgrade-recovery.md",
+        ".github/workflows/ci.yml",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "backend/tests/test_library_transfer_roundtrip.py",
+        "backend/tests/test_scoped_principal_journeys.py",
+        "documentation/package.json",
+        "documentation/pages/features/cortex-chat.mdx",
+        "documentation/pages/features/skills.mdx",
+        "documentation/pages/guides/versions.mdx",
+        "documentation/scripts/validate-docs.mjs",
+        "documentation/scripts/validate-docs.test.mjs",
+        "documentation/zudoku.config.tsx",
+        "handbook/25-cortex-chat.md",
+        "qa/QA_CONTRACT_RECORDS.md",
+        "qa/cortex_qa_master.ods",
+        "qa/features.json"
+      ]
+    },
+    "cortex-chat": {
+      "base_revision": "40fe79799c4729c4b695890566ef3a51746b3b5e",
+      "aggregate_sha256": "2ceafc1cd842fbfb550146e5bd0f82866eca5a3f1b25a3d18799b3115f639a7f",
+      "files": [
+        ".claude/guides/auth-and-identity.md",
+        ".claude/guides/chat-streaming-memory.md",
+        ".claude/guides/cortex-backend-integration.md",
+        ".claude/guides/design-system.md",
+        ".claude/guides/operations-and-state.md",
+        ".github/workflows/ci.yml",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/regeneration/index.md",
+        "docs/regeneration/records/2026-10-01-adoption-slice.md",
+        "package.json",
+        "scripts/run-tests.mjs",
+        "tests/api-fetch-retry.test.ts",
+        "tests/cortex-analytics.test.ts",
+        "tests/crypto-password.test.ts",
+        "tests/fixtures/api-return-at-done.ts",
+        "tests/helpers/late-memory-contract.ts",
+        "tests/helpers/sse.ts",
+        "tests/negative-control-return-at-done.test.ts",
+        "tests/proxy-strip-parity.test.ts",
+        "tests/rate-limit-message.test.ts",
+        "tests/sqlite-contracts.test.ts",
+        "tests/streaming-contract.test.ts",
+        "tests/upstream-retry.test.ts"
+      ]
+    },
+    "cortex-skills": {
+      "base_revision": "1156aded6726d6105cb13a72ded93efaf55f5bef",
+      "aggregate_sha256": "5ed1798d8877dddcf5ed7b4386a1a20377910b02d8f2effe7cbfd5e8749d1e2a",
+      "files": [
+        ".github/workflows/ci.yml",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/regeneration/index.md",
+        "docs/regeneration/records/2026-10-01-slice-1.md",
+        "docs/regeneration/records/2026-10-01-slice-2.md",
+        "docs/regeneration/records/negative-control-recipes.md",
+        "mcp-server/package.json",
+        "mcp-server/test/contract.test.mjs",
+        "package-lock.json",
+        "public/SKILL.md",
+        "public/index.json",
+        "public/llms.txt",
+        "sdk/test/contract.test.ts"
+      ]
+    }
+  }
+}

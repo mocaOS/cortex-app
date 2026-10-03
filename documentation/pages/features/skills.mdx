@@ -145,8 +145,12 @@ Values are saved in `config.json` inside the skill directory. The `auth_header` 
 | `ENABLE_AGENT_CHAT` | `true` | Enable agentic chat mode (required for skills in Chat) |
 | `SKILL_HTTP_TIMEOUT` | `15` | HTTP tool timeout in seconds |
 | `MAX_SKILL_TOOLS` | `10` | Max skill tools in the agent |
+| `MAX_SKILL_INSTRUCTIONS_TOKENS` | `4000` | Approximate token budget for skill instructions injected into the agent prompt; longer instructions are truncated with a marker |
 | `ENABLE_SKILL_SCRIPTS` | `false` | Allow legacy script execution (security-sensitive) |
 | `SKILL_SCRIPT_TIMEOUT` | `30` | Script timeout in seconds |
+| `SKILL_HTTP_INSECURE_HOSTS` | empty | Comma-separated hostnames for which skill `http_request` calls skip TLS verification (opt-in for self-hosted skill APIs with self-signed certs, e.g. `helpdesk.internal`). Empty = verify all hosts. Hosts listed here are also SSRF-allowlisted |
+| `SKILL_HTTP_ALLOW_PRIVATE` | `false` | SSRF policy for all skill-originated egress (`http_request`, legacy HTTP tools, install-from-URL). By default requests resolving to private/loopback/link-local/metadata addresses (e.g. `169.254.169.254`) are blocked — the tool's URL is LLM-chosen and steerable via prompt injection. Set `true` only if skills legitimately call private IPs |
+| `SKILL_HTTP_ALLOWED_HOSTS` | empty | Comma-separated hostnames exempt from the skill-egress SSRF check (opt-in for one specific internal skill API) |
 
 ## Docker Volume Persistence
 
@@ -180,6 +184,7 @@ All endpoints require Admin authentication.
 
 - The LLM never sees API tokens or credentials — authentication is injected server-side
 - Only `auth_header` templates from the config schema are used to build HTTP headers
+- **SSRF-guarded egress** — skill-originated HTTP targets are resolved and checked against private/loopback/link-local/metadata ranges before connecting (and re-checked on every redirect hop); use `SKILL_HTTP_ALLOWED_HOSTS` or `SKILL_HTTP_ALLOW_PRIVATE` (see configuration above) when a skill must legitimately reach an intranet API
 - Secret values in the config endpoint are masked (`********`) in API responses
 - Config files are stored locally in the skill directory, not in the database
 - Script execution is **disabled by default** (`ENABLE_SKILL_SCRIPTS=false`)

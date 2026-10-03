@@ -114,6 +114,7 @@ const config: ZudokuConfig = {
           icon: "book-open",
           items: [
             "/guides/deployment",
+            "/guides/versions",
             "/guides/authentication",
             "/guides/security",
             "/guides/data-transfer",

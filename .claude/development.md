@@ -50,8 +50,15 @@ npm run lint       # ESLint
 `.github/workflows/ci.yml` gates PRs (and pushes to `main`):
 - **Backend**: `pip install -r requirements.txt`, `ruff check --select E9,F63,F7,F82 .` (error-only smoke check — full ruff/mypy is a follow-up), `pytest`.
 - **Frontend**: `npm ci`, `npx tsc --noEmit`, `npm run lint`.
+- **Scripts/docs**: script tests + version sync, then zero-dependency
+  `node documentation/scripts/validate-docs.mjs` and its node:test controls.
+  Published-mirror checks are separate from offline CI (see `maintenance.md`).
+- **Recovery oracle:** `python3 qa/restore/oracle.py selftest` in the scripts job;
+  actual disposable container replay is separate (`qa/restore/README.md`).
 
-The pytest suite is fully isolated (LLM + Neo4j mocked, env sandboxed via `conftest.py`), so it runs with no external services.
+The offline pytest suite uses mocked LLM + Neo4j and sandboxed settings; live E2E
+modules auto-skip without a configured test target. See `qa.md` for the temporary
+filesystem space requirement and `upgrade-recovery.md` for state/recovery gates.
 
 ## Shared model service (cortex-helper)
 

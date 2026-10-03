@@ -17,8 +17,8 @@ The pitch: provision an account for each team member, assign them to a group sco
 - **Message actions** — hover any message for copy, **regenerate** (last answer), **edit & resend** (forks the conversation at that point), and **👍/👎 feedback** that feeds the admin analytics. With [voice](#voice) configured, every answer also gets a **read-aloud** button.
 - **Starter prompts** — admin-curated suggested questions render as clickable cards on the empty chat screen, combined with the selected personality's own starters.
 - **Collection scoping** — defaults to everything the user's group can read; a settings panel narrows to a single collection. The backend enforces scope via the key, so the UI can never leak other collections.
-- **Conversation memory** — the app round-trips the backend's opaque memory blob each turn for cross-turn recall and citation continuity beyond the history window.
-- **Server-side chat history** — sessions, messages, and auto-generated titles persist per user and follow them across devices, in a slide-in sidebar with **title search**, **pinning**, and per-chat **Markdown export**.
+- **Conversation memory** — the app round-trips the backend's opaque memory blob each turn for cross-turn recall and citation continuity beyond the history window. The answer can finish before memory compaction; a follow-up sent immediately uses the blob available at send time. Regenerate and editing the last question restore that turn's pre-answer snapshot; editing an earlier question restarts recall at the fork.
+- **Server-side chat history** — sessions, messages, and auto-generated titles persist per user and follow them across devices, in a slide-in sidebar with **title search**, **pinning**, per-chat **Markdown export**, and per-message Markdown download.
 - **Deep links** — the active chat rides in the URL (`/?chat=<id>`), so a refresh stays in place, back/forward walk between conversations, and a chat link can be shared with anyone who has access to it.
 - **Support link** — an optional, admin-configured button in the chat header (helpdesk, mailto, wiki — any URL).
 - **i18n** — English and German UI, default language set per deployment. Every user has a profile page (username, avatar, password).
@@ -37,9 +37,17 @@ Assistant personas layered over the same retrieval engine. Each personality **is
 A project groups conversations and carries defaults every chat inside it inherits: an optional personality, a collection scope, and **instructions** — an invisible briefing injected with every question in the project.
 
 - **Sharing** — one modal, one search field over groups *and* individual people. Members see all chats in the project; a warning asks for confirmation before an existing chat is moved into a shared project.
+- **Removing access** — only the project owner changes its share list. Direct and group grants are independent: removing a person's direct grant leaves access in place while a group grant still covers them. Access to someone else's chat is rechecked on new reads, saves and live-feed connections; a chat's creator retains access to their own saved conversation. An already-open live feed keeps its connect-time admission until disconnected and can still receive events; removing a share does not immediately terminate that subscription. Saved conversations and memory are kept.
 - **Multi-user conversations** — any member can continue any project chat. Every message is attributed to its author (name chips on teammates' messages); editing and regenerating are limited to your own turns; renaming/moving/deleting a chat stays with its creator.
+- **Concurrent questions** — a normal send first reads the latest settled thread and memory. If members ask simultaneously, the last saved full conversation snapshot wins; simultaneous answers are not merged into one history. This also applies when a delayed memory update saves its originating turn's full snapshot.
+- **Edit and regenerate** — these deliberately fork the conversation displayed in your tab. Regenerate and editing its last question reuse the locally retained pre-answer memory; a fresh load uses stored memory as the best available fallback. The locally verified, unreleased candidate also retains that snapshot when navigating away and back within the same page to the same local last exchange, including when delayed compaction finishes while away. Editing an earlier question restarts recall at that fork.
 - **Realtime** — teammates' turns appear live: when someone asks in a chat you have open, their question pops in and the answer **streams in real time** in your view (joining mid-answer replays what you missed). New chats, moves, and shares update everyone's sidebar within a second. No extra infrastructure — SSE over the app's own server.
+- **Connection recovery** — when the open-chat feed reconnects after a transport drop, it reads the current settled conversation and memory, including changes missed while disconnected. A teammate's interrupted live preview is cleared so a missed completion does not leave a permanently streaming answer. If the teammate is still answering, the replayed live turn accompanies the freshly saved history.
 - **Organization** — collapsible project folders in the sidebar; drag & drop chats between your personal list and projects.
+  Moving an existing chat keeps its history, citations, memory and personality and does not bump its recency timestamp. Project defaults apply when creating a chat; moving one does not replace its personality. The locally verified, unreleased candidate keeps the original project context when a move is rejected, prevents a delayed move acknowledgment from changing the context of a different chat selected meanwhile, and prevents older personal-list responses from clearing the context of a moved or newly selected project chat. When two moves commit in order but their responses arrive in reverse order, current list membership keeps the selected chat's context aligned with its saved project, retaining its edit/regenerate memory snapshot.
+- **Deleting a project** — only its owner can delete it, after confirmation. Cancel leaves it intact. Chats survive in their creators' personal lists with their history, citations, memory, personality and recency preserved; the project owner does not gain access to another creator's now-personal chat. A valid delayed memory update can still finish saving its author's chat. The locally verified, unreleased candidate keeps another selected project's context intact if the delete acknowledgment arrives after navigation, preserves the selected project's context when deletion fails before reaching the server, and updates your selected chat to personal context when another user deletes its project, retaining its local edit/regenerate memory snapshot.
+  Former members cannot newly read, save or subscribe to someone else's detached chat. An answer admitted before deletion can still finish, but its later save needs current access and may be rejected. An already-open feed can continue receiving events until disconnected; deletion does not establish immediate termination of that subscription.
+  A missing DELETE response does not prove cancellation. In the locally verified, unreleased candidate, the refreshed lists reconcile a deletion that committed before response delivery failed; the selected author's chat uses personal context and retains valid delayed memory without automatically replaying DELETE.
 
 ### Voice
 
@@ -51,7 +59,7 @@ Optional speech-to-text dictation and text-to-speech read-aloud, configured with
 
 ### Multi-tenant auth & user management
 
-- **Email/password accounts** with argon2id hashing and DB-backed sessions (opaque cookie, 30-day sliding TTL). Users never need Cortex credentials.
+- **Email/password accounts** with argon2id hashing and DB-backed sessions (opaque cookie, fixed 30-day lifetime). Users never need Cortex credentials.
 - **Single Sign-On (OIDC)** — vendor-agnostic SSO against any OpenID Connect IdP with discovery: Entra ID / Azure AD, ADFS 2016+, Okta, Auth0, Google Workspace, Keycloak, Authentik, Authelia, Zitadel, PocketID. Three env vars enable it (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`); the flow is Authorization Code + PKCE, terminating into the same session model as password login. First-time users are **JIT-provisioned** into an optional default group (`OIDC_DEFAULT_GROUP`); an existing account with the same email is linked automatically — but only when the IdP asserts the email as **verified** (the account-takeover guard). `OIDC_ONLY=true` removes password login and self-registration entirely; the superadmin is excluded from SSO and keeps a break-glass password login (`/login?password=1`). Legacy LDAP-only or SAML-only stacks: put a thin bridging IdP (Authentik or Dex) in front and point the issuer URL at it.
 - **Three roles** — one env-bootstrapped `superadmin`, promotable `admin`s, and `user`s. Each user belongs to exactly one **group**; the group's collection scope defines what its members can search. On first boot the app auto-creates a **"Full Access" group** and assigns the superadmin to it, retrying in the background until the backend is reachable.
 - **Self-registration with approval** — a public `/register` page feeds a pending queue on the admin Users page; approving a registration assigns its group. On by default, disable with `ENABLE_REGISTRATION=false`. Admins can be **notified by email of new registrations**, and pending users who log in get an "awaiting approval" message (only on a correct password — the flow is enumeration-safe).
@@ -116,12 +124,14 @@ Minted keys live in the key store of the backend they were minted against. Re-po
 ### Prerequisites
 
 - A running Cortex instance (personality **Generate** additionally needs a Cortex release that ships `POST /api/llm/completions` — older backends show a clear message)
-- An **admin-tier API key** (`moca_admin_...`) from that instance (Settings → API Keys)
-- Docker, or Node.js 18+ to run from source
+- An **admin-tier API key** from that instance — the `ADMIN_API_KEY` value configured in the Cortex backend's environment, **not** a key minted in Settings → API Keys (those are read/manage-tier, `cortex_ro_`/`cortex_rw_`/`cortex_pub_`-prefixed; see the [authentication guide](/guides/authentication))
+- Docker, or Node.js 20+ to run from source (Chat is a Next.js 16 app)
 
 ### Environment reference
 
 All configuration is server-side and runtime — the same image serves any tenant, and boot fails fast with one aggregated error listing every missing or malformed value.
+
+> **Version basis.** This page documents Cortex Chat **1.3.0**. The self-host release stack currently pins an older Chat (see the changelog for the current pin), so rows marked **Chat 1.2.0+** are not available on a release-stack install until its next stack bump; `docker run` below pulls the current release.
 
 **Required:**
 
@@ -152,13 +162,17 @@ All configuration is server-side and runtime — the same image serves any tenan
 | `OIDC_BUTTON_LABEL` | Login-button text, e.g. `"Sign in with Entra ID"`. | localized "Single Sign-On" |
 | `OIDC_DEFAULT_GROUP` | Name of the chat group first-time SSO users join (resolved at login time). Unset = new SSO users land group-less and can't chat until an admin assigns a group. | — |
 | `OIDC_ONLY` | `true` hides the password form and disables password login + self-registration. The env-managed superadmin keeps a password backdoor at `/login?password=1`. | `false` |
+| `DEMO_MODE` | **Chat 1.2.0+** — flips the deployment into a public demo: bootstraps a shared demo user at boot, prefills the login form with its published credentials, stores the demo user's chats in the visitor's browser, and disables per-user mutations for that account. Other accounts are unaffected; unset = the feature is invisible. | — |
+| `DEMO_EMAIL`, `DEMO_PASSWORD` | **Chat 1.2.0+** — demo account credentials. Defaults are deliberately public (`test@test.com` / `test`); a `DEMO_EMAIL` belonging to an existing account is refused at boot. | `test@test.com` / `test` |
+| `DEMO_GROUP` | **Chat 1.2.0+** — name of the group to pin the demo user to (re-resolved each boot). Unset keeps the demo user's current/first group. | — |
 | `VOICE_STT_BASE_URL` | OpenAI-compatible audio API for dictation; unset = mic hidden. Endpoints used: `{base}/audio/transcriptions`. | — |
 | `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Credentials + model for STT (e.g. `faster-whisper-large-v3`, `whisper-large-v3`). Model required when the base URL is set. | — |
 | `VOICE_TTS_BASE_URL` | OpenAI-compatible audio API for read-aloud; unset = speaker buttons hidden. Endpoints used: `{base}/audio/speech`. | — |
 | `VOICE_TTS_API_KEY`, `VOICE_TTS_MODEL`, `VOICE_TTS_VOICE` | Credentials, model (e.g. `kokoro-82m`, `tts-kokoro`), and voice (e.g. `af_heart`); some backends require a voice. | — |
 | `SENTRY_ENVIRONMENT` | Tags error events per deployment/tenant. | `production` |
 | `SENTRY_DSN` | Overrides the baked-in GlitchTip DSN (server-side, runtime). | built-in |
-| `SENTRY_DISABLED` | `1` = no error reporting at all. | — |
+| `SENTRY_DISABLED` | `1` = no **server-side** error reporting. Client-side reporting is a separate, build-time switch (next row). | — |
+| `NEXT_PUBLIC_SENTRY_DISABLED`, `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | **Build-time only** — client-side error reporting switch, DSN, and environment tag. `NEXT_PUBLIC_*` values are inlined into the browser bundle when the image is built; they do not change via runtime env. | — |
 | `SENTRY_AUTH_TOKEN` | **Build-time only** — enables source-map upload to GlitchTip (Coolify: set as a build variable; the Compose file maps it as a build arg). | — |
 
 Deprecated but still accepted with a boot warning: `LIBRARY_API_URL` and `NEXT_PUBLIC_API_URL` (aliases for `CORTEX_API_URL`), and a legacy `ACCENT_COLOR` / `NEXT_PUBLIC_ACCENT_COLOR`, which is migrated into the settings database once on first boot.
@@ -178,13 +192,15 @@ The `docker run` below is still the right path when Chat runs **separately** fro
 ```bash
 docker run -p 3000:3000 \
   -e CORTEX_API_URL=https://your-cortex-instance.com \
-  -e BACKEND_ADMIN_API_KEY=moca_admin_your-admin-key \
+  -e BACKEND_ADMIN_API_KEY=your-cortex-admin-key \
   -e SUPERADMIN_EMAIL=admin@example.com \
   -e SUPERADMIN_PASSWORD=change-me \
   -e APP_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -v cortex-chat-data:/app/data \
-  cortex-chat
+  ghcr.io/mocaos/cortex-chat:latest
 ```
+
+The published image is `ghcr.io/mocaos/cortex-chat`, tagged per Chat release (`1.3.0`, …, plus `latest`); pin a tag instead of `latest` when you want upgrades to be explicit.
 
 The container listens on `3000` and persists everything (users, groups, keys, chat history, avatars, logo) under `/app/data` — mount a volume there. For **Coolify / Dokploy**, create a Docker Compose resource pointing at the repository, set the required variables (plus any optional ones — the shipped `docker-compose.yml` already maps SMTP, registration, GlitchTip, and `PORT`), and deploy it unchanged. Any platform with Dockerfile builds (Railway, Render, Fly.io) works the same way. From source: `npm install`, copy `.env.example` to `.env.local`, `npm run dev` — migrations apply automatically on every server start.
 

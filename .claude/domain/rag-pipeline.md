@@ -75,6 +75,12 @@ Synthesizes all gathered context from the researcher into a streamed answer.
 
 ## Server-side sessions (`ENABLE_SESSIONS`, default off)
 
+Principal/SSE composition gate: `tests/test_scoped_principal_journeys.py` uses
+two keys through real auth (unlike the shared fake-admin client). Session ownership,
+MCP caller-key forwarding and deep-research error/memory handling have stable
+obligations in `qa/QA_CONTRACT_RECORDS.md`; real Neo4j predicate behavior remains
+outside that fake-store gate. Cross-repo consumers and commands: `../regeneration.md`.
+
 The opt-in alternative to the client-carried blob: `POST /api/sessions` mints a `session_id` (optionally seeded with existing history+memory — the migration path for blob-mode clients); passing it on ask endpoints makes the backend load/persist history + the curated blob itself (`app/services/session_service.py`, `ApiSession` Neo4j nodes). Contract: session ⊕ client-carried state (`400 session_conflict`); foreign session → 404 (sessions are per-key private); fast search rejected (stateless by definition). Turn persistence wraps the agent event streams (`_with_session_persistence` in main.py — accumulates content frames + captures the post-done memory_update); the non-streaming path appends history without compaction. History capped at `SESSION_MAX_TURNS` with the blob's `transcript.summarized_count` decremented by the trim (keeps the curator's index coherent — `trim_history`); per-key quota `SESSION_MAX_PER_KEY`; idle TTL `SESSION_TTL_DAYS` swept hourly. Instance-operational: excluded from export. Advertised via `GET /api/features` → `enable_sessions` for client feature-detection. Tests: `tests/test_sessions.py`.
 
 ## Remote MCP (`ENABLE_REMOTE_MCP`, default off)

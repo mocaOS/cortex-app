@@ -8,7 +8,10 @@
     "build": "zudoku build",
     "postbuild": "npx pagefind --site ./dist",
     "preview": "zudoku preview",
-    "lint": "eslint"
+    "lint": "eslint",
+    "validate": "node scripts/validate-docs.mjs",
+    "validate:live": "node scripts/validate-docs.mjs --live",
+    "test": "node --test scripts/validate-docs.test.mjs"
   },
   "dependencies": {
     "mermaid": "^11",

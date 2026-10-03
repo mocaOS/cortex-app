@@ -212,9 +212,11 @@ does.
 
 ## Backups
 
-The `backup` sidecar runs nightly: a verified APOC graph export plus a tar of
-uploads, custom inputs, chat data, skills and apps. It goes unhealthy if the
-newest verified backup is older than two intervals.
+The `backup` sidecar runs nightly: an APOC graph export plus a tar of uploads,
+custom inputs, chat data, skills and apps. Counts/checksums and `.complete` record
+the job's checks. They do not prove an atomic snapshot of live SQLite/file writers
+or full restorability. It goes unhealthy if the newest completed backup is older
+than two intervals.
 
 ```bash
 docker compose exec backup /backup.sh                        # run now
@@ -232,9 +234,12 @@ is the header comment in `ops/backup/restore.sh`; this is the same procedure:
 # 1. List available backups and pick a <timestamp>.
 docker compose exec backup ls /backups
 
-# 2. Stop the backend — it's about to have its graph wiped and replayed
-#    underneath it.
+# 2. Stop every writer — the graph and file databases will be restored.
 docker compose stop backend
+# If the optional Chat service is enabled, also run:
+docker compose stop chat
+# Quiesce any other writer of the affected volumes; retain current state if
+# valid writes after the snapshot need reconciliation.
 
 # 3. Restore the graph. RESTORE_WIPE=yes is required: this DETACH DELETEs the
 #    whole graph — and drops its constraints and indexes, which the replay
@@ -245,7 +250,9 @@ docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 
 # 4. Restore the file volumes (uploads, custom_inputs, chat, skills, apps).
 #    The backup sidecar mounts these read-only, so it cannot write them back
-#    itself — this runs in a throwaway container instead. Volume names are
+#    itself — this runs in a throwaway container instead. Restore into fresh/
+#    empty target file volumes and retain the prior state; do not overlay a
+#    running/nonempty SQLite database and WAL. Volume names are
 #    ${COMPOSE_PROJECT_NAME}_<name>; .env.example sets COMPOSE_PROJECT_NAME=cortex,
 #    so a default install uses the cortex_* names below (use your own prefix
 #    if you changed COMPOSE_PROJECT_NAME).
@@ -261,9 +268,20 @@ docker run --rm \
 # 5. Start the backend. Startup recreates every constraint/index, including
 #    the vector indexes the logical export does not carry.
 docker compose start backend
+# Start Chat again if it was enabled and stopped in step 2:
+docker compose start chat
 
-# 6. Verify document/entity counts on GET /api/stats.
+# 6. Compare snapshot vs target records, identities and referenced file bytes;
+#    include Chat/Apps SQLite, memory, avatars and key decryptability.
+#    GET /api/stats counts and health alone are insufficient.
 ```
+
+Retain encryption/configuration secrets separately: the volumes/graph do not
+replace `.env`, and Chat's encrypted backend keys need its original
+`APP_ENCRYPTION_KEY`. Restoring a pre-upgrade snapshot can lose later valid writes.
+Use the disposable `qa/restore/` gate before relying on a new recovery/version
+combination; its quiesced storage test does not certify online consistency or
+backend/Chat boot and login journeys.
 
 ## Troubleshooting
 

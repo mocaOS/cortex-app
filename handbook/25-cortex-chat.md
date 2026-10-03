@@ -28,7 +28,7 @@ The heart of the app is a single-purpose chat page backed by your instance's [As
 - **Message actions.** Hovering a message reveals its actions: copy, **download** the message as a Markdown file (answers include their source footnotes), **regenerate** the last answer, **edit & resend** one of your questions (which forks the conversation at that point), and **thumbs up/down feedback** that rolls up into the admin analytics. When voice is configured, every answer also gets a **read-aloud** button.
 - **Starter prompts.** Administrators can curate suggested questions that appear as clickable cards on the empty chat screen — combined with the starters a selected personality brings along.
 - **Collection scoping.** By default a chat searches *all* collections the user's group has access to. The settings panel (gear icon) lets the user narrow to a single collection; the scope indicator in the input bar always shows what is being searched.
-- **Conversation memory.** The app round-trips the backend's conversation-memory blob on every turn, so multi-turn conversations keep recall and citation continuity even beyond the backend's history window.
+- **Conversation memory.** The app round-trips the backend's conversation-memory blob on every turn, so multi-turn conversations keep recall and citation continuity even beyond the backend's history window. An answer can finish before its memory update arrives; an immediate follow-up uses the memory available when sent. Regenerate or edit your last question to reuse its pre-answer snapshot; editing an earlier question restarts recall at that fork.
 - **Server-side chat history.** Sessions, messages, and auto-generated titles are stored per user in the app's database. A user can start a conversation on a laptop and continue it on a phone; history appears in a slide-in sidebar with **title search**, **pinned chats**, and per-chat **Markdown export**.
 - **Deep links.** The open conversation lives in the URL, so refreshing the page keeps your place, the browser's back/forward buttons walk through conversations, and a link to a specific chat can be shared with anyone who has access to it.
 - **Support link.** If configured, a support button appears in the chat header pointing wherever you like — a helpdesk, a mailto link, an internal wiki.
@@ -54,9 +54,25 @@ A **project** is a shared workspace: a folder of conversations that carries defa
 
 Sharing is deliberately simple: one modal with one search field that matches both **groups and individual people**. Members see every conversation in the project. Because that means exposing a chat's full history, moving an existing conversation into a shared project asks for confirmation first.
 
+Only the project owner changes the share list. If someone has both an individual grant and access through a shared group, remove both to end their membership. Access to someone else's chat is rechecked on new reads, saves and live-feed connections; a chat's creator retains access to their own saved conversation. An already-open live feed keeps its connect-time admission until disconnected and can still receive events. Removing a share does not immediately terminate that subscription or delete the saved conversation and memory.
+
 Project chats are **multi-user by default**. Any member can continue any thread; every message shows its author, so a conversation reads like the team effort it is. Editing or regenerating is limited to your own turns, and only a chat's creator can rename, move, or delete it.
 
+Before a normal question is sent, the app reads the latest settled thread and memory. If two members ask simultaneously, the last saved full conversation snapshot wins; simultaneous answers are not merged into one history.
+
 It behaves like a live space, too: when a teammate asks a question in a chat you have open, their question appears immediately and the answer **streams into your view in real time** — joining mid-answer replays what you missed. New chats, moves, and shares show up on everyone's sidebar within a second, with no additional infrastructure (it's all Server-Sent Events through the app's own server). Chats can be dragged between your personal list and project folders.
+
+Moving an existing chat keeps its full history, citations, memory and personality without changing its recency timestamp. Creation defaults from the target project do not replace that chat's personality. The locally verified, unreleased candidate keeps the original project context after a rejected move, binds updates to the current conversation, and prevents an older personal-list response from clearing a moved or newly selected project's context. If two moves commit in order and the responses arrive in reverse order, current list membership keeps the selected chat's context aligned with its saved project and preserves its edit/regenerate memory snapshot. Switching to another conversation meanwhile does not change that conversation's context.
+
+Only the project owner can delete a project, and a confirmation explains that chats are kept. Each chat returns to its creator's personal list with its history, citations, memory and personality intact; other former project members no longer gain access through that project. Pending memory work for your own chat can still finish saving. The locally verified, unreleased candidate preserves the context of another project you select while deletion is finishing, keeps the selected project's context if deletion fails before reaching the server, and switches your selected chat to personal context when someone else deletes its project, keeping its local edit/regenerate memory snapshot.
+
+After deletion, former members cannot newly read, save or open a live feed for someone else's now-personal chat. An answer already in progress can still finish, but saving it requires current access and may fail. An already-open feed can still receive events until disconnected; its earlier admission does not authorize a new save.
+
+Losing the delete response does not mean the project was kept. The locally verified, unreleased candidate refreshes the lists to reconcile a deletion that committed before its response was lost, keeps your selected chat in personal context with valid delayed memory, and does not automatically repeat the deletion.
+
+When the open-chat connection returns after a transport interruption, the tab reads the latest saved conversation and memory. An interrupted teammate preview is cleared so an answer that finished while disconnected does not stay visibly streaming. Editing or regenerating deliberately forks the conversation displayed in your tab; it uses your retained pre-answer memory for the last question (stored memory on a fresh load), while editing an earlier question restarts recall at the fork. The locally verified, unreleased candidate retains the local snapshot when you navigate away and back within the same page to that same last exchange, even if its delayed memory update finishes while away.
+
+If the teammate is still answering after reconnect, their replayed live answer appears alongside the latest saved history. Concurrent saves remain last-writer-wins, including a delayed memory update that saves its originating turn. History and recall are selected together; the tab does not combine one member's adopted history with another turn's memory.
 
 ## Voice
 
@@ -85,7 +101,7 @@ There are four paths:
 3. **Bulk import.** The repository ships a command-line script (`scripts/import-users.ts`) that bulk-creates users from an `.xlsx` spreadsheet (columns `email` and `benutzername`) against a running deployment: it logs in as the superadmin, assigns everyone to a chosen group with a shared initial password, defaults to a **dry run**, and never modifies existing accounts — re-running it is safe. See `scripts/README.md` in the repository.
 4. **Single Sign-On.** With an OIDC identity provider configured (next section), first-time SSO users are created automatically on login — no password, no approval queue — and join the group named by `OIDC_DEFAULT_GROUP` (or none, until an admin assigns one).
 
-Sessions are cookie-based with a 30-day sliding lifetime, and passwords are hashed with argon2id.
+Sessions are cookie-based with a fixed 30-day lifetime — the expiry is set when the session is created and using the app never extends it. Passwords are hashed with argon2id.
 
 ### Password reset and email
 
@@ -110,7 +126,7 @@ Register the client at your IdP with the redirect URI `{APP_BASE_URL}/api/auth/o
 
 **What happens on first login.** A returning SSO user is recognized by the stable identity the IdP asserts (issuer + subject). A first-time user is matched by email: if a chat account with that email already exists **and the IdP says the email is verified**, the account is linked — from then on both login methods reach the same account. The verified-email requirement is deliberate (an unverified claim must never take over an existing account), and linking also signs out every existing session for that account. If no account matches, one is created on the spot — role `user`, joining the group named by `OIDC_DEFAULT_GROUP`. Leave that unset and new SSO users land group-less: they can sign in but can't chat until an admin assigns a group — the right default when not everyone at your IdP should read your knowledge base.
 
-**Going all-in.** `OIDC_ONLY=true` removes the password form and self-registration entirely — accounts then come only from the IdP. Two things survive on purpose: the superadmin keeps password access via `/login?password=1` (break-glass — it must work even when the IdP is down), and it is excluded from SSO in both directions. Note that disabling a user at the IdP does **not** end their existing chat sessions (30-day sliding lifetime) — to cut access immediately, delete the user in **Admin → Users**, which cascades their sessions. Login history tags each sign-in as `password` or `oidc`.
+**Going all-in.** `OIDC_ONLY=true` removes the password form and self-registration entirely — accounts then come only from the IdP. Two things survive on purpose: the superadmin keeps password access via `/login?password=1` (break-glass — it must work even when the IdP is down), and it is excluded from SSO in both directions. Note that disabling a user at the IdP does **not** end their existing chat sessions (which live out their fixed 30-day lifetime) — to cut access immediately, delete the user in **Admin → Users**, which cascades their sessions. Login history tags each sign-in as `password` or `oidc`.
 
 **Entra ID (Microsoft 365 shops).** In the Azure portal: *App registrations → New registration*, redirect URI (type "Web") `https://chat.example.com/api/auth/oidc/callback`, then create a client secret under *Certificates & secrets*. The three values: `OIDC_ISSUER_URL=https://login.microsoftonline.com/<tenant-id>/v2.0`, client ID from the overview page, and the secret. Entra doesn't emit an `email_verified` claim, so linking to pre-existing password accounts won't happen automatically — either provision via SSO from the start, or expect users with old password accounts to appear as unlinked (an admin can delete the stale account first).
 
@@ -122,7 +138,7 @@ Register the client at your IdP with the redirect URI `{APP_BASE_URL}/api/auth/o
 
 This is the most important design idea in the app, and worth understanding as an administrator:
 
-There is exactly **one** privileged credential — an admin-tier Cortex API key you place in the app's environment as `BACKEND_ADMIN_API_KEY`. It never leaves the server and is never written to the database. The app uses it as a *factory* to mint narrower keys against your Cortex backend (see [Chapter 17](17-administration.md) for Cortex's API key tiers):
+There is exactly **one** privileged credential — the Cortex backend's own `ADMIN_API_KEY` value, placed in the app's environment as `BACKEND_ADMIN_API_KEY`. This is the instance-level admin key configured in the backend's environment (see [Chapter 4: Configuration](04-configuration.md)), **not** one of the keys minted in Settings → API Keys — those are read/manage-tier (`cortex_ro_`/`cortex_rw_`/`cortex_pub_`-prefixed) and cannot mint further keys. It never leaves the server and is never written to the database. The app uses it as a *factory* to mint narrower keys against your Cortex backend (see [Chapter 17](17-administration.md) for Cortex's API key tiers):
 
 | Key | Scope | Minted when | Used for |
 |---|---|---|---|
@@ -185,19 +201,21 @@ Beyond the dashboard, admins can define a `<cortexchatanalytics>` template in Se
 
 ## Built for imperfect networks
 
-Worth knowing as an operator, even though none of it needs configuration: Cortex Chat is written to degrade gracefully when the backend misbehaves. If the Cortex instance restarts mid-answer, the stream reconnects and regenerates transparently. Rate-limit responses (both burst limits and monthly quotas) surface as clear, localized messages — including "your monthly quota resets on <date>" rather than a nonsensical retry timer. Storage-full and oversized-upload conditions get friendly errors instead of stack traces. Every user action carries a request ID that the backend echoes, so a support question can be correlated across both apps' logs. Errors are reported to a GlitchTip (Sentry-compatible) project in production builds; set `SENTRY_DISABLED=1` to opt out entirely, or `SENTRY_DSN` to point at your own instance.
+Worth knowing as an operator, even though none of it needs configuration: Cortex Chat is written to degrade gracefully when the backend misbehaves. If the Cortex instance restarts mid-answer, the stream reconnects and regenerates transparently. Rate-limit responses (both burst limits and monthly quotas) surface as clear, localized messages — including "your monthly quota resets on <date>" rather than a nonsensical retry timer. Storage-full and oversized-upload conditions get friendly errors instead of stack traces. Every user action carries a request ID that the backend echoes, so a support question can be correlated across both apps' logs. Errors are reported to a GlitchTip (Sentry-compatible) project in production builds; `SENTRY_DISABLED=1` opts out the **server side**, `SENTRY_DSN` points at your own instance, and the browser side is governed by the build-time `NEXT_PUBLIC_SENTRY_*` variables (see the configuration table below).
 
 ## Setting it up
 
 ### Prerequisites
 
-- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working. That endpoint follows `DEFAULT_REASONING_MODE` (default `off`); on a thinking-by-default model (Qwen3.x) with reasoning left on, the writer can spend its whole token budget on hidden reasoning and the run ends with an "empty answer" error — keep the default or pick a non-thinking model.
-- An **admin-tier API key** (`moca_admin_...`) generated in that instance — see [Chapter 17: Administration](17-administration.md)
-- Node.js 18+ if running from source, or Docker
+- A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)).
+- An **admin-tier API key** from that instance — the `ADMIN_API_KEY` value configured in the Cortex backend's environment, not a key minted in Settings → API Keys (those are read/manage-tier and cannot mint further keys; see [Chapter 4](04-configuration.md) and [Chapter 17](17-administration.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working. That endpoint follows `DEFAULT_REASONING_MODE` (default `off`); on a thinking-by-default model (Qwen3.x) with reasoning left on, the writer can spend its whole token budget on hidden reasoning and the run ends with an "empty answer" error — keep the default or pick a non-thinking model.
+- Node.js 20+ if running from source (Chat is a Next.js 16 app), or Docker
 
 ### Configuration
 
-All configuration is server-side and read at runtime — the same built image can serve any tenant. The required variables:
+All configuration is server-side and read at runtime — the same built image can serve any tenant. This chapter documents **Chat 1.3.0**; the self-host release stack currently pins an older Chat, so rows marked as newer features may not be available on a release-stack install until its next stack bump.
+
+The required variables:
 
 | Variable | Purpose |
 |---|---|
@@ -218,9 +236,10 @@ Optional:
 | `APP_BASE_URL` | The app's public URL, used to build links in emails and the SSO redirect URI. Required when SMTP or OIDC is configured; never derived from the request's Host header. |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Single Sign-On against any OpenID Connect IdP (see the SSO section above). Unset issuer = feature invisible; when set, all three plus `APP_BASE_URL` are required. |
 | `OIDC_SCOPES`, `OIDC_BUTTON_LABEL`, `OIDC_DEFAULT_GROUP`, `OIDC_ONLY` | SSO tuning: requested scopes (default `openid profile email`), the login-button text, the group first-time SSO users join, and IdP-only mode (password login and self-registration off; superadmin keeps `/login?password=1` as break-glass). |
+| `DEMO_MODE`, `DEMO_EMAIL`, `DEMO_PASSWORD`, `DEMO_GROUP` | **Chat 1.2.0+** — public demo mode: bootstraps a shared demo user at boot (defaults `test@test.com`/`test`), prefills the login form, stores the demo user's chats in the visitor's browser, and disables per-user mutations for that account. Other accounts are unaffected. `DEMO_EMAIL` that already exists is refused at boot; `DEMO_GROUP` pins the demo user's group. Incompatible with `OIDC_ONLY`. |
 | `VOICE_STT_BASE_URL`, `VOICE_STT_API_KEY`, `VOICE_STT_MODEL` | Speech-to-text for the dictation mic — any OpenAI-compatible audio API (`{base}/audio/transcriptions`). Unset base URL = mic hidden; the model is required when the base URL is set. |
 | `VOICE_TTS_BASE_URL`, `VOICE_TTS_API_KEY`, `VOICE_TTS_MODEL`, `VOICE_TTS_VOICE` | Text-to-speech for read-aloud (`{base}/audio/speech`). Same gating; some backends require a voice name. |
-| `SENTRY_ENVIRONMENT`, `SENTRY_DSN`, `SENTRY_DISABLED` | Error-tracking knobs: tag events per deployment, override the built-in GlitchTip DSN, or switch reporting off. `SENTRY_AUTH_TOKEN` is a *build-time* variable that enables source-map upload so stack traces show real file names. |
+| `SENTRY_ENVIRONMENT`, `SENTRY_DSN`, `SENTRY_DISABLED` | Server-side error-tracking knobs (runtime): tag events per deployment, override the built-in GlitchTip DSN, or switch **server-side** reporting off. Client-side (browser) reporting is a separate **build-time** switch: `NEXT_PUBLIC_SENTRY_DISABLED` / `NEXT_PUBLIC_SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_ENVIRONMENT` are inlined into the browser bundle when the image is built and cannot be changed via runtime env. `SENTRY_AUTH_TOKEN` is likewise *build-time* — it enables source-map upload so stack traces show real file names. |
 
 The app validates its configuration at boot and refuses to start with a single error listing every problem — a missing key, a malformed encryption key, SMTP configured without `SMTP_FROM` or `APP_BASE_URL` — so a misconfigured deployment fails loudly instead of half-working. Never prefix any of these with `NEXT_PUBLIC_` — that would bake them into the client bundle.
 
@@ -237,13 +256,15 @@ The repository ships a multi-stage Dockerfile and a `docker-compose.yml` aimed a
 ```bash
 docker run -p 3000:3000 \
   -e CORTEX_API_URL=https://your-cortex-instance.com \
-  -e BACKEND_ADMIN_API_KEY=moca_admin_your-admin-key \
+  -e BACKEND_ADMIN_API_KEY=your-cortex-admin-key \
   -e SUPERADMIN_EMAIL=admin@example.com \
   -e SUPERADMIN_PASSWORD=change-me \
   -e APP_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -v cortex-chat-data:/app/data \
-  cortex-chat
+  ghcr.io/mocaos/cortex-chat:latest
 ```
+
+The published image is `ghcr.io/mocaos/cortex-chat`, tagged per Chat release (plus `latest`) — pin a tag instead of `latest` when you want upgrades to be explicit.
 
 The container listens on port 3000 and persists all state under `/app/data` — users, groups, minted keys, chat history, avatars, and the uploaded logo — so mount a volume there. On Coolify or Dokploy, create a Docker Compose resource pointing at the repository, set the five required variables (plus any optional ones) in the platform's environment settings, and deploy; the shipped Compose file already wires everything, including the optional `SENTRY_AUTH_TOKEN` build argument for source maps. Any platform with Dockerfile builds (Railway, Render, Fly.io) works the same way.
 
@@ -268,6 +289,7 @@ From that point on, day-to-day operation is entirely inside the app: users chat,
 
 - [Chapter 10: Ask AI](10-ask-ai.md) — the retrieval and Deep Research pipeline behind every answer
 - [Chapter 8: The Knowledge Graph](08-knowledge-graph.md) — the pipeline the Processing tab drives
-- [Chapter 17: Administration](17-administration.md) — generating the admin-tier API key Cortex Chat needs
+- [Chapter 4: Configuration](04-configuration.md) — the backend's `ADMIN_API_KEY`, the credential Cortex Chat mints scoped keys with
+- [Chapter 17: Administration](17-administration.md) — the key tiers the app's minted keys belong to
 - [Chapter 24: Apps](24-apps.md) — the other kind of app: small web apps hosted *inside* your instance
 - [Chapter 16: Integration Patterns](16-integrations.md) — building your own frontend against the same API

@@ -1,88 +1,61 @@
-# CLAUDE.md
+# Cortex — repository instructions (canonical)
 
-Cortex is an agentic knowledge base that ingests documents, extracts entities/relationships via LLMs, builds a Neo4j knowledge graph, and exposes it through a FastAPI REST API for RAG applications. Next.js 15 frontend for search, Q&A, graph exploration, and document management.
+Cortex ingests documents, builds a Neo4j knowledge graph, and serves RAG through
+FastAPI and a Next.js frontend. This repository also owns the public documentation.
+Companions: `cortex-chat` owns chat identity/history/UI; `cortex-skills` owns the
+published skills, TypeScript SDK and standalone MCP server. Each has local rules.
 
-## Navigation Map
+## Every change: preserve the knowledge as well as the product
 
-| File | Description |
-|------|-------------|
-| [`.claude/architecture.md`](.claude/architecture.md) | Tech stack, backend service map, frontend routes & components |
-| [`.claude/environment.md`](.claude/environment.md) | All 160+ env vars grouped by concern (DB, LLMs, features, skills, auth) |
-| [`.claude/development.md`](.claude/development.md) | Docker/local dev commands, Neo4j setup, deployment (Coolify, Dokploy, standalone) |
-| [`.claude/design-system.md`](.claude/design-system.md) | Design tokens, visual principles, `.impeccable.md` reference |
-| [`.claude/maintenance.md`](.claude/maintenance.md) | Doc sync rules for README, documentation/, handbook/, design-system/, .claude/ |
-| [`.claude/frontend-patterns.md`](.claude/frontend-patterns.md) | Explore browsers, graph expansion, chat rendering, source modal, pagination |
-| [`.claude/domain/document-pipeline.md`](.claude/domain/document-pipeline.md) | Upload → Docling → chunking → embedding → extraction → image analysis |
-| [`.claude/domain/relationships.md`](.claude/domain/relationships.md) | Per-chunk extraction, batch analysis (Phase 1/2), ERR, multi-round, batching |
-| [`.claude/domain/entities.md`](.claude/domain/entities.md) | Fuzzy resolution, dedup (rapidfuzz), merging, editing, search, type normalization |
-| [`.claude/domain/communities.md`](.claude/domain/communities.md) | Leiden/Louvain detection, summarization, staleness tracking |
-| [`.claude/domain/knowledge-graph-ui.md`](.claude/domain/knowledge-graph-ui.md) | 3-step pipeline page, staleness, regeneration flow, image awareness |
-| [`.claude/domain/rag-pipeline.md`](.claude/domain/rag-pipeline.md) | Researcher/writer agents, tools, speed/quality modes, hybrid search |
-| [`.claude/domain/skills.md`](.claude/domain/skills.md) | AgentSkills standard, auto-activation, http_request, config wizard |
-| [`.claude/domain/admin-features.md`](.claude/domain/admin-features.md) | System reset, library import/export, bulk download, API key management |
-| [`.claude/domain/git-integration.md`](.claude/domain/git-integration.md) | Git connector (GitHub/GitLab/Gitea): provider abstraction, incremental sync engine, document provenance, `git_repo` write tool, scheduled polling |
-| [`.claude/domain/web-crawl.md`](.claude/domain/web-crawl.md) | MDHarvest powered by Crawl4ai — web→markdown harvesting via a (self-hosted or shared) crawl4ai service, crawl client, Web Import endpoints/UI, multi-tenant privacy model |
-| [`.claude/domain/x402.md`](.claude/domain/x402.md) | x402 pay-per-query monetization — env flag → runtime config → verification, monetized public keys (read-only + endpoint allowlist), settle-before-serve payment gate, vendor-agnostic facilitator client, earnings |
-| [`.claude/domain/apps.md`](.claude/domain/apps.md) | In-instance app hosting (`ENABLE_APPS`) — zip install, minted per-app keys, sandboxed iframe + app tokens, endpoint-allowlisted SSE-safe proxy, share-link grants; ecosystem plan in cortex-registry/ECOSYSTEM.md |
-| [`.claude/domain/observability.md`](.claude/domain/observability.md) | Langfuse LLM tracing & cost — env-driven activation, OpenAI client factory, agentic-trace grouping (`observed_trace`/`traced_sse`), manual records for Haystack embeddings + raw-httpx vision, streaming usage capture. GlitchTip error tracking (`SENTRY_*`): backend `error_tracking.py`, frontend `@sentry/nextjs` + source-map upload |
-| [`.claude/bench.md`](.claude/bench.md) | Bench harness (`bench/`) — LLM-stack benchmark orchestrator, model registry, safety backup, heuristics. **Not yet publicly documented — keep changes scoped.** |
-| [`.claude/qa.md`](.claude/qa.md) | QA & testing — backend pytest suite (`.qa-venv`, conftest fixtures, coverage map), live E2E harness (`test_live_e2e*.py`), canonical QA spreadsheet (`qa/`), defect log |
+Apply this loop proportionately; an ordinary patch needs no seven-document report.
 
-## File-Path Routing
+- **Start:** inspect revision and `git status`; preserve existing work. Read
+  [architecture](.claude/architecture.md), then the affected guides in the
+  [scoped map](.claude/navigation.md). Check the [campaign checkpoint](.claude/regeneration.md)
+  when continuing maintenance or changing a cross-repo boundary.
+- **Intent:** name the outcome, preserved promises, and any accepted behavior delta.
+  Separate required behavior from observations, defects and proposals.
+- **Compilation:** identify the unit, consumers, public boundary, state owner and
+  permitted effects. Keep a local fix local; redesign a boundary explicitly.
+- **Evaluations:** select meaningful checks/oracles before implementation; capture
+  the baseline and freeze the gate before a replacement. Use [QA](.claude/qa.md).
+  Never relax the gate to fit a candidate; isolate fault probes from shared files/state.
+- **Provenance:** retain reasons, input/candidate identities, commands, results and
+  limitations in existing tests/docs or a concise change record. Diagnose failures
+  from the operation, version, path and event order, not a health signal alone.
+- **Pace:** match checks and introduction/recovery to coupling. Persisted formats,
+  auth, embeddings, public REST/SSE and independent client releases are slow layers;
+  consult [upgrade/recovery](.claude/upgrade-recovery.md) before changing them.
+- **Deletion:** preserve knowledge and state first. Establish consumers, supported
+  version combinations and removal/recovery conditions before retiring a path.
+- **Compaction:** remove justified duplication and temporary machinery when its
+  exit conditions hold; keep one authoritative home for each rule and incident lesson.
+- **Finish:** verify the integrated change, update canonical and affected published
+  knowledge per [maintenance](.claude/maintenance.md), harvest into the owning guide,
+  report failures/skips honestly, and leave the next action. A unit-test pass is not
+  model-quality, replacement, restore, or production evidence.
 
-When editing files in these paths, read the corresponding `.claude/` file(s):
+## Production and collaboration constraints
 
-| Source path | Read |
-|---|---|
-| `backend/app/main.py` | `architecture.md` + relevant `domain/*.md` for the endpoint area |
-| `backend/app/config.py`, `.env*` | `environment.md` |
-| `backend/app/models.py` | `architecture.md` |
-| `backend/app/services/document_processor.py`, `docling_worker.py`, `anydoc_converter.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
-| `backend/app/services/observability.py`, `error_tracking.py` | `domain/observability.md` |
-| `frontend/src/instrumentation*.ts`, `frontend/sentry.*.config.ts`, `frontend/next.config.mjs` | `domain/observability.md` (error tracking) |
-| `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |
-| `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md` |
-| `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md`, `domain/observability.md` (trace grouping) |
-| `backend/app/services/skill_service.py` | `domain/skills.md` |
-| `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |
-| `backend/app/services/crawl_client.py` | `domain/web-crawl.md` |
-| `backend/app/services/x402_service.py` | `domain/x402.md`, `domain/admin-features.md` (API key management) |
-| `backend/app/services/app_service.py`, `app_task_service.py`, `app_task_dsl.py`, `app_storage_service.py`, `app_registry_service.py` | `domain/apps.md`, `domain/admin-features.md` (API key management) |
-| `frontend/src/app/apps/**`, `components/admin/Apps*.tsx`, `components/admin/AppConfigModal.tsx`, `components/admin/AppGrantsModal.tsx` | `domain/apps.md`, `frontend-patterns.md` |
-| `backend/app/services/llm_config.py` | `environment.md`, `domain/relationships.md`, `domain/observability.md` (OpenAI client factory) |
-| `backend/app/services/library_transfer_service.py` | `domain/admin-features.md` |
-| `backend/app/services/webhook_service.py` | `domain/document-pipeline.md` (ingestion status & webhooks) |
-| `backend/app/services/remote_mcp.py` | `architecture.md`, `domain/rag-pipeline.md` |
-| `backend/app/services/session_service.py` | `domain/rag-pipeline.md` (server-side sessions) |
-| `backend/app/services/auth_service.py`, `api_key_service.py`, `api_usage_service.py` | `domain/admin-features.md`, `domain/x402.md` (monetized keys) |
-| `backend/app/services/prompt_security.py` | `architecture.md` |
-| `frontend/src/app/extract/**` | `domain/knowledge-graph-ui.md` |
-| `frontend/src/app/documents/**`, `components/documents/**`, `components/upload/**` | `domain/document-pipeline.md`, `frontend-patterns.md`, `domain/web-crawl.md` (Web Import modal) |
-| `frontend/src/app/deduplicate/**` | `domain/entities.md` |
-| `frontend/src/app/explore/**`, `components/explore/**` | `frontend-patterns.md`, `domain/entities.md` |
-| `frontend/src/app/ask/**`, `components/ask/**` | `domain/rag-pipeline.md`, `frontend-patterns.md` |
-| `frontend/src/app/admin/**`, `components/admin/**` | `domain/admin-features.md`, `domain/skills.md`, `domain/git-integration.md` |
-| `frontend/src/app/collections/**`, `components/collections/**` | `frontend-patterns.md` |
-| `frontend/src/app/add/**` | `domain/document-pipeline.md` |
-| `frontend/src/components/layout/**` | `architecture.md`, `frontend-patterns.md` |
-| `frontend/src/lib/**` | `architecture.md` |
-| `design-system/**` | `design-system.md` |
-| `documentation/**`, `handbook/**` | `maintenance.md` |
-| `coolify/**`, `nginx/**`, `docker-compose*.yml` | `development.md` |
-| `selfhost/**`, `scripts/build-stack-json.mjs`, `scripts/check-version-sync.mjs`, installer changes (external repo `mocaOS/cortex-installer`) | `development.md` (self-host section), `environment.md` |
-| `.github/workflows/release.yml` | `development.md` (self-host section) |
-| `bench/**` | `bench.md` |
-| `backend/tests/**`, `qa/**` | `qa.md` |
+- Preserve supported consumers and persisted state unless a behavior/migration
+  change is explicitly in scope. Do not deploy, publish, commit, or mutate live
+  stores merely to run a test. Use existing release authority and disposable fixtures.
+- Never reset/stash another writer's work. Delegate with disjoint write paths,
+  accepted inputs and exact checks; review and verify integrated results.
+- Anonymize customer-facing references, comments, tests, fixtures and commits:
+  no tenant/customer names, instance hostnames, real keys or IDs. Preserve the
+  generic failure mechanism and record secret references rather than values.
+- `bench/` is internal, not publicly documented; read its scoped guide before use.
 
-## Priority
+## Navigation and instruction ownership
 
-**Always read**: `architecture.md` (gives you the lay of the land for any task)
-**Read on demand**: All other files, based on the routing table above
-
-## Anonymize customer-facing references
-
-Commits, `documentation/pages/changelog.mdx`, handbook pages, code comments, tests, and fixtures never name a tenant, customer, client, instance hostname, or deployment — no company names, no tenant domains, no API keys or IDs from a real instance. Describe the trigger generically ("a deployment running the default model", "a thinking-by-default model"); the technical cause is the record, not who hit it. Debugging against a live tenant is fine; what lands in git is scrubbed.
-
-## Meta: Maintaining These Docs
-
-When making significant changes, update the relevant `.claude/` subfile(s) per the routing table. If adding a new subfile, add it to the Navigation Map and File-Path Routing above. Keep subfiles 50–300 lines. See [`.claude/maintenance.md`](.claude/maintenance.md) for full sync rules across all documentation layers (README, documentation/, handbook/, design-system/).
+- [Scoped map](.claude/navigation.md): all backend/frontend/domain path-routing rules.
+- [QA](.claude/qa.md): exact test commands, environment setup and gate limitations.
+- [Development](.claude/development.md): build/release/self-host commands.
+- [Regeneration index](.claude/regeneration.md): three-repo contracts, evidence, backlog.
+- `AGENTS.md` is a minimal explicit-read adapter to this canonical file. Markdown
+  links do not automatically load their targets; subtree/delegated sessions must
+  read this root and the affected guide if not already delivered.
+- Keep this root under 80 lines; update `.claude/navigation.md` when a guide moves
+  or is added. Keep scoped guides focused (normally 50–300 lines); history belongs
+  behind the index. The portable `REGENERATIVE-SOFTWARE.md` remains product-neutral.

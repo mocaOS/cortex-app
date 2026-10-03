@@ -3,10 +3,16 @@
 #
 # Runbook (from the host, in the stack directory):
 #   1. ls the available backups:      docker compose exec backup ls /backups
-#   2. Stop the backend:              docker compose stop backend
+#   2. Stop ALL state writers:        docker compose stop backend
+#      If the optional chat service is enabled, also: docker compose stop chat
+#      Quiesce other writers before restoring their volumes; retain the current
+#      state separately if later writes need reconciliation. Image rollback and
+#      restoring an older snapshot are different operations.
 #   3. Restore the graph:             docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 #   4. Restore the file volumes (the sidecar mounts them read-only, so this
-#      runs in a throwaway container — adjust volume names to your stack):
+#      runs in a throwaway container — resolve your stack's actual volume names
+#      and use fresh/empty target file volumes, retaining the previous state.
+#      Never extract over a running or nonempty SQLite database/WAL set):
 #        docker run --rm \
 #          -v <stack>_uploads_data:/data/uploads \
 #          -v <stack>_custom_inputs_data:/data/custom_inputs \
@@ -16,10 +22,19 @@
 #          -v <stack>_backups:/backups:ro \
 #          alpine tar -xzf /backups/<timestamp>/files.tar.gz -C /
 #   5. Start the backend:             docker compose start backend
+#      Start chat again only if it was enabled and stopped in step 2.
 #      Startup recreates every constraint/index — including the vector indexes,
 #      which the logical export does not carry. /health reports
 #      schema_initialized=true once done.
-#   6. Verify document/entity counts on GET /api/stats.
+#   6. Verify restored records, stable identities/relationships and referenced
+#      file bytes against the retained snapshot. Include Chat/Apps SQLite rows,
+#      opaque memory, avatars and key decryptability with separately retained
+#      encryption keys. Counts on GET /api/stats and health are diagnostics,
+#      not completeness acceptance. See qa/restore/ for the disposable gate.
+#
+# A successful quiesced-fixture rehearsal does not establish atomic online
+# snapshots, boot/login journeys, or cross-version compatibility. The backup
+# job can tar live files; .complete/checksums prove its own checks, not consistency.
 #
 # RESTORE_WIPE=yes is required: step 3 DETACH DELETEs the entire graph — and
 # drops its constraints and indexes, which the replay recreates — before

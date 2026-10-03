@@ -453,13 +453,15 @@ standalone prod stack add the overlay:
 docker compose -f docker-compose.prod.yml -f docker-compose.backup.yml up -d
 ```
 
-Nightly (`BACKUP_INTERVAL_SECONDS`), online and verified: a server-side APOC
+Nightly (`BACKUP_INTERVAL_SECONDS`): a server-side APOC
 logical export of the graph (`graph.cypher.gz`) plus a tar of the file volumes —
 uploads, custom inputs, chat data, **installed skills, and installed apps** —
-with checksums and a `.complete` marker. Skills and apps were added in v1.0.0;
-before that they were silently excluded, and since they are user-authored with
-no other copy, verify that any older backup you are relying on actually
-contains them. Retention
+with checksums and a `.complete` marker. The sidecar archives only the volumes
+mounted into it: self-host/Dokploy mount all five, while the Coolify and standalone
+backup-overlay configurations currently mount uploads/custom inputs only. Verify
+actual mounts and archive contents for your deployment. Counts/checksums certify
+the job's checks, not an atomic snapshot of running Chat/Apps SQLite writers or
+complete recovery. Retention
 (`BACKUP_RETENTION_DAYS`, default 7) only rotates after a verified success and
 never removes the newest complete backup. The sidecar's healthcheck goes
 unhealthy when the newest verified backup is older than twice the interval, so
@@ -480,8 +482,11 @@ Restoring is a six-step procedure, not one command: `restore.sh` replays the
 # 1. Pick a <timestamp>
 docker compose exec backup ls /backups
 
-# 2. Stop the backend — its graph is about to be wiped and replayed underneath it
+# 2. Stop all writers of the state being restored.
 docker compose stop backend
+# If the optional Chat service is enabled, also run:
+docker compose stop chat
+# Quiesce any other writer; retain current state to reconcile later valid writes.
 
 # 3. Restore the graph. RESTORE_WIPE=yes is required: it DETACH DELETEs the
 #    whole graph and drops its constraints and indexes before replaying the
@@ -491,7 +496,9 @@ docker compose stop backend
 docker compose exec -e RESTORE_WIPE=yes backup /restore.sh <timestamp>
 
 # 4. Restore the file volumes. The sidecar mounts them read-only, so this runs
-#    in a throwaway container. Volume names are ${COMPOSE_PROJECT_NAME}_<name>
+#    in a throwaway container. Use fresh/empty target file volumes, retaining
+#    previous state; never overlay live/nonempty SQLite database/WAL files.
+#    Volume names are ${COMPOSE_PROJECT_NAME}_<name>
 #    (the self-host .env.example sets COMPOSE_PROJECT_NAME=cortex).
 docker run --rm \
   -v cortex_uploads_data:/data/uploads \
@@ -505,13 +512,26 @@ docker run --rm \
 # 5. Start the backend — startup recreates every constraint and index,
 #    including the vector indexes the logical export does not carry
 docker compose start backend
+# Start Chat again if it was enabled and stopped in step 2:
+docker compose start chat
 
-# 6. Verify document/entity counts on GET /api/stats
+# 6. Compare restored records, stable identities and referenced file bytes with
+#    the snapshot, including Chat/Apps SQLite, memory and avatars.
+#    Verify encrypted keys with separately retained encryption configuration.
+#    GET /api/stats and health alone do not establish completeness.
 ```
 
 The authoritative runbook is the header comment in `ops/backup/restore.sh`.
 Backups live in the `backups` volume **on the same host**; ship them off-host
 (restic/rclone) for disaster recovery.
+
+The file archive is taken from running volumes; a tar of a live SQLite database
+and WAL is not automatically a consistent backup. Quiesce all writers or use a
+verified consistent-snapshot procedure. Retain configuration/encryption keys
+separately. An older snapshot restore can discard valid later writes; it is not
+the same as changing an image tag. Current local rehearsal evidence covers
+quiesced synthetic graph/files/Chat/Apps state, not online atomicity, cross-version
+recovery, or application boot/login journeys.
 
 ### Manual physical dump (alternative, requires downtime)
 

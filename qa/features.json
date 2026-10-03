@@ -438,7 +438,7 @@
       "dependencies": "library_transfer_service.",
       "assumptions": "ZIP format round-trips.",
       "test_cases": "Happy: export->download->import. Error: concurrent -> 409, download early -> 400. Boundary: import exceeding MAX_* caps -> 403. Edge: replace wipes; clean into non-empty.",
-      "status": "Tested (import caps + NDJSON round-trip: test_library_transfer) + Documented", "defect_count": 0, "severity": "", "notes": "Serialization/round-trip primitives now unit-tested; full live export->import is manual.", "last_tested": "2026-06-22"
+      "status": "Tested (test_library_transfer primitives + test_library_transfer_roundtrip full export->import state continuity + import caps) + Documented", "defect_count": 0, "severity": "", "notes": "Full round trip now gated offline: record/identity/byte continuity, clean-mode refusal, incomplete-archive reporting. Relationship props outside the importer's explicit props dict are dropped on restore (OBS-LIB-001, see qa/QA_CONTRACT_RECORDS.md). Live export->import still manual.", "last_tested": "2026-10-01"
     },
     {
       "id": "F-ADMIN-005", "name": "Statistics dashboard & API usage analytics", "area": "Admin",
@@ -560,6 +560,28 @@
       "assumptions": "Cancellation honored only at checkpoints (cooperative).",
       "test_cases": "Happy: cancel mid-process -> FAILED. Edge: cancel with no task, slow task >10s timeout. Boundary: cancel right before chunk store.",
       "status": "Documented (manual)", "defect_count": 0, "severity": "", "notes": "", "last_tested": "2026-06-22"
+    },
+    {
+      "id": "F-SESS-001", "name": "Server-side sessions (ENABLE_SESSIONS)", "area": "Ask",
+      "user_story": "As an API consumer, I want server-side conversation sessions so my client only passes a session id and conversation state survives across calls and machines.",
+      "expected": "POST/GET/DELETE /api/sessions (per-key ownership, quota SESSION_MAX_PER_KEY, seedable history/memory); ask (both transports) accepts session_id: stored history injected, turn persisted post-answer; session_id + client-carried state -> 400 session_conflict; fast search + session -> 400; foreign/missing session -> 404; TTL sweep + excluded from library export; opaque memory blob trimmed with summarized_count-preserving history trim.",
+      "edge_cases": "Sessions disabled -> 403; quota exceeded -> 400 session_quota_exceeded; corrupted stored JSON tolerated (parse_session_state); byte ceilings drop oldest turns / whole blob; post-done memory_update frame captured on stream end; persistence failure never breaks a served answer.",
+      "validation": "test_sessions (CRUD, trim math, ask integration); test_scoped_principal_journeys (REAL-principal cross-key isolation 404s, owner blob round-trip, stream conflict, foreign-key ask on both transports).",
+      "dependencies": "session_service.py, main.py ask/session endpoints, neo4j_service ApiSession methods.",
+      "assumptions": "Per-key privacy enforced by the store's (id, key_id) match; sessions are instance-operational data.",
+      "test_cases": "Owner sees own session incl. memory; foreign key GET/list/DELETE/ask -> 404 (real auth chain); owner streaming turn persists under its own principal; stream session_conflict; quota; disabled flag; trim/summarized_count math; serialize byte ceilings.",
+      "status": "Tested (test_sessions + test_scoped_principal_journeys real-principal gates)", "defect_count": 0, "severity": "", "notes": "Cross-key isolation offline proven at HTTP layer with real auth chain; Cypher predicate itself needs live coverage.", "last_tested": "2026-10-01"
+    },
+    {
+      "id": "F-MCP-001", "name": "Remote MCP server (/mcp, ENABLE_REMOTE_MCP)", "area": "Integration",
+      "user_story": "As an MCP client (Claude Desktop/Cursor), I want to point at <instance>/mcp with my API key so every deployment is MCP-native without extra installs.",
+      "expected": "Streamable-HTTP JSON-RPC: initialize/tools list/ping; notifications 202; batching rejected 400; tools/call dispatches through the instance's OWN REST API via in-process ASGI client forwarding the CALLER's key (auth/scoping/quotas unchanged); SSE response mode when accepted; deep_research aggregates the internal /api/ask/stream SSE leg; API failures -> isError results; disabled -> 404.",
+      "edge_cases": "Invalid key -> 401; unknown tool -> isError result; internal 404 -> isError; stream error frame -> isError with the error text; raw JSON-RPC on the MCP SSE wire (no Cortex type stamp).",
+      "validation": "test_remote_mcp (transport + tool dispatch); test_scoped_principal_journeys (real-auth: caller key forwarding, collection-restricted search confinement, deep_research SSE aggregation + error-frame mapping).",
+      "dependencies": "remote_mcp.py, main.py /mcp endpoints, auth_service (real dependency chain).",
+      "assumptions": "Stateless server (no Mcp-Session-Id); conversation threads are client-side state.",
+      "test_cases": "Handshake/transport matrix; restricted key search confined to allowed collections via forwarded key; unrestricted key sees other collections; deep_research aggregates stream and maps errors; 405 GET/DELETE; disabled 404.",
+      "status": "Tested (test_remote_mcp + test_scoped_principal_journeys real-principal gates)", "defect_count": 0, "severity": "", "notes": "Previously absent from this inventory; MCP traffic shares the REST security surface by design (protocol adapter).", "last_tested": "2026-10-01"
     }
   ],
   "defects": [

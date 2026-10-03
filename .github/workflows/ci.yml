@@ -137,6 +137,15 @@ jobs:
       - name: Version sync
         run: node scripts/check-version-sync.mjs
 
+      - name: Documentation contracts (offline, no install required)
+        run: node documentation/scripts/validate-docs.mjs
+
+      - name: Documentation validator controls (hermetic)
+        run: node --test documentation/scripts/validate-docs.test.mjs
+
+      - name: Restore completeness oracle controls (hermetic)
+        run: python3 qa/restore/oracle.py selftest
+
   selfhost-contract:
     name: Selfhost compose contract
     runs-on: ubuntu-latest
