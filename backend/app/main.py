@@ -4122,7 +4122,9 @@ async def assemble_context(
             try:
                 communities = await asyncio.to_thread(
                     get_neo4j_service().search_communities_by_content,
-                    request.query, 5, allowed_collection_ids,
+                    request.query, 5,
+                    [effective_collection_id] if effective_collection_id
+                    else allowed_collection_ids,
                 )
             except Exception as e:  # noqa: BLE001 — communities are enrichment
                 logger.warning(f"Community search failed for /api/context: {e}")
@@ -4539,6 +4541,9 @@ async def ask_question(
             graph_context=graph_context,
             reranked=result.get("reranked", False),
             reasoning_steps=result.get("reasoning_steps"),
+            sub_questions=result.get("sub_questions"),
+            communities_used=result.get("communities_used"),
+            retrieval_stats=result.get("retrieval_stats"),
             # Echo the scope that was actually applied (request or key
             # restriction) — this used to always read null.
             collection_id=effective_collection_id,
@@ -4693,7 +4698,8 @@ async def ask_question_stream(
                         top_k=request.top_k,
                         max_hops=request.max_hops,
                         conversation_history=request.conversation_history,
-                        collection_id=_stream_effective_collection_id
+                        collection_id=_stream_effective_collection_id,
+                        allowed_collection_ids=_stream_allowed_collection_ids,
                     )
                     if _session_ctx:
                         events = _with_session_persistence(events, _session_ctx, request.question)
@@ -4813,17 +4819,31 @@ Question: {processed_question}"""
                 
                 # Redact any system-prompt leakage from the streamed answer
                 # (sliding-window filter; no-op when prompt_security is off).
+                _fast_finish_reason = None
+
                 async def _fast_deltas():
+                    nonlocal _fast_finish_reason
                     async for chunk in stream:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            yield chunk.choices[0].delta.content
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        # Capture terminal metadata before text-only filtering;
+                        # unrelated null/usage tails must not erase the reason.
+                        reason = getattr(choice, "finish_reason", None)
+                        if reason is not None:
+                            _fast_finish_reason = reason
+                        if choice.delta.content:
+                            yield choice.delta.content
 
                 async for safe in filter_stream(
                     _fast_deltas(), system_prompt, enabled=settings.prompt_security
                 ):
                     yield sse_frame({'content': safe})
 
-                yield sse_frame({'done': True, 'fast_mode': True})
+                done_event = {'done': True, 'fast_mode': True}
+                if _fast_finish_reason == "length":
+                    done_event['truncated'] = True
+                yield sse_frame(done_event)
                 
             except Exception as e:
                 logger.error("Error in fast streaming RAG: %s", e, exc_info=True)
@@ -5023,17 +5043,32 @@ Question: {processed_question}"""
 
             # Redact any system-prompt leakage from the streamed answer
             # (sliding-window filter; no-op when prompt_security is off).
+            _writer_finish_reason = None
+
             async def _writer_deltas():
+                nonlocal _writer_finish_reason
                 async for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    # Terminal metadata can arrive without content; capture it
+                    # before the text-only security filter, retaining it across
+                    # trailing null-reason or usage-only chunks.
+                    reason = getattr(choice, "finish_reason", None)
+                    if reason is not None:
+                        _writer_finish_reason = reason
+                    if choice.delta.content:
+                        yield choice.delta.content
 
             async for safe in filter_stream(
                 _writer_deltas(), system_prompt, enabled=settings.prompt_security
             ):
                 yield sse_frame({'content': safe})
 
-            yield sse_frame({'done': True})
+            done_event = {'done': True}
+            if _writer_finish_reason == "length":
+                done_event['truncated'] = True
+            yield sse_frame(done_event)
 
         except Exception as e:
             logger.error("Error in streaming RAG: %s", e, exc_info=True)
@@ -6408,7 +6443,8 @@ async def ask_with_thinking_stream(
                     top_k=request.top_k,
                     max_hops=request.max_hops,
                     conversation_history=request.conversation_history,
-                    collection_id=_stream_effective_collection_id
+                    collection_id=_stream_effective_collection_id,
+                    allowed_collection_ids=_stream_allowed_collection_ids,
                 )
                 if _session_ctx:
                     events = _with_session_persistence(events, _session_ctx, request.question)

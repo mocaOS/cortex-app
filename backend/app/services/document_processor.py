@@ -4972,13 +4972,16 @@ class QueryProcessor:
                 "resolved_entity_count": hybrid_result.get("resolved_entity_count", 0),
             }
         else:
-            # Legacy hybrid search — no collection filter available here, falls back to full scan
+            # Legacy vector + graph path: retain caller scope in both chunk
+            # queries. Entity/relationship metadata has separate traversal rules.
             result = await asyncio.to_thread(
                 self.neo4j.hybrid_search,
                 query_embedding=query_embedding,
                 entity_names=query_entities,
                 top_k=top_k,
                 max_hops=max_hops,
+                collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
             return {
                 "results": result["vector_results"],
@@ -5023,6 +5026,7 @@ class QueryProcessor:
                 max_hops=max_hops,
                 conversation_history=conversation_history,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
 
         graph_context = None
@@ -5307,6 +5311,7 @@ Response Style:
         conversation_history: Optional[List[ConversationMessage]] = None,
         collection_id: Optional[str] = None,
         thinking_callback: Optional[Callable[[ThinkingEvent], None]] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> dict:
         """
         Agentic multi-step RAG for complex questions with extended thinking.
@@ -5324,6 +5329,8 @@ Response Style:
             conversation_history: Previous conversation messages
             collection_id: Optional collection scope
             thinking_callback: Optional callback for streaming thinking events
+            allowed_collection_ids: Optional list of allowed collections
+                (for restricted API keys)
         """
         import re
 
@@ -5345,6 +5352,7 @@ Response Style:
                 conversation_history=conversation_history,
                 use_agentic=False,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
 
         # Resolve the LLM config from settings
@@ -5419,6 +5427,10 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}""",
         # =====================================================================
         # Step 2: Search relevant communities for context
         # =====================================================================
+        community_scope = (
+            [collection_id] if collection_id else allowed_collection_ids
+        )
+
         if self.settings.enable_community_detection:
             step_number += 1
             emit_thinking(
@@ -5427,7 +5439,7 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}""",
             )
 
             relevant_communities = self.neo4j.search_communities_by_content(
-                question, limit=3
+                question, limit=3, allowed_collection_ids=community_scope
             )
             if relevant_communities:
                 communities_used.update(c["id"] for c in relevant_communities)
@@ -5472,6 +5484,7 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}""",
                 max_hops=max_hops,
                 use_hybrid_rrf=True,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
 
             # Re-rank results
@@ -5539,7 +5552,9 @@ Maximum 3 sub-questions. Format: {"sub_questions": ["q1", "q2", ...]}""",
         # Add community summaries if available
         if communities_used and self.settings.enable_graph_summarization:
             for com_id in list(communities_used)[:5]:
-                community = self.neo4j.get_community(com_id)
+                community = self.neo4j.get_community(
+                    com_id, allowed_collection_ids=community_scope
+                )
                 if community and community.get("summary"):
                     merged_communities.append(
                         {
@@ -5663,6 +5678,7 @@ Response Style:
         )
 
         answer = response.choices[0].message.content
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
 
         # Final thinking event
         emit_thinking("done", "Answer generated successfully")
@@ -5686,6 +5702,7 @@ Response Style:
             "graph_context": graph_context.model_dump() if graph_context else None,
             "reranked": True,
             "reasoning_steps": reasoning_step_strings,
+            "finish_reason": finish_reason,
             "search_method": "agentic_rag",
             "sub_questions": sub_questions,
             "communities_used": list(communities_used),
@@ -5704,6 +5721,7 @@ Response Style:
         max_hops: int = 2,
         conversation_history: Optional[List[ConversationMessage]] = None,
         collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Streaming version of agentic RAG with extended thinking.
@@ -5798,11 +5816,15 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions.""",
         yield {"thinking": f"Identified {len(sub_questions)} research areas"}
         yield {"sub_questions": sub_questions}
 
+        community_scope = (
+            [collection_id] if collection_id else allowed_collection_ids
+        )
+
         # Step 2: Search communities
         if self.settings.enable_community_detection:
             yield {"thinking": "Searching knowledge graph communities..."}
             relevant_communities = self.neo4j.search_communities_by_content(
-                question, limit=3
+                question, limit=3, allowed_collection_ids=community_scope
             )
             if relevant_communities:
                 communities_used.update(c["id"] for c in relevant_communities)
@@ -5822,6 +5844,7 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions.""",
                 max_hops=max_hops,
                 use_hybrid_rrf=True,
                 collection_id=collection_id,
+                allowed_collection_ids=allowed_collection_ids,
             )
 
             if self.settings.enable_reranking and search_result["results"]:
@@ -5871,7 +5894,9 @@ Output JSON: {"sub_questions": ["q1", "q2", ...]}. Max 3 sub-questions.""",
 
         if communities_used and self.settings.enable_graph_summarization:
             for com_id in list(communities_used)[:5]:
-                community = self.neo4j.get_community(com_id)
+                community = self.neo4j.get_community(
+                    com_id, allowed_collection_ids=community_scope
+                )
                 if community and community.get("summary"):
                     merged_communities.append(
                         {
@@ -5999,11 +6024,22 @@ Comprehensive Answer:""",
             **build_chat_params(llm_config.model, temperature=0.3, max_tokens=2000),
         )
 
+        finish_reason = None
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield {"content": chunk.choices[0].delta.content}
+            if chunk.choices:
+                # Terminal content-free reason chunks carry the completion's
+                # finish_reason; usage-only/empty-choices chunks and a null
+                # reason must not erase an earlier one.
+                reason = getattr(chunk.choices[0], "finish_reason", None)
+                if reason is not None:
+                    finish_reason = reason
 
-        yield {"done": True, "communities_used": list(communities_used)}
+        done = {"done": True, "communities_used": list(communities_used)}
+        if finish_reason == "length":
+            done["truncated"] = True
+        yield done
 
     # =========================================================================
     # Agent-based Research Pipeline (Researcher/Writer Architecture)

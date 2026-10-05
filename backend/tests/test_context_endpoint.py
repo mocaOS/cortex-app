@@ -158,3 +158,68 @@ class TestContextMonetizedAccess:
         from app.services.auth_service import MONETIZED_KEY_ALLOWED_PATHS
 
         assert "/api/context" in MONETIZED_KEY_ALLOWED_PATHS
+
+
+class TestContextEffectiveScope:
+    """The communities leg must receive the effective scope, never fall back
+    to unrestricted (None). Single-collection restricted keys expose their one
+    collection as effective_collection_id with allowed_collection_ids=None —
+    forwarding the raw filter used to leak off-scope communities; empty-grant
+    restricted keys must forward [] so the query binds a real empty filter."""
+
+    @staticmethod
+    def _override_auth(ctx_env, collection_scope, allowed_collections):
+        from app.main import app
+        from app.models import APIKeyPermission
+        from app.services.auth_service import AuthResult, require_read_permission
+
+        auth = AuthResult(
+            is_authenticated=True,
+            is_admin=False,
+            permissions=[APIKeyPermission.READ],
+            key_id="restricted",
+            collection_scope=collection_scope,
+            allowed_collections=allowed_collections,
+        )
+        ctx_env.client.app.dependency_overrides[require_read_permission] = lambda: auth
+
+    @staticmethod
+    def _community_scope_args(ctx_env, payload):
+        r = ctx_env.client.post("/api/context", json=payload)
+        assert r.status_code == 200, r.text
+        args, _kwargs = ctx_env.neo4j.search_communities_by_content.call_args
+        return args
+
+    def test_all_scope_caller_stays_unrestricted(self, ctx_env):
+        args = self._community_scope_args(
+            ctx_env, {"query": "q", "include_communities": True}
+        )
+        assert args == ("q", 5, None)
+
+    def test_explicit_collection_caller_forwards_own_collection(self, ctx_env):
+        args = self._community_scope_args(
+            ctx_env,
+            {"query": "q", "include_communities": True, "collection_id": "col-1"},
+        )
+        assert args == ("q", 5, ["col-1"])
+
+    def test_single_collection_restricted_forwards_effective_collection(self, ctx_env):
+        self._override_auth(ctx_env, "restricted", ["col-alpha"])
+        args = self._community_scope_args(
+            ctx_env, {"query": "q", "include_communities": True}
+        )
+        assert args == ("q", 5, ["col-alpha"])
+
+    def test_multi_collection_restricted_forwards_allowlist(self, ctx_env):
+        self._override_auth(ctx_env, "restricted", ["col-a", "col-b"])
+        args = self._community_scope_args(
+            ctx_env, {"query": "q", "include_communities": True}
+        )
+        assert args == ("q", 5, ["col-a", "col-b"])
+
+    def test_empty_restricted_forwards_empty_filter(self, ctx_env):
+        self._override_auth(ctx_env, "restricted", [])
+        args = self._community_scope_args(
+            ctx_env, {"query": "q", "include_communities": True}
+        )
+        assert args == ("q", 5, [])

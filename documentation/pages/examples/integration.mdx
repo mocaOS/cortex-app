@@ -7,7 +7,7 @@ Examples for integrating Cortex with popular frameworks, AI tools, and automatio
 
 :::tip{title="Retrieving knowledge from Cortex?"}
 
-The recommended first call for "ask the Cortex" / "find something in the Cortex" is a **streaming Deep Research query**: `POST /api/ask/stream` (SSE) with `use_agentic: true` — see [Ask AI](/features/ask-ai). The non-streaming `POST /api/ask` shown in some examples below is for platforms that cannot consume SSE (Slack slash commands, n8n HTTP nodes); it serves quick chat answers only, is bounded by a ~28s server deadline, and rejects `use_agentic: true`.
+The recommended first call for "ask the Cortex" / "find something in the Cortex" is a **streaming Deep Research query**: `POST /api/ask/stream` (SSE) with `use_agentic: true` — see [Ask AI](/features/ask-ai). The non-streaming `POST /api/ask` shown in some examples below is recommended for quick chat from platforms that cannot consume SSE (Slack slash commands, n8n HTTP nodes); it is bounded by a ~28s server deadline and rejects `use_agentic: true` when `ENABLE_AGENT_RESEARCH=true` (default). With the flag false, legacy deep research reaches the non-streaming path under that deadline; prefer streaming regardless of the flag.
 
 :::
 

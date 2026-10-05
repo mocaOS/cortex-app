@@ -428,15 +428,19 @@ curl "$CORTEX_URL/api/graph/communities" \
 ### Get Community Details
 
 ```bash
-curl "$CORTEX_URL/api/graph/communities/comm_1" \
+# Community IDs are integers
+curl "$CORTEX_URL/api/graph/communities/1" \
   -H "X-API-Key: $CORTEX_API_KEY"
 ```
 
-### Summarize Community
+### Summarize Communities
 
 ```bash
-curl -X POST "$CORTEX_URL/api/graph/communities/comm_1/summarize" \
-  -H "X-API-Key: $CORTEX_API_KEY"
+# Batch endpoint; omit community_ids to summarize all communities
+curl -X POST "$CORTEX_URL/api/graph/communities/summarize" \
+  -H "X-API-Key: $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"community_ids": [1]}'
 ```
 
 ---

@@ -168,6 +168,13 @@ library-transfer test remains a different subset, not whole-stack recovery.
 
 ## Known recovery gaps
 
+Current continuation choice (2026-10-04): the user selected **both** the CI
+Python3.11/Node20 consumer pair and production images for the next disposable
+recovery replay. This closes the target-choice prerequisite only; select the
+snapshot mechanism and supported upgrade pairs and bind retained image identities
+before execution. No restore/DNS/release gate was repeated for this decision.
+Current handoff: `qa/NEXT_SESSION.md`, legacy-agentic continuation.
+
 Recorded, not fixed (do not silently work around them in docs):
 
 - **No off-host transport**: backups live in the local `backups` volume;
@@ -194,6 +201,17 @@ Recorded, not fixed (do not silently work around them in docs):
   Tier-2 physical restore are documented but not round-trip validated.
 
 ## Baselines
+
+2026-10-03 follow-up **prerequisite only**: private named-network DNS plus exact
+HTTP fixture and NXDOMAIN control pass on a new owned rootless engine. Read App
+`output/chat-project-move-positive-list-20261003/recovery-dns-preflight/RECEIPT.md`
+with its `CORRECTIONS.md` and machine supplement before reuse. Retained failure
+history includes a swallowed composite exit, revised resource identities and an
+image-pull attempt before final save/load reuse. The recipe uses transient scopes
+through the shared user manager but no shared-engine repair/reset/prune; DNS must
+be recreated after fixture cleanup. This is not an online snapshot, restore-pair
+or production deployment claim. Pick the supported runtime/upgrade pair and
+snapshot mechanism before extending recovery. Backups remain user-managed.
 
 Review baseline (this slice): cortex-app `bd6c1e0`, cortex-chat `40fe797`
 (v1.3.0), cortex-skills `1156ade`. Self-host release stack currently pins an

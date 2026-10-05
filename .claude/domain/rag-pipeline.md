@@ -2,7 +2,9 @@
 
 Two-stage researcher/writer pipeline for answering questions. See [`.claude/domain/skills.md`](skills.md) for skill-augmented capabilities.
 
-**Retrieval doctrine (all docs follow this):** the first-choice call for "ask/retrieve/find something in the Cortex" is a **streaming Deep Research query** — `POST /api/ask/stream` (SSE) with `depth: "deep"` (or the legacy `use_agentic: true`, permanently supported). Non-streaming `POST /api/ask` is quick-chat only: bounded by `ASK_DEADLINE_SECONDS` (28s → 504) and rejects deep research with `400 agentic_requires_streaming`. Keep every doc surface (README, documentation/, handbook/, cortex-skills) consistent with this.
+**Retrieval doctrine (all docs follow this):** the first-choice call for "ask/retrieve/find something in the Cortex" is a **streaming Deep Research query** — `POST /api/ask/stream` (SSE) with `depth: "deep"` (or the legacy `use_agentic: true`, permanently supported). Non-streaming `POST /api/ask` is recommended for quick chat: bounded by `ASK_DEADLINE_SECONDS` (28s → 504), it rejects deep research with `400 agentic_requires_streaming` when `ENABLE_AGENT_RESEARCH=true` (default). With that flag false it reaches the legacy `rag_query` → `_agentic_rag_query` within the same deadline. Streaming remains the recommended research entry in either configuration. Keep every doc surface (README, documentation/, handbook/, cortex-skills) consistent with this.
+
+**REST search ≠ researcher retrieval (don't conflate the two hybrid paths):** `POST /api/search` runs `QueryProcessor.hybrid_search` → `Neo4jService.simple_hybrid_search` (neo4j_service.py) — **vector + fulltext + metadata** legs (each `top_k×2`; metadata = filename 3.0 / custom topic hint 2.5 / custom-input raw content 2.0), fused by `_reciprocal_rank_fusion` with the **fixed signature weights** 0.5/0.3/0.2 (vector/keyword/metadata; `main.py:search` passes no weights) and k=60, then trimmed to `top_k`. No graph leg, no rerank, and `ENABLE_HYBRID_SEARCH` is **not consulted** on this endpoint; the config `vector_weight/keyword_weight/graph_weight` and `ENABLE_HYBRID_SEARCH` govern only the ask/context/researcher path below. Fulltext and metadata leg failures are contained (warning + empty leg); vector-leg failures surface as 500. The researcher's `knowledge_search` is the different path: `graph_search_async` → `hybrid_search_rrf` (vector + fulltext + **graph traversal**, config weights, parallel legs, rerank) — that's the fusion described in the `knowledge_search` bullet. Published prose conflating these produced the 2026-10-04 search-prose corrections; keep the distinction in any new doc surface.
 
 ## Researcher Agent
 
@@ -104,6 +106,93 @@ The opt-in alternative to the client-carried blob: `POST /api/sessions` mints a 
 ## Legacy Fallback
 
 Fixed pipeline available as fallback via `ENABLE_AGENT_RESEARCH=false`. Also `ENABLE_AGENT_CHAT=false` to disable chat agent.
+
+`graph_search_async` selects legacy `Neo4jService.hybrid_search` when hybrid RRF
+is disabled by its caller or `ENABLE_HYBRID_SEARCH`. Both scope arguments must
+reach its vector and traversal chunk builders, retaining None vs empty. Gate
+`test_search_helpers.py::test_legacy_graph_search_scope_binds_both_legs` covers
+both branch selections and both actual query assemblies; its recording driver
+does not establish returned-data or live Cypher isolation. Separate limitation:
+legacy and ranked traversal collect global entity/relationship metadata while
+applying collection clauses to chunk queries. Do not equate chunk scope with
+complete graph-context privacy.
+
+Legacy streaming `agentic_rag_stream` receives both effective scope arguments
+from `/api/ask/stream` and `/api/ask/stream/thinking`, forwards them to every
+sub-question's chunk-query builders, and derives community scope as `[collection_id]`
+when present, otherwise the allowlist (including `[]`). Both community search
+and summary fetch receive it. Positive real-auth HTTP/assembly regression:
+`tests/test_legacy_agentic_scope.py`; frozen baseline/review and local unreleased
+candidate are in `output/legacy-agentic-scope-20261004/`. Canned recording rows
+do not establish returned-data/live Cypher isolation. The community scope oracle
+derives from fresh-retrieval authority and the existing researcher/scoped-builder
+precedent; a shared full summary can mention inaccessible members once one member
+is accessible. `get_community`'s separate key-relationships query remains global
+(that result is not projected by this streaming caller). Graph metadata and
+`communities_used` derived from it remain broader gaps.
+
+Flag-off **non-streaming** REST `rag_query` → `_agentic_rag_query` now forwards
+the same effective scope to sub-question chunk/community-access builders and its
+no-LLM-key recursive `rag_query(use_agentic=False)` fallback. Gate
+`tests/test_legacy_agentic_nonstream_scope.py` reuses the unchanged streaming
+recording helpers; accepted baseline and local unreleased candidate live in
+`output/legacy-agentic-nonstream-scope-20261004/`. The allowlist argument is appended
+after `thinking_callback`, preserving old positional callback use. Main/model
+response projection and threaded SYNC LLM calls remain unchanged. Nonstream400
+with the flag true and direct callback invocation are distinct evidence boundaries.
+SSE uses `agentic_rag_stream` (no ASK_DEADLINE_SECONDS/no keyless recursion);
+nonstream uses `_agentic_rag_query` under that deadline. Keep these implementations
+separate in prose and gates. The local unreleased nonstream completion repair now
+returns the synthesis provider finish_reason; the existing handler projects `stop`
+to stop/false and `length` to length/true. Gate v3 preserves the old v2 scope/progress/
+callback controls and declares its null/false characterization as an intentional
+acceptance delta; original v2 bytes remain retained. Evidence and reviewer limits:
+`output/legacy-agentic-nonstream-flags-20261004/FINAL.md`. Null-provider compatibility
+is executed; absent-attribute compatibility is source-supported by getattr only.
+The local unreleased nonstream handler now projects helper-produced
+`sub_questions`, `communities_used` and `retrieval_stats` using the existing
+schema. Preserve nonempty values, literal empty lists/dicts and null/missing
+values without truthiness collapse. The real helper always supplies its four
+stats keys (`total_sources_considered`, `unique_sources`,
+`sub_questions_researched`, `communities_referenced`); empty/null stats probes
+are labelled typed seam compatibility, not producer behavior. Input-screen
+refusals precede retrieval and leave these fields null; model refusals after
+retrieval carry the helper values alongside refusal flags. Earlier all-null
+projection is retained characterization, not intent. Real-auth regression:
+`tests/test_legacy_agentic_optional_projection.py`; frozen baseline, independent
+review and candidate evidence: `output/legacy-agentic-optional-projection-20261005/`.
+This projects already-broader metadata and does not establish privacy. The
+local unreleased legacy streaming
+agentic_rag_stream repair independently captures synthesis finish_reason from
+content-free terminal chunks and emits done.truncated=true only for length. Null,
+missing attributes and empty-choice usage chunks remain healthy; exact content,
+done order/community IDs and scope controls are retained, with no added notice.
+Both SSE entries pass events through. Gate
+`tests/test_legacy_agentic_stream_flags.py` and v2 baseline/finalized candidate:
+`output/legacy-agentic-stream-flags-20261005/FINAL.md`.
+
+Standard-depth `/api/ask/stream` with `ENABLE_AGENT_CHAT=false` separately captures
+the writer's completion reason before `_writer_deltas` feeds the text-only
+`filter_stream`. Content-free `length` and content-bearing `length` both set the
+existing `done.truncated=true`; trailing null or empty-choice usage chunks do not
+erase the reason. Stop/null/missing metadata leaves the flag absent, and the real
+security filter, answer content, source/status ordering and effective scope stay
+intact. This local unreleased repair adds no visible notice or SSE finish_reason.
+Its cap is `settings.writer_max_tokens_speed` (`WRITER_MAX_TOKENS_SPEED`, default
+1200), distinct from the literal deep legacy2000 and nonstream1200 calls. Gate:
+`tests/test_standard_stream_flags.py`; baseline/candidate/review/limits:
+`output/standard-stream-flags-20261005/FINAL.md`. Scope evidence here is handler
+forwarding to a recorded retrieval request, not query-builder/store privacy.
+Fast-depth `/api/ask/stream` separately captures the last non-null reason inside
+`_fast_deltas` before `filter_stream`, adding existing done.truncated only on length
+while retaining fast_mode=true. Its literal600-token cap and Fast Mode model are
+independent of WRITER_MAX_TOKENS_SPEED/WRITER_MODEL. First turns forward scope into
+vector retrieval and fence at most3×600-character context slices; history turns use
+the bounded suffix without retrieval. Real-auth gate `test_fast_stream_flags.py`
+preserves those effects, real filters/refusal, content and null/usage tails; evidence
+`output/fast-stream-flags-20261005/FINAL.md`. Scope is handler forwarding only.
+`/api/ask/stream/thinking` has neither standard nor fast writer branch, so these
+gates do not cover that endpoint. All local propagation repairs remain unreleased.
 
 **Event-loop invariant (don't regress):** every LLM call on a request path must be non-blocking. `document_processor.py` `rag_query` (the non-agentic `/api/ask` path) and `_agentic_rag_query` use the **synchronous** `OpenAI` client, so their `client.chat.completions.create(...)` calls are wrapped in `await asyncio.to_thread(...)` — a bare sync call pins the asyncio event loop for the whole ~15-20s generation, starving every other in-flight request's async work (Neo4j acquisition, etc.) and cascading into timeouts/`500`s under concurrency (watchdog logs `Event loop was blocked for …s` + a thread dump). The agentic researcher/writer path already uses `AsyncOpenAI` + `await`; embeddings, Neo4j, and query entity-extraction are already threaded/async. Use `AsyncOpenAI` or `asyncio.to_thread` for any new generation call — never a bare sync `.create()` in an `async def`.
 

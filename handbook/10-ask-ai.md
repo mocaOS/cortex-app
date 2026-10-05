@@ -2,7 +2,7 @@
 
 The Library provides two AI-powered question-answering modes, both accessible through the web interface and API. Both use a researcher/writer agent architecture that iteratively gathers information before synthesizing an answer.
 
-> **Retrieving knowledge from the Cortex? Start with streaming Deep Research.** Whenever the task is "ask the Cortex", "retrieve data from the Cortex", or "find something in the Cortex", the first call should be `POST /api/ask/stream` (SSE) with `use_agentic: true`. It runs the full agentic pipeline and heartbeats keep long runs alive. The non-streaming `POST /api/ask` serves quick single-shot chat answers only — it is bounded by a ~28s server deadline (`ASK_DEADLINE_SECONDS`, 504 on expiry) and rejects `use_agentic: true` with `400 agentic_requires_streaming`.
+> **Retrieving knowledge from the Cortex? Start with streaming Deep Research.** Whenever the task is "ask the Cortex", "retrieve data from the Cortex", or "find something in the Cortex", the first call should be `POST /api/ask/stream` (SSE) with `use_agentic: true`. Heartbeats keep long runs alive. The non-streaming `POST /api/ask` is recommended for quick single-shot chat answers — it is bounded by a ~28s server deadline (`ASK_DEADLINE_SECONDS`, 504 on expiry) and rejects `use_agentic: true` with `400 agentic_requires_streaming` when `ENABLE_AGENT_RESEARCH=true` (default). With the flag false it reaches the legacy deep-research path within the same deadline; streaming remains the research recommendation.
 
 ## Two Modes
 
@@ -189,7 +189,7 @@ All streaming endpoints use Server-Sent Events. Each event is a JSON object:
 | `retrieval_stats` | `{"retrieval_stats": {total, unique, searches, communities}}` | Final search stats |
 | `communities_used` | `{"communities_used": [1, 3]}` | Community IDs used |
 | `memory_update` | `{"memory_update": {...}}` | Updated conversation-memory blob (only when `conversation_memory` was sent). Arrives **after** `done` by default — keep reading until the stream closes |
-| `done` | `{"done": true}` | Answer complete. Carries `pending_memory: true` when a `memory_update` still follows; `refused: true` when the stream was a prompt-injection refusal; `truncated: true` when the writer hit its output-token cap |
+| `done` | `{"done": true}` | Answer complete. Carries `pending_memory: true` when a `memory_update` still follows; `refused: true` when the stream was a prompt-injection refusal; `truncated: true` when the answer hit its output-token cap |
 | `error` | `{"error": "message"}` | Error occurred |
 
 ### Non-Streaming
@@ -206,7 +206,9 @@ curl -X POST http://localhost:8000/api/ask \
   }'
 ```
 
-The JSON response carries `answer`, `sources`, `graph_context`, the applied `collection_id`, and three answer-quality flags: `finish_reason` (the provider's, e.g. `stop`/`length`), `truncated` (the answer hit the 1,200-token chat cap and is cut short) and `refused` (the answer is the prompt-injection safe refusal, not knowledge — rephrase as a plain question). A failure before an answer is produced returns `500 {"detail": {"error": "ask_failed", "use_endpoint": "/api/ask/stream"}}`; a slow backend returns `504 {"detail": {"error": "deadline_exceeded"}}`. Either way, retry on the streaming endpoint.
+The JSON response carries `answer`, `sources`, `graph_context`, the applied `collection_id`, and three answer-quality flags: `finish_reason` (the answer completion's provider reason, e.g. `stop`/`length`), `truncated` (the answer hit the writer's output-token cap — 1,200 tokens for standard chat, 2,000 for the flag-off legacy deep-research synthesis call — and is cut short) and `refused` (the answer is the prompt-injection safe refusal, not knowledge — rephrase as a plain question). A failure before an answer is produced returns `500 {"detail": {"error": "ask_failed", "use_endpoint": "/api/ask/stream"}}`; a slow backend returns `504 {"detail": {"error": "deadline_exceeded"}}`. Either way, retry on the streaming endpoint.
+
+On the flag-off legacy deep-research run of this endpoint (`use_agentic: true` with `ENABLE_AGENT_RESEARCH=false`), the response also projects the research metadata that pipeline already produced: `sub_questions` (the decomposed sub-questions), `communities_used` (integer community IDs) and `retrieval_stats` (four fixed counts: total sources considered, unique sources, sub-questions researched, communities referenced). Nonempty and empty lists are preserved as-is. The standard chat path and the no-key fallback leave all three null, and so do the input-screen refusals (which are answered before any retrieval); a model refusal — where the writer itself emitted the canned deflection — still runs the real research pipeline, so the populated values are returned alongside `refused: true`. Earlier inspected handler snapshots omitted these values; check the version/capability rather than assuming. The streaming Deep Research events keep their own separate retrieval statistics.
 
 ### Conversation History
 
@@ -228,6 +230,14 @@ curl -X POST http://localhost:8000/api/ask/stream \
 The Library retains up to `MAX_CONVERSATION_HISTORY` messages (default: 6).
 
 ### Collection-Scoped Questions
+
+An omitted collection uses the API key's allowed collections; a permitted explicit
+collection narrows that scope. The local unreleased legacy scope repairs forward
+scalar/multi/empty scope to sub-question chunk queries and community selection/summary
+access. Shared full summaries and global graph metadata mean this is not complete
+graph-context privacy. With the research flag off, streaming and non-streaming use
+separate legacy implementations; non-streaming's no-key recursive fallback also
+preserves scope and remains deadline-bounded. Non-streaming responses also project the answer completion's provider `finish_reason` and the derived `truncated` flag (`length` ⇒ `truncated: true`); both fields already exist in the response schema, so no client change is required, and the decomposition call's reason is never used. This propagation is a local unreleased repair. The flag-off streaming endpoints get the same signal: the legacy synthesis stream's provider `finish_reason` projects onto the public `done` frame as the `truncated` flag (`length` ⇒ `truncated: true`; `stop`, a null reason, and a missing reason attribute never set it, and the decomposition call's reason is never used) — additive only, with no new SSE field and no visible cut-short note on this legacy path. This done-flag projection is part of the same local unreleased round. The standard chat streaming writer on `POST /api/ask/stream` (`ENABLE_AGENT_CHAT=false`, the default) projects its writer stream's provider `finish_reason` the same way — `length` ⇒ `truncated: true` on the `done` frame; `stop`, a null reason, and a missing reason attribute never set it. Its cap is `WRITER_MAX_TOKENS_SPEED` (default 1,200), not the deep synthesis call's fixed 2,000 tokens. This standard-writer done-flag is also a local unreleased repair. The fast streaming writer on `POST /api/ask/stream` (`depth: "fast"` / `use_fast_search: true` — always its own branch, independent of the agent-chat flag; `/api/ask/stream/thinking` has no fast branch) projects its writer stream's provider `finish_reason` the same way — `length` ⇒ `truncated: true` on the `done` frame; `stop`, a null reason, and a missing reason attribute never set it. Its cap is a literal 600 tokens — not `WRITER_MAX_TOKENS_SPEED` — with the Fast Mode model (`OPENAI_MODEL_FAST_MODE`, default `OPENAI_MODEL`). This fast-writer done-flag is also a local unreleased repair.
 
 ```bash
 curl -X POST http://localhost:8000/api/ask/stream \
@@ -320,4 +330,4 @@ PROMPT_SECURITY=true             # Injection protection in prompts
 
 ### If an answer looks cut off
 
-Answers are capped by the writer limits above. When a response reaches its cap, Cortex ends it with a visible note saying it was cut short — so a truncated answer is never presented as a complete one — and logs a warning naming the limit to raise. If you see that note regularly on Deep Research, either ask narrower questions or raise `WRITER_MAX_TOKENS_QUALITY`. API clients get the same signal as data: the `done` frame carries `truncated: true`, and the non-streaming response `truncated: true` with `finish_reason: "length"`. An answer that stops mid-sentence *without* that note or flag is a different problem (usually a network or proxy timeout), not the token limit.
+Answers are capped by the writer limits above. When a response reaches its cap, Cortex ends it with a visible note saying it was cut short — so a truncated answer is never presented as a complete one — and logs a warning naming the limit to raise. If you see that note regularly on Deep Research, either ask narrower questions or raise `WRITER_MAX_TOKENS_QUALITY`. API clients get the same signal as data: the `done` frame carries `truncated: true`, and the non-streaming response `truncated: true` with `finish_reason: "length"`. (The flag-off legacy streaming paths set the same `done`-frame flag from their writer stream's provider reason without appending the visible note — the deep synthesis call has a fixed 2,000-token cap, and the standard chat writer uses `WRITER_MAX_TOKENS_SPEED`, default 1,200. The fast streaming writer sets the same flag the same way, with a literal 600-token cap and the Fast Mode model; that branch is its own, independent of the agent-chat flag.) An answer that stops mid-sentence *without* that note or flag is a different problem (usually a network or proxy timeout), not the token limit.

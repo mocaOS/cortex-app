@@ -269,7 +269,8 @@ python bench/test_heuristics.py
     (chat mode, `use_agentic=false`); logs answers, sources, latency.
 11. **Q+A quality mode** → same bank via `/api/ask/stream` (`use_agentic=true`,
     deep-research path, aggregated from the SSE frames — the non-streaming
-    `/api/ask` rejects agentic requests); logs answers, sources, latency.
+    `/api/ask` rejects agentic requests when `ENABLE_AGENT_RESEARCH=true`;
+    flag-off legacy runs under its non-streaming deadline); logs answers, sources, latency.
 12. **Parses `docker logs`** over the combo's wall-clock window for signal
     counts + phase timestamps.
 13. **Applies heuristic analysis** — verdict, failure_patterns,

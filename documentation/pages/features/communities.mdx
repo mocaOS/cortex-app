@@ -124,7 +124,7 @@ curl "http://localhost:8000/api/graph/communities" \
 {
   "communities": [
     {
-      "id": "comm_1",
+      "id": 1,
       "name": "Machine Learning Fundamentals",
       "description": "Core ML concepts including neural networks, optimization, and training methods",
       "document_count": 12,
@@ -132,7 +132,7 @@ curl "http://localhost:8000/api/graph/communities" \
       "top_entities": ["Neural Network", "Deep Learning", "Gradient Descent"]
     },
     {
-      "id": "comm_2",
+      "id": 2,
       "name": "Natural Language Processing",
       "description": "NLP techniques, transformers, and language models",
       "document_count": 8,
@@ -146,14 +146,18 @@ curl "http://localhost:8000/api/graph/communities" \
 
 ### Get Community Details
 
+Community IDs are integers. The detail endpoint returns the community's summary,
+member entities, and key relationships (filtered to the API key's allowed
+collections):
+
 ```bash
-curl "http://localhost:8000/api/graph/communities/comm_1" \
+curl "http://localhost:8000/api/graph/communities/1" \
   -H "X-API-Key: your-api-key"
 ```
 
 ```json
 {
-  "id": "comm_1",
+  "id": 1,
   "name": "Machine Learning Fundamentals",
   "description": "Core ML concepts including neural networks, optimization, and training methods",
   "summary": "This community covers the foundational aspects of machine learning, with a focus on neural network architectures, training algorithms, and optimization techniques...",
@@ -170,56 +174,111 @@ curl "http://localhost:8000/api/graph/communities/comm_1" \
 }
 ```
 
-### Get Community Documents
+### Community Members
+
+The detail endpoint above returns the community's member entities (and their key
+relationships). There is no per-community documents listing — browse documents
+per collection instead, e.g. `GET /api/documents?collection_id=<collection_id>`.
+
+### Summarize Communities
+
+Generate or regenerate AI summaries for communities (batch endpoint; requires
+manage permission):
 
 ```bash
-curl "http://localhost:8000/api/graph/communities/comm_1/documents" \
-  -H "X-API-Key: your-api-key"
+curl -X POST "http://localhost:8000/api/graph/communities/summarize" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "community_ids": [1],
+    "force_regenerate": true
+  }'
 ```
 
-### Summarize a Community
-
-Generate an AI summary of a community's content:
-
-```bash
-curl -X POST "http://localhost:8000/api/graph/communities/comm_1/summarize" \
-  -H "X-API-Key: your-api-key"
-```
+Omit `community_ids` to summarize all communities; omit `force_regenerate` (or
+set it `false`) to skip communities that already have a summary.
 
 ```json
 {
-  "community_id": "comm_1",
-  "summary": "This community contains 12 documents focused on machine learning fundamentals. Key topics include:\n\n1. Neural network architectures (CNNs, RNNs, Transformers)\n2. Training algorithms and optimization (SGD, Adam, learning rate scheduling)\n3. Regularization techniques (dropout, batch normalization)\n\nThe documents span from introductory material to advanced research papers.",
-  "key_topics": ["Neural Networks", "Optimization", "Regularization"],
-  "generated_at": "2024-01-15T10:30:00Z"
+  "results": [
+    {
+      "id": 1,
+      "status": "summarized",
+      "name": "Machine Learning Fundamentals",
+      "summary": "This community covers the foundational aspects of machine learning, with a focus on neural network architectures, training algorithms, and optimization techniques."
+    }
+  ],
+  "total_processed": 1
 }
 ```
 
 ## Community-Based Queries
 
-### Search Within a Community
+Communities are not a scoping parameter on the search or ask endpoints:
+
+- `POST /api/search` accepts no community filter — `SearchRequest` scopes by
+  `collection_id` only. A community field in the body is ignored: it adds no
+  community restriction, and the search remains scoped exactly as it would be
+  without it — the supplied `collection_id`, or the API key's collection scope
+  when no `collection_id` is supplied.
+- `collection_id` on `/api/search` and `/api/ask` selects a **Collection**
+  (`Collection.id`) only. A community identifier such as `comm_1` matches no
+  collection, and community IDs are integers — passing one as a string
+  collection scope finds nothing, while a numeric value fails the string field
+  with 422.
+
+Use the supported paths below.
+
+### Search Community Summaries
+
+Search communities by their summary content (results are filtered to the API
+key's allowed collections):
 
 ```bash
-curl -X POST "http://localhost:8000/api/search" \
+curl "http://localhost:8000/api/graph/communities/search?query=backpropagation" \
+  -H "X-API-Key: your-api-key"
+```
+
+```json
+{
+  "query": "backpropagation",
+  "results": [
+    {
+      "id": 1,
+      "name": "Machine Learning Fundamentals",
+      "summary": "Core ML concepts including neural networks, optimization, and training methods",
+      "entity_count": 156,
+      "score": 3.42
+    }
+  ]
+}
+```
+
+### Ask with Community Context
+
+There is no community-scoped ask. On agentic (deep research) queries, the
+researcher agent can retrieve relevant community summaries into the answer
+context with its `community_search` tool, scoped to the request's
+`collection_id` (or the API key's allowed collections) — tool use is
+model-chosen per run, not a guaranteed inclusion. To focus an ask, scope it to
+a real collection ID:
+
+```bash
+curl -N -X POST "http://localhost:8000/api/ask/stream" \
   -H "X-API-Key: your-api-key" \
+  -H "Accept: text/event-stream" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "backpropagation algorithm",
-    "community_id": "comm_1"
+    "question": "What are the key topics covered in this collection?",
+    "depth": "deep",
+    "collection_id": "default"
   }'
 ```
 
-### Ask About a Community
+(legacy equivalent: `"use_agentic": true` in place of `depth`).
 
-```bash
-curl -X POST "http://localhost:8000/api/ask" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the key topics covered in this community?",
-    "collection_id": "comm_1"
-  }'
-```
+To read one community's summary and members directly, use
+`GET /api/graph/communities/{community_id}` with the community's integer ID.
 
 ## Regenerating Communities
 

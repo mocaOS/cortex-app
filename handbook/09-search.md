@@ -4,7 +4,7 @@ This chapter explains the Library's hybrid search system — how it works, how t
 
 ## How Hybrid Search Works
 
-The Library combines three retrieval methods and fuses their results for comprehensive search:
+The Library's search endpoint combines three retrieval methods and fuses their results:
 
 ```
 User Query
@@ -15,18 +15,17 @@ User Query
     ├──▶ Keyword Search (Neo4j full-text index, Lucene)
     │         Weight: 0.3
     │
-    └──▶ Graph Traversal (entity relationships)
+    └──▶ Metadata Search (filename, topic hints, custom-input content)
               Weight: 0.2
               │
               ▼
       Reciprocal Rank Fusion (RRF)
               │
               ▼
-      Cross-Encoder Re-Ranking (optional)
-              │
-              ▼
       Final Ranked Results
 ```
+
+The search endpoint stops at the fusion — no cross-encoder step or entity-relationship traversal leg. Ask AI/context retrieval uses a different vector/keyword/graph fusion, with graph in place of metadata, followed by optional re-ranking; see below and [chapter 10](10-ask-ai.md).
 
 ### Vector Search (Semantic)
 
@@ -44,17 +43,15 @@ Full-text search using Neo4j's Lucene-based index on chunk content. The query is
 
 **Limitations:** Misses paraphrased or conceptually related content.
 
-### Graph Traversal
+### Metadata Search
 
-Entities mentioned in your query are identified, resolved to the entities stored in the graph, then their relationships in the knowledge graph are followed to find connected chunks.
+The third leg matches document metadata by case-insensitive containment and returns the matching documents' chunks: the document's filename (relevance 3.0), a custom input's topic hint (2.5), or the raw content of custom inputs (2.0). Results are ordered by that relevance score, then by chunk position.
 
-Resolution is what makes this leg fire reliably: the graph stores one canonical name per entity, while the names in your query come from an LLM. A mention is matched first by exact name, then case-insensitively against the name **or any alias** the entity has collected through deduplication, merges and renames, and finally by a fulltext match on the name that only accepts a stored name containing every word of the mention ("Polygon" → "Polygon Network", but not "Ethereum Foundation" → "Ethereum").
+**Strengths:** Finds documents by what they are called or how they were labeled, even when the chunk text doesn't contain the query terms — and surfaces custom inputs whose raw content mentions the query.
 
-Neighbors are found by following the typed relationships between entities (one hop, plus a capped second ring), not by co-occurrence in text — so asking about a character surfaces the people and factions the graph actually links to them, not every word that happened to appear in the same paragraph. The passages this leg contributes are ranked by how many of your question's entities they mention, with the entities you named outweighing their neighbors, so a passage that mentions two of them beats one that mentions a single neighbor.
+**Limitations:** Pure substring matching on a handful of metadata fields; it doesn't understand paraphrases and doesn't reach the knowledge graph.
 
-**Strengths:** Discovers content that is contextually related through entity connections, even if it doesn't directly contain your search terms. Asking about "Vitalik Buterin" can surface content about "Ethereum" through the CREATED_BY relationship.
-
-**Limitations:** Depends on entities being correctly extracted and relationships existing.
+> Graph traversal — identifying entities in your query, resolving them to stored entities (including aliases), and following relationships to connected, mention-ranked chunks — is part of **Ask AI's** retrieval pipeline, not the search endpoint. It's described in [chapter 10](10-ask-ai.md).
 
 ### Reciprocal Rank Fusion (RRF)
 
@@ -64,11 +61,11 @@ RRF combines results from all three methods into a unified ranking:
 RRF_score(chunk) = Σ (weight_i / (60 + rank_i))
 ```
 
-This formula ensures that chunks appearing in multiple result sets rank higher, while the weights control each method's influence. The three legs run concurrently for each query.
+Ranks are 1-based (the first result has rank 1). A chunk receives a contribution from each leg in which it appears, weighted by that leg and its rank. The three legs run one after another for each query.
 
-### Cross-Encoder Re-Ranking
+### Cross-Encoder Re-Ranking (Ask AI retrieval)
 
-After RRF, the top results are optionally re-scored by a cross-encoder model that evaluates each (query, chunk) pair directly. This provides more precise relevance scores than the initial retrieval methods. The reranker is always given more candidates than it keeps (about twice `RERANK_TOP_K`, pooled across a search's queries and deduplicated first), so it selects rather than merely reorders.
+The search endpoint returns its RRF-fused results as-is — no re-ranking is applied to `/api/search`. The Ask AI endpoints optionally re-score their retrieval candidates with a cross-encoder model that evaluates each (query, chunk) pair directly. This provides more precise relevance scores than the initial retrieval methods. The reranker is always given more candidates than it keeps (about twice `RERANK_TOP_K`, pooled across a search's queries and deduplicated first), so it selects rather than merely reorders.
 
 Default model: `cross-encoder/ms-marco-MiniLM-L-6-v2`
 
@@ -95,7 +92,7 @@ curl -X POST http://localhost:8000/api/search \
       "document_id": "doc_abc123",
       "chunk_id": "doc_abc123_chunk_3",
       "content": "Machine learning is a subset of artificial intelligence...",
-      "score": 0.89,
+      "score": 0.0164,
       "document_title": "AI Fundamentals.pdf",
       "metadata": {
         "filename": "AI Fundamentals.pdf",
@@ -103,8 +100,8 @@ curl -X POST http://localhost:8000/api/search \
       }
     }
   ],
-  "total_results": 5,
-  "total": 5
+  "total_results": 1,
+  "total": 1
 }
 ```
 
@@ -121,17 +118,17 @@ curl -X POST http://localhost:8000/api/search \
   }'
 ```
 
-Scoping is applied to every leg. Because Neo4j's vector index cannot filter while it searches, a scoped vector search asks the index for many more nearest neighbours than requested (10×, capped at 200) and filters afterwards — otherwise a small collection inside a large library would get only the handful of its chunks that happened to rank in the global top results.
+Scoping is applied to every leg. Because Neo4j's vector index cannot filter while it searches, a scoped vector search over-fetches candidates and filters afterwards. At the default factor10, ANN depth is `max(depth, min(10 × depth, 200))`, where the search endpoint's leg depth is `top_k × 2`; a small collection can otherwise receive only the few of its chunks that happened to rank in the global top results.
 
 ### Search Within Ask AI
 
-The Ask AI endpoints use the same hybrid search internally. When you ask a question, the researcher agent issues `knowledge_search` tool calls that execute hybrid RRF search with re-ranking behind the scenes.
+The Ask AI endpoints run their own retrieval internally: the researcher agent issues `knowledge_search` tool calls that execute a hybrid RRF search — vector + keyword + **graph traversal** — and re-rank the fused candidates. That graph leg (entity resolution, relationship traversal, mention-ranked passages) is why asking about "the CEO" can find the right person even when "CEO" never appears in a chunk; the search endpoint's third leg is metadata matching instead, with no graph and no re-ranking.
 
 ## Tuning Search
 
 ### Adjusting Weights
 
-The three search method weights should sum to approximately 1.0:
+These environment variables tune the **Ask AI/context** retrieval fusion (vector + keyword + graph); they should sum to approximately 1.0. The search endpoint's own fusion is fixed at 0.5 (vector) / 0.3 (keyword) / 0.2 (metadata) and is not affected by them:
 
 ```env
 VECTOR_WEIGHT=0.5     # Semantic similarity
@@ -152,11 +149,15 @@ GRAPH_WEIGHT=0.2      # Entity relationship traversal
 ### Enabling/Disabling Features
 
 ```env
-ENABLE_HYBRID_SEARCH=true   # Set false for vector-only search
-ENABLE_RERANKING=true        # Set false to skip cross-encoder step
+ENABLE_HYBRID_SEARCH=true   # Gates the Ask AI/context hybrid path (vector + keyword + graph).
+                            # false falls back to legacy vector + graph traversal there — no keyword
+                            # leg, but collection scope reaches both chunk queries. Graph entity/
+                            # relationship metadata remains global in both retrieval paths.
+                            # /api/search is unaffected: it always runs vector + keyword + metadata.
+ENABLE_RERANKING=true        # Set false to skip the cross-encoder step (Ask AI retrieval)
 ```
 
-### Graph Traversal Depth
+### Graph Traversal Depth (Ask AI retrieval)
 
 ```env
 MAX_GRAPH_HOPS=2   # How many relationship hops to follow (1-3)
@@ -191,12 +192,12 @@ Results are sorted by connection count (most connected entities first), which ty
 
 2. **Adjust `top_k` thoughtfully** — Request more results (10-20) for comprehensive research, fewer (3-5) for quick lookups.
 
-3. **Enable re-ranking** — The cross-encoder step significantly improves precision with minimal latency cost. Keep it enabled unless you need sub-100ms responses.
+3. **Re-ranking is an Ask AI feature** — The cross-encoder step significantly improves Ask AI retrieval precision. `/api/search` always returns RRF-fused results without it.
 
-4. **Build the knowledge graph** — Search quality improves dramatically once entity extraction, relationship analysis, and community detection are complete. The graph weight in RRF provides context that pure text search cannot.
+4. **Build the knowledge graph** — Ask AI retrieval's graph-traversal leg can add entity/relationship context after extraction. The search endpoint uses the same Neo4j store but has no entity-relationship traversal leg.
 
-5. **Use the right search type for your query**:
-   - Conceptual questions → hybrid search (default)
-   - Looking for a specific term or name → keyword search
-   - Exploring entity connections → graph traversal
+5. **Use the right tool for your query**:
+   - Conceptual questions → Ask AI (hybrid retrieval with a graph leg)
+   - Looking for a specific term or name → the search endpoint's keyword leg, or entity search below
+   - Exploring entity connections → Ask AI, or the graph/visualization endpoints
    - Maximum speed → fast search mode (`use_fast_search=true` in Ask AI)

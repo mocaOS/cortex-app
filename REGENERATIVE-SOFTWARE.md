@@ -2,12 +2,12 @@
 
 ## A repository translation and operating playbook for coding agents
 
-**Version:** 2.14.0
+**Version:** 2.21.0
 
 **Purpose:** Make useful software evolution cheaper and more reliable by preserving product knowledge, establishing changeable boundaries, and verifying that implementations can evolve or be replaced without losing essential behavior or state.  
 **Inspiration:** Chad Fowler's regenerative software concept.
 
-**This revision:** separates request, view, commit and acknowledgment ownership; derives selected context from positive authoritative evidence without losing local snapshots; verifies post-commit response loss and branch-specific notification effects; challenges evaluator modes, UI overlays and reviewer overclaims; and preserves executed evidence during documentation-only harvests and selective reuse. It extends release-path discipline to build-variant parity — evidence for one build configuration does not cover another a deployment path actually builds, and compile-time public flags cannot be substituted by runtime overrides — supplies runtime-only gate prerequisites in the environment where each gate runs, distinguishes observation-path filtering from product absence without injecting state into the observed surface, validates synthetic fixture identifiers against the receiving component, demands owned telemetry sinks with deliberate positive controls, labels inherited fixture metadata as non-evidence, composes commits as atomic units that keep ignored artifacts local, and treats a push that triggers a source rebuild as a production introduction with backups, transport-aware smoke and redeploy rollback.
+**This revision:** makes optional-value projection preserve empty versus null/missing values, separates actual producer behavior from schema-tolerance probes, binds failure metadata to the phase that produced it, and distinguishes consumed stage inputs from later knowledge addenda. It also requires checking actual writer scope and preflighting ancillary execution resources before claiming offline verification. Earlier selected-case, candidate-retention, stage-receipt, scope, completion and retained-evidence rejudgment rules remain in force.
 
 This file is a portable execution brief. It contains the principles, discovery method, design requirements, implementation workflow, evaluation strategy, and completion criteria needed to apply the approach. It requires no particular language, framework, agent harness, deployment platform, or repository layout.
 
@@ -428,9 +428,17 @@ Require specialists to return file/symbol references, commands and results when 
 
 Run product archaeology, dependency mapping, test inventory, and documentation comparison in parallel when they do not share writes. Assign one writer to shared contracts, package manifests, migration ordering, generated indexes, and central documentation. Serialize changes whose validity depends on another change.
 
+Include generated and installed artifacts in write ownership. Separate source paths can still share a compiler output directory or a workspace-linked package. Finish and identify the producer's build before a dependent consumer runs; freeze the consumed artifact closure and check it afterward. Concurrent rebuilds cannot be treated as independent verification of one combined candidate.
+
 Route repairs to the artifact's existing owner and preserve accumulated diagnoses when continuing delegated work. Where separately owned runners exchange observations, freeze their receipt schema, required check identities and version in one coordination contract; validate the actual delivered shapes before an expensive integrated run.
 
 File ownership does not confer ownership of shared workspace state. While other writers or evaluators are active, do not shelve, reset, restore, replace, or temporarily mutate their source tree, index, generated configuration, or runtime resources—even for a baseline or negative control. Use an isolated fixture/reference environment; let the lead coordinate operations affecting the whole workspace. A restored file does not retroactively make a shared-tree experiment isolated.
+
+Audit actual touched paths, including generated artifacts and shared checkpoints,
+against each writer's accepted allowlist. A scope violation remains a violation
+even when no simultaneous writer or data loss occurred. Stop the conflicting
+write, retain its bytes, disclose the deviation, and explicitly transfer ownership
+before continuing; do not describe the combined work as unconditionally disjoint.
 
 Freeze a work package's accepted inputs before candidate generation. If a specialist discovers missing intent or a contract conflict, return the affected slice to specification instead of letting each agent invent its own interpretation.
 
@@ -515,6 +523,13 @@ Use static analysis and observed behavior together. Code search cannot enumerate
 
 Map each cross-cutting promise across its supported entry, execution, result and diagnostic paths. A correct intermediary or client-side cleanup does not prove the promise held at the consumer's actual boundary. Alternative transports, workers, administrative tools, errors and logs can bypass the first path inspected; include the consequential siblings in the impact set.
 
+When rejection depends on configuration, inspect the guard and its false branch
+under the selected settings. A healthy rejection control in one configuration
+does not establish that another configuration is unreachable. Record the entry,
+condition, invoked implementation and public projection; follow dependency-absent
+and recursive fallbacks too. A family name shared by two paths does not transfer
+their deadlines, fallback behavior or permitted effects between them.
+
 Use change history when available to test the proposed seams: which files, schemas, and teams repeatedly change together, and for what reason? Exclude bulk formatting, generated output, and coordinated releases before interpreting co-change as coupling. Combine that evidence with actual dependency and ownership constraints.
 
 For every candidate unit, answer:
@@ -544,6 +559,16 @@ Run a relevant baseline after understanding commands and environment effects. Re
 Preflight prerequisites in dependency order: execution platform, required artifacts/packages, access, and resource capacity. Keep diagnostics distinct; a failed platform query does not prove an image or package is missing. Check the actual temporary, cache and container-storage filesystems, not just the checkout's disk. Place large scratch on adequately provisioned, run-owned storage and account for space retained by failed attempts.
 
 Carry that scratch configuration through every required command and child process, including browser profiles, documentation fixtures and native tooling. Recheck capacity as failed attempts accumulate; a valid initial preflight does not cover later runs. Reuse an existing compatible tool installation when authorized, with its version/path recorded, rather than silently changing the product's dependency graph to obtain an evaluation environment.
+
+Where downloads or installs are outside scope, disable implicit fetch fallbacks before launching tooling; a missing local artifact is a prerequisite, not permission to fetch it. Inspect persistent runtime configuration before reuse: an engine or store can pin storage/runtime roots that a later command cannot safely substitute. A failed query with the wrong configuration does not establish artifact absence. Record attempted external transfers even when they fail; unavailable transfer observations mean unknown, not zero egress.
+
+Provider mocks and an offline package-manager flag do not cover ancillary
+resources such as first-use tokenizer data or public-name resolution. Preflight
+those actual paths too: bind available local artifacts and the chosen network
+policy before the run. Reuse compatible tools read-only from retained artifacts
+when permitted, with extracted bytes/version recorded. If a network adaptation
+causes an unapproved fetch, retain and disclose it; cache bytes or an empty
+credential environment do not prove transfer volume, destinations or zero egress.
 
 Resource floors can apply to setup-only stages and evaluation self-controls too. Classify a preflight refusal and its dependent failures before attributing regressions to the product; preserve the guard. Bound recovery work against the actual shortfall, including extraction scratch and compressor memory. Reclaim only identified owned duplicates after evidence preservation (Section 12.3); if safe recovery is insufficient, name the capacity prerequisite instead of turning verification into an open-ended storage project. After provisioning changes, remeasure and reconcile inputs before fresh executions; a later pass does not diagnose an earlier crash.
 
@@ -736,7 +761,30 @@ For each boundary, document the applicable parts of this inventory:
 
 A schema usually captures only part of this. “Both implementations return JSON with these fields” is insufficient when clients depend on timing, ordering, error distinctions, or persistence behavior.
 
+For numeric outputs, declare meaning, units, useful range and transformations,
+not only the field's type. Trace consumer thresholds back to the actual producer:
+a rank-fusion score, similarity and calibrated probability are not interchangeable.
+A shape-compatible scale change can silently discard all useful results. Check
+the range and decision rule before interpreting an empty result as absence or
+tuning a cutoff; calibration and quality claims still need their own evidence.
+
 Map authority per effect: resource ownership, direct or group grants, access to contextual data, permission to perform a general action, and admission to an ongoing subscription can have different rules. Test overlapping grants and removal of the last covering grant; removing one grant need not revoke another independent right. Omitting an inaccessible optional context can be correct while the caller's general action remains permitted. Derive the gate from the supported boundary rather than inventing a blanket denial.
+
+Carry that authority through alternate implementations and feature-flag fallback
+branches as well as the default path. Disabling an optimization must not erase a
+scope the caller already supplied. Preserve absent-versus-empty values and the
+fallback's supported algorithm/shape rather than replacing it merely to regain
+confinement. Judge each returned projection separately: filtering primary records
+or chunks does not establish that related entities, summaries or metadata are
+scoped. Record any broader gap without claiming a narrow forwarding fix closes it.
+
+Carry authority through recursive calls and dependency-absent degradation, not
+only the primary feature-flag branch. A fallback that re-enters an otherwise
+correct standard path can lose the caller's scope before that path receives it.
+Use a permitted-progress contrast and retain the actual requests at both seams.
+Separate resource eligibility from content redaction: allowing access because one
+related member is permitted does not establish that a shared summary, aggregate,
+identifier list or separately fetched relationship set contains only permitted data.
 
 Distinguish connect-time authorization from continuing authorization. A successful new-read or new-subscription denial does not prove that an already-admitted feed or operation was terminated, nor does a disappearing UI entry. Observe both boundaries where relevant. A feed that does not revalidate is an observed limitation, not automatically a preservation requirement or permission to ignore an existing revocation obligation. Specify any stronger lifecycle guarantee explicitly before claiming it or changing that boundary.
 
@@ -862,6 +910,7 @@ Name the actual orchestration exercised, not merely the deepest real dependency:
 | Evidence boundary | What it can establish | What remains unestablished |
 |---|---|---|
 | Source/structural inspection | Presence, wiring and plausible event-order mechanisms | Executed behavior |
+| Real query/request assembly through a recording transport | Actual generated predicates, scope parameters and effect requests at the named seam | Store execution, planner semantics, returned data or production isolation |
 | Extracted actual callback with controlled bindings | That source expression's behavior under the named state/event schedule | Framework scheduling, component lifecycle and user interaction |
 | Real request context + disposable persistence + test driver | Actual route/auth/state effects and the driver's client protocol | The product UI's orchestration, even if it uses the same helpers |
 | Actual UI journey through the framework | Interaction, lifecycle and reload behavior in the identified UI environment | Production parity, external-service quality or untested environments |
@@ -894,9 +943,46 @@ The old implementation is an observation source and a differential reference. It
 4. Resolve the acceptance rule through evidence and the appropriate decision owner.
 5. Re-run both sides when relevant and preserve the decision.
 
+Inspect internal results and the actual public projection separately. Optional
+fields or completion metadata returned by a helper may be dropped by its handler;
+the helper's shape is not evidence that the client received those values. Label
+incidental nulls, missing flags and callback schedules as observations, not lasting
+requirements. If a later correction changes them intentionally, declare a versioned
+acceptance delta, retain the old gate and baseline, and preserve its still-required
+scope/progress checks. Correcting a faulty evaluator and changing product intent
+are distinct decisions even when both require new gate bytes.
+
+For optional values, distinguish nonempty, empty, explicit null and absent keys
+at the serialized consumer boundary. Preserve permitted falsey values without
+collapsing them through a truthiness fallback; missing-key compatibility must
+not turn into a lookup error. Give consequential projected fields independent
+positive cases so one rejected field cannot hide the others. Label schema-valid
+empty/null probes separately when the actual producer never emits those states;
+type acceptance alone does not establish a producer guarantee. Trace failure
+phase too: a refusal before work and an abstention after work can legitimately
+carry different metadata despite sharing a failure label.
+
+For streamed completion metadata, observe chunks independently of visible content.
+A terminal reason can arrive on a content-free chunk; a later usage-only chunk can
+have no choices at all. Capture required metadata before a text-only adapter drops
+it, preserve the declared terminal value across unrelated trailing chunks, and
+pair cut-output cases with healthy completion, null/missing metadata and supported
+empty-choice controls. Do not infer truncation from text or transfer one pipeline's
+visible notice, deadline or callback schedule to a sibling.
+
+Declare value equivalence precisely. If a contract permits an absent flag or boolean
+false, a test for "not exactly true" can wrongly accept null, numbers or strings.
+Test the allowed typed values, and distinguish an attribute-present null control
+from an attribute-absent control. A test name mentioning a positive flag is not
+evidence that its fixture ever supplies that value; inspect the actual assertions.
+
 Do not generate implementation and expectations from the same unsupported assumption and mistake agreement for verification.
 
+A simulated store can help connect real authentication, orchestration and query assembly to a fixture outcome, but its interpretation remains an explicit oracle assumption. Contrast permitted, empty and unrestricted scopes, and retain the actual predicate/parameter requests so a lenient fake cannot conceal a missing filter. Recording a correct request proves assembly; interpreting it in a fake proves only that fixture interaction. Neither establishes the database's actual execution or live isolation. Where a mechanical repair touches sibling builders, use a frozen direct-seam selection with healthy controls rather than treating one HTTP case or a source-pattern count as coverage of every changed path.
+
 Inspect the evaluator's own dependency path. An assertion that calculates its expected value using the candidate's parser, rounding helper, authorization routine, or serializer may repeat the very defect it should detect. Shared public types can be appropriate; shared decision logic needs an independent property, reference vector, or other justified oracle. Treat the harness, comparator, fixtures, and runner configuration as maintained software with explicit trust assumptions.
+
+For framing and fragmentation claims, locate cuts in the actual encoded payload delivered to the candidate and inspect the bytes on both sides. Account for multibyte characters, serializer whitespace and the distinction between a byte index and an end-exclusive slice offset. A prefix assembled separately from the real serializer can miss both a character and a delimiter; a passing ordinary-input control does not prove the intended split occurred. Establish the fixture's cut locations before attributing a rejection or accepting the claimed coverage.
 
 Prefer named fields or structured records for inter-stage values over growing positional argument lists. Validate required fields, types and identities fail-closed. In a cross-process journey, bind the consumer's reported upstream to the producer actually launched; a passing check against a different endpoint is not integrated evidence. Validate synthetic fixture values — identifiers, addresses, keys — against the receiving component's own validation rules before a run; a syntactically plausible fixture can be rejected by the actual sink and stop a run at setup, which is a fixture defect, not a product-value rejection or an accepted whole run.
 
@@ -956,12 +1042,15 @@ For asynchronous state, deliberately hold the post-completion result while a lat
 
 Record gesture/request, authoritative commit and acknowledgment-delivery order independently. Under last-writer-wins, a successful earlier mutation remains accepted even when a later commit supersedes its state; its delayed acknowledgment is not current-state authority. Reverse acknowledgment delivery does not establish reverse commit order, and a case whose dispatch and commit orders coincide cannot distinguish a latest-dispatched-mutation rule from commit truth. Choose separate schedules when that distinction matters:
 
-| Mutation dispatch | Observed commits | Acknowledgment delivery | Discrimination under the declared last-writer-wins contract |
-|---|---|---|---|
-| A, then B | A, then B | B, then A | Current state B; rejects stale last-delivered-ack binding, but also passes latest-dispatched selection |
-| A, then B | B, then A | B, then A | Current state A; distinguishes commit truth from latest-dispatched selection |
+| Mutation dispatch | Observed commits | Acknowledgment delivery | Authoritative read delivery varied by the case | Discrimination under the declared last-writer-wins contract |
+|---|---|---|---|---|
+| A, then B | A, then B | B, then A | Not varied | Current state B; rejects stale last-delivered-ack binding, but also passes latest-dispatched selection |
+| A, then B | B, then A | B, then A | Not varied | Current state A; distinguishes commit truth from latest-dispatched selection |
+| A held before forwarding, then B | B, then A | B, then A | Capture positive B while A is held; deliver newer positive A, then older B last | Current state A; exposes stale positive-read adoption after newer evidence |
 
 These are case-design examples, not execution claims. Holding A before forwarding can create the second schedule; holding its genuine response after commit creates the first. Prove the chosen phase and commit order, preserve both accepted outcomes, and leave unexecuted orderings explicitly uncovered.
+
+Read delivery is an additional ordering axis, not a mutation-order policy. An older response can positively name a superseded association rather than merely omit a resource. Retain genuine response bytes, dispatch/capture/delivery sequence and the selected view; judge through direct consumers before a later refresh can repair their state. Apply the declared freshness/ownership contract without turning both accepted mutations into latest-gesture-wins or inferring universal read-order coverage from one schedule.
 
 Unchanged durable state can be incidental protection: a uniqueness or authorization constraint may reject a misdirected write while its required state update is silently lost. For isolation claims, inspect attempted effects and acknowledgments as well as final state, and verify the originating resource receives its exact required update. Include navigation away **and back**, auxiliary edits such as feedback, and an older result arriving after a newer operation has settled when these can expose distinct ownership failures.
 
@@ -988,6 +1077,8 @@ Name the evidence correctly: an original defect reproduction, an intentionally i
 
 A diagnostic probe that succeeds only while a known defect exists needs an explicit exit condition. Preserve its baseline counterexample, then establish the positive intended-behavior assertion before judging an authorized fix. Run that positive gate against the retained broken case to prove sensitivity and keep healthy controls. A correct fix failing the old diagnostic expectation is not a regression; deleting or relaxing the intended obligation to preserve a green diagnostic run is gate erosion.
 
+When a baseline launcher requires unchanged input identities or expected defect observations, keep those assumptions in its retained record. A candidate launcher may bind new input identities and label the diagnostic observations as changed, but it must import or otherwise preserve the frozen positive value oracle, full required selection and failure semantics. Declare this mode-specific identity treatment before execution; a diagnostic run completing successfully must not substitute for product acceptance.
+
 Fault-injection fidelity is scoped to the claim. When the claim covers real entry, readiness, or recovery behavior, enter through the actual entry path and trigger the real failing operation with its actual preconditions; a mocked initializer or shortcut establishes only wrapper behavior, not the claimed operation. Synthetic dependency faults are appropriate when the intended cause and phase are proven — for example, by asserting the injected fault produces the expected error at the expected point before trusting the control. Match the injection mechanism to the environment — privilege-based restrictions, locking, and error classes can change with the running user, runtime, or driver. Keep healthy positive controls alongside negative ones: a gate that has only ever demonstrated rejection cannot show that valid behavior still passes. When one orchestration wrapper spans several phases, record which phase actually failed; an exception during teardown or cleanup does not establish a rejection of admission or readiness.
 
 Exercise consent/cancel through the actual platform control when that interaction is claimed; invoking a mutation helper alone does not establish it. Derive selectors and expected text from the evaluated locale, including a localized confirmation. A hard-coded label that cannot address the current surface is a driver failure, not a product-value rejection. Restore temporary fixture configuration in a finally path and stop or isolate dependent cases when that restoration or prerequisite fails; preserve the failed attempt rather than weakening the value gate.
@@ -1001,6 +1092,8 @@ An observation interface may filter what it returns by context — transport sec
 Verify interception and quota semantics with ordinary surrounding traffic. A framework's match budget may count fallthrough or nonselected operations before the handler filters them. Filter by the intended operation and consumer identity, and reserve sequence/quota before asynchronous capture when dispatch order matters. Hold all competing responses relevant to the selected-read rule: an uncaptured newer refresh can invalidate an older held-read probe. Retain request order, captured bodies and nonmatching-operation controls so a missing interception cannot masquerade as a product defect.
 
 Define mode-specific completion for evaluation barriers. A manually held response requires the declared release and final delivery; passthrough requires delivery without inventing a manual-release obligation; a deliberate delivery failure requires its identified failure outcome. Reserve once before any asynchronous forwarding so a second match cannot overwrite a pending operation's capture or release handle. Mode-correct drain checks must still reject missing outcomes, unmatched requests and unknown failures.
+
+Before extending a no-repair barrier, trace the consumer's wait graph. A save can remain queued until its follow-up refresh resolves; indefinitely holding every refresh can prevent the later save or consumer from reaching its oracle. Choose a bounded hold or, where supported failure handling preserves progress, capture the genuine response and deliberately fail its delivery during the judged window. Record that additional fault condition, exact failure accounting and release/teardown boundary. This is a scoped evaluation condition, not evidence for the pure delivery schedule or broad outage behavior without that condition; never fabricate a successful response to bypass the dependency.
 
 Readiness must identify the active operation being judged. A released predecessor or completed record cannot satisfy a wait for a new held response. Correlate consumer and producer observations before comparing or releasing them; when one correlation ID spans retries, retain attempt/generation information as well. Mixing a fresh consumer request with an older producer result can create a false passing value check followed by a release failure.
 
@@ -1030,13 +1123,33 @@ The gate passes only when every applicable **required** check passes against the
 
 Report **evaluation execution** and **product-obligation verdicts** separately in co-retained machine-readable evidence as well as the checkpoint. An evaluation-improvement slice may finish successfully by confirming a product defect; that obligation must still read `failed`, not be hidden behind an all-green assertion total. Identify healthy cases, deliberate negative controls and defect confirmations in the selected rows. Require strict boolean outcomes, unique nonempty check identities and an explicit required selection; malformed rows or partial selection must not silently disappear.
 
+Before freezing a consequential gate, map each declared obligation to the cases
+actually collected and executed. A fixture branch, scenario name or validator rule
+that no selected case reaches supplies no coverage. Resolve missing cases before
+candidate judgment; retain the earlier selection and obtain the newly required
+observations rather than downgrading the declared promise to fit the existing gate.
+Canonicalize module/suite, class/group and parameterized case identities separately
+when translating runner formats: folding a group into a module path can falsely
+reject an unchanged selection. Derive subgroup counts from those actual identities,
+and check reviewer summaries against them too.
+
+When raw observations are required, retain them before fallible assertions for
+healthy rows as well as rejected rows. Validate the actual required payloads,
+types, nonempty collections and case identities; a receipt-class label or successful
+test row does not prove those observations were serialized. Explicitly classify
+rows whose adapter can retain only public output, without claiming upstream capture.
+
 Retain row-level healthy observations on a failed run while keeping integrated acceptance failed. Record which clauses were not reached after a first failing assertion; that rejection proves the failed conjunction, not independent sensitivity to its remaining clauses. The accepted candidate must execute the complete frozen obligation, and a wrapper's overall non-acceptance label must not be misreported as an individual healthy control having failed.
 
 When a runner emits a report, acceptance MUST also honor process exit status, report validity, selection, suite/setup/teardown failures and unhandled runtime errors. All assertion rows can pass while the run itself fails. Prefer the runner's structured results; retain actual selected/passed/failed/skipped counts and distinguish an unexecuted gate from a candidate failure. Do not hardcode a historical test count as a substitute for validating the required selection and current gate identity.
 
+A composite command can hide an inner failure when its final diagnostic command succeeds. Propagate the operation's exit status through wrappers and independently assert the required semantic result: successful discovery plus exact returned content for a positive probe, or the declared rejection for a negative control. An outer zero exit with a failed inner probe remains a failed attempt. Preserve the original receipt and correct the wrapper for future invocations rather than relabeling the old result.
+
 Error handlers must preserve failure semantics: logging an unhandled rejection or browser exception only to stderr/observations must not turn it into success. Collect required runtime errors across every page/context/process the journey creates, including fresh reload observers and target crashes, and feed them into the structured verdict and exit status. Distinguish an intended assertion rejection from an unmet case prerequisite, unsupported UI selector or tooling failure: all prevent acceptance, but only the first can demonstrate behavioral sensitivity. A passing per-obligation row on failed required selection, execution or teardown does not establish acceptance of that claim.
 
 An injected operation failure can be a required expected outcome without excusing evaluation failures. Reconcile attempted mutations with actual acknowledgments or identified expected transport failures, bound to the actor, resource, method and attempt where applicable. Require the declared error class and state effect; unknown failures or missing outcomes still fail. Retain deliberate network-error diagnostics separately, without blanket exemptions for page exceptions, unhandled rejections or unrelated errors.
+
+Classify failures within the actual observation phase and correlate each permitted failure one-to-one with its cause: an intercepted request identity or an instrumented intentional close of the exact connection, ordered within a justified delivery bound. Ordinary framework cleanup during an action can cancel an existing subscription inside the probe window as well as before it. An error spelling or source-based prediction of cleanup is insufficient to exempt it; collect actual invocation evidence, retain unmatched and late events, and keep unexpected failures fail-closed. New instrumentation cannot retroactively supply observations missing from an earlier run.
 
 Separate primary failures from dependent contamination. A failed barrier or setup stage can leave owned work pending and make later count, selection or drain checks fail; these remain failures but are not independent product defects. Stop the dependent sequence or isolate its owned resources before another independent case, retaining the original rejection and its causal classification. Cleanup must not convert the failed case into acceptance.
 
@@ -1157,6 +1270,11 @@ For each documentation surface, identify its audience, canonical source, support
 
 Generated references should derive from canonical schemas or metadata where useful. Human-authored material should explain semantics, workflows, exceptions, and reasons that schemas cannot express.
 
+Determine generated ownership from the actual generator's outputs and configured
+include/exclude map, not a filename or directory convention. A manifest can omit
+a static discovery file; a site mirror can omit a separately maintained handbook.
+Give each source and generated artifact an explicit writer and its own check.
+
 Avoid copying an entire API contract into multiple READMEs, skills, and internal guides. Link shared truth, generate stable portions, and validate the audience-specific examples that remain.
 
 ### 11.2 Update docs with the behavior they describe
@@ -1170,6 +1288,26 @@ For each changed capability:
 5. Remove obsolete guidance only when its supported version or consumer obligation has ended.
 
 A documentation discrepancy should trigger investigation, not an automatic decision that either code or prose must be correct. Version skew between a checkout and published docs is a hypothesis to verify.
+
+Check defaults and precedence per field against executable branches, not only comments, annotations or one nearby test. Truthiness-based merging can conflate omission with explicit false/empty values; a string-field precedence test does not establish the same rule for a boolean. Align prose with confirmed supported behavior without silently changing that behavior or inventing an approval dependency for an ordinary correction. Keep unresolved behavior separate, update affected duplicate references and generated content identities, and distinguish source-derived schema comparisons from a complete runtime schema.
+
+Likewise, a shared feature name or similarly named helper does not establish a
+shared pipeline. Trace each documented entry to its actual stages, flag consumers,
+weights, result score and enrichment paths. Split statements spanning different
+branches instead of correcting one entry by making its sibling's prose false.
+Record a multiplier's receiving depth and cap explicitly when that depth differs
+from the caller's requested count.
+
+Review branch-spanning prose against a small source-backed entry map: transport,
+implementation, configuration, deadline, dependency fallback and result projection.
+Check the final text, not only the writer's summary. Keep rejected conflations and
+their corrections in the change record; public guidance should explain current
+use and version applicability without carrying private baseline history or test
+totals. A latest dirty candidate must not be described as every released version.
+
+Trace error prose through authentication, quotas, payment and other dependencies as well as the handler and contained retrieval branches. Permission validation is not an existence lookup; an unavailable dependency is not an index-readiness contract; an ignored unsupported field supplies no restriction beyond the caller's actual resource/key scope. Derive identifier type, namespace and lookup meaning from their producers and consumers. Document fresh retrieval separately from client-carried context, and describe a model-selected optional tool as available rather than guaranteed to run.
+
+Before claiming full schema parity, capture the complete actual runtime-generated schema using real route/type declarations and the real generator in an identified, configuration-isolated environment. Avoid unrelated service startup where possible; record tool versions, runtime configuration, operation selection and reference resolution, and retain both full schemas and exhaustive differences. Keep raw name/structure differences alongside explicitly documented dereferencing or representation normalization. Equivalence after ignoring titles/examples is a different claim from complete structure equivalence; array-order and other heuristic classifications need caveats. Count unique operations separately from comparison facets or repeated operation identifiers; generated client names can make apparently cosmetic identifiers contract-visible. A freshly bound, byte-identical schema may inherit its full comparison, but generator evidence is not deployed-runtime parity and comparison alone does not authorize schema edits.
 
 ### 11.3 Evaluate documentation
 
@@ -1198,7 +1336,7 @@ Use the latter two together when claiming observed per-session adoption. A manua
 
 Before the task, choose a small rubric: does the agent find the canonical contract and state owner, distinguish preservation from a proposed delta, select meaningful required gates and recovery needs, protect existing work/consumers, and place new knowledge in its owning guide or packet? Can it choose no change when the promise already holds, reason about failures from operation, version, path and event order instead of inferring a cause from one symptom or a health signal, and leave an accurate evidence claim and next step without the previous conversation? Exercise a relevant scoped path as well as the root when claiming both. Record the task, entry path, delivered/read files, instruction identity, observed decisions, results and gaps. Repair missing instructions at their owner; do not simply add more copies. This evaluates instruction delivery/usability, not implementation reconstruction.
 
-For published mirrors, validate nonempty content, important sections, examples and links; a successful site build or an empty comparison is not a semantic consistency check. Reuse inclusion/generation from one canonical body when the toolchain and audiences permit it.
+For published mirrors, validate nonempty content, important sections, examples and links; a successful site build or an empty comparison is not a semantic consistency check. Bind each inclusion probe to a configured source page and the generated section it contributes. A phrase shared with an excluded surface proves the included page's wording, not publication of that excluded surface. Verify separately maintained material at its own boundary, and keep machine-readable probe labels consistent with that distinction. Reuse inclusion/generation from one canonical body when the toolchain and audiences permit it.
 
 ### 11.4 Keep the durable pack concise and navigable
 
@@ -1235,9 +1373,16 @@ A generation record should include the base revision, dirty-tree patch identity 
 
 Content identity and generation provenance are separate. Matching a baseline or retained artifact neither proves source use nor makes a behaviorally correct candidate fail; different bytes do not prove a fresh context. A replay tool should record identity comparisons and behavioral acceptance independently, leaving source context `unknown` unless separately established. Record accepted working inputs as well as revision lineage: an intentional, uncommitted contract change is not automatically stale merely because it differs from the base revision.
 
+Do not call a dirty producer tree revision-identical merely because its entry
+handler is unchanged. Bind the consumed files and transitive paths; state which
+prior local repairs are part of the accepted basis. A sparse lock/binary sample
+supports only that named sample, not a complete installed-artifact inventory.
+
 The build recipe must identify necessary source, generated inputs, tools, dependencies, configuration, and external services. A lockfile does not guarantee that its packages or toolchain remain retrievable. Preserve accepted artifacts or controlled dependency copies when their loss would violate an actual recovery requirement; otherwise state the external dependency. Verify a clean build when making a rebuildability claim, rather than relying on an already-populated workspace.
 
 Record the interpreter, resolved package versions, native dependency checks and image identity actually exercised. A lockfile-pinned install on another runtime is not evidence for the CI or production runtime. Isolated installs should use the identified source and locks without relying on or mutating another writer's working dependency tree.
+
+When runtime identity is derived from package metadata, identify the authoritative declaration and retain it in the shipped input closure. Verify its resolution in the supported package layout; a stale literal or obsolete nested lock is not package identity. Keep advertised-version agreement, installed-artifact identity and distribution/publication as separate claims.
 
 Distinguish a private copy of an existing installed graph, a fresh lockfile-controlled install and a clean rebuild. An authorized private copy can preserve dependency resolution for a local evaluation; record its source identity and native-binding execution, prevent cache writes to the original tree, and do not call it install/rebuild evidence. Development and production compilers may exercise different paths. Diagnose launch failures in the selected environment without changing product code or suppressing isolation gates merely to obtain a usable fixture; record any runner/environment change and its narrowed claim. Language-runtime network hooks observe only their intercepted paths, not every native socket or OS-level egress.
 
@@ -1268,23 +1413,79 @@ Avoid committing credentials, personal production data, or identifying customer 
 
 Write a minimal result on failure as well as success **before cleanup**: candidate and accepted-gate identities, invocation/environment, stage, actual counts/outcomes, and a safe diagnostic identifying the failed obligation or prerequisite. Do not preserve arbitrary credential-bearing subprocess output. State whether raw artifacts are temporary and which reviewed aggregates, counterexamples and accepted source artifacts remain durable. A manifest records trusted inputs; a candidate-editable manifest is not independent tamper protection.
 
+Receipt capture is part of a required stage's execution, not deferred closeout
+formatting. Retain its actual command, times, exit outcome, input identities and
+safe raw observations before the next fallible stage. For idempotency claims, keep
+both compared outputs. A transcript-only result must remain labeled as such; when
+the missing artifacts cannot be recovered, rerun only the necessary receipt-bearing
+stages against identified inputs. Reuse unaffected retained builds and judgments.
+
 Retain the structured observations used by the verdict before removing scratch, so acceptance can be audited later. The replay invocation must include the flags and configuration that select the claimed phases and environment; a default command that omits an opt-in phase does not replay its evidence.
 
 Retain the actual executed gate/adapter/fixture bytes and relevant before-edit source alongside their hashes, including selected uncommitted inputs a version-control diff would omit. A digest identifies an artifact but cannot recover it after the working file changes. Prefer snapshots at execution time; if historical bytes must be recovered from a documented exact delta, verify every recovered digest against the original execution manifest and label the operation as byte recovery, not a new execution or product reconstruction. If unchanged current bytes are copied only after execution, verify them against that execution's digests and label this post-execution byte retention; it does not establish launch-time capture or a new run.
 
+Keep gate identity, baseline identity and candidate identity separate in launch and
+retention code. The frozen gate and unchanged neighbors stay pinned; an explicitly
+changed implementation must match the identified candidate's execution-time inputs,
+not the baseline digest it is intended to replace. Carry this distinction through
+finalization as well as launch, and preserve the baseline bytes independently.
+
+Challenge this identity treatment before a real candidate run: exercise the launch
+and retention adapter with legitimately changed candidate bytes, a mismatching copy
+and disallowed neighbor drift in owned synthetic fixtures. A correct launch check
+does not prove that a later retention loop uses the same expected identity. Keep
+these machinery self-controls distinct from product executions, and bind the
+runner/import closure externally so self-hashing does not create a circular freeze.
+
 Filenames, modification times and matching dirty-status lists are not content identities. Reconcile consumed runtime, complete evaluator/fixture closure, installed dependencies and execution tools against their recorded digests. When current acceptance combines fresh work with unchanged-input prior runs, label each inherited execution explicitly; do not rename retained test counts or receipts as newly executed evidence.
+
+Compare a resumed slice against its accepted working-tree snapshot when attributing
+that slice's changes. A diff from the published revision includes earlier local
+work and cannot establish which session changed a checkpoint or consumer. For
+append-only continuation claims, verify the preserved body directly against that
+snapshot. Source line references must identify their before/candidate basis; an
+availability claim needs an actual probe, not an assumed environment.
 
 A reused fixture or template can carry metadata describing its own origin — captured evidence arrays, environment labels — rather than the executed run. Establish the executed mode and target from the owning verdict, declared run configuration and actual runtime inspection; treat inherited provenance strings and counts as describing the template, not the new target, and do not relabel inherited executions when a different mode or build variant is claimed.
 
 Make scratch removal conditional on **actual receipt retention**, not a configured output path or an attempted copy. Verify that the destination contains the expected readable report before removal; write final cleanup and claim verdicts there afterward. On resume, recheck important evidence locations: a surviving aggregate can preserve a historical conclusion when raw artifacts are absent, but cannot establish current raw-artifact retrieval. Keep that distinction explicit and do not repeat completed work merely to conceal the retention gap.
 
+Regenerability, ignore rules and modification times do not establish deletion ownership. A newly touched cache directory may contain pre-existing artifacts; never remove it recursively or with a time-based selector to clean one generated file. Prefer checks that produce no persistent artifact or direct their output into an owned destination. If cleanup crosses ownership, disclose the exact affected paths and evidence limits, preserve remaining inputs, and distinguish verified recovery from merely possible regeneration; a digest audit of other files cannot support an all-work-preserved claim.
+
 When losslessly re-retaining owned generated diagnostics, verify payload bytes and link targets before removing the original. Copy tools can rewrite relative links even when regular file bytes match. Record any accepted metadata differences, the new container's digest and retrieval mapping, and the historical container identities; do not describe re-packaging as unchanged container bytes. Keep archival/setup process limits separate from product readiness bounds, and preserve originals through failed copies, comparisons or compression attempts. This procedure does not authorize altering live state or another owner's resources.
 
 When a wrapper augments a retained result with consumer-specific verdicts or evidence scope, identify the authoritative final writer and hash the final bytes after augmentation. Check that final scope labels agree with the journey actually exercised. A read-only closeout verifier can confirm receipt validity, required selection, current consumed-input hashes and preserved baselines; it is identity/evidence validation, not a new journey execution or behavioral replay.
 
+Keep each stage's actual consumed-input closure distinct from files sampled only
+for preflight or later report authoring. Preserve the original stage manifest,
+then classify a knowledge-only addendum by its real dependencies instead of
+rebuilding an unchanged producer or silently ignoring a changed execution input.
+When byte-preserving append-only provenance is claimed, compare the retained
+prefix exactly: harmless formatting edits still break that identity claim.
+Correct accidental byte drift or disclose an intentional delta without relaxing
+the preservation oracle; retain failed audits separately from product failures.
+
+Bind a receipt's final digest from a separate manifest or successor record; do not
+embed a self-digest and mistake an earlier body hash for the final file. Keep actual
+command argv and execution/observation times in producer receipts; hand-entered
+report times are assembly metadata or explicit approximations. A probe label must
+name what its actual needle establishes. If finalization catches a source-only
+formatting defect, retain the failed audit, correct and rebind those source bytes,
+and rerun only the invalidated stage when executable/build inputs remain unchanged.
+
 When final acceptance combines stages from a stopped batch and later targeted executions, retain the original batch's nonzero outcome. Enumerate every accepted stage's actual invocation, exit observation, final receipt, candidate/gate identity and environment adaptation; distinguish captured process status from a manually recorded observation. Reconcile all required stages against the final inputs before claiming integrated acceptance. Do not rewrite a failed batch as successful or infer process exit solely from passing assertion rows.
 
 A documentation-only harvest has its own provenance. Preserve the executed playbook/instruction basis, gate bytes, runtime identities and original verdicts; update current guidance and continuation pointers without rewriting old receipts to the new version. Retain before-edit knowledge snapshots and write the harvest's evidence/current-input audit separately. An audit that verifies old evidence is not a journey replay and must not overwrite the final report it is validating. When a campaign permits only documentation or checkpoint addenda, verify the unchanged remainder by digest and make additions append-only so every original byte prefix stays verifiable; treat a dirty working tree as preserved evidence input, not something to clean or commit to obtain a tidy record.
+
+When verifier corrections produce several reports, name the authoritative accepted receipt by its exact versioned path and digest in the checkpoint; an unnumbered filename can still belong to a retained failure. Audit both structured outcomes and human-readable summaries against observations. A mistaken summary such as "removed" for something that was already absent needs a separate correction, not a rewritten receipt or an invented operation. Preserve the failed verifier's actual input/exit record and distinguish machinery diagnosis from a new product execution.
+
+When reusing retained evaluation machinery, reconcile its latest accepted
+corrections and judgment sidecars too. A preserved producer script can precede an
+oracle correction; copying that earlier template alone can reintroduce the same
+mislabelled probe or invalid criterion. Bind the reused executable and the accepted
+evaluation semantics separately, then check their actual pairing before execution.
+
+Reconcile counts against each invocation's actual selection and counting unit. A larger passing suite does not disprove a smaller run over fewer files; sum the selected subsets before correcting a total. Count control rows, new test definitions, parameterized cases and operation facets separately, and say whether roots or aggregate entries are included. Retain additive corrections to mistaken summaries, including machine-readable labels and review summaries. Keep measured execution timestamps separate from report-assembly stamps; distinguish bytes, decimal units and binary units. A conditional review is accepted only after its stated supplements/checks are actually supplied and bound in the final record. An unavailable required linter or other tool remains unverified: a syntax check or a different successful gate is not equivalent evidence for the missing check.
 
 ### 12.4 Observe claims, not only process health
 
@@ -1322,6 +1523,8 @@ For each unit, identify:
 
 “Derived” does not mean free to delete. Establish that the inputs, transformation versions, permissions, compute budget, and reconstruction time are available. Recomputing embeddings or indexes may change behavior or cost more than recovery allows.
 
+Preserve semantic distinctions in boundary values throughout their lifecycle: an absent filter can mean unrestricted access while an empty allowed set means no permitted resources. Creation-time nonempty validation does not establish that updates, deletion of the last grant or historical state cannot produce emptiness. Trace those producer paths, then carry the effective scope through scalar/list translations, query builders, counts and optional enrichment. Evaluate unrestricted, nonempty and empty controls against the existing confinement promise; preserve separately supported direct-resource behavior rather than inventing a blanket denial or new deletion policy to repair a truthiness error.
+
 ### 13.2 Define the compatibility matrix
 
 Test relevant combinations explicitly:
@@ -1335,6 +1538,8 @@ Test relevant combinations explicitly:
 | Recovery tooling | Backups, exports, migrations, replay and repair formats |
 
 If a combination is intentionally unsupported, describe the deployment ordering or interruption it requires. A rollback command is not a recovery plan if the old binary cannot interpret the state that now exists.
+
+Matching persisted file shapes establishes only the named format compatibility. It does not establish that another tool's executable was run successfully against those files. Derive state identity and isolation from the supported key/namespace contract; do not invent credential-scoped storage or stronger cross-tool guarantees from format agreement alone.
 
 A fresh schema's automatic reference cleanup can hide a missing application-level detach that historical schema versions require. Exercise a fixture without that action when making the corresponding compatibility claim. A copied or source-extracted transition pattern proves only the named pattern under its adapter; it does not establish that the real handler invokes it, authorizes it or performs it atomically. Keep pattern controls and actual entry-point execution distinct, retaining the compatibility constraint until its supported historical states are retired.
 
@@ -1398,6 +1603,8 @@ Verify a multi-resource restore at the level of records, identities, and referen
 
 Storage restoration and product recovery are distinct claims. For a product-recovery claim, boot the real consumers and exercise important restored-state journeys through supported entry points: authentication, permitted and denied reads, key use and linked content where applicable. Run on disposable copies after storage acceptance and before destructive controls, or on independently provisioned targets; capture the originals before and after to prove isolation. HTTP journeys do not establish browser behavior, and no-model runs do not establish model quality.
 
+For process-restart continuity, observe the old process's actual termination, capture the durable bytes, and launch a fresh process on the same owned state root. Check startup's permitted effects and a subsequent consumer request's exact history/opaque state against independently known prior values. Two clients in one process do not test restart; a value still supplied by shared in-memory or fixture state cannot establish that persistence recovered it.
+
 Consumer startup can legitimately mutate state. Enumerate accepted schema ensures, default records, backfills and bookkeeping precisely; derive expected values from pre-boot state or an independent rule. Match structural additions to their exact definitions and ownership. An unexpected write requires diagnosis and a recorded acceptance decision, not a broad metadata/timestamp exclusion or copying the consumer's output into the oracle.
 
 Recover the whole authoritative representation, including journals, sidecars, blobs and producer/schema identity where applicable. Prefer a consistent snapshot or an independently rebuilt target with the original retained; renaming one live file is not a recovery procedure for a multi-file store. Validate documented commands against the actual configuration precedence and refuse unsupported combinations before destructive effects.
@@ -1432,6 +1639,8 @@ Stages are logical gates, not a requirement to finish every product specificatio
 Freeze the executable gate before delegating or generating the runtime candidate: record the gate's artifact identities together with its result against the unchanged baseline, so later failures are attributable to the candidate rather than to a moving standard. Oracle-debugging simulations and harness self-checks are disposable evaluation machinery, not acceptance runs or reconstruction evidence; label them that way in the record. An evaluator repaired after freezing restarts from the gate freeze, not from a revised candidate.
 
 At evaluation time, establish that the runner is exercising the identified candidate: check resolved package/module paths, selected adapter, service endpoint, or artifact identity as appropriate. A stale build, reused container, cached import, or accidental fallback to the baseline can produce a green report about the wrong implementation.
+
+Follow the consumed artifact beyond an entry point or re-export index. That file can remain identical while a transitive compiled module changes; bind the affected module and installed/workspace-linked copies to the executed build. Reconcile this closure at start and finish, especially when a producer and consumer share generated outputs.
 
 For long or multi-stage runs, hold writes to accepted candidate and evaluation inputs, capture their identities at start and re-verify at finalize. An intervening input edit invalidates the combined claim even if assertions pass; a start-only manifest cannot establish that all stages used the same inputs.
 
@@ -1472,7 +1681,24 @@ Record the phase where a run stopped. When a loader, dependency-resolution, tool
 
 Each repair should have a concrete diagnosis and expected observation. If successive failures expose unmodelled lifecycle or protocol responsibilities, revisit the boundary and evaluation design instead of accumulating local patches until examples happen to pass. Keep focused checks in the repair loop and reserve the combined gate for integrated inputs; duplicate full-suite runs by every writer add cost without independent evidence.
 
-When capture and judgment are separable, confirm an oracle or finalizer repair read-only against retained evidence before paying for another full run. Label that replay as machinery diagnosis or re-judgment of historical observations; it does not prove a new integrated execution. Use a fresh run identity and resources for the final combined acceptance run, retaining the failed attempt and its diagnosis.
+Separate capture/build from judgment when practical, and persist the producer's
+receipt and raw output before running fallible post-processing. A downstream
+oracle, probe-label or report-authoring failure does not itself invalidate the
+completed producer stage. Repair the judgment in a separately identified artifact
+and rejudge the retained output read-only when it contains the required observations;
+keep the failed judgment and its cause. This is machinery diagnosis or rejudgment,
+not a new product execution. Use a new judgment identity without rerunning the
+producer solely to obtain a fresh all-green run label. Repeat the producer only
+for changed relevant inputs, missing observations/artifacts, or a separately
+declared new evidence claim; retain unaffected passed-stage receipts.
+
+A producer receipt written before required retention/finalization is provisional
+for whole-run acceptance even when its rows pass. If the wrapper subsequently
+fails, retain its nonzero outcome and identify the failed phase. Repair the finalizer
+in a separate artifact, verify the retained output against the original executed
+candidate/gate identities, and issue a successor phase-specific receipt. Do not
+replay the producer solely to clear the wrapper failure or rewrite its early
+success as evidence that finalization originally completed.
 
 A failed stage need not force replay of independent passed stages. Reuse their retained receipts only when relevant candidate, gate, dependency and environment assumptions still match the final inputs; rerun the failed or invalidated stages under fresh identities after diagnosis. Prove relevance against the complete executed path, including imported helpers, dynamic selection and state owners; an unchanged filename, convenient source prefix or isolated entry function alone is insufficient. A browser-only adapter correction can leave an independent transport gate reusable when its whole execution closure is demonstrably unchanged; otherwise rerun it. Launcher or setup changes may invalidate environmental claims without changing product-value expectations. Final acceptance still requires the complete reconciled stage set and actual process outcomes (Section 12.3), not whichever successful retry was most recent.
 
@@ -1539,7 +1765,9 @@ Shadow execution must isolate writes and external effects. Do not send the same 
 
 Define rollout success and recovery triggers before exposure, including representative sample volume. Avoid expanding traffic because “nothing failed” during a period with no meaningful workload.
 
-When the release model rebuilds from repository source on push, the push itself is the production introduction and carries the same gates: explicit authorization for the push, backups through existing procedures verified for their actual mounted coverage before it, and a defined post-deploy smoke over the transport the product requires — secure session attributes, for example, can demand HTTPS — including authentication, a representative write with reload/durability, and the changed capabilities' round-trips. Roll back by redeploying the prior accepted revisions; history rewriting is not a rollback procedure. Retain results and stop on any actual backup, build, or smoke failure.
+Establish the actual release trigger and operational ownership first. Git publication, package publication, artifact build and deployment are separate events unless the configured workflow connects them. A source-built deployment path does not by itself mean pushing auto-deploys; user-managed backup routines do not become agent-run operations merely because a release template mentions them. Use the identified deployed revision and transport for operational claims.
+
+When the confirmed release model rebuilds and deploys repository source on push, that push is the production introduction and carries the same gates: explicit authorization, backup coverage through the owning procedures, and a defined post-deploy smoke over the transport the product requires — secure session attributes, for example, can demand HTTPS — including authentication, a representative write with reload/durability, and the changed capabilities' round-trips. Roll back by redeploying the prior accepted revisions; history rewriting is not a rollback procedure. Retain results and stop on any actual backup, build, or smoke failure.
 
 ---
 
@@ -1558,6 +1786,8 @@ None requires deleting the working source permanently. Use an isolated worktree,
 A worktree isolates source files, not databases, queues, ports, credentials, or external effects. Provision the mutable resources the rehearsal actually uses, select explicit test configuration, and confirm the target before destructive probes. Use synthetic identities and uniquely scoped fixtures; route external effects to designated sinks. Cleanup must remove only resources created for this run. If a real dependency is unavailable, declare the substitute and the evidence limitation.
 
 Bind claimed operations and comparisons to stable resource identities. Re-resolve and validate ephemeral locators immediately before use, especially after restart; a cached address can now point to another resource. If shared infrastructure is broken, provision a private instance where permitted rather than performing destructive global repair outside your ownership. Environmental adapters must be explicit and fail-closed, with the omitted behavior named as a claim limit; an alternate transport is not evidence for the default discovery path. Track diagnostic scratch retained after failure and reclaim it when its retention purpose ends, preserving the durable evidence first.
+
+A privately named engine can still share host supervisors, sockets, runtime namespaces, storage locks or network helpers. Map those dependencies and their permitted effects before calling it isolated; owned paths do not grant authority to repair or stop another owner's services. Verify service-name discovery separately from direct-address transport, using actual name resolution and the expected service response when that claim matters. Successful private DNS proves neither whole-stack recovery nor OS-level egress confinement; retain shared-manager interactions and uncertainty from failed setup attempts in the resource receipt.
 
 ### 15.2 Define the survival pack precisely
 
@@ -2135,6 +2365,22 @@ If the extension fits the predicted boundary and the packet supplied the require
 | A gesture-order fix is called commit-order correct after only aligned dispatch/commit tests | The gate cannot distinguish those rules | Design reverse-commit and reverse-ack schedules separately; leave unexecuted orderings uncovered |
 | A consumer action times out behind a drawer while state checks pass | Interaction overlays prevented the driver from reaching the value oracle | Close supported local visibility controls, retain the adapter failure and rerun the unchanged value gate |
 | An independent reviewer overstates what a schedule or file timestamp proves | Review conclusions were not checked against raw cases and content identities | Correct and retain the review, reconcile actual input digests, and separate predictions from execution |
+| A no-repair read barrier prevents later saves from finishing | The held read also gates the product's persistence/progress queue | Trace the wait graph; use a bounded, explicitly scoped delivery condition that preserves progress without repairing the judged state |
+| A valid action is rejected for a transport cancellation | Expected-fault accounting ignored an actual framework close inside the window | Correlate the exact connection's recorded close and failure one-to-one; keep unknown and late failures distinct |
+| Fragmentation coverage is claimed but the payload was never cut there | Prefix lengths, serializer formatting or multibyte width misplaced offsets | Locate and inspect cuts in the actual encoded bytes before attributing coverage |
+| A consumer's unchanged index is cited as proof it used a repaired dependency | The changed compiled transitive module was not identified | Bind the full affected consumed artifact closure and serialize shared-output builds |
+| A wrapper exits zero while its positive probe failed | A final diagnostic command swallowed the operation's status | Propagate the inner status and require the semantic positive/negative result; retain the failed receipt |
+| Documented precedence matches a comment but contradicts the branch | Tests for one parameter type were generalized to another | Trace omission/false/empty handling per field and correct prose without silently changing product behavior |
+| Similarly named features have contradictory flag, stage or score prose | One entry's pipeline was copied onto a different execution path | Trace each entry and branch; identify score meaning and consumer cutoffs before correcting shared prose |
+| Turning off an optimization broadens access, or filtered records coexist with off-scope metadata | A fallback dropped caller authority, or only one result projection was scoped | Preserve scope through the alternate path and evaluate primary data and enrichment separately |
+| A rejected request is called unreachable under another configuration, or a recursive fallback broadens its scope | A negative control pinned only one guard condition, or re-entry lost caller context | Trace the selected false branch and recursive call; pair positive reachability/progress with independently scoped request observations |
+| A helper returns completion metadata but the public response reports no cut | The handler's projection was assumed to preserve the helper's result | Observe the public boundary; record missing values as a finding and freeze a versioned positive propagation gate before repair |
+| An inclusion probe passes for a source excluded by the generator | Identical wording on an included page was attributed to another surface | Bind the probe to the configured source section and check excluded surfaces separately |
+| A passed build is repeated after a report/probe error | Producer completion and downstream judgment were treated as one indivisible run | Retain the producer receipt/output and repair/rejudge only the affected stage |
+| Losing the last resource grant expands retrieval or enrichment | An empty scope was collapsed into an absent filter, or a resolved scalar scope was dropped | Exercise lifecycle-produced empty state and carry the effective scope through every consuming seam |
+| A complete schema comparison is inferred from route counts or a version label | Runtime generator output, transitive types or normalization semantics were never compared | Capture the full real schema, retain exhaustive differences and identify operations, facets and equivalence passes separately |
+| A later suite count is used to reject an earlier passing total | Different selections or counting units were treated as the same run | Reconcile actual per-invocation selections and correct summaries additively |
+| Cleaning one generated cache file deletes existing local artifacts | Ignore rules, regenerability or directory mtimes were mistaken for ownership | Use an owned output destination or exact owned file identity; disclose any crossed ownership and limit preservation claims |
 
 ---
 

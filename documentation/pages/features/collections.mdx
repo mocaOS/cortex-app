@@ -179,7 +179,7 @@ curl "http://localhost:8000/api/documents?collection_id=coll_abc123" \
 
 ## Collection-Scoped Operations
 
-By default, all Ask AI modes (Chat, Deep Research) and basic search query across **all collections** — no `collection_id` is needed to search everything. To narrow results to a single collection, pass a `collection_id`; vector search, keyword search, and graph traversal will then only include data from that collection's documents.
+Ask AI and basic search resolve the requested collection against the key's allowed scope; omitting `collection_id` uses the key's scope. To narrow retrieval to a single permitted collection, pass its `collection_id`. Basic search scopes its vector, keyword, and metadata legs to that collection's documents. The default Ask AI/context RRF path applies collection clauses to the chunk queries in its vector, keyword, and graph retrieval. The legacy fallback when `ENABLE_HYBRID_SEARCH=false` also carries scope into its vector and traversal chunk queries. Entity and relationship metadata returned by graph traversal remains global in both paths; chunk scoping does not establish complete graph-context isolation.
 
 ### Search Within a Collection
 

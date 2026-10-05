@@ -1206,11 +1206,13 @@ class Neo4jService:
             if filters and "file_type" in filters:
                 filter_clause = "AND d.file_type = $file_type"
             
-            # Collection scoping: filter vector results to collection membership
+            # Collection scoping: filter vector results to collection membership.
+            # None = unrestricted (no clause); [] = restricted key with no
+            # grants — a real empty filter that must match nothing, not "all".
             collection_clause = ""
             if collection_id:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-            elif allowed_collection_ids:
+            elif allowed_collection_ids is not None:
                 collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
             # The ANN call cannot pre-filter; when a scope/filter applies,
@@ -2205,7 +2207,7 @@ class Neo4jService:
                     terms.append(f"{sanitized}*")
             search_query = " OR ".join(terms) if terms else " OR ".join(names)
             try:
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run("""
                         CALL db.index.fulltext.queryNodes('entity_name_fulltext', $search_query)
                         YIELD node, score
@@ -2413,7 +2415,7 @@ class Neo4jService:
         collection_clause = ""
         if collection_id:
             collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-        elif allowed_collection_ids:
+        elif allowed_collection_ids is not None:
             collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
         with self.driver.session() as session:
@@ -2551,7 +2553,7 @@ class Neo4jService:
             collection_clause = ""
             if collection_id:
                 collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-            elif allowed_collection_ids:
+            elif allowed_collection_ids is not None:
                 collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
             # Optionally constrain traversal to Entity-only paths
@@ -2667,7 +2669,7 @@ class Neo4jService:
                 collection_clause = ""
                 if collection_id:
                     collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-                elif allowed_collection_ids:
+                elif allowed_collection_ids is not None:
                     collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
                 result = session.run(f"""
@@ -2713,7 +2715,7 @@ class Neo4jService:
                 collection_clause = ""
                 if collection_id:
                     collection_clause = "MATCH (col:Collection {id: $collection_id})-[:CONTAINS]->(d)"
-                elif allowed_collection_ids:
+                elif allowed_collection_ids is not None:
                     collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
                 
                 # Search in document metadata
@@ -2946,20 +2948,34 @@ class Neo4jService:
         query_embedding: List[float],
         entity_names: List[str],
         top_k: int = 5,
-        max_hops: int = 2
+        max_hops: int = 2,
+        collection_id: Optional[str] = None,
+        allowed_collection_ids: Optional[List[str]] = None
     ) -> dict:
         """
         Perform hybrid search combining vector similarity and graph traversal.
         (Legacy method - use hybrid_search_rrf for better results)
+
+        Carry scope to vector and traversal chunk queries. Graph entity and
+        relationship metadata has separate, currently unscoped traversal rules.
+        None is unrestricted; an empty allowed list remains a real empty filter.
         
         Returns:
             Dict with 'vector_results' and 'graph_context'
         """
         # Vector search
-        vector_results = self.vector_search(query_embedding, top_k)
+        vector_results = self.vector_search(
+            query_embedding, top_k,
+            collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
+        )
         
         # Graph traversal
-        graph_context = self.traverse_from_entities(entity_names, max_hops)
+        graph_context = self.traverse_from_entities(
+            entity_names, max_hops,
+            collection_id=collection_id,
+            allowed_collection_ids=allowed_collection_ids,
+        )
         
         return {
             "vector_results": vector_results,
@@ -3437,7 +3453,7 @@ class Neo4jService:
             # Collection scoping: 4-hop pattern for entity filtering
             collection_match = ""
             collection_where = ""
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 collection_match = """
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e)
                     WHERE col.id IN $allowed_collection_ids
@@ -3446,7 +3462,7 @@ class Neo4jService:
             
             if fetch_all:
                 # No LIMIT clause - fetch all entities
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run(f"""
                         {collection_match}
                         OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
@@ -3479,7 +3495,7 @@ class Neo4jService:
             else:
                 # Diversity score: penalize high-degree hubs so the default
                 # view shows a diverse set of entities, not just the most connected ones.
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run(f"""
                         {collection_match}
                         OPTIONAL MATCH (c2:Chunk)-[:MENTIONS]->(e)
@@ -3949,7 +3965,7 @@ class Neo4jService:
 
         # Fetch all entities with their connectivity stats (optionally scoped to collections)
         with self.driver.session() as session:
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 result = session.run("""
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                     WHERE col.id IN $allowed_collection_ids
@@ -4251,7 +4267,7 @@ class Neo4jService:
         
         with self.driver.session() as session:
             # Get the central entity — verify it is accessible in the allowed collections
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 entity_result = session.run("""
                     MATCH (e:Entity {name: $name})
                     WHERE EXISTS {
@@ -4287,7 +4303,7 @@ class Neo4jService:
             # Traverse relationships up to max_depth
             # Using a parameterized depth requires string interpolation (safe since we clamp the value)
             # For collection-scoped keys, filter related entities to the allowed collections
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 traverse_result = session.run(f"""
                     MATCH (start:Entity {{name: $name}})
                     CALL {{
@@ -4388,7 +4404,7 @@ class Neo4jService:
         
         with self.driver.session() as session:
             if include_connections:
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run("""
                         // Get selected entities (scoped to allowed collections)
                         MATCH (e:Entity)
@@ -4447,7 +4463,7 @@ class Neo4jService:
                                mention_count
                     """, names=entity_names)
             else:
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run("""
                         MATCH (e:Entity)
                         WHERE e.name IN $names
@@ -4956,7 +4972,7 @@ class Neo4jService:
                 filtered to those accessible in the allowed collections.
         """
         with self.driver.session() as session:
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 # Verify the community has at least one accessible member entity
                 result = session.run("""
                     MATCH (com:Community {id: $id})
@@ -5059,7 +5075,7 @@ class Neo4jService:
             
             # Collection scoping: 4-hop pattern
             collection_match = ""
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 collection_match = """
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(chunk:Chunk)-[:MENTIONS]->(e)
                     WHERE col.id IN $allowed_collection_ids
@@ -5068,7 +5084,7 @@ class Neo4jService:
                 params["allowed_collection_ids"] = allowed_collection_ids
 
             # Get total count
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 count_query = f"""
                     {collection_match}
                     {where_clause.replace('WHERE', 'WHERE' if not collection_match else 'AND' if where_parts else '')}
@@ -5104,7 +5120,7 @@ class Neo4jService:
             else:
                 order_clause = "ORDER BY mention_count DESC"
 
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 if where_parts:
                     data_query = f"""
                         {collection_match}
@@ -5183,7 +5199,7 @@ class Neo4jService:
             where_clause = "WHERE " + " AND ".join(where_parts)
 
             # Collection scoping: pre-collect allowed entity names using 4-hop pattern
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 params["allowed_collection_ids"] = allowed_collection_ids
                 collection_filter_clause = """
                     AND (EXISTS {
@@ -5251,7 +5267,7 @@ class Neo4jService:
 
             # Collection scoping: include only communities whose member entities
             # are reachable from the allowed collections (5-hop pattern)
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 params["allowed_collection_ids"] = allowed_collection_ids
                 collection_filter = """
                     AND EXISTS {
@@ -5330,7 +5346,7 @@ class Neo4jService:
     def get_entity_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
         """Get all distinct entity types, optionally scoped to collections."""
         with self.driver.session() as session:
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 result = session.run("""
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
                     WHERE col.id IN $allowed_collection_ids
@@ -5349,7 +5365,7 @@ class Neo4jService:
     def get_relationship_types(self, allowed_collection_ids: Optional[List[str]] = None) -> List[str]:
         """Get all distinct relationship types (excluding internal types), optionally scoped to collections."""
         with self.driver.session() as session:
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 result = session.run("""
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(s:Entity)
                     WHERE col.id IN $allowed_collection_ids
@@ -5558,7 +5574,7 @@ class Neo4jService:
             return []
         with self.driver.session() as session:
             try:
-                if allowed_collection_ids:
+                if allowed_collection_ids is not None:
                     result = session.run("""
                         CALL db.index.fulltext.queryNodes('community_summary_fulltext', $search_query)
                         YIELD node, score
@@ -6189,7 +6205,7 @@ class Neo4jService:
                 to only those accessible from these collections.
         """
         with self.driver.session() as session:
-            if allowed_collection_ids:
+            if allowed_collection_ids is not None:
                 # Scoped stats: counts only for the allowed collections
                 result = session.run("""
                     MATCH (col:Collection)-[:CONTAINS]->(d:Document)

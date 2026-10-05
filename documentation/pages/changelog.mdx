@@ -7,6 +7,191 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## October 5, 2026
+
+A maintenance week's accumulated backend, SDK and documentation work joins
+`main` for the next release; this entry implies no new release tag, package or
+image publication, or deployment. The backend work strengthens the collection-scope and answer-quality signals
+of the legacy ask paths the earlier fixes did not reach; the Skills work
+hardens the TypeScript SDK's SSE parser and the MCP server's package-version
+advertisement; and a reconciliation pass corrects published reference prose
+that described the wrong retrieval path or endpoint shape. Everything reuses
+existing response fields and SSE keys: no API shape, schema, migration or
+dependency change. The scope repairs bind chunk-query and community-access
+predicates — global traversal metadata and shared community summaries remain
+broader limitations — and none of this is a confinement-complete, production
+or deployment claim.
+
+### Scope forwarding in the legacy ask pipelines
+
+The September 2 recall fixes and this week's earlier confinement work reached
+agent-mode retrieval and the shared query builders. The legacy deep-research
+pipelines that run with `ENABLE_AGENT_RESEARCH=false` are two separate
+implementations — a streaming one and a non-streaming one — and both dropped
+the effective collection scope at their sub-question chunk queries and
+community calls.
+
+- **Streaming** — both `/api/ask/stream` and `/api/ask/stream/thinking` now
+  pass the effective scalar-or-allowlist scope to every sub-question's
+  chunk-query builders, and community selection and summary access receive the
+  requested collection when set, otherwise the key's allowed collections —
+  preserving the difference between no scope (`None`) and an empty allowed set
+  (`[]`) instead of collapsing both into unrestricted queries.
+- **Non-streaming** — flag-off `POST /api/ask` forwards the same scope through
+  the legacy deep-research call, and its no-LLM-key recursive fallback (the
+  path that retries as a standard query when no key is available) preserves it
+  too. That recursion exists only on the non-streaming path, which is also the
+  only one under the ~28s `ASK_DEADLINE_SECONDS` deadline; SSE deep research
+   has neither keyless recursion nor that deadline.
+- **Legacy hybrid retrieval** — disabling `ENABLE_HYBRID_SEARCH` keeps the
+  effective collection and allowlist on both the vector and graph-chunk legs
+  instead of losing that scope when switching away from the RRF path.
+- **Bound** — this confines chunk queries and community access. Graph traversal
+  still collects global entity/relationship metadata, `communities_used` is
+  derived from it, and a shared full community summary can mention members
+  outside the accessible set once one member is accessible. Collection scoping
+  is not complete graph-context privacy.
+- Verified by real-auth regression gates over recorded query assembly on both
+  transports — fixture/query-assembly evidence, not live Neo4j or deployment
+  verification.
+
+### Truncation and finish-reason signal on legacy, standard and fast paths
+
+Since September 3, agent-mode answers mark `truncated: true` on the `done`
+frame and end with a visible "cut short" note. The other writers ended with a
+bare `done`, so a mid-word cut was indistinguishable from a finished answer on
+those paths.
+
+- **Non-streaming legacy deep research** (`use_agentic: true` with
+  `ENABLE_AGENT_RESEARCH=false`) — the answer synthesis completion's provider
+  `finish_reason` now reaches the existing public `finish_reason`/`truncated`
+  fields (`stop` → `stop`/`false`, `length` → `length`/`true`). The
+  sub-question decomposition call's reason is never substituted for the
+  answer's.
+- **Streaming** — the flag-off legacy deep-research stream, the standard chat
+  writer (`ENABLE_AGENT_CHAT=false`, the default) and the fast writer
+  (`depth: "fast"` / `use_fast_search`, always its own branch) capture the
+  writer stream's `finish_reason` and set the existing `done.truncated` only
+  on `length`. Standard and fast capture it before their text-only output
+  filter; legacy deep research retains it in its own synthesis loop. A `stop` reason, a null
+  or missing reason attribute, and trailing null/usage-only chunks never set
+  the flag — and never erase a `length` seen earlier in the stream.
+- **No new notice, no new field** — these paths set the machine-readable flag
+  only: no visible "cut short" note (that stays the agent writer's behavior)
+  and no public `finish_reason` on SSE.
+- **Cap accuracy** — the caps behind the flag are now stated per branch:
+  the legacy deep streaming synthesis call is a fixed 2,000 tokens; standard
+  chat uses `WRITER_MAX_TOKENS_SPEED` (default 1,200); fast uses a literal 600
+  tokens and the Fast Mode model (`OPENAI_MODEL_FAST_MODE`, default
+  `OPENAI_MODEL`), independent of `WRITER_MAX_TOKENS_SPEED`/`WRITER_MODEL`. On
+  the non-streaming endpoint, standard chat is a literal 1,200-token call and
+  flag-off legacy deep research a fixed 2,000 — neither reads
+  `WRITER_MAX_TOKENS_SPEED`. Fast's first turn builds context from the top
+  three retrieved chunks trimmed to 600 characters each; a follow-up turn with
+  conversation history skips retrieval entirely.
+
+### Optional research metadata on the flag-off non-streaming path
+
+- The flag-off legacy deep-research response on `POST /api/ask` now projects
+  the research metadata that pipeline already produced into the existing
+  response fields: `sub_questions` (string list), `communities_used` (integer
+  community IDs) and `retrieval_stats` (four fixed counts: total sources
+  considered, unique sources, sub-questions researched, communities
+  referenced). Nonempty and literally empty (`[]`) values are preserved;
+  the standard chat path and the no-key fallback return nulls.
+- **Refusals are not uniform** — input-screen refusals (the pattern validator
+  and prompt-guard classifier) are answered before any retrieval, so all three
+  fields stay null; a model refusal — the writer emitted the canned deflection
+  itself — still runs the real pipeline, so the populated values arrive
+  alongside `refused: true` and `refusal_source: "model"`.
+- These fields already exist in the response schema: this is a producer value
+  correction on existing fields, not an API change. Earlier handler snapshots
+  omitted the values, so clients should check the version/capability rather
+  than assume. Streaming Deep Research keeps its own separate
+  retrieval-statistics events, untouched by this.
+
+### SDK SSE parsing and MCP server version (cortex-skills)
+
+- **SDK** — the SSE parser normalizes fragmented CRLF across chunk boundaries:
+  a provider or proxy that splits a `\r\n` frame terminator across two chunks
+  no longer breaks event parsing. LF framing, multi-byte UTF-8 splits,
+  incremental callbacks, late-memory aggregation and shutdown signaling are
+  unchanged.
+- **MCP server** — the advertised server version is read from the installed
+  MCP package metadata instead of a stale hardcoded value, so its handshake
+  identifies the server package accurately. Protocol negotiation is unchanged. New coverage
+  drives the real server process through a restart, confirming persisted state
+  files and opaque history survive with the state code isolated to its own
+  threads.
+- No dependency, lockfile, package-version or schema change.
+
+### Documentation reconciliation
+
+- **REST search ≠ researcher retrieval** — published pages described
+  `POST /api/search` as vector + keyword + graph with cross-encoder reranking
+  and env-tunable weights; it is actually vector + fulltext + **metadata**
+  legs fused by fixed reciprocal-rank weights (0.5/0.3/0.2, k=60), with no
+  graph-traversal leg, no rerank, and `ENABLE_HYBRID_SEARCH` not consulted on
+  this endpoint. The configurable weights and the flag govern only the
+  ask/context/researcher path, which is a different implementation. Feature
+  pages, handbook chapters and skill references now keep the distinction.
+- **Search reference** — the top-level `collection_id` request field and the
+  `total` response field are documented; a fabricated `RRF_K` environment row
+  and fabricated response fields (`query_time_ms`, `graph_context`) were
+  removed.
+- **Communities** — community IDs are integers, not `comm_N` strings;
+  summarization is the batch `POST /api/graph/communities/summarize` endpoint
+  (manage permission), and there is no per-community documents listing.
+- **Operator error semantics, corrected** — a permitted but nonexistent
+  collection id on search returns empty results, not 404 (a disallowed id is
+  403); search has no ingestion/readiness 503 gate — 503 responses come from
+  the generated-key store or x402 configuration paths; and a community id
+  passed as `collection_id` is just an ordinary collection filter that matches
+  nothing — community and collection identifiers are separate namespaces with
+  no mapping.
+- **Reference drift** — release-dependent `/health` version reporting, upload
+  processing running only when explicitly requested (default false), the
+  supported multipart placements, and boolean/string query-precedence merge
+  behavior were corrected against actual producer behavior across the skills
+  references and integration docs.
+
+No API or schema breakage — all backend changes reuse existing response
+fields, SSE keys and collection predicates; the SDK/MCP changes are
+runtime-local with no dependency or package-version change; documentation
+corrections are prose-only. Changes take effect when the corresponding
+components are updated; existing deployments are unaffected until then.
+
+---
+
+## October 4, 2026
+
+Backend repairs joining `main` for the next release: collection-scoped
+retrieval retains empty permissions and applies the effective scope to context
+enrichment. They publish with the next release; this entry claims no
+deployment and no released image.
+
+### Collection-scope confinement
+
+- **Empty allowed collections stay empty** — when a restricted key loses its
+  last collection grant through a key update or collection deletion, graph,
+  search, community and scoped-count queries now retain an empty collection
+  predicate instead of falling back to unrestricted queries. Unrestricted keys
+  still use the existing unfiltered path.
+- **Context community enrichment follows the requested scope** —
+  `/api/context` now forwards the effective single collection to community
+  search, including when a restricted key resolves to its one allowed
+  collection. Empty and multi-collection filters retain their meaning.
+- **Regression coverage** — frozen hermetic HTTP/auth/query-building and direct
+  query-assembly gates reject the original defects before the repair. Durable
+  search/context regression tests cover empty filters and effective-scope
+  forwarding. This is local fixture evidence, not live Neo4j or deployment
+  verification.
+
+No API shape, schema, migration or dependency change. Key-update and collection
+deletion policies, and direct access to uncollected documents, are unchanged.
+
+---
+
 ## October 3, 2026
 
 A reliability and verification slice landing on `main` across the three companion repositories. Cortex Chat gets corrected streaming, memory and history behavior for the edge cases that navigation, delayed memory compaction and shared projects create; the backend and its companions gain contract tests, journey fixtures and a disposable whole-stack restore rehearsal; and the published documentation corrects several long-standing inaccuracies about versions, backups and chat memory. No backend API, schema, migration or dependency change is included in this delta.

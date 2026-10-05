@@ -30,7 +30,7 @@ The web UI's login and session cookie are not involved.
 
 | Tool | What it does | Key needed |
 |------|--------------|------------|
-| `search_knowledge` | Hybrid search (vector + keyword + graph, reciprocal rank fusion). Returns the top chunks with filenames and scores. `top_k` 1–50, optional `collection_id`. | read |
+| `search_knowledge` | Hybrid search (vector + keyword + metadata, reciprocal rank fusion). Returns the top chunks with filenames and scores. `top_k` 1–50, optional `collection_id`. | read |
 | `ask_question` | A cited answer from the RAG engine. `mode: "chat"` answers in seconds; `mode: "deep_research"` runs the agentic researcher and can take minutes — it is the first choice when the task is "find out what the knowledge base says". | read |
 | `get_context` | A token-budgeted context bundle (reranked chunks + graph context + community summaries) for your **own** prompt — retrieval without Cortex writing the answer. `max_tokens` 200–32000, default 4000. Backed by `POST /api/context`. | read |
 | `list_documents` | Documents, newest first, with optional `collection_id` / `status` filter and `limit` (max 500). The ground truth for "what is in here". | read |

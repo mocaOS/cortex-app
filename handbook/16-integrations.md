@@ -90,8 +90,9 @@ class CortexClient:
     # ── Ask AI ─────────────────────────────────────────────────
     # To retrieve knowledge from the Cortex, prefer
     # ask_stream(question, use_agentic=True) — streaming Deep Research.
-    # The non-streaming ask() is for quick chat answers only: it is bounded
-    # by a ~28s server deadline and rejects use_agentic (400).
+    # Non-streaming ask() is recommended for quick chat: ~28s deadline.
+    # use_agentic is rejected (400) with ENABLE_AGENT_RESEARCH=true (default);
+    # flag-off legacy deep research runs under that same deadline.
 
     def ask(self, question: str, **kwargs) -> dict:
         payload = {"question": question, **kwargs}

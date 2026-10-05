@@ -176,7 +176,9 @@ class CortexClient:
         For retrieving knowledge from the Cortex, prefer
         ask_streaming(use_agentic=True) — streaming Deep Research.
         The non-streaming endpoint is bounded by a ~28s server deadline
-        and rejects use_agentic with 400 agentic_requires_streaming.
+        and rejects use_agentic with 400 agentic_requires_streaming when
+        ENABLE_AGENT_RESEARCH=true (default). Flag-off legacy deep research
+        reaches this endpoint under that deadline; prefer streaming either way.
 
         Args:
             question: The question to ask

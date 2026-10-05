@@ -185,3 +185,22 @@ Validation on create/update: restricted scope requires ≥1 collection; all spec
 - `ApiKeyCard` — individual key display with collection scope badge (amber "N Collections" or muted "All Collections") and collection list in expanded details
 - `ApiKeyAnalytics` — usage statistics
 - `UsageChart` — visual usage data
+
+### Empty collection scopes and enrichment
+
+At query boundaries, `None` means unrestricted; `[]` means no permitted
+collections. A restricted key can lose its last `HAS_ACCESS_TO` relationship
+through an admin key update or collection deletion. Preserve the empty filter
+through every graph/search/count/enrichment consumer: truthiness must not turn
+it into the unrestricted branch. This does not change direct uncollected-document
+access through `can_access_collection(None)` or impose a new key-update/deletion
+policy. Community enrichment must receive the effective scope too: a resolved
+single collection becomes `[effective_collection_id]`, otherwise forward the
+allowed list (including `[]`) or unrestricted `None`.
+
+Durable regression owners: `backend/tests/test_search_helpers.py` (real query
+assembly) and `test_context_endpoint.py` (effective community-scope forwarding).
+The frozen HTTP/auth/query-building and 18-method assembly gate, baseline
+rejections and local repair are retained under
+`output/claims-openapi-20261004/empty-scope/`. Its fake Bolt and recording-driver
+observations are not live Cypher or production isolation evidence.

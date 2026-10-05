@@ -193,14 +193,20 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `query`: str
 - `top_k`: int (default: 5, min: 1, max: 50)
 - `filters`: Optional[dict]
+- `collection_id`: Optional[str] — top-level scope; legacy `filters.collection_id` is also supported (400 if both disagree)
 
 **Response**: `SearchResponse`
 - `query`: str
 - `results`: List[SearchResult]
 - `total_results`: int
+- `total`: int — alias of `total_results`, the number of returned results
+
+This endpoint uses fixed vector/keyword/metadata weights (0.5/0.3/0.2), RRF
+fusion, and no cross-encoder reranking. `ENABLE_HYBRID_SEARCH` and the weight
+environment variables govern the different Ask AI/context fusion, not this route.
 
 #### `POST /api/ask`
-**Description**: Ask a question using enhanced GraphRAG — **non-streaming, fast-chat only**. To retrieve knowledge from the Cortex, the recommended first call is a streaming Deep Research query on `POST /api/ask/stream` with `use_agentic: true`; use this endpoint only for quick single-shot answers from callers that cannot consume SSE.  
+**Description**: Ask a question using enhanced GraphRAG — **non-streaming, recommended for quick chat**. To retrieve knowledge from the Cortex, the recommended first call is a streaming Deep Research query on `POST /api/ask/stream` with `use_agentic: true`; use this endpoint for quick single-shot answers from callers that cannot consume SSE.
 **Authentication**: `require_read_permission`  
 **Request**: `RAGRequest`
 - `question`: str
@@ -209,7 +215,7 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `max_hops`: int (default: 2, min: 1, max: 3)
 - `conversation_history`: Optional[List[ConversationMessage]]
 - `use_reranking`: bool (default: true)
-- `use_agentic`: bool (default: false) — **rejected on this endpoint**: `use_agentic: true` returns `400 {"error": "agentic_requires_streaming", "use_endpoint": "/api/ask/stream"}`. Agentic Deep Research routinely runs 60–90s and only the SSE endpoint survives that (heartbeats keep the connection alive).
+- `use_agentic`: bool (default: false) — with `ENABLE_AGENT_RESEARCH=true` (default), returns `400 {"detail": {"error": "agentic_requires_streaming", "use_endpoint": "/api/ask/stream", ...}}`. With the flag false, the legacy `_agentic_rag_query` runs within the same deadline. Its local unreleased forwarding repair carries effective scalar/multi/empty scope through chunk/community-access builders and the no-LLM-key recursive fallback. Use streaming Deep Research in either configuration.
 - `use_fast_search`: bool (default: false)
 
 **Constraints**:
@@ -223,13 +229,12 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 - `graph_context`: Optional[GraphContext]
 - `reranked`: bool
 - `reasoning_steps`: Optional[List[str]]
-- `sub_questions`: Optional[List[str]]
-- `communities_used`: Optional[List[int]]
-- `retrieval_stats`: Optional[dict]
-- `collection_id`: Optional[str] — the scope actually applied (request or key restriction)
+- `sub_questions`: Optional[List[str]] — decomposed sub-questions (string list). Populated only on the flag-off legacy deep-research path (local unreleased projection; earlier inspected handler snapshots omitted the values — check version/capability). Nonempty and literal `[]` lists are preserved. Null on the standard chat path, the no-LLM-key fallback, and the input-screen refusals (constructed before retrieval); a model refusal runs the real helper, so the populated values are projected alongside `refused: true`/`refusal_source: "model"`.
+- `communities_used`: Optional[List[int]] — integer community IDs used during the legacy deep retrieval; same branch and null rules as `sub_questions` (including the model-refusal projection).
+- `retrieval_stats`: Optional[dict] — on the flag-off legacy deep path exactly four keys: `total_sources_considered`, `unique_sources`, `sub_questions_researched`, `communities_referenced` (the schema accepts `{}`, but the real helper always returns all four keys populated). Null on the standard chat path, the no-key fallback and input-screen refusals; projected populated on model refusals (see `sub_questions`). Distinct from the streaming endpoints' SSE retrieval statistics.
 - `structured`: Optional[dict] — parsed JSON answer when `response_format` was set
-- `finish_reason`: Optional[str] — provider finish reason of the answer (`stop`, `length`, …)
-- `truncated`: bool — `true` when the answer hit the 1,200-token chat cap (`finish_reason == "length"`)
+- `finish_reason`: Optional[str] — provider finish reason of the answer completion (`stop`, `length`, …): the standard answer on the standard chat path, the synthesis completion on the flag-off legacy agentic path (local unreleased propagation; the decomposition call's reason is never used). Null when the provider reports none.
+- `truncated`: bool — `true` when `finish_reason == "length"`, i.e. the answer hit the writer's output-token cap (1,200 tokens on the standard non-streaming chat path; 2,000 on the flag-off legacy agentic synthesis call)
 - `refused`: bool — `true` when `answer` is the prompt-injection safe refusal rather than knowledge
 - `refusal_source`: Optional[str] — set when `refused`: `heuristic` (pattern validator), `classifier` (prompt-guard model — may be a false positive, rephrase), or `model` (the writer emitted the canned deflection itself). Both input gates run on this endpoint exactly as on `/api/ask/stream`; a refused ask is a normal `200` with empty `sources` and `finish_reason: "stop"`.
 
@@ -251,6 +256,10 @@ Cortex (Neo4j + Haystack powered GraphRAG) is a knowledge base system that combi
 **Notes**: 
 - When `use_agentic=true`: Includes extended thinking visibility
 - When `use_fast_search=true`: Uses simple vector search only (fastest)
+- **Local unreleased legacy scope repairs** (`ENABLE_AGENT_RESEARCH=false`): both streaming endpoints (`agentic_rag_stream`) and non-streaming `/api/ask` (`_agentic_rag_query`) forward the effective scalar/allowlist to sub-question chunk queries and community selection/summary access. Only nonstream has the no-LLM-key recursive fallback, which also preserves scope. Shared full community summaries and global entity/relationship metadata remain broader limits; this is not complete graph-context privacy.
+- **Local unreleased legacy streaming done-flag** (`ENABLE_AGENT_RESEARCH=false`): on both streaming endpoints, the legacy synthesis stream's provider `finish_reason` projects onto the public `done` frame as `truncated` — `length` → `truncated: true`; `stop`, a null reason, and a missing reason attribute never set the flag, and the decomposition call's reason is never used. Additive only — no new SSE field, no public `finish_reason` on SSE — and this legacy path appends no "cut short" notice; its synthesis call carries its own 2,000-token output cap.
+- **Local unreleased standard streaming done-flag** (`ENABLE_AGENT_CHAT=false`, the default): on the standard chat branch of `POST /api/ask/stream` (`depth: "standard"` or the equivalent agreeing legacy flags), the standard writer's provider `finish_reason` is captured from the synthesis stream before the text-only security filter and projects onto the public `done` frame as `truncated` — `length` → `truncated: true`; `stop`, a null reason, and a missing reason attribute never set the flag. Additive only — no new SSE field, no public `finish_reason` on SSE, no "cut short" notice; the writer cap is `WRITER_MAX_TOKENS_SPEED` (default 1200), distinct from the flag-off legacy agentic synthesis call's literal 2000 and the non-streaming chat path's literal 1200.
+- **Local unreleased fast streaming done-flag** (the fast branch of `POST /api/ask/stream`, reached with `depth: "fast"` or `use_fast_search: true` — always its own branch, independent of `ENABLE_AGENT_CHAT`; `/api/ask/stream/thinking` has no fast branch): the fast writer's provider `finish_reason` is captured from the synthesis stream before the text-only security filter and projects onto the public `done` frame as `truncated` — `length` → `truncated: true`; `stop`, a null reason, and a missing reason attribute never set the flag. Additive only — no new SSE field, no public `finish_reason` on SSE, no "cut short" notice; the output cap is a literal 600 tokens — distinct from `WRITER_MAX_TOKENS_SPEED` and the other writers' caps — and the model is the Fast Mode model (`OPENAI_MODEL_FAST_MODE`, default `OPENAI_MODEL`), not the `WRITER_MODEL` override.
 
 #### `POST /api/ask/stream/thinking`
 **Description**: Stream RAG with extended thinking visibility  
@@ -690,9 +699,9 @@ Returns current system settings grouped into:
 - `graph_context`: Optional[GraphContext]
 - `reranked`: bool
 - `reasoning_steps`: Optional[List[str]]
-- `sub_questions`: Optional[List[str]]
-- `communities_used`: Optional[List[int]]
-- `retrieval_stats`: Optional[dict]
+- `sub_questions`: Optional[List[str]] — legacy deep-research projection (see `POST /api/ask`)
+- `communities_used`: Optional[List[int]] — legacy deep-research projection (see `POST /api/ask`)
+- `retrieval_stats`: Optional[dict] — legacy deep-research projection, four fixed keys (see `POST /api/ask`)
 - `collection_id`: Optional[str]
 - `structured`: Optional[dict]
 - `finish_reason`: Optional[str]
@@ -853,7 +862,7 @@ Returns current system settings grouped into:
 **Key Methods**:
 - `search(query, top_k, filters) -> List[dict]`: Semantic vector search
 - `hybrid_search(query, top_k, vector_weight, keyword_weight, metadata_weight) -> List[dict]`: Hybrid search with RRF
-- `graph_search_async(query, top_k, max_hops, use_hybrid_rrf) -> dict`: Graph-enhanced search
+- `graph_search_async(query, top_k, max_hops, use_hybrid_rrf, collection_id, allowed_collection_ids) -> dict`: Graph-enhanced search
 - `rerank_results(query, results, top_k) -> List[dict]`: Cross-encoder reranking
 - `rag_query(question, top_k, use_graph, max_hops, conversation_history, use_reranking, use_agentic) -> dict`: RAG query
 - `agentic_rag_stream(question, top_k, max_hops, conversation_history, collection_id) -> AsyncGenerator`: Streaming agentic RAG (legacy)
@@ -911,6 +920,11 @@ Returns current system settings grouped into:
 - `add_document_to_collection(doc_id, collection_id) -> bool`: Add document to collection
 - `delete_document(doc_id) -> dict`: Delete document and cleanup
 - `cleanup_orphaned_entities() -> int`: Cleanup orphaned entities
+
+Legacy `Neo4jService.hybrid_search` (vector + traversal when hybrid RRF is
+disabled) accepts optional `collection_id`/`allowed_collection_ids` after
+`max_hops` and forwards them to both chunk-query builders. Graph entity and
+relationship metadata remains global in the legacy and RRF traversal paths.
 
 **Features**:
 - Vector indexes for embeddings

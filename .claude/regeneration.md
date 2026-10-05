@@ -1,6 +1,379 @@
 # Cortex maintenance / regeneration index
 
-Mode: **translate**, playbook [`REGENERATIVE-SOFTWARE.md` v2.14.0](../REGENERATIVE-SOFTWARE.md).
+## Authorized publication continuation — portable2.21.0, 2026-10-05
+
+User authorized harvesting portable lessons, updating the App technical changelog,
+then committing/pushing accumulated maintenance across all three `main` branches.
+This supersedes the preceding no-commit/no-push constraint only. Deployment,
+package/image publication, paid runs, installs/pulls, schema/dependency/migration
+changes and shared-resource/cache cleanup remain outside this continuation.
+Backups stay user-owned; Git push does not auto-deploy these instances.
+
+Portable2.21 harvest owns typed optional projection, schema-versus-producer probes,
+failure-phase metadata, actual writer scope, stage-input closures/exact prefixes,
+and ancillary-resource preflight. Eight before knowledge snapshots and bindings:
+`output/publication-20261005/harvest/{start.json,HARVEST.json}`. Executed optional
+projection and all prior evidence retain their2.20/earlier bases and bytes.
+App changelog now describes Oct4/Oct5 accumulated scope/completion/optional-field,
+SDK CRLF/MCP server-version and source-backed reference corrections; Oct3 remains
+the already-published week-wide Chat/recovery/contract record.
+
+Current backend production-dependency-runtime SOURCE suite:1688pass/22live skips,
+error-only Ruff pass with read-only retained tool reuse; image/python/copy/actual
+selection bound. Original offline attempt and swallowed wrapper exit retained.
+Read `verification/RECEIPT.md` WITH `CORRECTIONS.md`/`REJUDGED-v1.json`: host-network
+adaptation fetched tokenizer data despite the task constraint; egress unknown,
+not zero. SDK31/MCP10 on private artifacts and docs10controls/one updated-changelog
+offline build pass in `output/publication-20261005/checks/`. Unchanged Chat63 and
+telemetry13 evidence require their recorded closure rebind, not browser replay.
+
+Git publication status/HEADs and readiness: `output/publication-20261005/
+{PUBLICATION.md,PUBLICATION.json,READINESS.md}`. Keep `qa/release/`'s three local
+adapters and ignored output/resources uncommitted. Readiness is bounded source/
+runtime evidence; new artifacts/live HTTPS/provider/store/privacy/quality are not
+verified. Recovery bothCI3.11/Node20+production still needs snapshot/upgrade/image
+bindings. Next exact maintenance action remains the unchanged-source SSE-stats/
+SHOW_RETRIEVAL_STATS prose trace in the preceding handoff. Older pointers are history.
+
+## Latest continuation — optional nonstream projection, v2.20.0
+
+Translate/local/uncommitted; published heads unchanged. Start8812 retained
+identities/86dirty snapshots reconciled the accepted fast candidate. Frozen
+real-auth optional gate22 baseline14controls/8projection rejects, independent
+ACCEPT before a main.py-only three-line `.get` repair using existing schema.
+Candidate22/22 with148retention; combined546/546 product exit0. Focused outer
+ID judgment failure retained; accepted `evaluation/focused/run-1/REJUDGED.json`
+rejudges the same JUnit, zero replay. Optional empty/null/missing compatibility,
+scope/completion/refusal/deadline/no-key/progress/callback/thread controls hold.
+
+Source attempt1's blanket refusal-null claim rejected; corrected input-screen
+versus model-refusal prose accepted before generation. Ask1.4.7, manifest25/55
+twice identical, lint0errors2existingwarnings, docs10controls and one private
+offline build/judgment pass with stage receipts. Source writer's extra Skills
+index write is disclosed; no simultaneous writer, lead owns final checkpoints.
+Portable2.20 remains unchanged; product lessons harvested in RAG/QA/maintenance.
+Owning closeout/audit/prompt: `output/legacy-agentic-optional-projection-20261005/`
+`{FINAL.md,FINAL.json,HARVEST.json,HANDOFF.md}`. Earlier next actions are historical.
+
+**Next exact local action:** trace actual SSE `retrieval_stats` payloads and
+`SHOW_RETRIEVAL_STATS` consumers separately for agent and flag-off legacy Deep
+Research through both streaming entries. Freeze raw positive/empty/config-contrast
+observations on current unchanged bytes before any repair; compare the Skills
+ask SSE table/example and App ask-ai example's `search_calls`/mixed-key claims.
+Correct only source/evidence-supported prose; existing schema remains unchanged.
+Broader metadata privacy and Hermes recall cutoff remain separate findings.
+Recovery remains both CI Python3.11/Node20 and production images with snapshot/
+upgrade-pair/retained-image prerequisites. Full constraints: qa/NEXT_SESSION.md.
+
+## Latest continuation — fast streaming flags and portable2.20.0
+
+Translate/local/uncommitted; same App85e29fe/Chatd6d3ad6/Skills63e37ec. Start8276
+recorded identities/409snapshots reconciled accepted standard candidate. Fastv1
+baseline26:20healthy/6lengthfails was valid but read-only review REJECTed its missing
+declared null-tail case. Additivev2 freezes27:20healthy/7lengthrejects; independent
+ACCEPT before fast-only main.py +17/-3 repair. Candidate27/27 final149retention,
+combined524/524 pass. First-turn/history/cap/model/context/filter/scope/progress
+preserved; raw23provider+public/1refusal/3REST. Chat13/SDK19 explicitly inherited.
+Ask1.4.6/manifest25/55twiceidentical/lint0errors2warnings/docs10controls/one private
+offline build/judgment pass with receipt-bearing stages. Failed machinery retained.
+
+Execution basis remains2.19.0. Separate portable2.20 harvest installs actual selected
+case coverage, canonical module/group IDs, end-to-end candidate-retention controls
+and stage-time receipts. Owning closeout `output/fast-stream-flags-20261005/{FINAL.md,
+FINAL.json}`; separate snapshot/audit/prompt `output/playbook-harvest-2.20.0/`.
+Ruff unverified; canned handler forwarding is not live store/provider/privacy/quality
+or production proof. All earlier next/current statements are historical.
+
+**Next exact local action:** trace real-auth flag-off `POST /api/ask` optional
+sub_questions/communities_used/retrieval_stats from `_agentic_rag_query` to existing
+RAGResponse fields. Freeze positive nonempty/empty/null public-projection gates on
+unchanged source BEFORE repair; keep flags-on400, deadline/no-key behavior, scope,
+finish_reason/truncated/refusal/progress controls. Current handler omission is static
+only; existing schema suffices, no schema change or broad metadata-privacy claim.
+Recovery remains both CI Python3.11/Node20 and production images, pending snapshot/
+supported upgrade-pair/retained-image bindings. Full constraints: qa/NEXT_SESSION.
+
+## Latest continuation — standard streaming completion flags, v2.19.0
+
+Translate/local/uncommitted; same App85e29fe/Chatd6d3ad6/Skills63e37ec. Start7185
+recorded identities/407snapshots match the accepted dirty basis. Frozen standard
+real-auth gate20:16controls pass/4lengthflags reject; independent read-only ACCEPT
+precedes a standard-branch-only main.py repair. Metadata captured before the
+text-only security filter survives content-free termination and null/usage tails.
+Candidate20/20 with completed retention, focused497/497 pass. Exact content/security/
+scope forwarding/progress preserved; no visible notice. Chat13/SDK19 are explicitly
+inherited by their unchanged recorded inputs, not fresh producer/client integration.
+
+V3's baseline-digest candidate-retention defect was caught before candidate launch;
+separate v4 fixes identity/finalization and passes three synthetic machinery controls,
+inheriting v3 baseline with fixed gate/selection. Prior attempts and focused-ID
+preflight failure remain retained. Docs ask1.4.5/manifest25/55 twice identical,
+lint0errors2existingwarnings/docs10controls/one private offline build/judgment pass.
+Missing original gate receipts received bounded fresh receipt-bearing executions;
+no rebuild after judgment-parent failure or receipt correction. Ruff unverified.
+Owning closeout: `output/standard-stream-flags-20261005/{FINAL.md,FINAL.json}`;
+harvest/current identities/fresh prompt: its `{HARVEST.json,HANDOFF.md}`. Portable
+2.19.0 remains unchanged: this slice applies its existing rules, not a new method
+version or historical evidence relabel. All older next/current sections are history.
+
+**Next exact local action:** freeze real-auth `POST /api/ask/stream` depth fast
+(`use_fast_search=true` equivalent) provider stop/length→done.truncated on unchanged
+fast-writer bytes BEFORE repair. Observe metadata before `_fast_deltas`→filter_stream;
+cover first-turn scoped vector retrieval and history/no-retrieval progress, real
+prompt-security/refusal/content and null/missing/usage tails. The fast call's literal
+600-token cap is distinct from standard WRITER_MAX_TOKENS_SPEED/deep2000. Fast still
+omits reasons (static only); standard's gate is not fast-path proof. Recovery remains
+both CI Python3.11/Node20 and production images with snapshot/upgrade/image prerequisites.
+
+## Latest continuation — legacy streaming completion flags, portable2.19.0
+
+Translate; executed basis2.18.0, current portable **2.19.0**. Published HEADs unchanged
+App85e29fe/Chatd6d3ad6/Skills63e37ec; start6522identities/404snapshots. Corrected frozen
+v2 baseline107:103pass/4content-free synthesis-length truncation rejects, no errors/
+skips; independent ACCEPT before one-function repair. Candidate107/107 producer
+passes, but original outer retention failed against the baseline runtime digest.
+Separate finalizer rejudges retained output and completes candidate-byte retention,
+zero test replay. Focused389/389, Chat13/13 and SDK19/19 source contract checks pass;
+SDK positive true flag fills a coverage gap, no client runtime defect/repair claimed.
+Scope/progress/content/order/community IDs and prior nonstream fix preserved.
+Two usage-tail composition cases pass on that same candidate under2.19.0; main
+107/389 execution remains2.18.0. No full-suite replay for the portable harvest.
+
+Public App/Skills prose distinguishes legacy flag-only from agent-writer visible
+notice; ask1.4.4, manifest twice identical25/55, lint0errors/2existing warnings,
+docs10controls/one private offline build/source-bound judgment pass. Failed launcher/
+adapter/receipt/retention/judge attempts and old receipts/resources stay retained.
+Ruff unverified; QA Python3.13.5/Node22, not CI/production recovery proof. Owning
+closeout: `output/legacy-agentic-stream-flags-20261005/{FINAL.md,FINAL.json}`;
+separate portable before-snapshot/harvest: `output/playbook-harvest-2.19.0/`.
+
+**Next exact local action:** freeze real-auth standard-depth `/api/ask/stream`
+with ENABLE_AGENT_CHAT=false, provider stop/length→public done.truncated BEFORE
+repair. Observe raw completion metadata before main.py's text-only _writer_deltas/
+filter_stream; preserve prompt-security/content/scope/progress. Standard and fast
+streaming omissions are static separate findings; do not transfer legacy deep
+gate/deadline semantics or bundle the fast sibling. Recovery stays both CI
+Python3.11/Node20 and production images with snapshot/upgrade/image prerequisites.
+All older next/current statements below are historical where superseded.
+
+## Latest continuation — nonstream completion flags, v2.18.0
+
+Translate on current portable **v2.18.0**; published HEADs remain App85e29fe/
+Chatd6d3ad6/Skills63e37ec, local/uncommitted. Start reconciles6027 recorded identities
+and403 snapshots against the accepted dirty basis. Frozen additive v3 baseline75:
+68pass/7intended finish-reason rejections, no errors/skips; independent read-only
+ACCEPT precedes the two-line synthesis-reason propagation repair. Candidate75/75
+and focused377/377pass with exact selection and start/end identities enforced.
+V2 null/false remains retained characterization; scope/progress/callback/thread
+controls are preserved. Null-provider reason passes; absent attribute is unexecuted.
+QA Python3.13.5; Ruff/CI error-only lint remains unavailable/unverified.
+
+Corrected public cap prose binds literal nonstream1200/2000 call arguments, not
+streamed-agent settings. Source corrections/byte recovery are retained. Docs10/10,
+one private offline build and source-bound judgment pass. Skills public/manifest
+inputs are byte-identical, so prior idempotency is reused; fresh lint0errors/
+2existing warnings. Chat/SDK/MCP runtime and historical suites unchanged/unreplayed.
+Owning evidence: `output/legacy-agentic-nonstream-flags-20261004/{FINAL.md,FINAL.json}`.
+
+**Next exact local action:** freeze a positive real-auth flag-off legacy streaming
+provider stop/length → public done.truncated gate through BOTH streaming entries
+on unchanged source before repair. Include content-free final finish-reason chunks,
+healthy progress and retained scope controls. agentic_rag_stream currently ignores
+provider reasons (static finding only); this is distinct from the completed
+deadline-bounded nonstream repair. Optional agentic metadata, broader graph privacy
+and Hermes recall cutoff remain separate. Recovery target stays **both CI
+Python3.11/Node20 and production images**, pending snapshot/upgrade-pair/image
+bindings. Preserve constraints/resources; all older sections keep historical scope.
+
+## Latest continuation — nonstream scope and portable v2.18.0
+
+Translate; this round executed onv2.17.0, current portable guidance **v2.18.0**.
+Published HEADs unchanged App85e29fe/Chatd6d3ad6/Skills63e37ec. Start5527 recorded
+identities/401 snapshots. Frozen v2 real-auth nonstream baseline69:43controls pass/
+26scope predicates reject; independent PASS precedes one-file document_processor
+forwarding repair, including no-key recursion and old positional callback support.
+Candidate69/69; focused371/371 (nine files, includes the unchanged streaming gate),
+in-memory compile pass. Recording/canned assembly, not returned-data/live Cypher
+or full privacy. Shared summaries/global metadata/IDs/relationships remain gaps.
+
+Skills ask1.4.3/hermes1.3.6 correct the owning scope note and shell comment only;
+manifest twice identical25/55root-inclusive, lint0errors/2existing warnings;
+docs10controls/one private offline build/source-bound inclusion judgment pass.
+Rejected branch/deadline prose conflations are retained and corrected; final docs
+distinguish streaming agentic_rag_stream from deadline-bounded _agentic_rag_query.
+Portable2.18 harvests guard/recursive reachability, public projection, characterization
+versus obligations, source-backed branch prose and accepted-working-tree/receipt
+provenance. Historical execution bases/gate bytes preserved; actual v2 gate/helper/
+before source retained post-execution by verified digest. Owning evidence/review:
+`output/legacy-agentic-nonstream-scope-20261004/{FINAL.md,FINAL.json}`; separate
+eight-file knowledge snapshot/audit/handoff: `output/playbook-harvest-2.18.0/`.
+
+**Next exact action:** freeze real-auth flag-off nonstream provider `stop`/`length`
+finish_reason/truncated positive HTTP gates on unchanged source before repair.
+The existing helper omits finish_reason; v2's null/false assertions are observed
+scope characterization, not a permanent promise. Declare a new acceptance delta,
+retain v2 bytes and scope controls, then repair only evidenced metadata propagation
+using the existing schema. Other optional agentic response fields are a separate
+projection finding. Recovery stays **both CI Python3.11/Node20 and production images**;
+snapshot/upgrade-pair and quality/provider/deployment prerequisites remain. No new
+publication/install/dependency/schema/migration/resource-cleanup authority; all
+earlier current-version/next-action paragraphs below keep historical scope.
+
+## Latest continuation — legacy agentic streaming scope, 2026-10-04
+
+Translate/v2.17.0, local/uncommitted on App85e29fe/Chatd6d3ad6/Skills63e37ec.
+5048 recorded identities reconciled before edits; accepted producer includes the
+prior dirty empty-filter/hybrid forwarding repairs. Frozen positive v3 real-auth
+HTTP→recording query assembly baseline95:55 controls pass/40 scope assertions
+reject. Independent read-only PASS and additive receipt corrections precede the
+minimal two-file **streaming-only** forwarding repair. Candidate95/95, focused
+302/302 (eight files), in-memory syntax pass; Ruff remains unavailable/unverified.
+Graph chunks and community selection/summary-access predicates receive scope;
+shared full summaries, global traversal metadata/IDs and community relationships
+remain broader limitations. No live Cypher/returned-data/complete privacy claim.
+
+Source trace corrects a prior handoff assumption: non-streaming `/api/ask` rejects
+agentic use only when `ENABLE_AGENT_RESEARCH=true`. Flag-off REST reaches
+`rag_query`→`_agentic_rag_query` with the same scope gaps; deliberately ungated and
+unrepaired in this slice. App/Skills affected recommendations now qualify the flag
+and distinguish the local unreleased streaming candidate. Seven Skills patch bumps;
+manifest twice identical25/55root-inclusive, Skills lint0errors/2existing warnings,
+docs validation/10controls and one private-copy offline build/inclusion judgment
+pass. Earlier product/evidence runs are retained, not relabeled or replayed.
+Owning closeout/audit/review: `output/legacy-agentic-scope-20261004/{FINAL.md,FINAL.json}`.
+
+**Next exact local action:** freeze a positive real-auth flag-off non-streaming
+`POST /api/ask`→`rag_query`→`_agentic_rag_query` gate on unchanged source, including
+scalar/single/multi/empty/unrestricted scope through all sub-question chunk legs
+and community search/summary access, then repair only the evidenced forwarding
+gaps. Keep flag-on400 and permitted-progress controls; broader metadata is separate.
+Recovery target choice is now **both CI Python3.11/Node20 and production images**;
+snapshot mechanism/upgrade pairs, quality corpus/provider and deployed revisions
+remain prerequisites. All original sections below keep their historical scopes.
+
+## Current portable harvest — v2.17.0; latest flag-off scope round
+
+One additional translate round executed onv2.16.0: frozen v2.1 baseline6controls
+pass/20predicate rejections precedes the minimal two-file scope-forwarding repair.
+Candidate26/26, focused207/207, syntax check pass; Ruff remains unavailable and
+CI error-only lint unverified. The legacy vector_graph algorithm/shape and default
+RRF controls are preserved. Evidence is real call/query assembly on a recording
+driver, not returned-data/live Cypher or complete graph-metadata privacy.
+
+Affected prose and search1.2.3 align the flag-off chunk-query scope with the
+global entity/relationship metadata caveat. Separate generated writer: manifest
+twice identical (25/55 including root), Skills lint0errors/two existing warnings,
+docs validate/10controls and **one** private-copy offline build pass. A failed
+post-build judge was repaired by rejudging the same retained output, zero rebuilds.
+Owning closeout/review/audit: `output/flagoff-scope-20261004/FINAL.md` and `.json`.
+
+Portable2.17.0 harvests entry/branch-specific pipeline and score contracts,
+fallback authority versus metadata confinement, actual generated-input ownership,
+source-bound mirror probes, dirty-tree/sampled-artifact provenance and producer/
+judgment stage reuse. Prior2.16.0 execution/gate/receipt bytes remain retained;
+separate six-file knowledge snapshot/review/audit:
+`output/playbook-harvest-2.17.0/{start,HARVEST}.json`. No gate replay follows
+the portable-only edit; root policies already route the lessons through owning
+guides. Fresh-session prompt: its `HANDOFF.md`.
+
+Exact next independent action: trace legacy `agentic_rag_stream`'s lost
+multi-collection allowlist and unscoped community retrieval under
+`ENABLE_AGENT_RESEARCH=false`; freeze a positive scoped-entry/assembly gate on
+unchanged source before repair. Distinguish reachable streaming paths from the
+REST-rejected non-streaming agentic path. Broader global graph metadata, Hermes
+recall cutoff, fabricated prose and recovery/quality/deployment prerequisites
+remain open. Recovery target choice still awaits CI Python3.11/Node20,
+production images, or both. Published HEADs unchanged, local/uncommitted;
+no new schema/dependency/migration/publication authority. Earlier next actions
+below are historical wherever superseded here.
+
+## Latest continuation — search prose, 2026-10-04
+
+Translate/v2.16.0, local/uncommitted on the same published HEADs. The named
+metadata-vs-graph, collections-field and search-reference configuration claims
+are confirmed drift and corrected across19 existing source documents, with
+six Skills patch versions and a separately generated manifest. REST search is
+vector/fulltext/metadata RRF (fixed weights, no graph-traversal leg or rerank),
+independent of the flag controlling the different ask/context graph fusion.
+Source, rejected preliminary review and corrections:
+`output/search-prose-20261004/{SOURCE,SOURCE-CORRECTIONS,source-review-1}.md`;
+Skills record `2026-10-04-search-metadata-fields.md` must be read with those
+corrections. The producer basis includes the prior local scope repair, not
+HEAD-identical backend files.
+
+Fresh affected gates pass: manifest twice byte-identical with25 skill/55 file
+entries verified, lint0 errors/two existing warnings, App docs validation and
+10 controls, private-existing-graph docs build with corrected page inclusion.
+Owning receipts: `output/search-prose-20261004/generated/RESULTS.json` and
+`docs-build/run-3/RESULTS.json`; final review/preservation/next action live in
+its `FINAL.md`. Original run1 failed mirror judgments and run2 post-build
+evaluator exception remain retained; they are not product failures. Unchanged
+backend/Chat/SDK/MCP/schema/recovery/release gates were not replayed. Current
+portable version stays2.16.0; no historical execution basis is rewritten.
+
+Exact next independent action: trace the flag-off ask/context legacy fallback's
+missing collection/allowlist propagation, then freeze a positive scoped
+retrieval gate on unchanged source before any runtime repair. Also record the
+Hermes0.4 recall cutoff against REST RRF's~0.0164 maximum as a separate static
+finding; no plugin failure/repair is claimed. Hermes's stale tool-schema
+description stays deferred under the no-schema constraint. Fabricated search
+examples/filter fields remain the next bounded prose audit. Recovery target
+choice (CI Python3.11/Node20, production images, or both), snapshot/upgrade,
+quality/provider and deployed-revision prerequisites remain open.
+
+## Current portable harvest — v2.16.0 (documentation-only)
+
+Harvest of the completed claims/openapi session: empty-vs-absent scopes and
+enrichment, dependency/identifier prose, query-assembly evidence limits, complete
+runtime schema comparisons, positive diagnostic-to-candidate gates, selection-aware
+count corrections and ownership-safe cache checks. Rules live in the portable
+guide; product facts remain in the existing owning guides and receipts.
+The claims/openapi executions below retain their **v2.15.0 basis**; no runtime,
+gate, schema, manifest, dependency, build or prior receipt changes accompany this
+harvest. Current-input snapshots and separate audit:
+`output/playbook-harvest-2.16.0/{start,HARVEST}.json`. Accepted prior closeout is
+`output/claims-openapi-20261004/{FINAL.md,FINAL.json}` INCLUDING corrections.
+Next action remains its source-backed search/collections/reference prose slice;
+recovery target choice and other listed prerequisites remain open.
+
+## Latest continuation — claims/openapi, 2026-10-04
+
+Translate/v2.15.0, local/uncommitted on the published HEADs below. The three
+search404/readiness503/community-id claims are **confirmed drift** and corrected
+at Skills search1.2.1/ask1.4.1 plus active App community/curl examples. Source and
+independent producer review distinguish all/restricted principals, unknown IDs,
+auth/payment503 and contained retrieval errors; no404/readiness/community
+contract was invented. Owning verdict/limits: `output/claims-openapi-20261004/CLAIMS.md`.
+
+Trace-discovered runtime defects received a frozen positive gate first:
+baseline four HTTP value rejections plus23 empty-filter assembly rejections.
+Smallest local repair retains `None` vs `[]` across24 Neo4j query branches and
+forwards `/api/context`'s effective scope to community enrichment. Candidate
+**15/15 HTTP values,69/69 assembly cases,102 focused backend tests pass**;
+seven durable regression tests. Fake Bolt/recording-driver evidence is not live
+Cypher. Ruff is unavailable; CI error-only lint remains unverified. Completed
+Chat/SDK/MCP/release/recovery gates stay historical, not re-executed.
+
+Complete runtime OpenAPI capture obtained: **120 paths /160 method entries**,
+current repaired-source capture byte-identical to its pre-repair schema. Full
+comparison is explicitly inherited by schema identity. Read original reports
+WITH `openapi/CORRECTIONS.md` and the machine supplement:102 unique shared
+operations differ across294 facets; heuristic categories and duplicate IDs are
+not schema parity. No schema edits. Fresh manifest twice byte-identical, Skills
+lint0 errors/two existing warnings, App docs validate/10 controls/offline build
+pass (`output/claims-openapi-20261004/`). The three ignored Python bytecode-cache
+deletions and count-summary corrections are disclosed in CLAIMS;1718 recorded
+prior identities and qa/release3 are audited separately, not an all-cache claim.
+
+Exact next independent action: trace `/api/search` metadata-vs-graph prose and
+the collections/search-reference field/config discrepancies in CLAIMS before
+another correction. Recovery choice still awaits **CI Python3.11/Node20,
+production images, or both**; online snapshots/upgrade pairs, quality corpus/
+model/provider authority and deployed revisions remain prerequisites. Schema
+alignment requires lifting the existing no-schema constraint. Earlier next-step
+statements below are historical wherever this continuation supersedes them.
+
+Mode: **translate**, playbook [`REGENERATIVE-SOFTWARE.md` v2.17.0](../REGENERATIVE-SOFTWARE.md).
 Product scope: cortex-app + cortex-chat + cortex-skills, including the public docs
 at `https://docs.cortex.eco/llms-full.txt`. Canonical session policy is each repo's
 root `CLAUDE.md`; `AGENTS.md` is an explicit-read adapter. This index is knowledge
@@ -8,6 +381,85 @@ and checkpoint, not another policy owner. Companion paths below are relative to
 the directory containing the three checkouts; each repo also works independently.
 
 ## Checkpoint and evidence
+
+**Latest portable harvest — v2.15.0:** documentation-only harvest of the completed
+positive-list, SDK/MCP, private-DNS prerequisite and skill-drift slices. Portable
+rules now cover barrier/progress coupling, stale positive reads, actual lifecycle
+fault correlation, encoded-byte fixture proof, compiled-input closure and process
+restart, executable precedence, private/shared infrastructure and receipt truth.
+Earlier execution bases remain v2.14.0 or their recorded predecessors; no new
+journey/release/provider run or product change accompanies this harvest.
+Before-edit knowledge/current-work snapshots and separate audit:
+`output/playbook-harvest-2.15.0/{start,HARVEST}.json`. Current next action remains
+the three unresolved search404/503/community-id claims below. Accepted session
+closeout: `output/sdk-mcp-protocol-20261003/FINAL.md` with
+`final-verification-v5.json`; older failed verifier reports remain historical.
+
+**Current — 2026-10-03:** Git publication is complete at Chat `d6d3ad6`, App
+`85e29fe`, Skills `63e37ec`; the authoritative `PUBLICATION.md`/`.json` in
+`output/release-readiness-20261003/authorized-publication-20261003/` supersede
+earlier authorization/release-gate statements below. No instance auto-deploys on
+push; backups are handled by separate user routines. Deployment/HTTPS smoke is
+not claimed. Historical production63/63 and telemetry13/13 were not repeated.
+
+**`chat-project-move-positive-list-20261003-b`**, translate/v2.14.0: frozen
+positive-list v1.1 **Chromium26/26 PASS on unchanged Chat**. A held pre-forward,
+B commit/ack and genuine positive B list held; A commit/ack, newer positive A
+list delivered, older B delivered last. Final association/direct immutable
+edit/regenerate context A, full move-only state and valid compaction pass.
+Post-old-B refresh responses are captured then delivery-failed to prevent repair
+without deadlocking the existing persistence→refresh queue. Actual selected-feed
+close invocations account for intentional redo-loading cancellations. v1 a25/26
+is an evaluator false positive; its bytes/failed scratch remain. Independent
+read-only review accepts b; **one fresh journey +27 explicitly inherited**
+unchanged-input journeys, suite147/types/docs10 controls and Skills lint pass.
+Owning Chat `records/2026-10-03-project-move-positive-list.md`; App
+`output/chat-project-move-positive-list-20261003/` retains integrated identities,
+reviews and failures. No product defect or Chat repair warranted.
+
+Recovery backlog prerequisite P3 progressed separately: new private named-network
+DNS + exact HTTP fixture and NXDOMAIN control demonstrated. Read
+`output/chat-project-move-positive-list-20261003/recovery-dns-preflight/RECEIPT.md`
+**with `CORRECTIONS.md` and `RECEIPTS-SUPPLEMENT-1.json`**: an earlier semantic
+failure had a swallowed shell exit, resource-size labels were corrected, and a
+pre-final image-pull attempt is disclosed (transfer outcome indeterminate).
+Final proof reused an existing image via save/load. Shared user-manager transient
+scopes were used through owned socket links; no OS-egress confinement is claimed.
+No new restore/release run. Remaining recovery choices: target runtime pair,
+online snapshot mechanism, operator backup coverage and supported upgrade pairs.
+
+Historical checkpoints follow; their original execution scopes remain intact.
+
+**Following slice — `sdk-mcp-protocol-20261003`:** SDK frozen fragmented-CRLF
+gate v1.4 rejects4 values on the published parser (26/30, LF controls pass);
+minimal accumulated-buffer normalization passes **30/30**. MCP frozen version
+binding rejects advertised0.2.0 vs existing package0.3.1 (9/10); reading package
+metadata passes **10/10** against the verified SDK build. Real subprocess restart,
+opaque history/memory, named-thread isolation and Hermes-compatible file shape
+pass unchanged state code. Separate writers and independent read-only review
+accept both. No dependency/schema/lock/package-version change; no new Git or
+package publication. Records live in Skills `docs/regeneration/records/2026-10-03-{sdk-crlf,mcp-version-restart}.md`;
+App `output/sdk-mcp-protocol-20261003/` owns failures, gates and combined closeout.
+Chat's accepted audit is `integrated-verification-v2.json` in its output folder;
+the unnumbered failed audit is retained. Its execution remains historical now.
+
+Ordered4/5 prerequisite audits proceeded read-only: no calibrated corpus/tasks/
+margins/provider authority selected; static OpenAPI metadata differs **and**
+source-derived routes/fields differ. Four high-traffic skills have specific
+source-backed discrepancies; details and comparison limits:
+`output/sdk-mcp-protocol-20261003/remaining-backlog/`. These are bounded audits,
+not full runtime-schema parity or quality evidence. No schema metadata-only fix.
+
+**`skill-drift-20261003`** closes the four established prose discrepancies:
+cortex2.5.1/upload1.1.1 and affected references now describe release-dependent
+health version, `qa`, upload default-false processing and supported multipart
+placement. Follow-up review corrected an overclaimed universal query precedence
+from the source comment: actual boolean/string merge behavior differs. Duplicate
+health guidance and a fabricated env row were corrected; generated manifest is
+idempotent and lint passes with two existing warnings. Independent ACCEPT;
+App `output/skill-drift-20261003/` retains both passes. No product/runtime change
+or publication in this prose slice. Remaining named search404/503/community-id
+claims need deeper tracing; quality/runtime-pair prerequisites above remain open.
 
 2026-10-01: compatibility-preserving instruction, documentation and evaluation
 improvements across all three repos. No product runtime, migration, deployment
@@ -345,7 +797,7 @@ notes nor current offline tests establish calibrated quality for this revision.
 | Public docs / handbook / LLM mirror | improved | source-backed corrections, build + validator; published site still lacks candidate updates |
 | App auth / sessions / instance MCP | improved | real principal through HTTP + SSE tests; fake graph means Cypher isolation unverified live |
 | Chat streaming / opaque memory / retries | improved (selected actual UI + HTTP) | accepted turn/project/selection/terminal gates retained; ask partial shutdown/reset/resubmit/exhaustion HTTP7/Chromium31 and suite136 pass; post-done shutdown and production parity remain open |
-| SDK + standalone MCP | improved | public consumer and stdio gates; LF coverage, CRLF parser gap recorded; MCP persisted-thread restart not exercised |
+| SDK + standalone MCP | improved | SDK30 LF/CRLF fragmented-frame/callback gates; MCP10 real stdio/version-binding/restart/name-isolation/file-shape gates. Actual Hermes shell interop/live backend parity remain separate |
 | Library transfer / state recovery | improved | ZIP gate + ownership/backup matrix + real quiesced restore/consumer controls; HTTP boot/login/read and original-state isolation passed; browser/online/old-version recovery and extra relationship-property fidelity remain open |
 | Chat crypto / SQLite migrations | improved | actual crypto/migrator, historical FK behavior and storage restore; old rows through intermediate migrations and live-WAL recovery not covered |
 | Ingestion / extraction / graph / dedup / communities | adequate-for-current-needs | existing offline suites and domain guides retained, full suite green; real pipeline/model quality not revalidated |
@@ -354,34 +806,29 @@ notes nor current offline tests establish calibrated quality for this revision.
 | Hosted apps / x402 / quotas | adequate-for-current-needs | existing scoped guides and deterministic suites retained; real payment/facilitator/app-state recovery not exercised |
 | Admin frontend / graph browsers | adequate-for-current-needs | instructions retained, no UI change; browser journeys not rerun |
 | Chat auth/SSO/reset/demo/proxy authorization | improved (ask + selected reads/relay/UI) | real Next ask auth/scope/header/allowlist/strip checks, selected relay feeds and restored reads; actual synthetic-user Chromium logins; demo/reset/SSO and broader browser lifecycle remain open |
-| Chat projects/realtime/personalities/voice/upload UI | improved (selected project-chat/share/move/delete); others deferred-with-reason | overlap/reverse Chromium21 each +25 established stages retained with unchanged-input inheritance explicit; delayed positive project-list orderings, other uncertain outcomes/unavailable reconciliation, instantaneous open-feed revocation, personalities/voice/upload lifecycle remain open |
+| Chat projects/realtime/personalities/voice/upload UI | improved (selected project-chat/share/move/delete); others deferred-with-reason | overlap/reverse Chromium21 each and delayed-positive-list26 establish their executed schedules; 27 earlier journeys inherited by content identity. Other list orders/uncertain outcomes/unavailable reconciliation, instantaneous open-feed revocation and personalities/voice/upload remain open |
 | Skill content / manifest/site | improved | navigation repaired, built and manifest regenerated; deeper field/permission audit beyond path checks still needed |
 | Release / backup / observability / provider upgrades | improved | version tool gate + recovery matrix + quiesced storage rehearsal; no mixed-version/online restore or production observation; external helper/installer outside write scope |
 
 ## Ordered next slices
 
-0. **Release closeout (supersedes until done):** run the source-default telemetry
-   boot smoke, fix Chat CI fetch-depth, then commit/push per
-   `output/release-readiness-20261003/HANDOFF-source-built.md` with explicit
-   authorization. Packet: `qa/NEXT_SESSION.md`.
-1. **Delayed positive project-list ordering:** after B commits/acks while A remains
-   pre-forward-held, capture an actual project-list response containing B. Release
-   A to commit, capture/deliver newer positive A lists, then deliver older B last.
-   Freeze direct edit/regenerate context A/full retained state/late-memory/immutable
-   no-chat-GET consumers and healthy controls under fresh IDs/version. Require actual
-   request/view ownership; preserve both accepted move outcomes/LWW and both executed
-   overlap/reverse schedules. No latest-gesture/CAS rule or product fix before rejection.
+0. **Git publication complete:** authoritative receipts above; no new commit/push/
+   deployment authority. Preserve historical release gates; packet `qa/NEXT_SESSION.md`.
+1. **Delayed positive project-list ordering complete:** v1.1 b26/26 unchanged Chat,
+   scoped anti-repair window and healthy controls; preserve all earlier schedules.
+   Other list schedules need a new bounded claim before another gate or repair.
 2. **Recovery fidelity follow-up:** storage + HTTP consumer gate completed
    (`qa/restore/RESULTS.md`). Small replay/receipt presentation fixes are recorded
    there; do not rerun K without changed relevant inputs or a new claim. Separately
-   identify CI/production runtime pairs, a healthy DNS-capable engine, live-WAL
-   snapshot controls, missing deployment backup mounts and supported upgrade pairs.
+   CI/production pairs are inventoried and private DNS prerequisite P3 now passes
+   (receipt/corrections above). Select the restore-consumer runtime target, live-WAL
+   snapshot mechanism, operator-owned backup coverage and supported upgrade pairs.
    Shared Podman is broken: never migrate/reset/prune it; use only run-owned
    private resources. Check actual temp/storage capacity before installs.
-3. **SDK/MCP protocol evolution:** preserve callback timing, add CRLF semantics with
-   explicit acceptance delta and baseline defect case; reconcile MCP advertised
-   package version and add file-thread restart/interop coverage. No runtime fix was
-   silently folded into this compatibility-preserving campaign.
+3. **SDK/MCP protocol evolution locally complete:** frozen baseline rejections,
+   SDK30/MCP10 candidate passes above. Only CRLF parsing and package-derived MCP
+   version change runtime; restart/file-shape is coverage-only. Actual cross-tool
+   process interop and authorized package release remain separate.
 4. **Calibrated agentic quality:** select sanitized corpus and held-out tasks,
    retrieve historical bench inputs where available, pin prompts/models/tools,
    agree margins and judge calibration *before* comparison; use an authorized

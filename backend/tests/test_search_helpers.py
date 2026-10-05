@@ -265,6 +265,51 @@ def test_community_search_sends_sanitized_query():
 
 
 # ---------------------------------------------------------------------------
+# Empty-scope confidentiality: None / [] / nonempty must assemble differently
+# ---------------------------------------------------------------------------
+
+
+def test_vector_search_binds_empty_scope_as_real_filter():
+    """Runtime confidentiality check (R08/R14 assembly face): a restricted key
+    with zero grants (`[]`) must assemble a query that BINDS the collection
+    predicate with `[]` (matches nothing). The old falsy drop assembled the
+    clause-less unrestricted query instead. `None` stays unrestricted; a
+    nonempty allowlist binds its ids."""
+    svc = _service(lambda q, p: [])
+
+    svc.vector_search([0.1], top_k=5, allowed_collection_ids=None)
+    q, p = svc._driver.calls[-1]
+    assert "col.id IN $allowed_collection_ids" not in q
+    assert p["allowed_collection_ids"] is None
+
+    svc.vector_search([0.1], top_k=5, allowed_collection_ids=[])
+    q, p = svc._driver.calls[-1]
+    assert "col.id IN $allowed_collection_ids" in q
+    assert p["allowed_collection_ids"] == []
+
+    svc.vector_search([0.1], top_k=5, allowed_collection_ids=["col-beta"])
+    q, p = svc._driver.calls[-1]
+    assert "col.id IN $allowed_collection_ids" in q
+    assert p["allowed_collection_ids"] == ["col-beta"]
+
+
+def test_community_search_binds_empty_scope_as_real_filter():
+    """Communities leg of /api/context (R09 assembly face): `[]` must bind
+    the empty IN clause, `None` must stay clause-less."""
+    svc = _service(lambda q, p: [])
+
+    svc.search_communities_by_content("governance", limit=3, allowed_collection_ids=[])
+    q, p = svc._driver.calls[-1]
+    assert "col.id IN $allowed_collection_ids" in q
+    assert p["allowed_collection_ids"] == []
+
+    svc.search_communities_by_content("governance", limit=3, allowed_collection_ids=None)
+    q, p = svc._driver.calls[-1]
+    assert "col.id IN $allowed_collection_ids" not in q
+    assert "allowed_collection_ids" not in p
+
+
+# ---------------------------------------------------------------------------
 # hybrid_search_rrf: parallel legs + resolution feeding traversal
 # ---------------------------------------------------------------------------
 
@@ -486,3 +531,107 @@ def test_hybrid_falls_back_to_legacy_traversal_when_disabled():
     )
     svc.hybrid_search_rrf([0.1], "q", ["Murbella"], top_k=5)
     assert seen == {"legacy": ["Murbella"]}
+
+
+# Flag-off scope gate v2.1: real QueryProcessor -> legacy Neo4j hybrid -> real
+# vector/traversal query builders, recording transport only (no store execution).
+# Five scoped inputs x two legacy routes x two observed legs reject on baseline;
+# four unrestricted controls pass. Separate leg selection proves each missing
+# predicate rather than inferring a second rejection from a failed conjunction.
+# Graph entity/relationship metadata isolation is a distinct unresolved finding.
+@pytest.mark.parametrize("leg", [0, 1], ids=["vector", "graph-chunks"])
+@pytest.mark.parametrize(
+    "enable_flag, caller_rrf",
+    [(False, True), (True, False)],
+    ids=["flag-off-caller-true", "flag-on-caller-false"],
+)
+@pytest.mark.parametrize(
+    "collection_id, allowlist, expect_scalar, expect_in",
+    [
+        (None, None, False, False),
+        ("collection-requested", None, True, False),
+        (None, ["single-grant"], False, True),
+        (None, ["grant-alpha", "grant-beta"], False, True),
+        (None, [], False, True),
+        ("collection-requested", ["collection-requested", "key-grant-1"], True, False),
+    ],
+    ids=["unrestricted", "requested-scalar", "single", "multi", "empty", "scalar-precedence"],
+)
+async def test_legacy_graph_search_scope_binds_both_legs(
+    leg, enable_flag, caller_rrf, collection_id, allowlist, expect_scalar, expect_in
+):
+    from app.services.document_processor import QueryProcessor
+
+    svc = _service(lambda query, params: [])
+    real_vector_search = svc.vector_search
+    real_traverse = svc.traverse_from_entities
+    legs = []
+
+    def vector_probe(embedding, top_k, **kwargs):
+        legs.append("vector")
+        return real_vector_search(embedding, top_k, **kwargs)
+
+    def traverse_probe(entity_names, max_hops, **kwargs):
+        legs.append("traverse")
+        return real_traverse(entity_names, max_hops, **kwargs)
+
+    svc.vector_search = vector_probe
+    svc.traverse_from_entities = traverse_probe
+    qp = QueryProcessor.__new__(QueryProcessor)
+    qp.settings = SimpleNamespace(
+        enable_hybrid_search=enable_flag,
+        vector_weight=0.5, keyword_weight=0.3, graph_weight=0.2,
+    )
+    qp.neo4j = svc
+    qp.graph_extractor = SimpleNamespace(is_available=False)
+    out = await qp.graph_search_async(
+        "fixture query", top_k=6, max_hops=2, use_hybrid_rrf=caller_rrf,
+        collection_id=collection_id, allowed_collection_ids=allowlist,
+        precomputed_embedding=[0.125, -0.25],
+        precomputed_entities=["Fixture Entity"],
+    )
+
+    assert legs == ["vector", "traverse"]
+    assert out == {"results": [], "graph_context": {"entities": [], "relationships": [], "chunks": []},
+                   "search_method": "vector_graph"}
+    assert len(svc._driver.calls) == 2
+    _, vector_params = svc._driver.calls[0]
+    _, traversal_params = svc._driver.calls[1]
+    assert vector_params["top_k"] == 6 and vector_params["embedding"] == [0.125, -0.25]
+    assert traversal_params["entity_names"] == ["Fixture Entity"]
+    query, params = svc._driver.calls[leg]
+    assert ("Collection {id: $collection_id}" in query) is expect_scalar
+    assert ("col.id IN $allowed_collection_ids" in query) is expect_in
+    assert (params["collection_id"], params["allowed_collection_ids"]) == (collection_id, allowlist)
+
+
+@pytest.mark.parametrize("allowlist", [None, []], ids=["unrestricted", "empty"])
+async def test_graph_search_default_rrf_scope_control(allowlist):
+    from app.services.document_processor import QueryProcessor
+
+    seen = []
+    svc = _service(lambda query, params: [])
+
+    def rrf(**kwargs):
+        seen.append(kwargs)
+        return {"results": [{"chunk_id": "control"}],
+                "graph_context": {"entities": [], "relationships": [], "chunks": []}}
+
+    def forbidden_legacy(*args, **kwargs):
+        pytest.fail("default RRF route must not use the legacy method")
+
+    svc.hybrid_search_rrf = rrf
+    svc.hybrid_search = forbidden_legacy
+    qp = QueryProcessor.__new__(QueryProcessor)
+    qp.neo4j = svc
+    qp.settings = SimpleNamespace(enable_hybrid_search=True, vector_weight=0.5,
+                                  keyword_weight=0.3, graph_weight=0.2)
+    out = await qp.graph_search_async(
+        "fixture query", allowed_collection_ids=allowlist,
+        precomputed_embedding=[0.125], precomputed_entities=[],
+    )
+    assert len(seen) == 1
+    assert seen[0]["allowed_collection_ids"] == allowlist
+    assert seen[0]["collection_id"] is None
+    assert (seen[0]["vector_weight"], seen[0]["keyword_weight"], seen[0]["graph_weight"]) == (0.5, 0.3, 0.2)
+    assert out["search_method"] == "hybrid_rrf" and out["results"] == [{"chunk_id": "control"}]

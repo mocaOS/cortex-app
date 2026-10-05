@@ -280,8 +280,9 @@ curl -N -X POST http://localhost:8000/api/ask/stream \
   -H "X-API-Key: your-api-key" \
   -d '{"question": "Explain the main concepts", "use_agentic": true}'
 
-# Quick chat answer (non-streaming; bounded by a ~28s server deadline,
-# and use_agentic is rejected here with 400 — Deep Research is streaming-only)
+# Quick chat answer (non-streaming; ~28s server deadline).
+# use_agentic returns 400 with ENABLE_AGENT_RESEARCH=true (default);
+# flag-off legacy deep research runs under that deadline — prefer streaming.
 curl -X POST http://localhost:8000/api/ask \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \

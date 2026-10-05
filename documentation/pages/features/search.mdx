@@ -1,11 +1,11 @@
 ---
 title: Search
-description: Hybrid search combining vector similarity, keyword matching, and graph traversal
+description: Hybrid search combining vector similarity, keyword matching, and metadata matching
 ---
 
 import { Mermaid } from "zudoku/mermaid";
 
-Cortex implements **hybrid search** that combines three search methods for optimal results: vector similarity, keyword matching, and knowledge graph traversal.
+Cortex implements **hybrid search** that combines three search methods: vector similarity, keyword matching, and metadata matching. Ask AI/context retrieval uses a different fusion — vector, keyword, and graph traversal, with graph in place of metadata — followed by optional cross-encoder re-ranking. The search endpoint itself stops at its fusion.
 
 ## Search Methods
 
@@ -23,15 +23,15 @@ Traditional full-text search for exact term matching.
 
 - Uses Neo4j's full-text indexes
 - Great for specific terms, names, and codes
-- Supports phrase matching
+- The query is reduced to its word tokens before it reaches the index, so Lucene syntax characters can't break the leg
 
-### Graph Traversal
+### Metadata Search
 
-Follows relationships in the knowledge graph to find connected information.
+Matches document metadata by case-insensitive containment and returns the matching documents' chunks.
 
-- Traverses up to 2 hops from matched entities
-- Finds related entities even if not mentioned in the query
-- Leverages GraphRAG entity extraction
+- Document filename (relevance 3.0)
+- Custom-input topic hint (relevance 2.5)
+- Raw content of custom inputs (relevance 2.0)
 
 ## Hybrid Search Architecture
 
@@ -39,14 +39,13 @@ Follows relationships in the knowledge graph to find connected information.
 flowchart TD
     Q["🔍 User Query"] --> V["Vector Search<br/><i>Weight: 0.5</i>"]
     Q --> K["Keyword Search<br/><i>Weight: 0.3</i>"]
-    Q --> G["Graph Traversal<br/><i>Weight: 0.2</i>"]
+    Q --> M["Metadata Search<br/><i>Weight: 0.2</i>"]
     
     V --> RRF["Reciprocal Rank Fusion"]
     K --> RRF
-    G --> RRF
+    M --> RRF
     
-    RRF --> RERANK["Cross-Encoder<br/>Re-ranking"]
-    RERANK --> RESULTS["📊 Final Results"]
+    RRF --> RESULTS["📊 Final Results"]
 `} />
 
 ## API Usage
@@ -121,30 +120,17 @@ RRF_score(d) = Σ 1 / (k + rank(d))
 
 Where:
 - `k` is a constant (default: 60)
-- `rank(d)` is the position in each result list
+- `rank(d)` is the 1-based position in each result list (the first result has rank 1)
 
-The weights for each method are configurable:
-
-```bash
-VECTOR_WEIGHT=0.5
-KEYWORD_WEIGHT=0.3
-GRAPH_WEIGHT=0.2
-```
+The weights for the search endpoint's three legs are fixed defaults (vector 0.5, keyword 0.3, metadata 0.2). The `VECTOR_WEIGHT`, `KEYWORD_WEIGHT`, and `GRAPH_WEIGHT` environment variables tune a different fusion — the Ask AI/context retrieval path, whose RRF legs are vector + keyword + graph traversal.
 
 ## Cross-Encoder Re-ranking
 
-After RRF fusion, a cross-encoder model re-ranks the top candidates for higher precision:
+Cross-encoder re-ranking is **not** part of the `/api/search` response — the returned `score` is the RRF fusion score. The Ask AI endpoints re-rank their retrieval candidates through a cross-encoder model for higher precision:
 
 - Model: `cross-encoder/ms-marco-MiniLM-L-6-v2`
 - Considers query-document pairs together
-- Significantly improves relevance of top results
-
-Enable/disable via:
-
-```bash
-ENABLE_RERANKING=true
-RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-```
+- Enable/disable via `ENABLE_RERANKING` (Applies to Ask AI retrieval, not to search results)
 
 ## Collection-Scoped Search
 
@@ -169,32 +155,13 @@ curl -X POST "http://localhost:8000/api/search" \
   }'
 ```
 
-## Graph Context in Search
+## Graph Context
 
-When graph search is enabled, results may include entity relationships:
-
-```json
-{
-  "results": [...],
-  "graph_context": {
-    "entities": [
-      {"name": "Neural Networks", "type": "Concept"},
-      {"name": "Deep Learning", "type": "Concept"}
-    ],
-    "relationships": [
-      {
-        "source": "Neural Networks",
-        "target": "Deep Learning",
-        "type": "PART_OF"
-      }
-    ]
-  }
-}
-```
+`/api/search` responses contain no graph context. Entity/relationship context appears on Ask AI and `/api/context` responses, whose different retrieval fusion uses graph traversal in place of metadata matching.
 
 ## Performance Tips
 
 1. **Use collection scoping when needed** - Search spans all collections by default; narrow to a specific collection for focused results
-2. **Adjust weights** - Tune `VECTOR_WEIGHT`, `KEYWORD_WEIGHT`, `GRAPH_WEIGHT` for your use case
+2. **Search weights are fixed** - The endpoint always fuses vector/keyword/metadata at 0.5/0.3/0.2; the weight environment variables tune Ask AI retrieval instead
 3. **Limit results** - Start with smaller limits and paginate
-4. **Enable re-ranking** - Improves precision for the final results
+4. **Re-ranking lives on Ask AI** - The cross-encoder step improves Ask AI retrieval precision; search results are always returned RRF-fused

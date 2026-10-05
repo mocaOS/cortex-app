@@ -50,6 +50,18 @@ If system `venv`/pip is unavailable, `uv venv .qa-venv` then
 
 ## Verification stages
 
+For release source checks, name the interpreter/image and actual tool bytes.
+An existing production dependency image running a current source copy is not a
+newly built or deployed artifact. Reuse retained tools read-only when available;
+do not install merely to clear a local gap. Provider mocks do not make first-use
+tokenizer downloads or public DNS checks offline: preflight caches/network policy
+and disable unauthorized fetch fallbacks. Retain any transfer/authority deviation
+and unknown egress honestly. Wrapper exits must honor the inner operation; a
+diagnostic print after pytest can swallow its failure. Required selection and
+raw JUnit/logs support separate read-only rejudgment without replaying the suite.
+Current production-runtime source check and corrections:
+`output/publication-20261005/verification/{RECEIPT.md,CORRECTIONS.md,REJUDGED-v1.json}`.
+
 - **Local deterministic:** backend pytest/error-only ruff; docs `npm run validate`
   + `npm test` (from `documentation/`); script tests/version sync; frontend typecheck/lint
   when its inputs change. Zero selection, setup errors or skipped required cases
@@ -101,6 +113,105 @@ Recovery evaluation rules:
   reset or prune for this campaign. Private direct-IP transport is opt-in and
   provides no DNS-discovery evidence. Exact host-specific replay/hazards live in
   `qa/restore/RESULTS.md`, rather than being assumed prerequisites on every host.
+
+## Legacy deep-research streaming scope gate
+
+Legacy deep-research streaming scope: `tests/test_legacy_agentic_scope.py` drives
+real auth through both streaming endpoints and real query builders over canned
+recording transport. Freeze/positive baseline before repair; inspect every
+sub-question and separate chunk/community predicates, with scalar/multi/empty/all
+and permitted-progress controls. Its nonstream400 control sets the research flag
+true; flag-off nonstream is a distinct reachable boundary. Use owned basetemp,
+`PYTHONDONTWRITEBYTECODE=1` and `-p no:cacheprovider`; retain failures/receipts
+without deleting existing temp/cache roots. Current evidence:
+`output/legacy-agentic-scope-20261004/FINAL.md`.
+
+## Legacy deep-research nonstream scope gate
+
+Flag-off nonstream scope: `tests/test_legacy_agentic_nonstream_scope.py` reuses the
+streaming recording helpers and drives real `/api/ask` auth through rag_query's
+agentic call, each sub-question and its no-key recursive fallback. The frozen
+selection separately observes chunk and community-access predicates; flags-on400,
+permitted flag-off200, standard-path forwarding and old positional callback/thread
+controls keep rejection/progress/compatibility distinct. Evidence:
+`output/legacy-agentic-nonstream-scope-20261004/FINAL.md`. Its v2 null completion
+field is historical characterization. Additive v3 freezes synthesis stop/length
+and decomposition contrasts before the completion-propagation repair; original
+v2 bytes remain retained. Current evidence:
+`output/legacy-agentic-nonstream-flags-20261004/FINAL.md` (75-case candidate, 377
+focused). Required selection and gate/neighbor identities must be enforced, not
+merely recorded; use its strict run_checks.py supplement with a fresh destination.
+Baseline reason rejection does not demonstrate the later truncated assertion's
+independent sensitivity. Null is exercised, absent reason is unobserved; successful
+JUnit rows establish asserted values, not independent serialized raw responses.
+
+## Legacy nonstream optional public projection
+
+`tests/test_legacy_agentic_optional_projection.py` reuses the unchanged real-auth
+nonstream fixture. Separate positive cases reject each omitted field; reachable
+empty lists and exact four-key stats are distinct from post-helper typed seam
+`{}`/null/missing compatibility. Retain raw helper/public observations before
+assertions. Input-screen and model refusals are separate paths: only the former
+has no retrieval metadata. Keep deadline504/disabled progress, flag-on400,
+auth/scope/no-key and the neighboring completion/callback/thread controls.
+Frozen gate22 baseline14pass/8rejects precedes independent ACCEPT and three-line
+handler-only repair; candidate22 and combined546 pass. Owning evidence:
+`output/legacy-agentic-optional-projection-20261005/FINAL.md`. Focused run-1's
+outer ID judgment failed; its accepted `REJUDGED.json` uses the same retained
+JUnit with no replay. Required selection and actual gate-byte identities remain
+authoritative. Machinery self-controls are retention-only, not launch faults.
+
+## Legacy streaming completion flags
+
+`tests/test_legacy_agentic_stream_flags.py` imports the unchanged recording fixture.
+V2 freezes content-free synthesis stop/length→done.truncated through both entries;
+null, absent-attribute, usage/empty choices and old helper controls are distinct.
+Raw chunks/public frames are retained in JUnit properties before value assertions
+(11full+1public-only), including healthy rows. Validate payloads/case IDs, not just
+receipt labels; no-cut permits absent or exactFalse, not arbitrary values that
+aren't True. Evidence: `output/legacy-agentic-stream-flags-20261005/FINAL.md`.
+V2 candidate tests passed before retention failed on an inappropriate baseline-
+runtime comparison; use the finalized-candidate successor, not the early producer
+ok=true as full-run acceptance. Candidate retention pins execution inputs; frozen
+gate/neighbors remain fixed. Replay only changed/failed stages. Narrow source
+consumer confirmations are Chat13/SDK19; SDK positive true adds coverage, not a
+reproduced client defect.
+
+Two supplemental usage-tail cases preserve length across trailing null and
+empty-choice usage chunks through both entries. They execute on the same candidate
+under current guidance2.19.0; the main107/389 runs retain their2.18.0 basis. Source-
+based composition coverage is not a live Langfuse/provider or mutant execution.
+
+## Standard streaming completion flags
+
+`tests/test_standard_stream_flags.py` drives real auth into standard-depth
+`/api/ask/stream` with `ENABLE_AGENT_CHAT=false`, canned provider chunks and the
+real question/security filters. Observe raw metadata before the text-only adapter.
+Its fixed20-case gate covers content-free/content-bearing length, stop/null/missing,
+usage/null tails, exact content/order, handler scope forwarding, progress and401/403.
+Positive length uses explicit depth; flags-derived entry is healthy-only. Scope
+is recorded handler forwarding, not query-builder/store privacy; top_k/max_hops
+are observed but not asserted. Classifier unconfigured is not classifier evidence.
+Owning baseline16pass/4lengthrejects, candidate20/20, focused497 and independent
+review: `output/standard-stream-flags-20261005/FINAL.md`. Candidate runner v4 retains
+changed main.py against its execution identity, with frozen neighbors kept pinned;
+its synthetic retention controls are machinery checks, not product executions.
+Check candidate retention before launch too: a correct preflight comparison does
+not prove a later copy loop uses the same identity. Module-aware JUnit IDs preserve
+class suffixes; collection and executed selection must agree. Reuse unchanged
+Chat13/SDK19 as explicitly inherited source-client evidence, not fresh integration.
+
+## Fast streaming completion flags
+
+Fast gate: `tests/test_fast_stream_flags.py` covers its own real-auth branch,
+first-turn handler `search` scope, history zero-retrieval/bounded messages,
+3×600-character fenced context, literal600-token/model call, real filters and flags.
+V1 declared a null tail but never selected it; read-only REJECT led to additive v2
+before runtime repair. Actual v2:13matrix (7length+6healthy),6scope,8other =27.
+Candidate27/27 and combined524 pass; full reasons/frames/writer kwargs are retained.
+Evidence/attempts: `output/fast-stream-flags-20261005/FINAL.md`. Bind runner imports
+externally and distinguish declared scenario machinery from selected coverage.
+Portable2.20 harvest follows completed2.19 executions; no historical relabel/replay.
 
 ## Companion Chat ask/memory HTTP gate
 
@@ -224,12 +335,12 @@ Native consent/full-row preservation/held memory/direct consumers/membership/lat
 after two unchanged-page context rejections. Correlate active browser/upstream IDs, not released predecessors;
 capture intercepted PATCH once before fetch/fulfill so every real ack matches an attempt. Changed runtime
 requires fresh integrated old gates, preserving historical receipts rather than stale whole-manifest reuse.
-Overlap/reverse: `scripts/chat-project-move-{overlap,reverse}-journey.ts <fresh-output> <fresh-id>`,
-types `scripts/tsconfig.chat-project-move-{overlap,reverse}.json`; Chat records `2026-10-03-project-move-{overlap,reverse}.md`.
-Overlap commits A/B, acks B/A rejects last-ack binding; reverse holds A pre-forward, B commits/acks then A commits/acks.
-Both retain accepted writes/LWW, full move-only state, valid compaction and direct immutable no-chat-GET consumers.
-Positive request/view-owned membership selects context; gesture/ack target alone is not authority. Close native drawer first.
-No-ack checks bind chat AND move body: earlier history saves are separate accepted writes. Preserve failed phase snapshots.
+Overlap/reverse/positive-list: `scripts/chat-project-move-{overlap,reverse,positive-list}-journey.ts <fresh-output> <fresh-id>`;
+matching `tsconfig.chat-project-move-*.json` and Chat `2026-10-03-project-move-*.md` records own replay/scope.
+Overlap commits A/B, acks B/A; reverse holds A pre-forward, commits/acks B/A; positive-list delivers newer A then older B.
+Keep both accepted writes/LWW/full move-only state/valid compaction/direct immutable no-chat-GET consumers. Positive request/view-owned membership owns context.
+Positive-list's anti-repair window fails delivery of genuine follow-up lists: holding them deadlocks persistence→refresh queues. Match expected failures to requests and actual intentional feed-close invocations; no broad error exemption.
+Close native drawer before actions. No-ack binds chat AND move body, excluding earlier history saves. Preserve failed phase snapshots; a new observer cannot retroactively supply missing old-run evidence.
 
 Project delete: from Chat, `node --import tsx scripts/chat-project-delete-journey.ts
 ../cortex-app/output/<fresh-output> <fresh-id> http|browser`, owned root-backed TMPDIR,
