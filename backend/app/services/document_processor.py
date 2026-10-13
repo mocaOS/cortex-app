@@ -740,6 +740,12 @@ _task_lock: Optional[asyncio.Lock] = None
 # Cancellation flags per document - set when processing should stop
 _cancellation_flags: Dict[str, asyncio.Event] = {}
 
+# Bumped by cancel_all_processing(). A running process_pending_documents batch
+# compares it with the value it started with and stops STARTING new documents
+# once it changes, so an abort drains the batch instead of only interrupting
+# the documents that happened to be in flight.
+_batch_abort_generation = 0
+
 
 def _get_task_lock() -> asyncio.Lock:
     """Get or create the task registry lock (must be created in async context)."""
@@ -1036,13 +1042,24 @@ class DocumentProcessor:
         Returns:
             Number of tasks that were cancelled
         """
+        global _batch_abort_generation
         task_lock = _get_task_lock()
         async with task_lock:
+            _batch_abort_generation += 1
+            # Batch processing (process_pending_documents) never registers in
+            # _active_tasks — its in-flight docs are only visible through their
+            # cancellation flags, so both registries must be swept.
             doc_ids = list(_active_tasks.keys())
+            batch_ids = [d for d in _cancellation_flags if d not in _active_tasks]
 
         cancelled_count = 0
         for doc_id in doc_ids:
             if await self.cancel_document_processing(doc_id):
+                cancelled_count += 1
+        for doc_id in batch_ids:
+            flag = _cancellation_flags.get(doc_id)
+            if flag is not None:
+                flag.set()
                 cancelled_count += 1
 
         logger.info(f"Cancelled {cancelled_count} processing tasks")
@@ -2030,12 +2047,19 @@ class DocumentProcessor:
         completed = 0
         failed = 0
         quota_skipped = 0
+        aborted = 0
+        start_generation = _batch_abort_generation
 
         async def process_one(doc: dict):
-            nonlocal completed, failed, quota_skipped
+            nonlocal completed, failed, quota_skipped, aborted
             async with semaphore:
                 # Yield before starting so the event loop can process pending requests
                 await asyncio.sleep(0)
+
+                # Aborted (cancel_all_processing): leave the rest 'pending'.
+                if _batch_abort_generation != start_generation:
+                    aborted += 1
+                    return
 
                 # Unit-denominated quota: in-flight documents always finish,
                 # but no NEW document starts once the monthly LLM-completion
@@ -2100,6 +2124,8 @@ class DocumentProcessor:
         )
 
         message = f"Processed {completed} documents, {failed} failed"
+        if aborted:
+            message += f"; {aborted} left pending (aborted)"
         if quota_skipped:
             message += (
                 f"; {quota_skipped} left pending — monthly usage limit reached "
@@ -2109,6 +2135,7 @@ class DocumentProcessor:
             "processed": completed,
             "failed": failed,
             "quota_skipped": quota_skipped,
+            "aborted": aborted,
             "total": total,
             "message": message,
         }

@@ -2177,7 +2177,8 @@ async def abort_graph_generation(auth: AuthResult = Depends(require_manage_permi
     docs_cancelled = await processor.cancel_all_processing()
 
     # 2. Cancel the backend chain (the Step 1→2→3 spawns plus any running
-    #    relationship_analysis / community_detection coroutine live here).
+    #    relationship_analysis / community_detection / git sync coroutine
+    #    live here).
     chain_cancelled = 0
     for t in list(_chain_tasks):
         if not t.done():
@@ -2201,6 +2202,12 @@ async def abort_graph_generation(auth: AuthResult = Depends(require_manage_permi
                 await asyncio.to_thread(get_neo4j_service().delete_task_record, tid)
             except Exception as e:
                 logger.warning(f"abort: could not delete task record {tid}: {e}")
+    # A git sync ingests through the same pipeline; its coroutine was cancelled
+    # above and fails its own record, but a sync whose coroutine is already
+    # gone must not keep the connection 409-locked either.
+    for tid, task in list(_task_store.items()):
+        if task.task_type == "git_repo_sync" and task.status in inflight:
+            fail_task(tid, "Sync aborted")
 
     # 4. Backstop: SIGKILL any docling_worker subprocess that outlived
     #    cancellation. Cancellation propagation isn't instantaneous and some
@@ -8304,6 +8311,15 @@ async def _run_git_sync_task(connection_id: str, task_id: str):
         result = await service.sync_connection(connection_id, task_id, progress=progress)
         result["connection_id"] = connection_id
         complete_task(task_id, result)
+    except asyncio.CancelledError:
+        # Aborted (POST /api/graph/generation/abort). The record must leave
+        # RUNNING or the connection stays locked with a 409 until restart;
+        # last_synced_sha is not advanced, so the next sync resumes the diff.
+        logger.info(f"git sync aborted for {connection_id}")
+        t = _task_store.get(task_id)
+        if t and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+            fail_task(task_id, "Sync aborted")
+        raise
     except Exception as e:
         logger.error(f"git sync failed for {connection_id}: {e}")
         fail_task(task_id, str(e))
@@ -8364,7 +8380,6 @@ async def _git_sync_scheduler():
 @app.post("/api/integrations/git/connections/{connection_id}/sync", response_model=GitSyncTriggerResponse)
 async def sync_git_connection(
     connection_id: str,
-    background_tasks: BackgroundTasks,
     auth: AuthResult = Depends(require_admin),
     _quota: None = Depends(enforce_processing_quota),
 ):
@@ -8375,13 +8390,12 @@ async def sync_git_connection(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     # Guard against a concurrent in-flight sync for this connection.
-    for t in _task_store.values():
-        if (t.task_type == "git_repo_sync" and t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
-                and (t.result or {}).get("connection_id") == connection_id):
-            raise HTTPException(status_code=409, detail="A sync is already running for this connection")
+    if _git_connection_has_active_sync(connection_id):
+        raise HTTPException(status_code=409, detail="A sync is already running for this connection")
     task = create_task("git_repo_sync")
     task.result = {"connection_id": connection_id}
-    background_tasks.add_task(_run_git_sync_task, connection_id, task.task_id)
+    # A chain task (not a BackgroundTask) so the graph-generation abort can cancel it.
+    _spawn_chain_task(_run_git_sync_task(connection_id, task.task_id))
     return GitSyncTriggerResponse(
         task_id=task.task_id, connection_id=connection_id, message="Sync started",
     )

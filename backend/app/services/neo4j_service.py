@@ -8120,7 +8120,8 @@ class Neo4jService:
             result = session.run("""
                 MATCH (d:Document {git_connection_id: $cid, git_path: $path})
                 RETURN d.id as id, d.git_blob_sha as git_blob_sha,
-                       d.filename as filename, d.git_sync_status as git_sync_status
+                       d.filename as filename, d.git_sync_status as git_sync_status,
+                       d.processing_status as processing_status
                 LIMIT 1
             """, cid=connection_id, path=git_path)
             record = result.single()

@@ -474,6 +474,15 @@ class GitConnectorService:
         await self._db(_write_content)
 
         existing = await self._db(self.neo4j.find_git_document, connection_id, path)
+        if existing and not force_modify and _is_current(existing, blob_sha):
+            # Same content as the stored doc — typically a re-sync after an
+            # aborted run (last_synced_sha was not advanced, so the diff is
+            # replayed). Don't wipe finished work; only queue unfinished docs.
+            if existing.get("processing_status") != "completed":
+                touched.append(existing["id"])
+            else:
+                stats["skipped"] += 1
+            return
         provenance = {
             "git_connection_id": connection_id,
             "git_path": path,
@@ -553,9 +562,11 @@ class GitConnectorService:
             current_paths.add(path)
             report(10 + int(45 * idx / total), 100, f"Reconciling ({idx+1}/{total})")
             existing = await self._db(self.neo4j.find_git_document, connection_id, path)
-            if existing and existing.get("git_blob_sha") == blob_sha \
-                    and existing.get("git_sync_status") != "orphaned":
-                continue  # unchanged
+            if existing and _is_current(existing, blob_sha):
+                # Unchanged; still queue it if an aborted run left it unprocessed.
+                if existing.get("processing_status") != "completed":
+                    touched.append(existing["id"])
+                continue
             try:
                 await self._ingest_file(connection_id, repo_dir, path, blob_sha, size,
                                         max_file, collection_id, commit_sha, stats, touched)
@@ -650,6 +661,12 @@ class GitConnectorService:
             )
             touched.append(doc_id)
             stats["created"] += 1
+
+
+def _is_current(existing: dict, blob_sha: str) -> bool:
+    """Stored doc already holds this blob and is still part of the sync."""
+    return (existing.get("git_blob_sha") == blob_sha
+            and existing.get("git_sync_status") != "orphaned")
 
 
 def _pending_status():
