@@ -95,6 +95,17 @@ protocol below is the stronger recovery gate.
   been run; treat any N-version export→new-instance import or tag rollback
   as **untested** until exercised on disposable infra (protocol below).
 
+## Incremental reprocess state
+
+Added 2026-10-13 ([`domain/incremental-reprocess.md`](domain/incremental-reprocess.md)); all additive, written lazily (no migration step):
+
+- Relationships: `source_document_ids`, `source_chunk_ids` lists (legacy `source_document_id` still written); `step2_verified` flag (Step-2-asserted edges survive release of their last document claim; a rebuild drops the Step-2 claim, never doc-claimed edges).
+- Label `:RetiredEntity` (+ `retired_at`, `retired_from_document`); `Entity.curated_at`; unlinked `RetiredEntityKey {key, name}` revival-lookup nodes with indexes `retired_entity_name`, `retired_entity_key`, `retired_entity_key_name` (startup backfill creates missing keys).
+- Document: `source_key` (index `document_source_key`), `updated_at`, `claims_version`, `completed_file_sha256`, `completed_config_hash` (delta gating — set only from a clean start or when no legacy unclaimed edges of the doc remain), `delta_in_progress`, `delta_orphan_candidates`; content-addressed chunk ids `{doc}_chunk_h{sha16}` beside legacy `{doc}_chunk_{idx}`.
+- Library export: separate `retired_entities.ndjson` section.
+
+Rollback to an older image: lists/fields are ignored; retired entities are invisible to the old code (its `:Entity` queries) and persist untouched (only a full reset removes them), but old delete paths go back to last-writer-wins edge deletion and hard orphan deletion; old reprocesses do full re-ingest (content-addressed chunk ids are opaque ids, so readable). Old library importers skip the `retired_entities.ndjson` section, so retired entities and their edges are **dropped** on import by an older version; `RetiredEntityKey` nodes are inert to old code. APOC backups carry all of it. Not exercised as a rollback test — treat as reasoned, untested.
+
 ## Recovery decision matrix
 
 | Scenario | Mechanism | Commands (existing only — never invent destructive ones) |

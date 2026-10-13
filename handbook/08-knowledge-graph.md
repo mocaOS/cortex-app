@@ -263,6 +263,8 @@ RAG queries use `entity_paths_only=False` for broader context retrieval.
 
 ## Graph Cleanup
 
+Removing or changing a document never deletes what other documents or your edits still back: a relationship stays while any document supports it, and an entity you edited or merged is **retired** (hidden, with its edits and relationships kept) rather than deleted, coming back if it is mentioned again. Administrators can list and purge retired entities with `GET` / `DELETE /api/graph/retired-entities?older_than_days=30`.
+
 ```bash
 # Clean up orphaned entities (no chunk mentions) and communities (no members)
 curl -X POST http://localhost:8000/api/cleanup/orphaned-entities \

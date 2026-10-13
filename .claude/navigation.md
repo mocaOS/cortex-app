@@ -16,6 +16,7 @@ read rules, not unconditional harness imports.
 | [`maintenance.md`](maintenance.md) | Doc authority, validation and sync rules across all surfaces |
 | [`frontend-patterns.md`](frontend-patterns.md) | Explore browsers, graph expansion, chat rendering, source modal, pagination |
 | [`domain/document-pipeline.md`](domain/document-pipeline.md) | Upload → Docling → chunking → embedding → extraction → image analysis |
+| [`domain/incremental-reprocess.md`](domain/incremental-reprocess.md) | Changed-document chunk delta, claim-set provenance, entity retirement, structural chunker, source_key upserts |
 | [`domain/relationships.md`](domain/relationships.md) | Per-chunk extraction, batch analysis (Phase 1/2), ERR, multi-round, batching |
 | [`domain/entities.md`](domain/entities.md) | Fuzzy resolution, dedup (rapidfuzz), merging, editing, search, type normalization |
 | [`domain/communities.md`](domain/communities.md) | Leiden/Louvain detection, summarization, staleness tracking |
@@ -42,11 +43,12 @@ When editing files in these paths, read the corresponding `.claude/` file(s):
 | `backend/app/main.py` | `architecture.md` + relevant `domain/*.md` for the endpoint area |
 | `backend/app/config.py`, `.env*` | `environment.md` |
 | `backend/app/models.py` | `architecture.md` |
-| `backend/app/services/document_processor.py`, `docling_worker.py`, `anydoc_converter.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing) |
+| `backend/app/services/document_processor.py`, `docling_worker.py`, `anydoc_converter.py`, `vision_analyzer.py` | `domain/document-pipeline.md`, `domain/observability.md` (LLM/embedding/vision tracing), `domain/incremental-reprocess.md` (reprocess/delta) |
+| `backend/app/services/structural_chunker.py` | `domain/incremental-reprocess.md`, `domain/document-pipeline.md` |
 | `backend/app/services/observability.py`, `error_tracking.py` | `domain/observability.md` |
 | `frontend/src/instrumentation*.ts`, `frontend/sentry.*.config.ts`, `frontend/next.config.mjs` | `domain/observability.md` (error tracking) |
 | `backend/app/services/graph_extractor.py` | `domain/relationships.md`, `domain/entities.md` |
-| `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md` |
+| `backend/app/services/neo4j_service.py` | `domain/entities.md`, `domain/communities.md`, `domain/relationships.md`, `domain/incremental-reprocess.md` (provenance/retirement) |
 | `backend/app/services/researcher_agent.py`, `research_prompts.py` | `domain/rag-pipeline.md`, `domain/skills.md`, `domain/git-integration.md`, `domain/observability.md` (trace grouping) |
 | `backend/app/services/skill_service.py` | `domain/skills.md` |
 | `backend/app/services/git_connector_service.py`, `git_providers/**` | `domain/git-integration.md` |

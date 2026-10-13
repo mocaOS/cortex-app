@@ -62,7 +62,8 @@ from app.services.library_transfer_service import LibraryTransferService
 # the importer's props dict — these are the promised ones).
 REL_PROMISED_PROPS = (
     "description", "weight", "confidence", "extraction_method",
-    "source_document_id", "extracted_at",
+    "source_document_id", "source_document_ids", "source_chunk_ids",
+    "extracted_at",
 )
 
 # doc-scoped restore names: {sanitized_doc_id}_{original_basename}
@@ -82,6 +83,7 @@ class ScriptedGraphStore:
         self.documents: Dict[str, dict] = {}
         self.chunks: List[dict] = []
         self.entities: List[dict] = []
+        self.retired_entities: List[dict] = []
         self.relationships: List[dict] = []
         self.communities: List[dict] = []
         self.community_members: List[dict] = []
@@ -131,6 +133,9 @@ class ScriptedGraphStore:
     def export_all_entities_batched(self, batch_size: int, skip: int):
         return self.entities[skip:skip + batch_size]
 
+    def export_retired_entities_batched(self, batch_size: int, skip: int):
+        return [dict(e) for e in self.retired_entities[skip:skip + batch_size]]
+
     def export_relationship_count(self) -> int:
         return len(self.relationships)
 
@@ -178,6 +183,10 @@ class ScriptedGraphStore:
 
     def import_entities_batch(self, rows) -> int:
         self.entities.extend(dict(r) for r in rows)
+        return len(rows)
+
+    def import_retired_entities_batch(self, rows) -> int:
+        self.retired_entities.extend(dict(r) for r in rows)
         return len(rows)
 
     def import_chunk_mentions_batch(self, rows) -> int:
@@ -269,12 +278,18 @@ def _populate_source(store: ScriptedGraphStore, upload_dir: Path,
          "description": "second deterministic entity",
          "mention_count": 1, "embedding": [0.25, 0.75]},
     ]
+    store.retired_entities = [
+        {"name": "Retired Entity", "type": "Concept",
+         "description": "curated, no live mentions", "retired_at": "2026-05-06"},
+    ]
     store.relationships = [
         {"source": "Alpha Entity", "target": "Beta Entity",
          "rel_type": "RELATES_TO",
          "description": "deterministic relationship",
          "weight": 7.5, "confidence": 0.9,
          "extraction_method": "llm", "source_document_id": "doc-alpha",
+         "source_document_ids": ["doc-beta", "doc-alpha"],
+         "source_chunk_ids": ["doc-alpha_chunk_0"],
          "extracted_at": "2026-04-05T06:07:08",
          # Not part of the import contract's props dict — observed to be
          # dropped on restore; recorded as a gap, not gated as contract.
@@ -456,6 +471,12 @@ class TestExportImportRoundTrip:
     def test_records_identities_survive_import(self, source_env, tmp_path):
         zip_path = str(tmp_path / "export.zip")
         _run_export(source_env["source"], zip_path)
+        # Retired entities ride their own section (importers ignore unknown
+        # sections, so older ones skip them instead of re-creating them live).
+        with zipfile.ZipFile(zip_path) as zf:
+            assert "retired_entities.ndjson" in zf.namelist()
+            ents = [json.loads(x) for x in zf.read("entities.ndjson").decode().splitlines() if x]
+        assert "Retired Entity" not in {e["name"] for e in ents}
         target = ScriptedGraphStore()
         completed, failed = _run_import(target, zip_path)
         assert not failed
@@ -463,6 +484,10 @@ class TestExportImportRoundTrip:
             source_env["source"], target, completed, source_env["files"],
             source_env["upload_dir"], source_env["custom_dir"],
         )
+        assert target.retired_entities == source_env["source"].retired_entities
+        assert [e["name"] for e in target.entities] == [
+            e["name"] for e in source_env["source"].entities
+        ]
 
 
 # ---------------------------------------------------------------------------

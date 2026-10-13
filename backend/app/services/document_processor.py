@@ -787,6 +787,102 @@ def get_active_processing_ids() -> list[str]:
     return sorted(ids)
 
 
+def chunk_content_hash(content: Optional[str]) -> str:
+    """Chunk content identity — must match Neo4jService.store_chunk."""
+    return hashlib.sha256(
+        (content or "").encode("utf-8", errors="replace")
+    ).hexdigest()[:32]
+
+
+def plan_chunk_delta(stored: List[dict], new_hashes: List[str]) -> dict:
+    """Match a changed document's new chunks against its stored chunks.
+
+    `stored`: [{id, content_hash, chunk_index, delta_pending}] (stored text
+    chunks); `new_hashes`: content hashes of the new chunk list, in order.
+    Multiset match by content hash — each stored chunk is reused at most once,
+    duplicates pair up in stored order. Returns:
+      sequence      per new position: stored chunk id (reused) or None (new)
+      kept_ids      reused stored chunk ids
+      removed_ids   stored chunks no longer present
+      done_positions new positions whose stored chunk was fully extracted
+                    (delta_pending=False) — the extraction skip set
+      reuse_ratio   reused / new chunk count
+    """
+    pools: Dict[str, list] = {}
+    for c in sorted(stored, key=lambda c: (c.get("chunk_index") is None, c.get("chunk_index") or 0)):
+        pools.setdefault(c.get("content_hash"), []).append(c)
+    sequence: List[Optional[str]] = []
+    done_positions: List[int] = []
+    kept: List[str] = []
+    for pos, h in enumerate(new_hashes):
+        pool = pools.get(h)
+        if h and pool:
+            c = pool.pop(0)
+            sequence.append(c["id"])
+            kept.append(c["id"])
+            if not c.get("delta_pending"):
+                done_positions.append(pos)
+        else:
+            sequence.append(None)
+    kept_set = set(kept)
+    removed = [c["id"] for c in stored if c["id"] not in kept_set]
+    return {
+        "sequence": sequence,
+        "kept_ids": kept,
+        "removed_ids": removed,
+        "done_positions": done_positions,
+        "reuse_ratio": (len(kept) / len(new_hashes)) if new_hashes else 0.0,
+    }
+
+
+def new_delta_chunk_id(doc_id: str, content_hash: str, taken: set) -> str:
+    """Id for a chunk added by a delta run: content-derived, never
+    index-based (kept legacy chunks hold `{doc_id}_chunk_{idx}` ids that a
+    new index-based id could collide with). `taken` is updated."""
+    base = f"{doc_id}_chunk_h{content_hash[:16]}"
+    cid, n = base, 1
+    while cid in taken:
+        n += 1
+        cid = f"{base}_{n}"
+    taken.add(cid)
+    return cid
+
+
+def _group_rel_claims(pairs, canonical_map: dict, seen_rels: set):
+    """Group one relationship work unit's (chunk_id, rel) pairs per relationship.
+
+    Returns (new_rels, new_claims, claim_only_rels, claim_only_claims) with the
+    claim lists aligned to the rel lists: each relationship carries exactly the
+    chunk ids that produced it in this unit. A relationship already stored by
+    an earlier unit of the document (in `seen_rels`) is returned as
+    claim-only, so its chunks still become claimants — removing one chunk
+    later (chunk-delta reprocess) must not drop an edge another chunk supports.
+    Mutates `seen_rels` and remaps rel endpoints to canonical names.
+    """
+    order: list = []
+    by_key: dict = {}
+    for cid, rel in pairs:
+        rel.source = canonical_map.get(rel.source.lower(), rel.source)
+        rel.target = canonical_map.get(rel.target.lower(), rel.target)
+        key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
+        if key not in by_key:
+            by_key[key] = (rel, [])
+            order.append(key)
+        if cid not in by_key[key][1]:
+            by_key[key][1].append(cid)
+    new_rels, new_claims, claim_rels, claim_claims = [], [], [], []
+    for key in order:
+        rel, cids = by_key[key]
+        if key in seen_rels:
+            claim_rels.append(rel)
+            claim_claims.append(cids)
+        else:
+            seen_rels.add(key)
+            new_rels.append(rel)
+            new_claims.append(cids)
+    return new_rels, new_claims, claim_rels, claim_claims
+
+
 class CancellationRequested(Exception):
     """Raised when document processing is cancelled."""
 
@@ -881,7 +977,15 @@ class DocumentProcessor:
 
         # Initialize splitter based on configuration
         # Sentence-based splitting preserves semantic units better
-        if self.settings.chunk_by == "sentence":
+        if self._structural_chunking():
+            from .structural_chunker import StructuralSplitter
+            self.splitter = StructuralSplitter(
+                self.settings.structural_chunk_min_words,
+                self.settings.structural_chunk_max_words,
+                self.settings.structural_chunk_boundary_divisor,
+            )
+            logger.info("Using structural (content-defined) chunking")
+        elif self.settings.chunk_by == "sentence":
             self.splitter = DocumentSplitter(
                 split_by="sentence",
                 split_length=self.settings.sentences_per_chunk,
@@ -963,6 +1067,7 @@ class DocumentProcessor:
         task_lock = _get_task_lock()
         task_to_wait = None
         was_running = False
+        batch_flag = None
 
         async with task_lock:
             was_running = doc_id in _active_tasks
@@ -971,6 +1076,11 @@ class DocumentProcessor:
             if doc_id in _cancellation_flags:
                 _cancellation_flags[doc_id].set()
                 logger.info(f"Set cancellation flag for document {doc_id}")
+                if not was_running:
+                    # Batch-run doc (process_pending_documents): no task to
+                    # cancel, only the flag reaches it — it must stay set until
+                    # the runner observes it (its finally removes it).
+                    batch_flag = _cancellation_flags[doc_id]
 
             # Get the task to cancel (we'll wait outside the lock)
             if doc_id in _active_tasks:
@@ -997,11 +1107,23 @@ class DocumentProcessor:
             except Exception as e:
                 logger.warning(f"Error waiting for task cancellation: {e}")
 
+        if batch_flag is not None:
+            # Give the batch runner a moment to hit its next checkpoint, so a
+            # caller replacing/deleting the doc right after doesn't race it.
+            for _ in range(100):
+                if _cancellation_flags.get(doc_id) is not batch_flag:
+                    break
+                await asyncio.sleep(0.1)
+
         # Clean up after waiting
         async with task_lock:
             if doc_id in _active_tasks:
                 del _active_tasks[doc_id]
-            if doc_id in _cancellation_flags:
+            if (
+                batch_flag is None
+                and doc_id in _cancellation_flags
+                and (was_running or _cancellation_flags[doc_id].is_set())
+            ):
                 del _cancellation_flags[doc_id]
 
         if was_running:
@@ -1445,7 +1567,19 @@ class DocumentProcessor:
             # reprocess do real work instead of delta-skipping as unchanged.
             "chunk-namespace:v2",
         ])
+        # Legacy chunking must keep the exact pre-v2 string: changing it would
+        # change every existing document's fingerprint (mass reprocess).
+        if self._structural_chunking():
+            src += "|" + "|".join([
+                "chunker:structural-v1",
+                str(s.structural_chunk_min_words),
+                str(s.structural_chunk_max_words),
+                str(s.structural_chunk_boundary_divisor),
+            ])
         return hashlib.sha256(src.encode()).hexdigest()[:16]
+
+    def _structural_chunking(self) -> bool:
+        return str(getattr(self.settings, "chunking_strategy", "legacy")).lower() == "structural"
 
     @staticmethod
     def _file_sha256(file_path: str) -> str:
@@ -1498,16 +1632,56 @@ class DocumentProcessor:
             and fingerprint.get("config_hash") == self._reprocess_config_hash()
         )
 
+    def _delta_eligible(
+        self, fingerprint: dict, file_hash: str, cfg_hash: str
+    ) -> bool:
+        """Whether a changed file can be reprocessed as a chunk delta.
+
+        All must hold: the feature (and ingest resume, whose checkpoint
+        machinery the delta builds on) is on; the last run that touched the
+        chunks is the one that COMPLETED under claim tracking
+        (claims_version=1, file_sha256 == completed_file_sha256 — a later
+        failed full run would have rewritten file_sha256 at its start); the
+        extraction config is unchanged; the bytes differ; stored text chunks
+        exist, all embedded; and the doc has no image chunks (image chunk ids
+        and analysis are index-based per conversion — a changed image set
+        can't be matched, so image-bearing docs take the full path).
+        """
+        s = self.settings
+        if not (
+            getattr(s, "enable_chunk_delta_reprocess", False)
+            and getattr(s, "enable_ingest_resume", False)
+        ):
+            return False
+        completed_sha = fingerprint.get("completed_file_sha256")
+        return bool(
+            fingerprint.get("claims_version") == 1
+            and completed_sha
+            and completed_sha == fingerprint.get("file_sha256")
+            and fingerprint.get("completed_config_hash") == cfg_hash
+            and file_hash != completed_sha
+            and (fingerprint.get("text_chunk_count") or 0) > 0
+            and (fingerprint.get("unembedded_chunk_count") or 0) == 0
+            and (fingerprint.get("image_chunk_count") or 0) == 0
+        )
+
     def _cleanup_before_reprocess(self, doc_id: str, file_path: str) -> None:
         """Clear a document's chunks/entities before reprocessing — unless
         ingest resume can build on them: with an unchanged file + extraction
         config, the stored chunks/embeddings (and any extraction checkpoint)
         are exactly what a reprocess would recreate, so _process_document
-        reuses them instead of re-converting and re-embedding."""
+        reuses them instead of re-converting and re-embedding. A changed file
+        of a delta-eligible doc also keeps them (chunk-delta reprocess)."""
         keep_for_resume = False
         if getattr(self.settings, "enable_ingest_resume", False):
             try:
                 keep_for_resume = self._ingest_fingerprint_matches(doc_id, file_path)
+                if not keep_for_resume:
+                    keep_for_resume = self._delta_eligible(
+                        self.neo4j.get_document_fingerprint(doc_id) or {},
+                        self._file_sha256(file_path),
+                        self._reprocess_config_hash(),
+                    )
             except Exception as e:  # noqa: BLE001 — fall back to the clean path
                 logger.warning(
                     f"Could not check resume fingerprint for {doc_id} ({e}); "
@@ -1565,12 +1739,19 @@ class DocumentProcessor:
             "done_indices": set(),
             "rels_done_chunk_ids": set(),
             "resumed": False,
+            "delta_candidate": False,
+            # Bytes this run processes (hashed at the START — a file swapped
+            # mid-run must not be recorded as processed) and whether the run
+            # starts without pre-claim-tracking state (see finalize_chunk_delta).
+            "file_hash": None,
+            "clean_start": False,
         }
         if not getattr(self.settings, "enable_ingest_resume", False):
-            return default
+            return await self._prepare_without_resume(doc_id, file_path, default)
         out = dict(default)
         try:
             file_hash = await asyncio.to_thread(self._file_sha256, file_path)
+            out["file_hash"] = file_hash
             cfg_hash = self._reprocess_config_hash()
             fingerprint = await asyncio.to_thread(
                 self.neo4j.get_document_fingerprint, doc_id
@@ -1579,8 +1760,24 @@ class DocumentProcessor:
                 not force_full
                 and fingerprint.get("file_sha256") == file_hash
                 and fingerprint.get("config_hash") == cfg_hash
+                # An interrupted chunk delta left a mixed chunk set: never
+                # reuse it as-is (re-planned via _delta_eligible when the
+                # same new bytes come back, cleaned up otherwise).
+                and not fingerprint.get("delta_in_progress")
             )
             text_chunk_count = fingerprint.get("text_chunk_count") or 0
+            out["clean_start"] = text_chunk_count == 0
+            if not matches and not force_full and self._delta_eligible(
+                fingerprint, file_hash, cfg_hash
+            ):
+                # Changed content of a claim-tracked completed doc: keep the
+                # stored chunks (no cleanup, no fingerprint write yet) —
+                # _apply_chunk_delta decides after splitting the new content,
+                # and writes the fingerprint once the new chunk set is stored.
+                out["delta_candidate"] = True
+                out["config_hash"] = cfg_hash
+                out["clean_start"] = True  # claims_version=1 already holds
+                return out
             if (
                 matches
                 and text_chunk_count > 0
@@ -1629,6 +1826,7 @@ class DocumentProcessor:
                     self.neo4j.delete_document_chunks, doc_id
                 )
                 await asyncio.to_thread(self.neo4j.clear_ingest_checkpoint, doc_id)
+                out["clean_start"] = True
                 logger.info(
                     f"Document {doc_id}: stored chunks not reusable (fingerprint "
                     f"changed or embeddings incomplete) — cleared "
@@ -1643,7 +1841,35 @@ class DocumentProcessor:
                 f"Ingest-resume preparation failed for document {doc_id} ({e}); "
                 f"running the full pipeline"
             )
-            return default
+            return await self._prepare_without_resume(doc_id, file_path, default)
+
+    async def _prepare_without_resume(
+        self, doc_id: str, file_path: str, default: dict
+    ) -> dict:
+        """Full-path preparation when resume is off or its preparation failed.
+
+        Callers no longer pre-wipe a changed document (git sync, in-place
+        replace), so stale chunks must be cleared here: the full path MERGEs
+        `{doc}_chunk_{idx}`, and a shorter new version would otherwise keep
+        the old tail chunks with their MENTIONS and relationship claims.
+        """
+        out = dict(default)
+        try:
+            out["file_hash"] = await asyncio.to_thread(self._file_sha256, file_path)
+        except Exception as e:  # noqa: BLE001 — completion just skips the fingerprint
+            logger.debug(f"Could not hash {file_path}: {e}")
+        try:
+            cleanup = await asyncio.to_thread(self.neo4j.delete_document_chunks, doc_id)
+            await asyncio.to_thread(self.neo4j.clear_ingest_checkpoint, doc_id)
+            out["clean_start"] = True
+            if cleanup.get("chunks_deleted"):
+                logger.info(
+                    f"Document {doc_id}: cleared {cleanup['chunks_deleted']} "
+                    f"stored chunks before a full reprocess"
+                )
+        except Exception as e:  # noqa: BLE001 — full path still runs
+            logger.warning(f"Could not clear stored chunks of {doc_id}: {e}")
+        return out
 
     async def _reprocess_delta_skip(self, doc_id: str, file_path: str) -> bool:
         """True when reprocessing can be skipped entirely: the document
@@ -1927,6 +2153,7 @@ class DocumentProcessor:
         collection_id: Optional[str] = None,
         source: str = "upload",
         git_provenance: Optional[dict] = None,
+        source_key: Optional[str] = None,
     ) -> str:
         """
         Store a file without processing it.
@@ -1968,6 +2195,9 @@ class DocumentProcessor:
 
         # Store document node (no processing yet)
         self.neo4j.store_document(doc_id, metadata)
+        if source_key:
+            # Stable sync key → later uploads with it replace this doc in place
+            self.neo4j.set_document_source_key(doc_id, source_key)
 
         # Add to collection if specified
         if collection_id:
@@ -1984,6 +2214,7 @@ class DocumentProcessor:
         collection_id: Optional[str] = None,
         source: str = "upload",
         git_provenance: Optional[dict] = None,
+        source_key: Optional[str] = None,
     ) -> str:
         """
         Process a file and store it in the knowledge base.
@@ -2000,7 +2231,7 @@ class DocumentProcessor:
         # First store the file
         doc_id = await self.store_file_only(
             file_path, filename, file_size, collection_id, source=source,
-            git_provenance=git_provenance,
+            git_provenance=git_provenance, source_key=source_key,
         )
 
         # Then start processing (with task tracking for cancellation support)
@@ -2149,6 +2380,238 @@ class DocumentProcessor:
             return False
         counts = await asyncio.to_thread(usage_meter.get_completions_this_month)
         return counts["total"] >= limit
+
+    async def _split_for_ingest(self, documents: list, use_vision: bool, loop) -> list:
+        """Converted text → final chunk list (shared by the full and the
+        chunk-delta path, so both produce byte-identical chunks)."""
+        # =============================================================
+        # Clean image placeholders from markdown before chunking
+        # =============================================================
+        if use_vision:
+            documents = [
+                dataclasses.replace(
+                    doc, content=_clean_image_placeholders(doc.content)
+                )
+                for doc in documents
+            ]
+
+        # =============================================================
+        # URL Protection: Prevent URLs from being split across chunks
+        # =============================================================
+        # Replace URLs with placeholders before splitting, then restore after
+        url_maps = []  # Store URL map for each document
+        protected_documents = []
+
+        for doc in documents:
+            protected_content, url_map = _protect_urls(doc.content)
+            url_maps.append(url_map)
+            # Create a new document with protected content
+            protected_doc = HaystackDocument(
+                content=protected_content, meta=doc.meta
+            )
+            protected_documents.append(protected_doc)
+
+            if url_map:
+                logger.debug(f"Protected {len(url_map)} URLs from chunking")
+
+        # Split documents into chunks (run in thread pool)
+        split_result = await loop.run_in_executor(
+            _get_processing_executor(),
+            functools.partial(self.splitter.run, documents=protected_documents),
+        )
+        chunks = split_result.get("documents", [])
+
+        # Restore URLs in each chunk
+        # Note: We need to restore URLs from all URL maps since chunks may
+        # come from any of the original documents
+        combined_url_map = {}
+        for url_map in url_maps:
+            combined_url_map.update(url_map)
+
+        if combined_url_map:
+            for chunk in chunks:
+                chunk.content = _restore_urls(chunk.content, combined_url_map)
+            logger.debug(f"Restored URLs in {len(chunks)} chunks")
+
+        # Enforce embed-token cap after URL restoration (URLs can grow content).
+        # Splits any oversize chunk into safe pieces so the downstream embed call
+        # never trips ContextWindowExceeded errors on managed providers / litellm
+        # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
+        chunks = _drop_empty_chunks(chunks)
+        return _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
+
+    async def _fall_back_to_full_reprocess(self, doc_id: str, resume: dict, why: str) -> None:
+        """A delta candidate that can't be a delta: do what
+        _prepare_ingest_resume does for a changed file (drop the stale chunks
+        — claim release + entity retirement — and record the new fingerprint)."""
+        cleanup = await asyncio.to_thread(self.neo4j.delete_document_chunks, doc_id)
+        await asyncio.to_thread(self.neo4j.clear_ingest_checkpoint, doc_id)
+        await asyncio.to_thread(
+            self.neo4j.set_document_fingerprint,
+            doc_id, resume["file_hash"], resume["config_hash"],
+        )
+        await asyncio.to_thread(self.neo4j.set_delta_in_progress, doc_id, None)
+        resume["delta_candidate"] = False
+        resume["clean_start"] = True
+        logger.info(
+            f"Document {doc_id}: chunk delta not applicable ({why}) — full "
+            f"reprocess; cleared {cleanup.get('chunks_deleted', 0)} stale chunks"
+        )
+
+    async def _apply_chunk_delta(
+        self, doc_id: str, documents: list, use_vision: bool, loop, resume: dict
+    ) -> Optional[dict]:
+        """Chunk-delta reprocess of a changed, claim-tracked document.
+
+        Splits the new content exactly like the full path, matches chunks by
+        content hash against the stored ones, and only embeds/stores the new
+        chunks. Removed chunks release their relationship claims and are
+        deleted; their entities become orphan candidates resolved at
+        completion (finalize_chunk_delta). Returns None after falling back to
+        the full path (low reuse, unhashed legacy chunks, embed mismatch),
+        else {"chunks", "done_indices", "rels_done_chunk_ids", "stats"} for
+        the extraction phases, which then run only over new chunks (the
+        existing skip_chunk_indices / rels_extracted resume machinery).
+
+        Restart safety: nothing is mutated before the new chunks are
+        embedded; removals → new chunks (flagged delta_pending) → kept
+        re-index + rels flags → watermark → fingerprint. Interrupted before
+        the fingerprint write, the next run re-plans (still delta-eligible;
+        delta_pending chunks reuse their embedding but are re-extracted);
+        after it, the ordinary ingest resume continues from the watermark.
+        """
+        chunks = await self._split_for_ingest(documents, use_vision, loop)
+        self._check_cancellation(doc_id)
+        # The full path truncates right before embedding; do it before hashing
+        # so new and stored hashes describe the same (stored) content.
+        _truncate_for_embedding(chunks, self.settings.embedding_max_input_tokens)
+        new_hashes = [chunk_content_hash(c.content) for c in chunks]
+
+        stored = await asyncio.to_thread(self.neo4j.get_chunks_for_delta, doc_id)
+        if not stored or not all(
+            c.get("content_hash") and c.get("has_embedding") for c in stored
+        ):
+            await self._fall_back_to_full_reprocess(
+                doc_id, resume, "stored chunks lack content hashes/embeddings"
+            )
+            return None
+        plan = plan_chunk_delta(stored, new_hashes)
+        min_ratio = float(getattr(self.settings, "chunk_delta_min_reuse_ratio", 0.3))
+        if not new_hashes or plan["reuse_ratio"] < min_ratio:
+            await self._fall_back_to_full_reprocess(
+                doc_id, resume,
+                f"reuse {plan['reuse_ratio']:.0%} < {min_ratio:.0%}",
+            )
+            return None
+
+        new_positions = [i for i, sid in enumerate(plan["sequence"]) if sid is None]
+        embedded_new: list = []
+        if new_positions:
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.update_document_progress, doc_id, 15, 100,
+                    f"Embedding {len(new_positions)} changed of {len(chunks)} chunks...",
+                ),
+            )
+            to_embed = [chunks[i] for i in new_positions]
+            _embed_call = functools.partial(self.embedder.run, documents=to_embed)
+            try:
+                embed_result = await loop.run_in_executor(
+                    _get_processing_executor(), _embed_call
+                )
+            except Exception as exc:  # same one-retry policy as the full path
+                logger.warning(f"Embedding pass failed ({exc}); retrying once", exc_info=True)
+                await asyncio.sleep(5)
+                embed_result = await loop.run_in_executor(
+                    _get_processing_executor(), _embed_call
+                )
+            embedded_new = await self._recover_missing_embeddings(
+                loop, embed_result.get("documents", [])
+            )
+            if len(embedded_new) != len(new_positions):
+                # Recovery split an unembeddable chunk — positions no longer
+                # line up with the plan. Rare; the full path handles it.
+                await self._fall_back_to_full_reprocess(
+                    doc_id, resume, "embedding recovery changed the chunk count"
+                )
+                return None
+        self._check_cancellation(doc_id)
+
+        # From here the stored chunk set is mixed until the fingerprint write:
+        # mark it, so a restart with the OLD bytes cleans up instead of
+        # reusing it as a match (the same new bytes re-plan the delta).
+        await asyncio.to_thread(
+            self.neo4j.set_delta_in_progress, doc_id, resume["file_hash"]
+        )
+        removal = await asyncio.to_thread(
+            self.neo4j.apply_chunk_delta_removals, doc_id, plan["removed_ids"]
+        )
+        taken = {c["id"] for c in stored}
+        final: list = []
+        new_ids: list = []
+        positions: list = []
+        embedded_iter = iter(embedded_new)
+        for pos, sid in enumerate(plan["sequence"]):
+            if sid is not None:
+                positions.append({"id": sid, "chunk_index": pos})
+                final.append(HaystackDocument(content=chunks[pos].content, meta={"chunk_id": sid}))
+                continue
+            doc = next(embedded_iter)
+            cid = new_delta_chunk_id(doc_id, new_hashes[pos], taken)
+            doc.meta["chunk_id"] = cid
+            await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.store_chunk,
+                    DocumentChunk(
+                        id=cid, document_id=doc_id, content=doc.content,
+                        embedding=doc.embedding, chunk_index=pos, metadata=doc.meta,
+                    ),
+                ),
+            )
+            new_ids.append(cid)
+            final.append(doc)
+        await asyncio.to_thread(self.neo4j.mark_chunks_delta_pending, new_ids)
+        done_positions = set(plan["done_positions"])
+        rels_done = {plan["sequence"][p] for p in done_positions}
+        await asyncio.to_thread(
+            self.neo4j.update_chunk_positions, positions, sorted(rels_done)
+        )
+        await asyncio.to_thread(
+            self.neo4j.set_document_extraction_progress,
+            doc_id, json.dumps(self._indices_to_ranges(done_positions)),
+        )
+        await asyncio.to_thread(
+            self.neo4j.set_document_fingerprint,
+            doc_id, resume["file_hash"], resume["config_hash"],
+        )
+        await asyncio.to_thread(self.neo4j.set_delta_in_progress, doc_id, None)
+        stats = {
+            "kept": len(plan["kept_ids"]),
+            "removed": len(plan["removed_ids"]),
+            "added": len(new_ids),
+            "relationships_deleted": removal.get("relationships_deleted", 0),
+        }
+        await loop.run_in_executor(
+            _get_processing_executor(),
+            functools.partial(
+                self.neo4j.update_document_progress, doc_id, 35, 100,
+                f"Changed content: {stats['added']} new, {stats['removed']} removed, "
+                f"{stats['kept']} unchanged chunks reused...",
+            ),
+        )
+        logger.info(
+            f"Document {doc_id}: chunk delta — kept {stats['kept']}, removed "
+            f"{stats['removed']}, added {stats['added']} "
+            f"({removal.get('relationships_deleted', 0)} relationships lost their last claim)"
+        )
+        return {
+            "chunks": final,
+            "done_indices": done_positions,
+            "rels_done_chunk_ids": rels_done,
+            "stats": stats,
+        }
 
     async def _process_document(
         self, doc_id: str, file_path: str, file_type: str,
@@ -2375,6 +2838,14 @@ class DocumentProcessor:
             # Image Extraction and Analysis (runs in background)
             # =================================================================
             serialized_images = conversion_result.get("images", [])
+            if resume.get("delta_candidate") and serialized_images and use_vision:
+                # The new version has images: their chunks/analysis are
+                # index-keyed per conversion, so this is a full reprocess —
+                # and the stale-chunk cleanup must happen BEFORE background
+                # image analysis starts storing new image chunks.
+                await self._fall_back_to_full_reprocess(
+                    doc_id, resume, "new version contains images"
+                )
             if serialized_images and use_vision:
                 # Set initial image progress so frontend knows images were found
                 await loop.run_in_executor(
@@ -2391,7 +2862,21 @@ class DocumentProcessor:
                     )
                 )
 
-            if resume_reuse:
+            delta = None
+            if resume.get("delta_candidate"):
+                delta = await self._apply_chunk_delta(
+                    doc_id, documents, use_vision, loop, resume
+                )
+            if delta is not None:
+                # Chunk delta: kept chunks are already stored and extracted;
+                # extraction below runs only over the new ones (skip set +
+                # rels flags), and `resumed` merges back the document's
+                # existing entities so new and kept chunks link correctly.
+                embedded_chunks = delta["chunks"]
+                resume["done_indices"] = delta["done_indices"]
+                resume["rels_done_chunk_ids"] = delta["rels_done_chunk_ids"]
+                resume["resumed"] = True
+            elif resume_reuse:
                 # Stored chunks match this file+config — rebuild the in-memory
                 # chunk list from Neo4j instead of re-running Docling, the
                 # splitter, and the full embed pass. Downstream phases only
@@ -2431,61 +2916,7 @@ class DocumentProcessor:
                 # Yield control
                 await asyncio.sleep(0)
 
-                # =============================================================
-                # Clean image placeholders from markdown before chunking
-                # =============================================================
-                if use_vision:
-                    documents = [
-                        dataclasses.replace(
-                            doc, content=_clean_image_placeholders(doc.content)
-                        )
-                        for doc in documents
-                    ]
-
-                # =============================================================
-                # URL Protection: Prevent URLs from being split across chunks
-                # =============================================================
-                # Replace URLs with placeholders before splitting, then restore after
-                url_maps = []  # Store URL map for each document
-                protected_documents = []
-
-                for doc in documents:
-                    protected_content, url_map = _protect_urls(doc.content)
-                    url_maps.append(url_map)
-                    # Create a new document with protected content
-                    protected_doc = HaystackDocument(
-                        content=protected_content, meta=doc.meta
-                    )
-                    protected_documents.append(protected_doc)
-
-                    if url_map:
-                        logger.debug(f"Protected {len(url_map)} URLs from chunking")
-
-                # Split documents into chunks (run in thread pool)
-                split_result = await loop.run_in_executor(
-                    _get_processing_executor(),
-                    functools.partial(self.splitter.run, documents=protected_documents),
-                )
-                chunks = split_result.get("documents", [])
-
-                # Restore URLs in each chunk
-                # Note: We need to restore URLs from all URL maps since chunks may
-                # come from any of the original documents
-                combined_url_map = {}
-                for url_map in url_maps:
-                    combined_url_map.update(url_map)
-
-                if combined_url_map:
-                    for chunk in chunks:
-                        chunk.content = _restore_urls(chunk.content, combined_url_map)
-                    logger.debug(f"Restored URLs in {len(chunks)} chunks")
-
-                # Enforce embed-token cap after URL restoration (URLs can grow content).
-                # Splits any oversize chunk into safe pieces so the downstream embed call
-                # never trips ContextWindowExceeded errors on managed providers / litellm
-                # proxies we can't tune. Zero content loss — see _enforce_embed_token_cap.
-                chunks = _drop_empty_chunks(chunks)
-                chunks = _enforce_embed_token_cap(chunks, self.settings.embedding_max_input_tokens)
+                chunks = await self._split_for_ingest(documents, use_vision, loop)
 
                 # Check for cancellation after chunking
                 self._check_cancellation(doc_id)
@@ -2733,6 +3164,8 @@ class DocumentProcessor:
                     skip_chunk_indices=resume["done_indices"] or None,
                     on_outage_state=_set_pause_state,
                 )
+                if delta is not None:
+                    extraction_run_stats["delta"] = delta["stats"]
                 if extraction_run_stats:
                     # Persisted for post-hoc tuning/monitoring only — nothing
                     # in the frontend reads it.
@@ -2793,6 +3226,36 @@ class DocumentProcessor:
 
                 # Link entities to chunks via fuzzy string matching
                 chunk_entity_links = self._match_entities_to_chunks(entities, embedded_chunks)
+
+                # A chunk whose relationship extraction already settled (resume
+                # checkpoint, or a chunk kept by a chunk delta) is re-opened
+                # when it gains an entity it did not mention before — e.g. a
+                # new entity from a changed section also occurring in an
+                # unchanged chunk: its relationships to the chunk's other
+                # entities were never extracted.
+                if resume["rels_done_chunk_ids"]:
+                    rels_done_prior = set(resume["rels_done_chunk_ids"])
+                    prior_mentions = await asyncio.to_thread(
+                        self.neo4j.get_chunk_mention_names, sorted(rels_done_prior)
+                    )
+                    reopened = {
+                        cid
+                        for cid, name in chunk_entity_links
+                        if cid in rels_done_prior
+                        and entity_canonical_map.get(name.lower(), name).lower()
+                        not in set(prior_mentions.get(cid, []))
+                        and name.lower() not in set(prior_mentions.get(cid, []))
+                    }
+                    if reopened:
+                        await asyncio.to_thread(
+                            self.neo4j.unmark_chunks_rels_extracted, sorted(reopened)
+                        )
+                        resume["rels_done_chunk_ids"] = rels_done_prior - reopened
+                        logger.info(
+                            f"Document {doc_id}: re-opened {len(reopened)} unchanged "
+                            f"chunks for relationship extraction (new entity mentions)"
+                        )
+
                 if getattr(self.settings, "enable_batched_kg_writes", False):
                     await loop.run_in_executor(
                         _get_processing_executor(),
@@ -2942,13 +3405,17 @@ class DocumentProcessor:
                                         unit,
                                         max_output_tokens=self.settings.relationship_max_output_tokens,
                                     )
-                                    rels = [r for rs in results_map.values() for r in rs]
+                                    # (chunk_id, rel): a batched call answers per
+                                    # chunk — each relationship is claimed by the
+                                    # chunk it came from, not the whole unit.
+                                    rels = [(cid, r) for cid, rs in results_map.items() for r in rs]
                                 else:
-                                    rels = await self.graph_extractor.extract_chunk_relationships_async(
+                                    single = await self.graph_extractor.extract_chunk_relationships_async(
                                         unit[0]["chunk_text"],
                                         unit[0]["entities"],
                                         max_output_tokens=self.settings.relationship_max_output_tokens,
                                     )
+                                    rels = [(unit[0]["key"], r) for r in single]
                                 return ("ok", [it["key"] for it in unit], rels)
                             except Exception as e:  # noqa: BLE001 — classified below
                                 if isinstance(e, ExtractionEndpointUnavailable) or _is_connection_error(e):
@@ -2998,15 +3465,23 @@ class DocumentProcessor:
                                 pause_flag_set = False
                                 await _set_pause_state(False)
                             done_chunk_ids, rels = payload, result
-                            chunk_new_rels = []
-                            for rel in rels:
-                                # Remap to canonical entity names from dedup
-                                rel.source = entity_canonical_map.get(rel.source.lower(), rel.source)
-                                rel.target = entity_canonical_map.get(rel.target.lower(), rel.target)
-                                key = (rel.source.lower(), rel.target.lower(), rel.relationship_type)
-                                if key not in seen_rels:
-                                    seen_rels.add(key)
-                                    chunk_new_rels.append(rel)
+                            chunk_new_rels, new_claims, claim_only_rels, claim_only_claims = (
+                                _group_rel_claims(rels, entity_canonical_map, seen_rels)
+                            )
+                            if claim_only_rels:
+                                try:
+                                    await loop.run_in_executor(
+                                        _get_processing_executor(),
+                                        functools.partial(
+                                            self.neo4j.store_relationships_batch,
+                                            claim_only_rels,
+                                            source_document_id=doc_id,
+                                            extraction_method="per_chunk",
+                                            chunk_ids_per_rel=claim_only_claims,
+                                        ),
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to record per-chunk relationship claims: {e}")
                             if chunk_new_rels and getattr(
                                 self.settings, "enable_batched_kg_writes", False
                             ):
@@ -3020,13 +3495,14 @@ class DocumentProcessor:
                                             chunk_new_rels,
                                             source_document_id=doc_id,
                                             extraction_method="per_chunk",
+                                            chunk_ids_per_rel=new_claims,
                                         ),
                                     )
                                     total_relationships += stored_count
                                 except Exception as e:
                                     logger.warning(f"Failed to store per-chunk relationship batch: {e}")
                             else:
-                                for rel in chunk_new_rels:
+                                for rel, rel_chunks in zip(chunk_new_rels, new_claims):
                                     try:
                                         stored = await loop.run_in_executor(
                                             _get_processing_executor(),
@@ -3035,6 +3511,7 @@ class DocumentProcessor:
                                                 rel,
                                                 source_document_id=doc_id,
                                                 extraction_method="per_chunk",
+                                                source_chunk_ids=rel_chunks,
                                             ),
                                         )
                                         if stored:
@@ -3180,7 +3657,11 @@ class DocumentProcessor:
             # Record the processed file + config identity so a later reprocess
             # of unchanged content can be skipped (enable_reprocess_delta).
             try:
-                file_hash = await asyncio.to_thread(self._file_sha256, file_path)
+                # The bytes hashed when this run STARTED — re-hashing here
+                # would record a file swapped mid-run as processed.
+                file_hash = resume.get("file_hash")
+                if not file_hash:
+                    raise ValueError("no start-of-run file hash")
                 await loop.run_in_executor(
                     _get_processing_executor(),
                     functools.partial(
@@ -3192,6 +3673,27 @@ class DocumentProcessor:
                 )
             except Exception as e:
                 logger.debug(f"Could not record document fingerprint: {e}")
+                file_hash = None
+
+            # Claim-tracked completion: makes the next content change of
+            # this doc eligible for a chunk delta, and resolves the orphan
+            # candidates a delta's chunk removals left (now that new chunks
+            # are linked, an entity that merely moved is not touched).
+            if file_hash:
+                try:
+                    finalized = await asyncio.to_thread(
+                        self.neo4j.finalize_chunk_delta,
+                        doc_id, file_hash, self._reprocess_config_hash(),
+                        bool(resume.get("clean_start")),
+                    )
+                    if finalized.get("orphans_retired") or finalized.get("orphans_deleted"):
+                        logger.info(
+                            f"Document {doc_id}: chunk delta orphans — "
+                            f"{finalized.get('orphans_retired', 0)} retired, "
+                            f"{finalized.get('orphans_deleted', 0)} deleted"
+                        )
+                except Exception as e:  # noqa: BLE001 — next run does a full reprocess
+                    logger.warning(f"Could not finalize claim tracking for {doc_id}: {e}")
 
             # On a resume-reuse run the original conversion (and its extracted
             # images) never happened in this process — if the interrupted run
@@ -3403,9 +3905,16 @@ class DocumentProcessor:
         if not entities:
             return {}
         if getattr(self.settings, "enable_batched_kg_writes", False):
-            return await self._store_entities_batched(
+            # Revive retired matches first so batched resolution / exact-name
+            # MERGE reuse them (the sequential path revives per entity inside
+            # neo4j_service).
+            entities, renamed = await self._revive_retired_for_batch(entities, loop)
+            canonical_map = await self._store_entities_batched(
                 doc_id, entities, entity_embeddings, loop
             )
+            for orig_lower, canon in renamed.items():
+                canonical_map[orig_lower] = canonical_map.get(canon.lower(), canon)
+            return canonical_map
         canonical_map: dict[str, str] = {}
         for idx, entity in enumerate(entities):
             self._check_cancellation(doc_id)
@@ -3438,6 +3947,34 @@ class DocumentProcessor:
             if idx % 10 == 0:
                 await asyncio.sleep(0)
         return canonical_map
+
+    async def _revive_retired_for_batch(self, entities: list, loop) -> tuple:
+        """Revive retired entities matching this batch; best-effort.
+
+        Returns (entities, renamed): entities whose revival matched by case or
+        alias are replaced by a copy carrying the revived canonical name, and
+        `renamed` maps their original lower-cased name → canonical name.
+        """
+        try:
+            revived = await loop.run_in_executor(
+                _get_processing_executor(),
+                functools.partial(
+                    self.neo4j.revive_retired_entities, [e.name for e in entities]
+                ),
+            )
+        except Exception as e:
+            logger.debug(f"retired-entity revival skipped: {e}")
+            return entities, {}
+        if not isinstance(revived, dict) or not revived:
+            return entities, {}
+        out, renamed = [], {}
+        for entity in entities:
+            canon = revived.get(entity.name.lower())
+            if isinstance(canon, str) and canon and canon != entity.name:
+                renamed[entity.name.lower()] = canon
+                entity = entity.model_copy(update={"name": canon})
+            out.append(entity)
+        return out, renamed
 
     async def _store_entities_batched(
         self,

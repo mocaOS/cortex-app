@@ -18,6 +18,7 @@ During Phase A (document processing), after entity extraction and chunk linking,
 
 - Tracks original-to-canonical entity name mapping during entity storage and remaps relationship source/target to canonical names before storing, preventing silent storage failures when entity names were merged during fuzzy resolution
 - Stored with `extraction_method='per_chunk'`
+- **Claim-set provenance (2026-10-13)**: every edge carries `source_document_ids` + `source_chunk_ids` (per-chunk stores attribute claims per chunk from the batched results map, so an edge carries exactly the chunks that stated it; Step-2 writers set `step2_verified`, which keeps the edge alive after its last document claim is released). `source_document_id` stays as the most recent claimant. Document/chunk removal releases claims; the edge is deleted only when no document claim remains. See [`incremental-reprocess.md`](incremental-reprocess.md).
 - Concurrency controlled by `CONCURRENT_RELATIONS` (default 3), separate from entity extraction concurrency
 - Uses tenacity retry with exponential backoff (4 attempts, 2-30s wait) for rate-limit/transient errors — **timeouts are excluded** (2026-07-09): they fail fast to the caller/single-chunk fallback instead of re-sending the prompt into a saturated endpoint. Calls go through a `max_retries=0` one-shot client (`_oneshot_async_client`) so SDK retries can't stack under tenacity; transport timeout is env-driven (`LLM_REQUEST_TIMEOUT_SECONDS`, previously hardcoded 120s)
 - **Connection errors are also excluded from tenacity and re-raised** (2026-07-20): an endpoint-down failure (litellm/gateway restart — `_is_connection_error`) propagates to the document pipeline's outage loop, which requeues the affected work units and waits with backoff up to `LLM_OUTAGE_MAX_WAIT_SECONDS` instead of losing the chunks' relationships. Settled chunks are flagged `Chunk.rels_extracted` so a resumed run skips them — see [`document-pipeline.md`](document-pipeline.md#ingest-checkpointresume--endpoint-outage-pause)
@@ -87,7 +88,7 @@ Prompt enforces 14 standard types (MENTIONS removed as it was a lazy co-occurren
 
 ## Rebuild vs Incremental Mode
 
-Relationship analysis supports `rebuild=true` mode (calls `delete_batch_relationships()` to delete only batch-analysis relationships where `extraction_method != 'per_chunk'`, preserving Step 1 per-chunk relationships, then triggers multi-round) alongside default incremental mode.
+Relationship analysis supports `rebuild=true` mode (calls `delete_batch_relationships()` to delete only batch-analysis relationships where `extraction_method != 'per_chunk'` **and that carry no document claim** — it retracts the Step-2 claim (`step2_verified`) everywhere; doc-claimed edges stay (reverted to `per_chunk` when they hold chunk claims), preserving Step 1 per-chunk relationships, then triggers multi-round) alongside default incremental mode.
 
 ## Stats
 

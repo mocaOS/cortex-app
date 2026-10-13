@@ -108,6 +108,30 @@ paths:
             type: string
             default: upload
           description: Source identifier for the document (e.g. 'youtube-transcriber', 'slack-bot'). Defaults to 'upload'.
+        - name: source_key
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+          description: >
+            Stable identity of the file at its source (e.g. `nextcloud:<server>:<fileId>`,
+            `url:<url>`). If a document with this key exists, it is replaced in place —
+            same document id, and only changed content is re-extracted (entities,
+            relationships and curation of unchanged parts are kept). Otherwise a new
+            document is created and stores the key. Also accepted as a form field.
+            An empty value is treated as absent. While a key is given, the
+            same-filename-and-size duplicate guard (409) is skipped.
+        - name: replace_document_id
+          in: query
+          schema:
+            type: string
+          description: >
+            Replace this existing document in place (takes precedence over `source_key`;
+            sets `source_key` on it when both are given). If the document no longer
+            exists the upload falls back to `source_key` resolution, then to a new
+            document — it never 404s. 403 if the document is outside the caller's
+            collection scope. Also accepted as a form field; empty = absent.
       requestBody:
         required: true
         content:
@@ -123,13 +147,22 @@ paths:
                 - file
       responses:
         '200':
-          description: Document uploaded
+          description: >
+            Document uploaded, replaced in place (`replaced: true`), or left untouched
+            because the bytes are identical to a completed document (`unchanged: true`).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Document'
+                $ref: '#/components/schemas/UploadResponse'
         '400':
-          description: Invalid file type or size
+          description: Invalid file type or size, or `source_key` longer than 512 characters
+        '403':
+          description: Plan file/entity limit reached (replacements do not count against the file limit), or the replace target is outside the caller's collection scope
+        '409':
+          description: >
+            A document with the same filename and size already exists (only checked when
+            no `source_key`/`replace_document_id` is given), or the resolved replace
+            target is managed by git sync (update it through the repository instead)
         '413':
           description: File too large
 
@@ -1079,7 +1112,7 @@ paths:
           in: query
           schema:
             type: string
-          description: Filter to relationships this document contributed (matched via the source_document_id stored on each edge)
+          description: Filter to relationships this document supports (matched via the edge's `source_document_ids` claim list or the legacy `source_document_id`)
         - name: skip
           in: query
           schema:
@@ -1116,6 +1149,90 @@ paths:
                   relationships_deleted:
                     type: integer
                     description: Number of relationships deleted
+
+  /api/graph/retired-entities:
+    get:
+      tags: [Knowledge Graph]
+      summary: List retired entities
+      description: >
+        Admin only. Curated entities (manually edited, merged/aliased, or holding
+        cross-document relationships) whose last mentioning document was removed or
+        changed are retired instead of deleted: they keep their edits and
+        relationships but are hidden from search, retrieval and the graph. If a
+        later extraction finds the same name (or an alias) again, the entity is
+        revived with everything it had.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Retired entities, most recently retired first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        type:
+                          type: string
+                        description:
+                          type: string
+                          nullable: true
+                        retired_at:
+                          type: string
+                        retired_from_document:
+                          type: string
+                          nullable: true
+                        degree:
+                          type: integer
+                          description: Relationships still attached
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+    delete:
+      tags: [Knowledge Graph]
+      summary: Purge retired entities
+      description: Admin only. Permanently deletes retired entities (and their relationships) retired at least `older_than_days` days ago.
+      parameters:
+        - name: older_than_days
+          in: query
+          schema:
+            type: integer
+            default: 30
+            minimum: 0
+          description: Age threshold in days; 0 purges all retired entities
+      responses:
+        '200':
+          description: Purge result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged:
+                    type: integer
+                  remaining:
+                    type: integer
 
   /api/graph/relationships/analyze:
     post:
@@ -2737,6 +2854,31 @@ components:
         collection_count:
           type: integer
 
+    UploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+        id:
+          type: string
+          description: Alias of document_id
+        filename:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, extracting, completed, failed]
+        message:
+          type: string
+        source:
+          type: string
+          default: upload
+        replaced:
+          type: boolean
+          description: An existing document (source_key / replace_document_id) was updated in place; document_id is unchanged. Always present.
+        unchanged:
+          type: boolean
+          description: The bytes were identical to an already-completed document, so nothing was reprocessed. Always present.
+
     Document:
       type: object
       properties:
@@ -2753,7 +2895,7 @@ components:
           format: date-time
         processing_status:
           type: string
-          enum: [pending, processing, extracting_entities, completed, failed]
+          enum: [pending, processing, extracting, completed, failed]
         chunk_count:
           type: integer
         collection_id:
@@ -3569,7 +3711,7 @@ components:
               source_document_id:
                 type: string
                 nullable: true
-                description: Id of the document this relationship was extracted from
+                description: Most recent document that asserted this relationship. A relationship can be supported by several documents; it is only removed when none of them supports it any more.
         total:
           type: integer
           description: Total number of matching relationships

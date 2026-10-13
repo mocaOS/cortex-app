@@ -92,6 +92,10 @@ Prevents simultaneous export/import operations (409 if one already running).
 
 On import completion, clears client-side caches (same as system reset).
 
+## Retired Entities
+
+Curated entities whose last mentioning chunk/document was removed are retired (`:RetiredEntity`, edges and edits kept, hidden from retrieval; revived on re-extraction) — model in [`incremental-reprocess.md`](incremental-reprocess.md). Admin endpoints: `GET /api/graph/retired-entities?limit=50&offset=0` → `{entities:[{name,type,description,retired_at,retired_from_document,degree}], total, limit, offset}`; `DELETE /api/graph/retired-entities?older_than_days=30` (0 = all; hard purge incl. edges; audit event `graph.retired_entities_purged`) → `{purged, remaining}`. System reset (`delete_all_documents`) and `delete_all_entities` also remove retired nodes. Library export writes them to a separate `retired_entities.ndjson` section and import restores the label (and revival keys); relationship rows carry the `source_document_ids`/`source_chunk_ids` claim lists (absent in older exports → imported as before). Importers older than 2026-10-13 skip that section, dropping retired entities and their edges. Persisted-state details: [`incremental-reprocess.md`](incremental-reprocess.md).
+
 ## Bulk Download
 
 `POST /api/documents/download-zip` — Accepts `{ "document_ids": [...] }`, fetches file paths via `get_documents_file_paths()` batch query, builds a ZIP64-enabled archive with duplicate filename disambiguation, and streams the response in 1MB chunks via `StreamingResponse`. Frontend triggers browser download via blob URL. Requires `read` permission; restricted keys can only download documents from their allowed collections. Accessible via Download button in bulk actions toolbar on Documents page.

@@ -76,9 +76,11 @@ Cortex syncs **incrementally** — it never re-ingests the whole repo on every s
 | Change in the repo | What happens in Cortex |
 |---|---|
 | **New file added** | A new document is created and ingested |
-| **File modified** | That document is re-extracted in place (its old chunks and relationships are replaced) |
+| **File modified** | That document is updated in place — only the parts of the file that changed are re-extracted; unchanged parts keep their entities, relationships and your edits |
 | **File deleted** | The document is **flagged for review** — never silently deleted |
 | **File renamed** | The document's path is updated, no re-ingestion needed |
+
+You can abort a running sync from the Knowledge Graph page; the next sync continues where it stopped and skips files that already finished.
 
 If a branch is force-pushed (history rewritten) or you change the file filters, Cortex automatically falls back to a full comparison so nothing is missed or stale.
 

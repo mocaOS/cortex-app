@@ -45,7 +45,7 @@ PAT is encrypted at rest (`enc:`-prefixed Fernet ciphertext via `crypto_service.
 3. **Filter**: `_supported` (extension ∈ `document_processor.RAW_TEXT_EXTENSIONS`) + include/exclude globs (`pathspec`) + per-file size guard.
 4. **Map A/M/D/R** (`_apply_diff_ops`), reusing existing functions:
    - **A** → write content file → `process_file(..., git_provenance=...)` (pending). Idempotent: falls back to M if the doc already exists.
-   - **M** → `find_git_document` → `delete_document_chunks` (clears chunks + rels) → reprocess in place; update blob/commit sha.
+   - **M** → `find_git_document` → set pending + new blob/commit sha, **no pre-wipe** (since 2026-10-13): the processor runs a chunk delta (only changed chunks re-extracted) or, for ineligible docs, its own conserving cleanup — see [`incremental-reprocess.md`](incremental-reprocess.md). A same-blob doc is skipped when completed and only re-queued when an aborted run left it unfinished.
    - **D** → `mark_git_document_orphaned` (**flag for review — never auto-delete**).
    - **R** → `remap_git_document` (+ reprocess if `R<100`).
 5. **Ingest**: staged docs are processed via `process_pending_documents` (existing concurrency control), through the raw-text fast path (see [`document-pipeline.md`](document-pipeline.md)).
@@ -59,7 +59,7 @@ PAT is encrypted at rest (`enc:`-prefixed Fernet ciphertext via `crypto_service.
 **Wiki**: GitHub → clone `repo.wiki.git`, paths prefixed `wiki/`. GitLab/Gitea → Wikis API. Both paths use a content hash (`_wiki_sha`) as the pseudo blob sha; `_ingest_raw` skips unchanged pages, and pages removed from the wiki are flagged orphaned (the main fulltree sweep deliberately leaves `wiki/` paths to this sweep).
 
 ### Global stale-relationship fix
-Relationships carry `source_document_id` but previously survived reprocess/delete unless an endpoint entity fully orphaned. `delete_relationships_by_source_document` + an inline cleanup step now run in `delete_document_chunks` and `delete_document` — fixing stale `RELATES_TO` edges for **all** documents (uploads/custom-inputs/git), not just git. The same two methods also scrub the doc's id from `Entity.source_documents` on surviving shared entities (see [`entities.md`](entities.md)).
+Relationships carry `source_document_id` but previously survived reprocess/delete unless an endpoint entity fully orphaned. Claim release (2026-10-13: an edge is dropped only when no document claim remains — [`incremental-reprocess.md`](incremental-reprocess.md)) now runs in `delete_document_chunks` and `delete_document` — fixing stale `RELATES_TO` edges for **all** documents (uploads/custom-inputs/git), not just git. The same two methods also scrub the doc's id from `Entity.source_documents` on surviving shared entities (see [`entities.md`](entities.md)).
 
 ## Write tool (`git_repo`, researcher agent)
 
@@ -79,7 +79,7 @@ When exposed, `build_git_repo_block(connection)` adds a `<connected_repository>`
 
 ## Scheduled polling
 
-A lifespan asyncio loop (`_git_sync_scheduler` in `main.py`, every `GIT_SYNC_POLL_INTERVAL` min, guarded by the flag) triggers `sync_connection` for connections whose `sync_interval_minutes > 0` and `next_sync_due <= now`, skipping any with an in-flight sync. Failing connections back off exponentially (see above). A sync task whose coroutine dies silently is reaped by the task store after 2h without a heartbeat, so it can't block the connection's future syncs. No webhooks.
+A lifespan asyncio loop (`_git_sync_scheduler` in `main.py`, every `GIT_SYNC_POLL_INTERVAL` min, guarded by the flag) triggers `sync_connection` for connections whose `sync_interval_minutes > 0` and `next_sync_due <= now`, skipping any with an in-flight sync. Failing connections back off exponentially (see above). A sync task whose coroutine dies silently is reaped by the task store after 2h without a heartbeat, so it can't block the connection's future syncs. Manual and scheduled syncs both run as chain tasks, so `POST /api/graph/generation/abort` cancels them: the record is failed ("Sync aborted") instead of staying RUNNING (which used to 409 every later sync until restart), the batch stops starting new documents (`cancel_all_processing` also signals batch docs, which never register in `_active_tasks`), and `last_synced_sha` is not advanced — the next sync replays the diff, skipping completed same-blob docs. No webhooks.
 
 ## API endpoints (`/api/integrations/git/*`, admin-gated)
 

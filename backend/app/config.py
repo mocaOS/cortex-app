@@ -890,6 +890,14 @@ class Settings(BaseSettings):
     sentences_per_chunk: int = Field(
         default=5
     )  # Sentences per chunk when using sentence splitting
+    # "legacy" = the CHUNK_BY DocumentSplitter above; "structural" = heading-
+    # anchored, content-defined chunks (services/structural_chunker.py) that stay
+    # byte-identical across small edits, so chunk-delta reprocessing can reuse
+    # them. Legacy stays default until retrieval quality is benchmarked.
+    chunking_strategy: str = Field(default="legacy")
+    structural_chunk_min_words: int = Field(default=80)
+    structural_chunk_max_words: int = Field(default=400)
+    structural_chunk_boundary_divisor: int = Field(default=4)
 
     # ==========================================================================
     # Community Detection & Graph Summarization
@@ -992,6 +1000,21 @@ class Settings(BaseSettings):
     #   from the checkpoint instead of re-running Docling, re-embedding every
     #   chunk, and re-extracting from batch 1. Set false for the legacy
     #   restart-from-zero behavior.
+    enable_chunk_delta_reprocess: bool = Field(
+        default=True
+    )  # When a COMPLETED document's file changes (git sync, in-place upload
+    #   replace, reprocess with a new file) and the extraction config is
+    #   unchanged, keep every chunk whose content is unchanged (embedding,
+    #   entity links, relationship claims) and re-extract only new chunks;
+    #   removed chunks release their relationship claims and orphaned
+    #   entities are retired/deleted. Requires enable_ingest_resume. A
+    #   document gets one full reprocess before its first delta (legacy
+    #   relationships carry no chunk claims). Set false for full reprocesses.
+    chunk_delta_min_reuse_ratio: float = Field(
+        default=0.3
+    )  # Fraction of the new content's chunks that must already exist for a
+    #   chunk delta; below it the document is fully reprocessed (a rewrite
+    #   gains little from a delta and loses whole-document extraction context).
     llm_outage_max_wait_seconds: int = Field(
         default=900
     )  # When the extraction/relationship endpoint refuses connections

@@ -45,6 +45,7 @@ Converted text is split into chunks controlled by:
 - `CHUNK_SIZE` — target chunk size
 - `CHUNK_OVERLAP` — overlap between chunks
 - `CHUNK_BY` — word or sentence-level chunking
+- `CHUNKING_STRATEGY` — `legacy` (default, the settings above) or opt-in `structural` (heading-anchored, content-defined chunks that stay stable under edits; `services/structural_chunker.py`). See [`incremental-reprocess.md`](incremental-reprocess.md).
 
 ## Embedding
 
@@ -363,6 +364,6 @@ After Phase A completes:
 ## v-Next Efficiency & Hardening
 
 - **Helper transport** (`services/helper_client.py`): all cortex-helper calls (convert + rerank) share one HTTP client with 3 retries (backoff+jitter, transient errors only) and a per-operation circuit breaker — a network blip no longer instantly degrades a tenant to its local fallback. `HELPER_STRICT_REMOTE=true` makes conversion failure mark the document failed instead of pulling docling into the tenant container. Rerank failure stays no-rerank (safe).
-- **Reprocess delta** (`ENABLE_REPROCESS_DELTA`): on successful processing the Document gets a fingerprint (`file_sha256` + `reprocess_config_hash`); a reprocess whose file bytes and extraction config both match is skipped entirely ("Content unchanged"). Chunks also carry an additive `content_hash` property.
+- **Reprocess delta** (`ENABLE_REPROCESS_DELTA`): on successful processing the Document gets a fingerprint (`file_sha256` + `reprocess_config_hash`); a reprocess whose file bytes and extraction config both match is skipped entirely ("Content unchanged"). Chunks also carry an additive `content_hash` property. When the bytes DID change (and config did not), the **chunk-delta reprocess** (`ENABLE_CHUNK_DELTA_REPROCESS`) keeps unchanged chunks and re-extracts only new ones — eligibility, matching and conservation rules live in [`incremental-reprocess.md`](incremental-reprocess.md).
 - **Image entity-embedding cache**: one per-document cache dict dedups entity embeddings across a document's images (same logo/diagram entity embedded once).
 - **Conversion metrics**: `cortex_document_conversion_seconds{path=remote|local}` + helper request counters; documents-processed counters by outcome.

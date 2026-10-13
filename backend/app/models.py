@@ -499,6 +499,15 @@ class UploadResponse(BaseModel):
     # Alias of document_id (kept in lockstep) so upload and document responses
     # agree on one name; document_id remains for existing clients.
     id: Optional[str] = Field(default=None, description="Alias of document_id")
+    replaced: bool = Field(
+        default=False,
+        description="An existing document (source_key / replace_document_id) "
+                    "was updated in place; document_id is unchanged",
+    )
+    unchanged: bool = Field(
+        default=False,
+        description="Replacement bytes matched the processed document; nothing was queued",
+    )
 
     @model_validator(mode="after")
     def _fill_id(self):

@@ -244,6 +244,22 @@ class LibraryTransferService:
 
                 _write_ndjson(zf, "entities.ndjson", _entity_records())
 
+                # Retired entities (no live mentions, kept for their curated
+                # state) get their OWN section: importers read sections by name
+                # and ignore unknown ones, so an older importer skips them
+                # instead of re-creating them as live :Entity nodes (which
+                # could clash with a live entity of the same name).
+                def _retired_entity_records():
+                    offset = 0
+                    while True:
+                        batch = self.neo4j.export_retired_entities_batched(batch_size=batch_size, skip=offset)
+                        if not batch:
+                            break
+                        yield from batch
+                        offset += batch_size
+
+                _write_ndjson(zf, "retired_entities.ndjson", _retired_entity_records())
+
                 # 5. Relationships (batched + streamed)
                 step += 1
                 relationship_count = self.neo4j.export_relationship_count()
@@ -598,6 +614,11 @@ class LibraryTransferService:
                         f"Importing entities ({processed}/{entity_total or processed})..."
                     )
 
+                # Retired entities (section absent in older exports). Before
+                # relationships, so edges to retired endpoints restore too.
+                for batch in _iter_ndjson_batches(zf, "retired_entities.ndjson", batch_size):
+                    self.neo4j.import_retired_entities_batch(batch)
+
                 # 10. Import chunk mentions (streamed in batches)
                 step += 1
                 update_progress(task_id, step, total_steps, "Importing chunk-entity links...")
@@ -628,6 +649,9 @@ class LibraryTransferService:
                         "confidence": rel.get("confidence"),
                         "extraction_method": rel.get("extraction_method", ""),
                         "source_document_id": rel.get("source_document_id"),
+                        # Claim sets (absent in pre-claim exports → stay unset).
+                        "source_document_ids": rel.get("source_document_ids"),
+                        "source_chunk_ids": rel.get("source_chunk_ids"),
                         "extracted_at": rel.get("extracted_at"),
                     }
                     try:

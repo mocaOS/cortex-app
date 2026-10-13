@@ -53,13 +53,32 @@ The `source` parameter lets you tag documents by origin. Defaults to `"upload"` 
 
 ```json
 {
+  "document_id": "doc_abc123",
+  "id": "doc_abc123",
   "filename": "document.pdf",
-  "doc_id": "doc_abc123",
   "status": "processing",
   "message": "Document uploaded and processing started",
-  "source": "upload"
+  "source": "upload",
+  "replaced": false,
+  "unchanged": false
 }
 ```
+
+### Updating a document in place (`source_key`)
+
+Integrations that sync files from another system should pass a stable **`source_key`** — the file's identity at its source (e.g. `notion:<page-id>`, `s3:<bucket>/<key>`). The first upload creates the document; every later upload with the same key **replaces that document in place**:
+
+- the document id stays the same (citations, links and collections keep working);
+- only the chunks whose text changed are re-embedded and re-extracted — entities, relationships and manual edits from unchanged parts are kept;
+- uploading identical bytes again is a no-op.
+
+```bash
+curl -X POST "http://localhost:8000/api/upload?source=my-sync&source_key=notion:abc123" \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@page.md"
+```
+
+The response always carries `replaced` and `unchanged` booleans. To adopt a document uploaded earlier without a key, pass `replace_document_id=<id>` together with the new `source_key` (a `replace_document_id` that no longer exists falls back to the key, then to a new document). Both parameters are also accepted as form fields; empty values are ignored. Keys are up to 512 characters. Replacements don't count against the plan's file limit and skip the same-name duplicate check. Documents synced from a git repository can't be replaced by upload (HTTP 409) — change the file in the repository and let git sync update it.
 
 ### Bulk Upload
 
@@ -247,7 +266,7 @@ curl -X DELETE "http://localhost:8000/api/documents/doc_abc123" \
 
 ### Reprocess a Document
 
-Useful after updating extraction settings:
+Useful after updating extraction settings. Reprocessing with a new file (multipart `file`) keeps the document id and, when only part of the content changed, re-extracts only the changed chunks:
 
 ```bash
 curl -X POST "http://localhost:8000/api/documents/doc_abc123/reprocess" \

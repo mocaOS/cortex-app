@@ -7,6 +7,34 @@ All notable changes to Cortex are documented here, organized by date.
 
 ---
 
+## October 13, 2026
+
+Synced files that change a little no longer cost a full re-ingest, and re-ingesting no longer destroys graph work other documents or users contributed. A changed document now keeps every unchanged chunk — embedding, entity links, relationships — and only the new text is embedded and extracted; relationships and curated entities are reference-counted so removing one document's support never deletes what another document or a manual edit still backs. Sync sources keep document identity instead of deleting and re-uploading. All new graph state is additive; no migration step.
+
+### Chunk-delta reprocessing
+
+- **Only changed chunks are re-extracted** — when a processed document's file changes and the extraction config does not, unchanged chunks are matched by content hash and kept; removed chunks release what they supported; new chunks are the only ones sent to the embedder and the extraction LLM. Controlled by `ENABLE_CHUNK_DELTA_REPROCESS` (default `true`, requires `ENABLE_INGEST_RESUME`) and `CHUNK_DELTA_MIN_REUSE_RATIO` (default `0.3`; below it the document is fully reprocessed).
+- **One-time full pass** — documents processed before this release, documents whose old or new version contains images, and forced (`engine=docling`) reprocesses take the full path.
+- **Structural chunker (opt-in)** — `CHUNKING_STRATEGY=structural` splits at headings and content-defined paragraph boundaries so an edit only disturbs nearby chunks. Measured on three real 1.2k–2.4k-line changelogs: prepending a release section re-extracts 0.7–2.1% of the text (100% before), appending lines 0.3–3.8%, a mid-file edit 1.7–3.1%. Default stays `legacy` until retrieval quality is benchmarked; switching makes each document fully reprocess once on its next change. Tunables `STRUCTURAL_CHUNK_MIN_WORDS` (80), `STRUCTURAL_CHUNK_MAX_WORDS` (400), `STRUCTURAL_CHUNK_BOUNDARY_DIVISOR` (4).
+
+### Graph conservation
+
+- **Relationships remember every supporting document** — a relationship asserted by several documents is no longer deleted when one of them is reprocessed or deleted; it goes only when no supporting document remains. `GET /api/graph/relationships?document_id=` matches any supporting document.
+- **Curated entities are retired, not deleted** — an entity you edited or merged, or one holding cross-document relationships, is retired when its last mention disappears: hidden from search and the graph, with edits, aliases and relationships kept, and revived automatically when the name is extracted again. New admin endpoints `GET` / `DELETE /api/graph/retired-entities`. Library export/import carries retired entities and relationship provenance.
+- **Step-2 rebuild keeps document-backed relationships** — `rebuild=true` relationship analysis no longer deletes edges that documents still support, and relationships confirmed by Step 2 survive when their source documents go.
+- **Library export** — retired entities travel in a new `retired_entities.ndjson` section; importers from earlier releases skip it, so they drop retired entities.
+
+### Sources keep document identity
+
+- **`source_key` uploads** — `POST /api/upload` accepts `source_key` and `replace_document_id`; a matching document is replaced in place (same id, chunk delta) and identical bytes are a no-op. Responses always include `replaced` and `unchanged`. Git-synced documents can't be replaced by upload (409).
+- **Git sync** — modified files are no longer wiped before reprocessing; aborting a sync now stops it and unlocks the connection (previously every later sync returned 409 until a restart).
+- **Web import** — re-importing the same URL or page set updates the existing document instead of duplicating it.
+- **Sync apps** — Nextcloud, WebDAV, Dropbox, Paperless, OneDrive, SharePoint and Google Drive (their next minor versions) update the existing document instead of deleting and re-uploading it; Paperless now re-syncs documents edited in Paperless. On an older backend the apps fall back to the previous delete-and-reupload flow.
+
+No breaking API change: new request parameters and response fields are additive.
+
+---
+
 ## October 5, 2026
 
 A maintenance week's accumulated backend, SDK and documentation work joins

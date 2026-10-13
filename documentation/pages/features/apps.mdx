@@ -78,7 +78,7 @@ for the release flow.
 
 ## First-party apps
 
-The registry currently lists eight first-party apps. All are `platform`-class (capabilities `http` + `storage` + `tasks`; YT Transcriber additionally `llm`), all request a `read_write` key — scope it to a dedicated collection per source at install. Each uses `storage` for delta cursors and per-item dedup, so re-runs transfer only new or changed content, and each can run on a schedule.
+The registry currently lists eight first-party apps. All are `platform`-class (capabilities `http` + `storage` + `tasks`; YT Transcriber additionally `llm`), all request a `read_write` key — scope it to a dedicated collection per source at install. Each uses `storage` for delta cursors and per-item dedup, so re-runs transfer only new or changed content, and each can run on a schedule. A changed file updates its **existing** document in place (via the upload `source_key`), so only the changed part is re-extracted and the document id, relationships and your entity edits are kept — older app versions deleted and re-uploaded the document instead.
 
 | App | What it does | You provide |
 |-----|--------------|-------------|

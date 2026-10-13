@@ -73,6 +73,8 @@ Seven of the apps are sync bridges: they watch a place where your documents alre
 - **Nextcloud Sync** — syncs folders from a Nextcloud server, authenticated with an app password rather than your account password.
 - **WebDAV Sync** — the universal fallback: syncs folders from *any* WebDAV server — Synology and QNAP NAS boxes, Koofr, pCloud, GMX/WEB.DE, MagentaCLOUD, HiDrive, Seafile, Hetzner Storage Boxes, and more.
 
+When a synced file changes, its existing document is updated in place: the document keeps its identity, only the changed part is re-read by the AI, and everything else — entities, relationships, your edits — stays as it was. (Earlier app versions deleted the document and uploaded it fresh.) Paperless Sync also picks up documents you edit in paperless-ngx.
+
 ### Turning media into knowledge
 
 - **YT Transcriber** — turns YouTube videos, or whole channels at once, into clean transcripts inside your knowledge graph. Transcription runs through a Venice AI key you provide; the raw transcript is then refined by your instance's own language model before being saved, so what lands in your collections reads like a document, not like subtitles.

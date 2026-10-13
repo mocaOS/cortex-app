@@ -94,6 +94,13 @@ CHUNK_BY=sentence
 
 # Sentences per chunk (when CHUNK_BY=sentence)
 SENTENCES_PER_CHUNK=5
+
+# Opt-in: heading-anchored, content-defined chunks that stay stable when a
+# file is edited, so re-syncs re-extract only the changed part (default: legacy)
+# CHUNKING_STRATEGY=structural
+# STRUCTURAL_CHUNK_MIN_WORDS=80
+# STRUCTURAL_CHUNK_MAX_WORDS=400
+# STRUCTURAL_CHUNK_BOUNDARY_DIVISOR=4
 ```
 
 ### Batch Processing
@@ -1008,6 +1015,10 @@ None change API shapes or graph semantics; each can be disabled per stack.
 | `RELATIONSHIP_CHUNKS_PER_CALL` | `4` | Max chunks per batched relationship-extraction call. |
 | `ENABLE_PHASEB_CHECKPOINTING` | `false` | Persist Phase B batch progress — crash/redeploy resumes; rounds 2+ reuse round 1's candidate scan. |
 | `ENABLE_REPROCESS_DELTA` | `false` | Skip reprocessing when file bytes + extraction config are unchanged since the last successful run. |
+| `ENABLE_CHUNK_DELTA_REPROCESS` | `true` | When a processed document's file changes (git sync, in-place upload via `source_key`, sync apps, web re-import), keep every unchanged chunk — embedding, entity links, relationships — and embed/extract only the new chunks. Requires `ENABLE_INGEST_RESUME`. Documents processed before this feature, and documents with images, are fully reprocessed. Set `false` to always reprocess whole documents. |
+| `CHUNK_DELTA_MIN_REUSE_RATIO` | `0.3` | Minimum share of the new content's chunks that must already exist for a chunk delta; below it the document is fully reprocessed. |
+| `CHUNKING_STRATEGY` | `legacy` | `structural` splits at headings and content-defined paragraph boundaries so edits only disturb nearby chunks (a section prepended to a 2,000-line changelog re-extracts ~1–2% instead of 100%). Opt-in until its retrieval quality is benchmarked; switching makes each document fully reprocess once on its next change. |
+| `STRUCTURAL_CHUNK_MIN_WORDS` / `STRUCTURAL_CHUNK_MAX_WORDS` / `STRUCTURAL_CHUNK_BOUNDARY_DIVISOR` | `80` / `400` / `4` | Structural chunk size bounds and boundary density. |
 | `RESEARCHER_STABLE_PROMPT` | `true` | Keep the researcher system prompt byte-stable across loop iterations (provider prefix caches hit from iteration 2). |
 | `ENABLE_PROMPT_CACHE_CONTROL` | `false` | Anthropic `cache_control` breakpoints when routed via OpenRouter to `anthropic/*` models. |
 

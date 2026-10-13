@@ -14,7 +14,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -2451,6 +2451,24 @@ async def upload_file(
         default=None, alias="source",
         description="source as a multipart form field (query param equivalent)",
     ),
+    source_key: Optional[str] = Query(
+        default=None,
+        description="Stable key of the file in its origin system (e.g. 'url:https://…', "
+                    "'nextcloud:<fileId>'). A later upload with the same key replaces "
+                    "that document in place — same document id — instead of creating a new one.",
+    ),
+    replace_document_id: Optional[str] = Query(
+        default=None,
+        description="Replace this existing document in place (same document id) with the uploaded file.",
+    ),
+    source_key_form: Optional[str] = Form(
+        default=None, alias="source_key",
+        description="source_key as a multipart form field (query param equivalent)",
+    ),
+    replace_document_id_form: Optional[str] = Form(
+        default=None, alias="replace_document_id",
+        description="replace_document_id as a multipart form field (query param equivalent)",
+    ),
     auth: AuthResult = Depends(require_manage_permission),
     _rate: None = Depends(enforce_rate_limit),
     _quota: None = Depends(enforce_processing_quota),
@@ -2460,24 +2478,40 @@ async def upload_file(
 
     For bulk uploads (100+ files), set start_processing=false to upload all files first,
     then call POST /api/documents/process-pending to start processing.
+
+    Sync sources pass `source_key` (or `replace_document_id`) so a changed file
+    replaces its document in place — the id, collection and everything attached
+    to it stay; unchanged bytes of a processed document are a no-op.
     """
     # Merge query/form placements (query wins; form fills in when absent)
     collection_id = collection_id or collection_id_form
     source = source or source_form
     if not start_processing and start_processing_form is not None:
         start_processing = start_processing_form
+    source_key = (source_key or source_key_form or "").strip() or None
+    replace_document_id = (replace_document_id or replace_document_id_form or "").strip() or None
+    if source_key is not None and len(source_key) > 512:
+        raise HTTPException(status_code=400, detail="source_key must be 1-512 characters")
 
     # Validate collection access
     target_collection = collection_id or "default"
     validate_collection_access(auth, target_collection, "upload to")
-    
+
     settings = get_settings()
-    
+
+    # Replacing an existing document does not add one: the file limit only
+    # applies to uploads that will create a new document.
+    replaces_existing = False
+    if replace_document_id or source_key:
+        replace_target = await _resolve_upload_replace_target(source_key, replace_document_id)
+        replaces_existing = replace_target is not None
+
     # Enforce file and entity limits
     if settings.max_files > 0 or settings.max_entities > 0:
         neo4j = get_neo4j_service()
         stats = await asyncio.to_thread(neo4j.get_stats)
-        if settings.max_files > 0 and stats["document_count"] >= settings.max_files:
+        if (settings.max_files > 0 and not replaces_existing
+                and stats["document_count"] >= settings.max_files):
             raise HTTPException(
                 status_code=403,
                 detail=f"File limit reached (max: {settings.max_files}). Upgrade your plan to upload more documents."
@@ -2531,6 +2565,17 @@ async def upload_file(
     # Refuse the upload if saving it would leave the disk nearly full.
     _ensure_disk_space(file_size)
 
+    if replace_document_id or source_key:
+        # Serialize per key so two concurrent first uploads of the same new
+        # source_key cannot both create a document.
+        async with _upload_key_lock(replace_document_id or f"key:{source_key}"):
+            return await _upload_replace_or_create(
+                auth=auth, content=content, filename=file.filename, file_ext=file_ext,
+                file_size=file_size, collection_id=collection_id,
+                start_processing=start_processing, source=source,
+                source_key=source_key, replace_document_id=replace_document_id,
+            )
+
     # Check for duplicate document (same filename and file size)
     neo4j = get_neo4j_service()
     existing = await asyncio.to_thread(neo4j.find_document_by_filename_and_size, file.filename, file_size)
@@ -2582,6 +2627,153 @@ async def upload_file(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Per-key locks for replace-in-place uploads (in-process; one backend per
+# instance). Entries are dropped once no upload holds or waits on them.
+_upload_key_locks: Dict[str, asyncio.Lock] = {}
+
+
+@asynccontextmanager
+async def _upload_key_lock(key: str):
+    lock = _upload_key_locks.setdefault(key, asyncio.Lock())
+    try:
+        async with lock:
+            yield
+    finally:
+        if not lock.locked() and not getattr(lock, "_waiters", None):
+            _upload_key_locks.pop(key, None)
+
+
+async def _resolve_upload_replace_target(
+    source_key: Optional[str], replace_document_id: Optional[str],
+) -> Optional[dict]:
+    """The document an upload replaces in place, or None to create a new one.
+
+    A replace_document_id that no longer exists (deleted by the user) is not
+    an error: resolution falls back to the source_key, then to a new upload —
+    a sync app must be able to re-create a document it once tracked.
+
+    Git-synced documents are a 409: their bytes are owned by git sync, which
+    skips a path whose blob sha it already recorded — an upload overwriting
+    the file would silently diverge from the repository."""
+    neo4j = get_neo4j_service()
+    target = None
+    if replace_document_id:
+        target = await asyncio.to_thread(neo4j.get_document_replace_target, replace_document_id)
+    if target is None and source_key:
+        target = await asyncio.to_thread(neo4j.find_document_by_source_key, source_key)
+    if target and target.get("git_connection_id"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Document {target['id']} is managed by git sync and cannot be replaced by upload",
+        )
+    return target
+
+
+async def _upload_replace_or_create(
+    *, auth: AuthResult, content: bytes, filename: str, file_ext: str, file_size: int,
+    collection_id: Optional[str], start_processing: bool, source: Optional[str],
+    source_key: Optional[str], replace_document_id: Optional[str],
+) -> UploadResponse:
+    """Keyed upload: replace the matching document in place (same id), or
+    create a new document carrying the source_key. Called under the key lock.
+
+    Replacement never deletes chunks/entities here — the processing run
+    compares fingerprints and decides what to reuse."""
+    import hashlib
+    settings = get_settings()
+    neo4j = get_neo4j_service()
+    processor = get_document_processor()
+    doc_source = source or "upload"
+
+    target = await _resolve_upload_replace_target(source_key, replace_document_id)
+    if target is None:
+        doc_id = str(uuid.uuid4())
+        file_path = os.path.join(settings.upload_dir, f"{doc_id}{file_ext}")
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(content)
+        try:
+            if start_processing:
+                doc_id = await processor.process_file(
+                    file_path, filename, file_size, collection_id,
+                    source=doc_source, source_key=source_key,
+                )
+            else:
+                doc_id = await processor.store_file_only(
+                    file_path, filename, file_size, collection_id,
+                    source=doc_source, source_key=source_key,
+                )
+        except Exception as e:
+            logger.error(f"Error storing file: {e}")
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=str(e))
+        return UploadResponse(
+            document_id=doc_id, filename=filename,
+            status=ProcessingStatus.PROCESSING if start_processing else ProcessingStatus.PENDING,
+            message=("File uploaded and processing started" if start_processing else
+                     "File uploaded. Call /api/documents/process-pending to start processing."),
+            source=doc_source,
+        )
+
+    doc_id = target["id"]
+    validate_collection_access(auth, target.get("collection_id") or "default", "upload to")
+
+    new_sha = hashlib.sha256(content).hexdigest()
+    if new_sha == target.get("file_sha256") and target.get("processing_status") == "completed":
+        if source_key and target.get("source_key") != source_key:
+            await asyncio.to_thread(neo4j.set_document_source_key, doc_id, source_key)
+        return UploadResponse(
+            document_id=doc_id, filename=target.get("filename") or filename,
+            status=ProcessingStatus.COMPLETED,
+            message="Content unchanged — document already processed",
+            source=doc_source, replaced=True, unchanged=True,
+        )
+
+    # A run still working on the old bytes must not race the new ones.
+    if target.get("processing_status") in ("processing", "extracting"):
+        await processor.cancel_document_processing(doc_id)
+
+    old_path = target.get("file_path") or ""
+    if old_path and Path(old_path).suffix.lower() == file_ext:
+        new_path = old_path
+    else:
+        new_path = os.path.join(settings.upload_dir, f"{doc_id}{file_ext}")
+    tmp_path = f"{new_path}.replace-{uuid.uuid4().hex[:8]}"
+    async with aiofiles.open(tmp_path, "wb") as f:
+        await f.write(content)
+    os.replace(tmp_path, new_path)
+
+    await asyncio.to_thread(
+        neo4j.replace_document_file, doc_id,
+        filename=filename, file_size=file_size, file_path=new_path,
+        file_type=file_ext, source_key=source_key,
+    )
+    if old_path and old_path != new_path:
+        try:
+            if Path(old_path).resolve().parent == Path(settings.upload_dir).resolve():
+                os.remove(old_path)
+        except OSError:
+            pass
+
+    if not getattr(settings, "enable_ingest_resume", False):
+        # Without ingest resume the run does not check stored chunks against
+        # the file fingerprint, so drop them here (legacy full reprocess).
+        await asyncio.to_thread(processor._cleanup_before_reprocess, doc_id, new_path)
+
+    if start_processing:
+        await processor._start_processing(doc_id, new_path, file_ext)
+    logger.info(f"Replaced document {doc_id} in place ({filename}, {file_size} bytes)")
+    return UploadResponse(
+        document_id=doc_id, filename=filename,
+        status=ProcessingStatus.PROCESSING if start_processing else ProcessingStatus.PENDING,
+        message=("Document replaced in place and processing started" if start_processing else
+                 "Document replaced in place. Call /api/documents/process-pending to start processing."),
+        source=doc_source, replaced=True,
+    )
 
 
 async def generate_filename_with_llm(content: str, input_type: str, title: Optional[str] = None) -> str:
@@ -6021,6 +6213,32 @@ async def delete_all_entities(auth: AuthResult = Depends(require_manage_permissi
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/graph/retired-entities")
+async def list_retired_entities(
+    limit: int = Query(default=50, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    auth: AuthResult = Depends(require_admin),
+):
+    """List retired entities: curated entities (edited, merged, aliased or
+    holding cross-document edges) whose last mentioning document was removed
+    or changed. They keep their edits and edges but are hidden from retrieval
+    and the graph; re-extraction of the same name revives them."""
+    neo4j = get_neo4j_service()
+    return await asyncio.to_thread(neo4j.list_retired_entities, limit, offset)
+
+
+@app.delete("/api/graph/retired-entities")
+async def purge_retired_entities(
+    older_than_days: int = Query(default=30, ge=0, description="Purge entities retired at least N days ago; 0 purges all"),
+    auth: AuthResult = Depends(require_admin),
+):
+    """Permanently delete retired entities (and their edges)."""
+    neo4j = get_neo4j_service()
+    result = await asyncio.to_thread(neo4j.purge_retired_entities, older_than_days)
+    audit("graph.retired_entities_purged", actor=auth.key_id, outcome="ok")
+    return result
+
+
 # =============================================================================
 # Community Detection Endpoints
 # =============================================================================
@@ -7759,6 +7977,82 @@ def _format_crawl_site_markdown(domain: str, pages: List[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _normalize_import_url(url: str) -> str:
+    """Stable identity of a crawled URL: lowercase scheme/host, no fragment,
+    no trailing slash on the path (the bare root stays "/")."""
+    p = urlparse(url.strip())
+    path = p.path.rstrip("/") or "/"
+    return urlunparse((p.scheme.lower(), p.netloc.lower(), path, p.params, p.query, ""))
+
+
+def _web_import_source_key(urls: List[str]) -> str:
+    """source_key of a web-import document. One page → `url:<url>`; a
+    multi-page site document → `site:<host>:<hash of its page set>`, so
+    re-importing the same pages replaces it in place instead of duplicating."""
+    norm = sorted({_normalize_import_url(u) for u in urls})
+    if len(norm) == 1:
+        return "url:" + norm[0]
+    import hashlib
+    digest = hashlib.sha256("\n".join(norm).encode()).hexdigest()[:16]
+    return f"site:{urlparse(norm[0]).netloc}:{digest}"
+
+
+async def _stage_web_import_doc(
+    processor, source_key: str, file_path: str, file_content: str, filename: str,
+    file_size: int, collection_id: Optional[str], source: str,
+) -> str:
+    """Stage one aggregated web-import document, replacing a previous import
+    of the same page(s) in place. Returns "created", "replaced" or "unchanged".
+
+    `file_path` is where a NEW document's markdown goes; replacements rewrite
+    the existing document's file. A previous import in another collection is
+    left alone (the importer was only authorized for this one) and a fresh,
+    un-keyed document is created instead."""
+    import hashlib
+    neo4j = get_neo4j_service()
+    data = file_content.encode("utf-8")
+    target_collection = collection_id or "default"
+    async with _upload_key_lock(f"key:{source_key}"):
+        target = await asyncio.to_thread(neo4j.find_document_by_source_key, source_key)
+        if target and (target.get("collection_id") or "default") != target_collection:
+            logger.info(
+                f"web import: {source_key} already imported into another collection; "
+                f"creating a separate document"
+            )
+            target, source_key = None, None
+        if target and target.get("git_connection_id"):
+            # Owned by git sync (bytes keyed by blob sha) — never overwrite.
+            target, source_key = None, None
+        if target is None:
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(data)
+            await processor.store_file_only(
+                file_path, filename, file_size, collection_id,
+                source=source, source_key=source_key,
+            )
+            return "created"
+        if (hashlib.sha256(data).hexdigest() == target.get("file_sha256")
+                and target.get("processing_status") == "completed"):
+            return "unchanged"
+        if target.get("processing_status") in ("processing", "extracting"):
+            await processor.cancel_document_processing(target["id"])
+        dest = target.get("file_path") or ""
+        if Path(dest).suffix.lower() != ".md":
+            dest = os.path.join(os.path.dirname(file_path), f"{target['id']}.md")
+        tmp = f"{dest}.replace-{uuid.uuid4().hex[:8]}"
+        async with aiofiles.open(tmp, "wb") as f:
+            await f.write(data)
+        os.replace(tmp, dest)
+        await asyncio.to_thread(
+            neo4j.replace_document_file, target["id"],
+            filename=filename, file_size=file_size, file_path=dest,
+            file_type=".md", source_key=source_key,
+        )
+        if not getattr(get_settings(), "enable_ingest_resume", False):
+            await asyncio.to_thread(processor._cleanup_before_reprocess, target["id"], dest)
+        return "replaced"
+
+
 async def _run_web_import_task(
     task_id: str,
     urls: List[str],
@@ -7830,6 +8124,7 @@ async def _run_web_import_task(
         by_domain.setdefault(page["netloc"], []).append(page)
 
     docs_created = 0
+    docs_unchanged = 0
     for domain, pages in by_domain.items():
         # Homepage-first, deterministic ordering within the site.
         pages.sort(key=lambda p: (len(urlparse(p["url"]).path.rstrip("/")), p["url"]))
@@ -7853,19 +8148,20 @@ async def _run_web_import_task(
         filename = _crawl_doc_filename(safe_domain, page_title)
         file_path = os.path.join(settings.custom_inputs_dir, f"{doc_id}.md")
         try:
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-                await f.write(file_content)
             file_size = len(file_content.encode("utf-8"))
             # Provenance: crawl:<domain>, plus community:<id> when a contributor
             # is known (mirrors the upload path's community:<addr> attribution).
             source = f"crawl:{domain}"
             if submitted_by and submitted_by.strip():
                 source += f" community:{submitted_by.strip().lower()}"
-            await processor.store_file_only(
-                file_path, filename, file_size, collection_id,
-                source=source,
+            outcome = await _stage_web_import_doc(
+                processor, _web_import_source_key([p["url"] for p in pages]),
+                file_path, file_content, filename, file_size, collection_id, source,
             )
-            docs_created += 1
+            if outcome == "unchanged":
+                docs_unchanged += 1
+            else:
+                docs_created += 1
         except Exception as e:  # noqa: BLE001
             logger.error(f"web import: failed to stage aggregated doc for {domain}: {e}")
             # Keep counts honest: those pages didn't make it in.
@@ -7873,14 +8169,24 @@ async def _run_web_import_task(
                 failed.append({"url": p["url"], "error": f"staging failed: {e}"})
             succeeded[:] = [s for s in succeeded if s["netloc"] != domain]
 
-    if not succeeded or docs_created == 0:
+    if not succeeded or (docs_created + docs_unchanged) == 0:
         fail_task(task_id, "All crawled pages failed to stage")
         return
 
     update_task_progress(
         task_id, total, total,
-        f"Aggregated {len(succeeded)} page(s) into {docs_created} document(s)",
+        f"Aggregated {len(succeeded)} page(s) into {docs_created} document(s)"
+        + (f", {docs_unchanged} unchanged" if docs_unchanged else ""),
     )
+    if docs_created == 0:
+        # Every page matched an already-processed document: nothing to queue.
+        complete_task(task_id, {
+            "imported": len(succeeded), "documents": 0, "unchanged": docs_unchanged,
+            "failed": len(failed), "total": total,
+            "succeeded": [{"url": s["url"], "title": s["title"]} for s in succeeded],
+            "failures": failed, "processing": None,
+        })
+        return
 
     # Hand the shared extract/embed pass (same as uploads/git) to its own
     # `batch_processing` task. That task is what the Documents page renders and
@@ -7907,6 +8213,7 @@ async def _run_web_import_task(
     complete_task(task_id, {
         "imported": len(succeeded),
         "documents": docs_created,
+        "unchanged": docs_unchanged,
         "failed": len(failed),
         "total": total,
         "succeeded": [{"url": s["url"], "title": s["title"]} for s in succeeded],

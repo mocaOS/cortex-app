@@ -543,10 +543,27 @@ flowchart TD
 |------|----------|
 | **Active Processing** | Cancelled immediately before deletion |
 | **Chunks** | All chunks from the document are removed |
-| **Entities** | Removed if only mentioned by this document |
+| **Entities** | Removed if only mentioned by this document — unless curated (see below) |
+| **Curated Entities** | **Retired**, not deleted, when you edited or merged them or they hold cross-document relationships |
 | **Shared Entities** | Preserved if mentioned by other documents |
-| **Relationships** | Removed with their entities (DETACH DELETE) |
+| **Relationships** | Removed only when no remaining document supports them; a relationship stated by several documents survives deleting one of them |
 | **Communities** | Removed if no member entities remain |
+
+### Retired entities
+
+A retired entity keeps its edits, aliases and relationships but disappears from search, chat and the graph. If a later document (or a re-synced version of the same file) mentions it again, it comes back with everything it had. Admins can review and purge them:
+
+```bash
+# List retired entities (most recent first)
+curl "http://localhost:8000/api/graph/retired-entities?limit=50" \
+  -H "X-API-Key: your-admin-key"
+
+# Permanently delete those retired at least 30 days ago (0 = all)
+curl -X DELETE "http://localhost:8000/api/graph/retired-entities?older_than_days=30" \
+  -H "X-API-Key: your-admin-key"
+```
+
+When a document's file changes (git sync, sync apps, upload with `source_key`), Cortex re-extracts only the changed chunks and applies the same rules to whatever the removed text supported.
 
 ### Cleanup API
 

@@ -377,6 +377,10 @@ Hold genuine GETs across acknowledged move/newer refresh and navigation without 
 direct context/snapshots need request and view ownership. Auxiliary messages+memory (not
 memory-only) publishes the sidebar event; keep failed triggers, healthy controls and diagnostics.
 
+### Incremental reprocess live gates
+
+Suites: `test_relationship_claims.py`, `test_entity_retirement.py`, `test_structural_chunker.py`, `test_chunk_delta_reprocess.py`, `test_upload_source_key.py` (hermetic). The claim and chunk-delta suites also hold **opt-in live tests** against a **disposable** Neo4j 5.x with APOC (never a shared/live graph — they write and delete): set `CORTEX_CLAIMS_NEO4J_URI` (e.g. `bolt://localhost:7699`) and `CORTEX_CLAIMS_NEO4J_PASSWORD`, otherwise they skip. The chunk-delta live test runs v1→v2 of a changelog through the real `_process_document` with mocked LLM/embedder and asserts kept ids, only-new-chunk extraction, claim release, retirement and cross-doc edge survival. Stop the container afterwards. Model quality of the structural chunker is **not** covered (needs a retrieval bench). Restart-mid-delta is unit-level only.
+
 ## Live end-to-end harness (`backend/tests/test_live_e2e*.py`)
 
 Real HTTP journeys against a running deployment (the docker-compose stack: `cortex-backend`, `cortex-neo4j`, `cortex-frontend`, `cortex-helper`). Both modules **auto-skip** when no stack/key is present, so the offline suite is unaffected.

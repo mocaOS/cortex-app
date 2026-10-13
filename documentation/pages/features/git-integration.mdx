@@ -55,9 +55,11 @@ Re-syncing is incremental — Cortex does **not** re-ingest the whole repo each 
 | Change | What Cortex does |
 |---|---|
 | **Added** | Creates a new document |
-| **Modified** | Re-extracts that document in place (old chunks/relationships replaced) |
+| **Modified** | Updates that document in place — only the chunks whose text changed are re-extracted; unchanged parts keep their entities, relationships and your edits |
 | **Deleted** | Flags the document for review (never auto-deleted) |
 | **Renamed** | Remaps the document's path |
+
+Aborting a running sync (the **Abort** button on the Knowledge Graph page) stops it cleanly; the next sync picks up where it left off and skips files that already finished.
 
 If the branch was force-pushed or you change the filters, sync self-heals via a full-tree reconcile (comparing every file's content hash to what's stored). After any change, the graph is flagged **stale** so you know to re-run relationship analysis and community detection from the **Knowledge Graph** page.
 

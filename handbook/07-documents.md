@@ -342,7 +342,7 @@ Re-run the processing pipeline on existing documents:
 curl -X POST http://localhost:8000/api/documents/{id}/reprocess \
   -H "X-API-Key: your-api-key"
 
-# Reprocess with a new file (replaces the original)
+# Reprocess with a new file (replaces the original; only changed parts are re-extracted)
 curl -X POST http://localhost:8000/api/documents/{id}/reprocess \
   -H "X-API-Key: your-api-key" \
   -F "file=@updated-document.pdf"
@@ -417,8 +417,8 @@ When a document is deleted, the Library performs thorough cleanup:
 
 1. **Task Cancellation** — Active processing tasks are stopped immediately (cancellation flag + asyncio.Task.cancel with 10s timeout)
 2. **Chunk Removal** — All text and image chunks are deleted
-3. **Orphaned Entity Cleanup** — Entities only mentioned by this document are removed (entities shared with other documents are preserved)
-4. **Relationship Cleanup** — Relationships this document contributed (tracked via `source_document_id`) are removed, as are relationships to deleted entities (via DETACH DELETE)
+3. **Orphaned Entity Cleanup** — Entities only mentioned by this document are removed (entities shared with other documents are preserved). Entities you edited or merged, or that hold cross-document relationships, are **retired** instead — hidden but kept with their edits, and revived if another document mentions them (see [Chapter 8](08-knowledge-graph.md#graph-cleanup))
+4. **Relationship Cleanup** — This document's support is removed from the relationships it contributed; a relationship is deleted only when no other document still supports it
 5. **Provenance Scrub** — Surviving shared entities have the deleted document's id removed from their `source_documents` list, so no entity keeps a provenance pointer at a document that no longer exists
 6. **Community Cleanup** — Communities with no remaining member entities are deleted
 

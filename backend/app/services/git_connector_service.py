@@ -492,8 +492,9 @@ class GitConnectorService:
         }
         if existing or force_modify:
             doc_id = existing["id"]
-            # clears chunks + rels (global fix)
-            await self._db(self.neo4j.delete_document_chunks, doc_id)
+            # No pre-wipe: the processor compares the new bytes with the
+            # stored chunks — a chunk delta keeps unchanged chunks (and their
+            # entities/relationships), anything else clears stale chunks itself.
             await self._db(self.processor.neo4j.update_document_status,
                            doc_id, _pending_status(), 0)
             await self._db(self.neo4j.set_document_git_provenance,
@@ -642,7 +643,7 @@ class GitConnectorService:
         await self._db(_write_content)
         if existing:
             doc_id = existing["id"]
-            await self._db(self.neo4j.delete_document_chunks, doc_id)
+            # No pre-wipe — see _ingest_file.
             await self._db(self.processor.neo4j.update_document_status,
                            doc_id, _pending_status(), 0)
             await self._db(self.neo4j.set_document_git_provenance, doc_id, blob_sha=blob_sha,

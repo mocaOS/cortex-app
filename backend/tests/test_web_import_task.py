@@ -21,13 +21,15 @@ def _patch_common(monkeypatch, tmp_path, crawl_impl):
     staged = []
 
     class FakeProcessor:
-        async def store_file_only(self, file_path, filename, file_size, collection_id, source=None):
+        async def store_file_only(self, file_path, filename, file_size, collection_id,
+                                  source=None, source_key=None):
             staged.append(
                 {
                     "file_path": file_path,
                     "filename": filename,
                     "collection_id": collection_id,
                     "source": source,
+                    "source_key": source_key,
                 }
             )
             return "doc-" + filename
@@ -39,6 +41,12 @@ def _patch_common(monkeypatch, tmp_path, crawl_impl):
             )
 
     monkeypatch.setattr(main, "get_document_processor", lambda: FakeProcessor())
+
+    class FakeNeo4j:  # no previous import of any URL → every page is new
+        def find_document_by_source_key(self, key):
+            return None
+
+    monkeypatch.setattr(main, "get_neo4j_service", lambda: FakeNeo4j())
     monkeypatch.setattr(crawl_client, "crawl_markdown", crawl_impl)
 
     settings = main.get_settings()

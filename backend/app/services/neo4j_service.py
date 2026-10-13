@@ -9,7 +9,7 @@ Features:
 
 from neo4j import GraphDatabase, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
-from typing import Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime, timedelta
 import functools
 import logging
@@ -39,6 +39,254 @@ _TRANSIENT_ERRORS = (ServiceUnavailable, SessionExpired, TransientError)
 # flat regardless of entity count (a full n×n float32 matrix at 32k entities is
 # 4 GB — an instant OOM inside the default container limits).
 _DEDUP_BLOCK_BUDGET_BYTES = 128 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# Relationship claim-set provenance
+# ---------------------------------------------------------------------------
+# An Entity→Entity edge is MERGEd on (source, type, target), so several
+# documents/chunks can assert the same edge. Each assertion is a claim:
+# `source_document_ids` / `source_chunk_ids` (set semantics, newest last).
+# The legacy single-valued `source_document_id` stays = most recent claimant
+# (GET filters, exports, older code). Removing a document or chunk drops only
+# its claims; the edge is deleted only when no document claim remains — so
+# reprocessing doc B no longer deletes an edge doc A also asserted.
+# Pre-claim edges are read as the one claim `[source_document_id]`.
+#
+# Non-document writers (Step-2 cross_collection verification) hold a claim of
+# their own: `step2_verified = true`. When the last document claim goes, such
+# an edge is KEPT with its document claims cleared (it is Step-2 knowledge,
+# exactly like an edge only Step 2 ever wrote); a Step-2 rebuild
+# (delete_batch_relationships) drops the Step-2 claim, and the edge only when
+# no document claims it either.
+
+# Endpoints may be retired (label RetiredEntity) — their claims still count.
+_REL_ENDPOINTS = (
+    "(s:Entity OR s:RetiredEntity) AND (t:Entity OR t:RetiredEntity)"
+)
+
+
+def _legacy_doc_claims(var: str) -> str:
+    """Cypher: the edge's document claims, legacy-initialised."""
+    return (
+        f"coalesce({var}.source_document_ids, CASE WHEN {var}.source_document_id "
+        f"IS NULL THEN [] ELSE [{var}.source_document_id] END)"
+    )
+
+
+def _claim_append_cypher(var: str, doc_expr: str, chunks_expr: str) -> str:
+    """Cypher SET clause appending one claim (doc + chunk ids) to edge `var`.
+
+    Must run as its own SET *before* `source_document_id` is overwritten so
+    the legacy initialisation reads the previous claimant. Re-appending an
+    existing claim moves it to the end (newest), keeping `last()` meaningful.
+    """
+    docs = _legacy_doc_claims(var)
+    return (
+        f"SET {var}.source_document_ids = CASE WHEN {doc_expr} IS NULL THEN {docs} "
+        f"ELSE [x IN {docs} WHERE x <> {doc_expr}] + {doc_expr} END, "
+        f"{var}.source_chunk_ids = [x IN coalesce({var}.source_chunk_ids, []) "
+        f"WHERE NOT x IN coalesce({chunks_expr}, [])] + coalesce({chunks_expr}, []), "
+        f"{var}.step2_verified = CASE WHEN {doc_expr} IS NULL "
+        f"AND $extraction_method <> 'per_chunk' THEN true "
+        f"ELSE {var}.step2_verified END"
+    )
+
+
+# An edge whose last document claim is released but which Step 2 also
+# verified: clear its document claims and keep it as a Step-2 edge
+# (relabelled so a Step-2 rebuild treats it like any Step-2-only edge).
+_KEEP_AS_STEP2 = """
+        SET r.source_document_ids = [], r.source_chunk_ids = [],
+            r.source_document_id = null,
+            r.extraction_method = CASE WHEN coalesce(r.extraction_method, 'per_chunk')
+                = 'per_chunk' THEN 'cross_collection' ELSE r.extraction_method END
+"""
+
+
+# Library import: resolve endpoints that may be live or retired entities
+# (label-anchored lookups keep the name indexes in play).
+_IMPORT_REL_ENDPOINTS = """
+    OPTIONAL MATCH (s1:Entity {name: $source})
+    OPTIONAL MATCH (s2:RetiredEntity {name: $source})
+    OPTIONAL MATCH (t1:Entity {name: $target})
+    OPTIONAL MATCH (t2:RetiredEntity {name: $target})
+    WITH coalesce(s1, s2) AS s, coalesce(t1, t2) AS t
+    WHERE s IS NOT NULL AND t IS NOT NULL
+"""
+
+# Drop every claim a document holds (doc id + its `{doc_id}_…` chunk ids).
+_RELEASE_DOCUMENT_CLAIMS = f"""
+    MATCH (s)-[r]->(t)
+    WHERE {_REL_ENDPOINTS}
+      AND (r.source_document_id = $id OR $id IN coalesce(r.source_document_ids, []))
+    WITH r, [x IN {_legacy_doc_claims('r')} WHERE x <> $id] AS docs,
+         [c IN coalesce(r.source_chunk_ids, []) WHERE NOT c STARTS WITH ($id + '_')] AS chunks,
+         coalesce(r.step2_verified, false) AS verified
+    WITH r, docs, chunks, verified, (size(docs) = 0 AND NOT verified) AS gone
+    FOREACH (_ IN CASE WHEN gone THEN [1] ELSE [] END | DELETE r)
+    FOREACH (_ IN CASE WHEN size(docs) > 0 THEN [1] ELSE [] END |
+        SET r.source_document_ids = docs, r.source_chunk_ids = chunks,
+            r.source_document_id = last(docs))
+    FOREACH (_ IN CASE WHEN size(docs) = 0 AND verified THEN [1] ELSE [] END |
+        {_KEEP_AS_STEP2})
+    RETURN count(CASE WHEN gone THEN 1 END) AS deleted,
+           count(CASE WHEN NOT gone THEN 1 END) AS released
+"""
+
+# Drop specific chunk claims (chunk-delta reprocess). The document claim goes
+# only when the doc's LAST chunk claim on that edge goes; edges the doc claims
+# at document level only (no chunk ids) are untouched.
+_REMOVE_CHUNK_CLAIMS = f"""
+    MATCH (s)-[r]->(t)
+    WHERE {_REL_ENDPOINTS}
+      AND any(c IN coalesce(r.source_chunk_ids, []) WHERE c IN $chunk_ids)
+    WITH r, r.source_chunk_ids AS before
+    WITH r, before, [c IN before WHERE NOT c IN $chunk_ids] AS after
+    WITH r, after, size(before) - size(after) AS removed,
+         (any(c IN before WHERE c STARTS WITH $prefix)
+          AND NOT any(c IN after WHERE c STARTS WITH $prefix)) AS doc_lost,
+         {_legacy_doc_claims('r')} AS docs0
+    WITH r, after, removed, doc_lost,
+         CASE WHEN doc_lost THEN [x IN docs0 WHERE x <> $doc_id] ELSE docs0 END AS docs
+    WITH r, after, removed, docs, doc_lost AND size(docs) = 0 AS unclaimed,
+         coalesce(r.step2_verified, false) AS verified
+    WITH r, after, removed, docs, unclaimed, verified,
+         (unclaimed AND NOT verified) AS gone
+    FOREACH (_ IN CASE WHEN gone THEN [1] ELSE [] END | DELETE r)
+    FOREACH (_ IN CASE WHEN unclaimed THEN [] ELSE [1] END |
+        SET r.source_chunk_ids = after, r.source_document_ids = docs,
+            r.source_document_id = CASE WHEN size(docs) = 0
+                THEN r.source_document_id ELSE last(docs) END)
+    FOREACH (_ IN CASE WHEN unclaimed AND verified THEN [1] ELSE [] END |
+        {_KEEP_AS_STEP2})
+    RETURN coalesce(sum(removed), 0) AS claims_removed,
+           count(CASE WHEN gone THEN 1 END) AS relationships_deleted
+"""
+
+
+# --- Entity retirement -------------------------------------------------------
+# An entity that loses its last mention is RETIRED instead of deleted when it
+# carries curated knowledge: a label swap Entity → RetiredEntity keeps the node,
+# its edits, aliases and edges, while every :Entity-labelled index and query
+# stops seeing it. Re-extraction of the same name revives it (see
+# Neo4jService.revive_retired_entities). Plain auto-extracted orphans are still
+# hard-deleted, exactly as before.
+
+# Curated = manually edited/merged, has aliases, or holds any edge that is not a
+# Step-1 per-chunk extraction (Step-2 cross-document, co-occurrence, manual...).
+# Evaluated after the caller released the document's own relationship claims.
+_RETIRE_CURATED_ORPHANS = """
+    UNWIND $names AS name
+    MATCH (e:Entity {name: name})
+    WHERE e.curated_at IS NOT NULL
+       OR size(coalesce(e.aliases, [])) > 0
+       OR EXISTS {
+            MATCH (e)-[r]-(x)
+            WHERE (x:Entity OR x:RetiredEntity)
+              AND coalesce(r.extraction_method, '') <> 'per_chunk'
+          }
+    REMOVE e:Entity
+    SET e:RetiredEntity,
+        e.retired_at = datetime(),
+        e.retired_from_document = $doc_id
+    WITH e
+    UNWIND apoc.coll.toSet(
+        [toLower(e.name)] + [a IN coalesce(e.aliases, []) | toLower(a)]
+    ) AS key
+    MERGE (:RetiredEntityKey {key: key, name: e.name})
+    WITH DISTINCT e
+    RETURN count(e) AS retired
+"""
+
+# Revival lookup keys: lower(name) + lower(aliases) on unlinked
+# RetiredEntityKey nodes (indexed on key and name). Unlinked so no traversal or
+# degree count ever sees them; a stale key is harmless because revival
+# re-matches the RetiredEntity by name.
+_INDEX_RETIRED_KEYS_BACKFILL = """
+    MATCH (e:RetiredEntity)
+    WHERE NOT EXISTS { MATCH (:RetiredEntityKey {name: e.name}) }
+    UNWIND apoc.coll.toSet(
+        [toLower(e.name)] + [a IN coalesce(e.aliases, []) | toLower(a)]
+    ) AS key
+    MERGE (:RetiredEntityKey {key: key, name: e.name})
+"""
+
+# Keys whose RetiredEntity is gone (purge, delete-all, reset).
+_DROP_ORPHANED_RETIRED_KEYS = """
+    MATCH (k:RetiredEntityKey)
+    WHERE NOT EXISTS { MATCH (:RetiredEntity {name: k.name}) }
+    CALL { WITH k DELETE k } IN TRANSACTIONS OF 10000 ROWS
+"""
+
+_DELETE_PLAIN_ORPHANS = """
+    UNWIND $names AS name
+    MATCH (e:Entity {name: name})
+    DETACH DELETE e
+    RETURN count(*) AS deleted
+"""
+
+# Step 2.5 of document deletion/reprocess, shared by both paths: retired nodes
+# are scrubbed too so they never claim a document that no longer holds them.
+_SCRUB_ENTITY_DOC_PROVENANCE = """
+    MATCH (e)
+    WHERE (e:Entity OR e:RetiredEntity)
+      AND $id IN coalesce(e.source_documents, [])
+    SET e.source_documents = [x IN e.source_documents WHERE x <> $id]
+"""
+
+# Revive retired nodes matching a name about to be (re)created. Exact name wins
+# over a case-insensitive match, which wins over an alias match. Skipped when an
+# active Entity already holds the name (the label swap would violate the
+# Entity.name uniqueness and duplicate the concept).
+_REVIVE_RETIRED = """
+    UNWIND $names AS name
+    WITH DISTINCT name
+    WHERE NOT EXISTS { MATCH (:Entity {name: name}) }
+    CALL {
+        WITH name
+        MATCH (k:RetiredEntityKey {key: toLower(name)})
+        MATCH (r:RetiredEntity {name: k.name})
+        RETURN r
+        ORDER BY CASE
+            WHEN r.name = name THEN 0
+            WHEN toLower(r.name) = toLower(name) THEN 1
+            ELSE 2
+        END
+        LIMIT 1
+    }
+    // Several requested names may hit the same node: revive it once.
+    WITH r, collect(name) AS requested
+    WHERE NOT EXISTS { MATCH (:Entity {name: r.name}) }
+    OPTIONAL MATCH (k:RetiredEntityKey {name: r.name})
+    DELETE k
+    WITH DISTINCT r, requested
+    REMOVE r:RetiredEntity
+    SET r:Entity
+    REMOVE r.retired_at, r.retired_from_document
+    WITH r, requested
+    UNWIND requested AS name
+    RETURN name AS requested, r.name AS name
+"""
+
+
+def _retire_or_delete_orphans(session, names, doc_id) -> Tuple[int, int]:
+    """Retire curated orphaned entities, hard-delete the rest.
+
+    `names` must already be orphans (no remaining MENTIONS outside what the
+    caller is removing). Runs inside the caller's session so it composes with
+    document deletion, reprocess cleanup and the chunk-delta path.
+
+    Returns (retired, deleted).
+    """
+    names = [n for n in (names or []) if n]
+    if not names:
+        return 0, 0
+    record = session.run(_RETIRE_CURATED_ORPHANS, names=names, doc_id=doc_id).single()
+    retired = int(record["retired"]) if record and record["retired"] else 0
+    # Retired nodes no longer carry :Entity, so this only hits the plain ones.
+    record = session.run(_DELETE_PLAIN_ORPHANS, names=names).single()
+    deleted = int(record["deleted"]) if record and record["deleted"] else 0
+    return retired, deleted
 
 
 class DedupScanCancelled(Exception):
@@ -255,7 +503,26 @@ class Neo4jService:
                 """)
             except Exception as e:
                 logger.warning(f"Entity community index may already exist: {e}")
-            
+
+            # Retired entities: name lookups, plus lowercase name/alias keys
+            # for revival. Keys live on separate RetiredEntityKey nodes because
+            # `x IN node.list` is never index-backed (label scan on 5.26).
+            for stmt in (
+                "CREATE INDEX retired_entity_name IF NOT EXISTS FOR (e:RetiredEntity) ON (e.name)",
+                "CREATE INDEX retired_entity_key IF NOT EXISTS FOR (k:RetiredEntityKey) ON (k.key)",
+                "CREATE INDEX retired_entity_key_name IF NOT EXISTS FOR (k:RetiredEntityKey) ON (k.name)",
+            ):
+                try:
+                    session.run(stmt)
+                except Exception as e:
+                    logger.warning(f"Retired-entity index may already exist: {e}")
+            try:
+                # Backfill keys for retired nodes created before the key index
+                # (or arriving through a restore/import).
+                session.run(_INDEX_RETIRED_KEYS_BACKFILL)
+            except Exception as e:
+                logger.warning(f"Retired-entity key backfill failed: {e}")
+
             # =================================================================
             # Community constraints
             # =================================================================
@@ -393,6 +660,15 @@ class Neo4jService:
                 """)
             except Exception as e:
                 logger.warning(f"git_document_path index may already exist: {e}")
+            try:
+                # Replace-in-place uploads (POST /api/upload?source_key=...):
+                # a sync source re-sends a changed file under its stable key.
+                session.run("""
+                    CREATE INDEX document_source_key IF NOT EXISTS
+                    FOR (d:Document) ON (d.source_key)
+                """)
+            except Exception as e:
+                logger.warning(f"document_source_key index may already exist: {e}")
 
             # =================================================================
             # Phase B checkpoint index (enable_phaseb_checkpointing)
@@ -579,7 +855,15 @@ class Neo4jService:
                        // 462-page book chunks to 3200), and the old
                        // chunk_index < 1000 filter clamped the count and made
                        // ingest-resume rebuild only the first 1000 chunks.
-                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE NOT c.id STARTS WITH (d.id + '_image_') | 1]) as text_chunk_count
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE NOT c.id STARTS WITH (d.id + '_image_') | 1]) as text_chunk_count,
+                       size([(d)-[:HAS_CHUNK]->(c:Chunk) WHERE c.id STARTS WITH (d.id + '_image_') | 1]) as image_chunk_count,
+                       // Chunk-delta reprocess eligibility (see
+                       // finalize_chunk_delta): identity of the last run that
+                       // COMPLETED under claim-tracked provenance.
+                       d.claims_version as claims_version,
+                       d.completed_file_sha256 as completed_file_sha256,
+                       d.completed_config_hash as completed_config_hash,
+                       d.delta_in_progress as delta_in_progress
             """, id=doc_id)
             record = result.single()
             return dict(record) if record else None
@@ -1427,15 +1711,12 @@ class Neo4jService:
             Dict with 'chunks_deleted' (int), 'orphaned_entities_removed' (int)
         """
         with self.driver.session() as session:
-            # Step 0: Remove relationships this document contributed. Edges carry
-            # source_document_id but survive entity-orphan cleanup when their
-            # endpoints persist via other documents — clear them explicitly so a
-            # reprocess does not leave stale relationships behind.
-            session.run("""
-                MATCH (:Entity)-[r]->(:Entity)
-                WHERE r.source_document_id = $id
-                DELETE r
-            """, id=doc_id)
+            # Step 0: Release the claims this document holds on relationships.
+            # Edges survive entity-orphan cleanup when their endpoints persist
+            # via other documents — drop this doc's claims explicitly so a
+            # reprocess leaves no stale edges, while edges other documents
+            # also assert keep existing (claim-set provenance).
+            session.run(_RELEASE_DOCUMENT_CLAIMS, id=doc_id)
 
             # Step 1: Find entities that will become orphaned after deletion
             orphaned_result = session.run("""
@@ -1455,26 +1736,22 @@ class Neo4jService:
             orphaned_record = orphaned_result.single()
             orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
 
-            # Step 2: Delete orphaned entities
-            orphaned_count = 0
+            # Step 2: Retire curated orphans, hard-delete plain auto-extracted
+            # ones (see _retire_or_delete_orphans).
+            orphaned_retired, orphaned_count = _retire_or_delete_orphans(
+                session, orphaned_entities, doc_id
+            )
             if orphaned_entities:
-                session.run("""
-                    MATCH (e:Entity)
-                    WHERE e.name IN $names
-                    DETACH DELETE e
-                """, names=orphaned_entities)
-                orphaned_count = len(orphaned_entities)
-                logger.info(f"Deleted {orphaned_count} orphaned entities for document {doc_id}")
+                logger.info(
+                    f"Orphaned entities for document {doc_id}: "
+                    f"{orphaned_count} deleted, {orphaned_retired} retired"
+                )
 
             # Step 2.5: Scrub this document's id from provenance on surviving
-            # entities. Reprocessing re-adds the id for entities the new
-            # extraction actually finds; without the scrub, entities dropped by
-            # the re-extraction keep a stale source_documents claim on this doc.
-            session.run("""
-                MATCH (e:Entity)
-                WHERE $id IN coalesce(e.source_documents, [])
-                SET e.source_documents = [x IN e.source_documents WHERE x <> $id]
-            """, id=doc_id)
+            # (and retired) entities. Reprocessing re-adds the id for entities
+            # the new extraction actually finds; without the scrub, entities
+            # dropped by the re-extraction keep a stale source_documents claim.
+            session.run(_SCRUB_ENTITY_DOC_PROVENANCE, id=doc_id)
 
             # Step 3: Delete only the chunks (not the document)
             result = session.run("""
@@ -1497,7 +1774,8 @@ class Neo4jService:
             
             return {
                 "chunks_deleted": chunks_deleted,
-                "orphaned_entities_removed": orphaned_count
+                "orphaned_entities_removed": orphaned_count,
+                "orphaned_entities_retired": orphaned_retired,
             }
     
     def delete_document(self, doc_id: str) -> dict:
@@ -1513,14 +1791,10 @@ class Neo4jService:
             'orphaned_communities_removed' (int)
         """
         with self.driver.session() as session:
-            # Step 0: Remove relationships this document contributed (see note in
+            # Step 0: Release this document's relationship claims (see note in
             # delete_document_chunks) so deletion never leaves stale edges whose
             # endpoint entities survive via other documents.
-            session.run("""
-                MATCH (:Entity)-[r]->(:Entity)
-                WHERE r.source_document_id = $id
-                DELETE r
-            """, id=doc_id)
+            session.run(_RELEASE_DOCUMENT_CLAIMS, id=doc_id)
 
             # Step 1: Find entities that will become orphaned after deletion
             # These are entities ONLY mentioned by chunks of this document
@@ -1541,27 +1815,23 @@ class Neo4jService:
             orphaned_record = orphaned_result.single()
             orphaned_entities = orphaned_record["orphaned_entities"] if orphaned_record else []
 
-            # Step 2: Delete orphaned entities (DETACH DELETE removes their relationships too)
-            orphaned_entity_count = 0
+            # Step 2: Retire curated orphans (edits, aliases and Step-2 edges
+            # survive, hidden), hard-delete plain auto-extracted ones.
+            orphaned_entity_retired, orphaned_entity_count = _retire_or_delete_orphans(
+                session, orphaned_entities, doc_id
+            )
             if orphaned_entities:
-                session.run("""
-                    MATCH (e:Entity)
-                    WHERE e.name IN $names
-                    DETACH DELETE e
-                """, names=orphaned_entities)
-                orphaned_entity_count = len(orphaned_entities)
-                logger.info(f"Deleted {orphaned_entity_count} orphaned entities for document {doc_id}")
+                logger.info(
+                    f"Orphaned entities for document {doc_id}: "
+                    f"{orphaned_entity_count} deleted, {orphaned_entity_retired} retired"
+                )
 
             # Step 2.5: Scrub this document's id from provenance on surviving
-            # (shared) entities. Entities kept because other documents mention
-            # them would otherwise carry a source_documents entry pointing at a
-            # document that no longer exists. Removes only the provenance
-            # pointer — never the entity.
-            session.run("""
-                MATCH (e:Entity)
-                WHERE $id IN coalesce(e.source_documents, [])
-                SET e.source_documents = [x IN e.source_documents WHERE x <> $id]
-            """, id=doc_id)
+            # (shared) and retired entities. Entities kept because other
+            # documents mention them would otherwise carry a source_documents
+            # entry pointing at a document that no longer exists. Removes only
+            # the provenance pointer — never the entity.
+            session.run(_SCRUB_ENTITY_DOC_PROVENANCE, id=doc_id)
 
             # Step 3: Delete orphaned communities (communities with no remaining members)
             orphaned_community_result = session.run("""
@@ -1595,6 +1865,7 @@ class Neo4jService:
             return {
                 "deleted": deleted,
                 "orphaned_entities_removed": orphaned_entity_count,
+                "orphaned_entities_retired": orphaned_entity_retired,
                 "orphaned_communities_removed": orphaned_community_count
             }
     
@@ -1668,9 +1939,10 @@ class Neo4jService:
                 CALL { WITH com DETACH DELETE com } IN TRANSACTIONS OF 10000 ROWS
             """)
 
-            # Delete all entities (they will all be orphaned)
+            # Delete all entities (they will all be orphaned), retired ones too
             session.run("""
-                MATCH (e:Entity)
+                MATCH (e)
+                WHERE e:Entity OR e:RetiredEntity OR e:RetiredEntityKey
                 CALL { WITH e DETACH DELETE e } IN TRANSACTIONS OF 10000 ROWS
             """)
 
@@ -1705,23 +1977,116 @@ class Neo4jService:
             Number of orphaned entities deleted
         """
         with self.driver.session() as session:
-            # Find entities not connected to any chunk
+            # Find entities not connected to any chunk. Curated ones are
+            # retired rather than deleted (see _retire_or_delete_orphans).
             result = session.run("""
                 MATCH (e:Entity)
                 WHERE NOT EXISTS { MATCH (:Chunk)-[:MENTIONS]->(e) }
-                WITH collect(e) as orphans
-                UNWIND orphans as orphan
-                DETACH DELETE orphan
-                RETURN count(*) as deleted
+                RETURN collect(e.name) as names
             """)
-            
-            deleted_count = result.single()["deleted"]
-            
-            if deleted_count > 0:
-                logger.info(f"Cleaned up {deleted_count} orphaned entities")
-            
+            record = result.single()
+            names = record["names"] if record else []
+            retired, deleted_count = _retire_or_delete_orphans(session, names, None)
+
+            if deleted_count > 0 or retired > 0:
+                logger.info(
+                    f"Cleaned up orphaned entities: {deleted_count} deleted, {retired} retired"
+                )
+
             return deleted_count
     
+    # -------------------------------------------------------------------------
+    # Entity retirement (see _retire_or_delete_orphans)
+    # -------------------------------------------------------------------------
+
+    def retire_or_delete_orphaned_entities(
+        self, names: List[str], doc_id: Optional[str] = None
+    ) -> dict:
+        """Retire curated / hard-delete plain orphaned entities by name.
+
+        The caller guarantees the names are orphans (e.g. the chunk-delta path
+        after removing a document's stale chunks). Returns
+        {"retired": int, "deleted": int}.
+        """
+        with self.driver.session() as session:
+            retired, deleted = _retire_or_delete_orphans(session, names, doc_id)
+        return {"retired": retired, "deleted": deleted}
+
+    def _revived_entity(self, entity: Entity) -> Entity:
+        """Revive a retired match for `entity` and return the entity to store.
+
+        On a case/alias revival the returned copy carries the revived node's
+        canonical name, so the caller's exact-name MERGE lands on it instead
+        of creating a duplicate. Never fails the store: revival is best-effort.
+        """
+        try:
+            revived = self.revive_retired_entities([entity.name])
+        except Exception as e:
+            logger.debug(f"retired-entity revival skipped for {entity.name!r}: {e}")
+            return entity
+        canonical = revived.get(entity.name.lower()) if isinstance(revived, dict) else None
+        if isinstance(canonical, str) and canonical and canonical != entity.name:
+            return entity.model_copy(update={"name": canonical})
+        return entity
+
+    def revive_retired_entities(self, names: List[str]) -> dict:
+        """Revive retired entities matching names about to be (re)extracted.
+
+        Must run BEFORE the names are resolved/MERGEd so the revived node is
+        reused instead of duplicated. Returns {requested_name_lower:
+        revived_canonical_name} for each name that revived a node; the
+        canonical name differs from the requested one on a case or alias match.
+        """
+        names = [n for n in dict.fromkeys(names or []) if n]
+        if not names:
+            return {}
+        with self.driver.session() as session:
+            result = session.run(_REVIVE_RETIRED, names=names)
+            revived = {r["requested"].lower(): r["name"] for r in result}
+        if revived:
+            logger.info(f"Revived {len(revived)} retired entities on re-extraction")
+        return revived
+
+    def list_retired_entities(self, limit: int = 50, offset: int = 0) -> dict:
+        """Page through retired entities, most recently retired first."""
+        with self.driver.session() as session:
+            total_record = session.run(
+                "MATCH (e:RetiredEntity) RETURN count(e) AS total"
+            ).single()
+            total = total_record["total"] if total_record else 0
+            result = session.run("""
+                MATCH (e:RetiredEntity)
+                RETURN e.name AS name, e.type AS type, e.description AS description,
+                       toString(e.retired_at) AS retired_at,
+                       e.retired_from_document AS retired_from_document,
+                       COUNT { (e)--(:Entity|RetiredEntity) } AS degree
+                ORDER BY e.retired_at DESC, e.name
+                SKIP $offset LIMIT $limit
+            """, offset=offset, limit=limit)
+            entities = [dict(r) for r in result]
+        return {"entities": entities, "total": total, "limit": limit, "offset": offset}
+
+    def purge_retired_entities(self, older_than_days: int = 0) -> dict:
+        """Hard-delete retired entities retired at least N days ago (0 = all)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:RetiredEntity)
+                WHERE $days <= 0
+                   OR e.retired_at IS NULL
+                   OR e.retired_at <= datetime() - duration({days: $days})
+                CALL { WITH e DETACH DELETE e } IN TRANSACTIONS OF 5000 ROWS
+                RETURN count(*) AS purged
+            """, days=int(older_than_days))
+            record = result.single()
+            purged = record["purged"] if record else 0
+            session.run(_DROP_ORPHANED_RETIRED_KEYS)
+            remaining_record = session.run(
+                "MATCH (e:RetiredEntity) RETURN count(e) AS remaining"
+            ).single()
+            remaining = remaining_record["remaining"] if remaining_record else 0
+        logger.info(f"Purged {purged} retired entities (older_than_days={older_than_days})")
+        return {"purged": purged, "remaining": remaining}
+
     def cleanup_orphaned_communities(self) -> int:
         """
         Find and delete all orphaned communities in the database.
@@ -1759,6 +2124,7 @@ class Neo4jService:
         Store an entity with optional chunk and document provenance.
         Uses MERGE to avoid duplicates. Links to chunk via MENTIONS if chunk_id provided.
         """
+        entity = self._revived_entity(entity)
         with self.driver.session() as session:
             result = session.run("""
                 MERGE (e:Entity {name: $name})
@@ -1832,6 +2198,9 @@ class Neo4jService:
 
             if not set_parts:
                 raise ValueError("No updates provided")
+            # Curation marker: an edited entity is retired, not deleted, when
+            # its last document goes away (see _retire_or_delete_orphans).
+            set_parts.append("e.curated_at = datetime()")
 
             query = f"""
                 MATCH (e:Entity {{name: $entity_name}})
@@ -1890,10 +2259,12 @@ class Neo4jService:
         relationship: Relationship,
         source_document_id: str = None,
         extraction_method: str = "per_document",
+        source_chunk_ids: Optional[List[str]] = None,
     ) -> bool:
         """
         Store a relationship between two entities.
-        Creates a dynamic relationship type with weight and provenance.
+        Creates a dynamic relationship type with weight and provenance; the
+        document/chunks are appended as a claim (see _claim_append_cypher).
         """
         # Skip self-referential relationships
         if relationship.source.strip().lower() == relationship.target.strip().lower():
@@ -1905,9 +2276,10 @@ class Neo4jService:
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
                     CALL apoc.merge.relationship(s, $rel_type, {}, {description: $description, weight: $weight, confidence: $confidence}, t) YIELD rel
+                    """ + _claim_append_cypher("rel", "$source_doc_id", "$source_chunk_ids") + """
                     SET rel.extracted_at = datetime(),
                         rel.extraction_method = $extraction_method,
-                        rel.source_document_id = $source_doc_id
+                        rel.source_document_id = coalesce($source_doc_id, rel.source_document_id)
                     RETURN type(rel) as rel_type
                 """,
                     source=relationship.source,
@@ -1918,6 +2290,7 @@ class Neo4jService:
                     confidence=relationship.confidence,
                     extraction_method=extraction_method,
                     source_doc_id=source_document_id,
+                    source_chunk_ids=list(source_chunk_ids or []),
                 )
                 return result.single() is not None
             except Exception as e:
@@ -1927,11 +2300,12 @@ class Neo4jService:
                     MATCH (s:Entity {name: $source})
                     MATCH (t:Entity {name: $target})
                     MERGE (s)-[r:RELATED_TO {type: $rel_type}]->(t)
+                    """ + _claim_append_cypher("r", "$source_doc_id", "$source_chunk_ids") + """
                     SET r.description = $description, r.weight = $weight,
                         r.confidence = $confidence,
                         r.extracted_at = datetime(),
                         r.extraction_method = $extraction_method,
-                        r.source_document_id = $source_doc_id
+                        r.source_document_id = coalesce($source_doc_id, r.source_document_id)
                     RETURN type(r) as rel_type
                 """,
                     source=relationship.source,
@@ -1942,6 +2316,7 @@ class Neo4jService:
                     confidence=relationship.confidence,
                     extraction_method=extraction_method,
                     source_doc_id=source_document_id,
+                    source_chunk_ids=list(source_chunk_ids or []),
                 )
                 return result.single() is not None
     
@@ -2003,6 +2378,7 @@ class Neo4jService:
                     relationship,
                     source_document_id=source_document_id,
                     extraction_method=extraction_method,
+                    source_chunk_ids=[chunk_id] if chunk_id else None,
                 ):
                     relationship_count += 1
             except Exception as e:
@@ -2557,7 +2933,12 @@ class Neo4jService:
                 collection_clause = "MATCH (col:Collection)-[:CONTAINS]->(d) WHERE col.id IN $allowed_collection_ids"
 
             # Optionally constrain traversal to Entity-only paths
-            path_filter = "WHERE ALL(n IN nodes(path) WHERE n:Entity)" if entity_paths_only else ""
+            # Either way never hop through a retired entity (it keeps its edges
+            # but must stay invisible to retrieval).
+            path_filter = (
+                "WHERE ALL(n IN nodes(path) WHERE n:Entity)" if entity_paths_only
+                else "WHERE NONE(n IN nodes(path) WHERE n:RetiredEntity)"
+            )
 
             result = session.run(f"""
                 MATCH (start:Entity)
@@ -3368,6 +3749,8 @@ class Neo4jService:
         Store entity with fuzzy deduplication.
         Merges with existing similar entities if found.
         """
+        # A retired match comes back first so resolution can find it.
+        entity = self._revived_entity(entity)
         # First, check for similar existing entities
         similar = self.find_similar_entities(entity.name, similarity_threshold)
 
@@ -3804,7 +4187,10 @@ class Neo4jService:
                             coalesce(canon.source_documents, []) + coalesce(old.source_documents, [])
                         ),
                         {desc_clause},
-                        canon.extraction_count = coalesce(canon.extraction_count, 0) + coalesce(old.extraction_count, 0)
+                        canon.extraction_count = coalesce(canon.extraction_count, 0) + coalesce(old.extraction_count, 0),
+                        // Curation marker: a merged entity is retired, not
+                        // deleted, once no document mentions it any more.
+                        canon.curated_at = datetime()
                     // Clear community_id since graph topology changed
                     REMOVE canon.community_id
                     DETACH DELETE old
@@ -5176,7 +5562,7 @@ class Neo4jService:
             allowed_collection_ids: If provided, scope to relationships where at least one
                 endpoint entity is from these collections (4-hop pattern).
             document_id: If provided, only relationships this document contributed
-                (matched via the source_document_id property on the edge).
+                (matched via the edge's claim set, legacy source_document_id too).
         """
         with self.driver.session() as session:
             params = {"skip": skip, "limit": limit}
@@ -5189,7 +5575,10 @@ class Neo4jService:
                 params["rel_type"] = rel_type
 
             if document_id:
-                where_parts.append("r.source_document_id = $document_id")
+                where_parts.append(
+                    "(r.source_document_id = $document_id"
+                    " OR $document_id IN coalesce(r.source_document_ids, []))"
+                )
                 params["document_id"] = document_id
 
             if search:
@@ -5478,18 +5867,41 @@ class Neo4jService:
     def delete_batch_relationships(self) -> dict:
         """Delete only batch-analysis relationships, preserving per-chunk relationships from Step 1.
 
+        An edge that still carries a document claim is Step-1 knowledge even
+        when a later Step-2 write relabelled its extraction_method (edges are
+        MERGEd on (source, type, target)) — it is kept, and restored to
+        'per_chunk' when chunk claims prove its Step-1 origin.
+
         Returns:
             Dict with count of deleted relationships.
         """
         with self.driver.session() as session:
-            result = session.run("""
+            session.run(f"""
                 MATCH (:Entity)-[r]->(:Entity)
                 WHERE type(r) <> 'MENTIONS'
                 AND coalesce(r.extraction_method, 'batch') <> 'per_chunk'
-                CALL {
+                AND size(coalesce(r.source_chunk_ids, [])) > 0
+                AND size({_legacy_doc_claims('r')}) > 0
+                SET r.extraction_method = 'per_chunk'
+            """)
+            # A rebuild retracts every Step-2 claim: edges documents still
+            # claim stay (Step-1 knowledge) but lose their step2_verified mark;
+            # edges with no document claim are deleted below.
+            session.run(f"""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE r.step2_verified IS NOT NULL
+                AND size({_legacy_doc_claims('r')}) > 0
+                REMOVE r.step2_verified
+            """)
+            result = session.run(f"""
+                MATCH (:Entity)-[r]->(:Entity)
+                WHERE type(r) <> 'MENTIONS'
+                AND coalesce(r.extraction_method, 'batch') <> 'per_chunk'
+                AND size({_legacy_doc_claims('r')}) = 0
+                CALL {{
                     WITH r
                     DELETE r
-                } IN TRANSACTIONS OF 10000 ROWS
+                }} IN TRANSACTIONS OF 10000 ROWS
                 RETURN count(*) as deleted
             """)
             record = result.single()
@@ -5519,6 +5931,16 @@ class Neo4jService:
             """)
             record = result.single()
             deleted = record["deleted"] if record else 0
+            # "Delete all entities" includes the retired layer, or a later
+            # re-extraction would revive curated state the operator wiped.
+            session.run("""
+                MATCH (e)
+                WHERE e:RetiredEntity OR e:RetiredEntityKey
+                CALL {
+                    WITH e
+                    DETACH DELETE e
+                } IN TRANSACTIONS OF 5000 ROWS
+            """)
             logger.info(f"Deleted {deleted} entities")
             return {"entities_deleted": deleted}
 
@@ -5661,6 +6083,8 @@ class Neo4jService:
         Returns:
             Tuple of (entity_name, is_new_entity)
         """
+        # A retired match comes back first so resolution can find it.
+        entity = self._revived_entity(entity)
         with self.driver.session() as session:
             # Convert embedding to list if numpy array
             if embedding is not None and hasattr(embedding, 'tolist'):
@@ -6053,14 +6477,27 @@ class Neo4jService:
         relationships: List[Relationship],
         source_document_id: str = None,
         extraction_method: str = "per_document",
+        source_chunk_ids: Optional[List[str]] = None,
+        chunk_ids_per_rel: Optional[List[Optional[List[str]]]] = None,
     ) -> int:
         """Store many relationships in one UNWIND + apoc.merge call.
+
+        Chunk claims: `chunk_ids_per_rel` (aligned with `relationships`) gives
+        each relationship the chunks that produced it; otherwise every
+        relationship gets `source_chunk_ids`. Rows carry it as
+        `row.source_chunk_ids`.
 
         Self-referential relationships are skipped (as in store_relationship).
         Falls back to the per-item path when APOC is unavailable.
         Returns the number of relationships actually stored (relationships
         whose endpoints don't exist are skipped, matching the per-item path).
         """
+        if chunk_ids_per_rel is not None:
+            if len(chunk_ids_per_rel) != len(relationships):
+                raise ValueError("chunk_ids_per_rel must align with relationships")
+            per_rel = list(chunk_ids_per_rel)
+        else:
+            per_rel = [source_chunk_ids] * len(relationships)
         rows = [
             {
                 "source": r.source,
@@ -6069,8 +6506,9 @@ class Neo4jService:
                 "description": r.description,
                 "weight": r.weight,
                 "confidence": r.confidence,
+                "source_chunk_ids": list(cids or []),
             }
-            for r in relationships
+            for r, cids in zip(relationships, per_rel)
             if r.source.strip().lower() != r.target.strip().lower()
         ]
         if not rows:
@@ -6086,9 +6524,10 @@ class Neo4jService:
                         {description: row.description, weight: row.weight,
                          confidence: row.confidence}, t
                     ) YIELD rel
+                    """ + _claim_append_cypher("rel", "$source_doc_id", "row.source_chunk_ids") + """
                     SET rel.extracted_at = datetime(),
                         rel.extraction_method = $extraction_method,
-                        rel.source_document_id = $source_doc_id
+                        rel.source_document_id = coalesce($source_doc_id, rel.source_document_id)
                     RETURN count(rel) AS stored
                 """,
                     rows=rows,
@@ -6103,12 +6542,13 @@ class Neo4jService:
                     f"falling back to per-item: {e}"
                 )
         stored = 0
-        for rel in relationships:
+        for rel, cids in zip(relationships, per_rel):
             try:
                 if self.store_relationship(
                     rel,
                     source_document_id=source_document_id,
                     extraction_method=extraction_method,
+                    source_chunk_ids=cids,
                 ):
                     stored += 1
             except Exception as e:
@@ -7673,13 +8113,16 @@ class Neo4jService:
     def export_all_entity_relationships(self) -> list:
         """Get all Entity-Entity relationships with type and properties."""
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (s:Entity)-[r]->(t:Entity)
+            result = session.run(f"""
+                MATCH (s)-[r]->(t)
+                WHERE {_REL_ENDPOINTS}
                 RETURN s.name as source, t.name as target, type(r) as rel_type,
                        r.description as description, r.weight as weight,
                        r.confidence as confidence,
                        r.extraction_method as extraction_method,
                        r.source_document_id as source_document_id,
+                       r.source_document_ids as source_document_ids,
+                       r.source_chunk_ids as source_chunk_ids,
                        r.extracted_at as extracted_at
             """)
             return [dict(record) for record in result]
@@ -7687,7 +8130,9 @@ class Neo4jService:
     def export_relationship_count(self) -> int:
         """Get total Entity-Entity relationship count for batched export progress."""
         with self.driver.session() as session:
-            result = session.run("MATCH (:Entity)-[r]->(:Entity) RETURN count(r) as cnt")
+            result = session.run(
+                f"MATCH (s)-[r]->(t) WHERE {_REL_ENDPOINTS} RETURN count(r) as cnt"
+            )
             return result.single()["cnt"]
 
     def export_all_entity_relationships_batched(self, batch_size: int = 500, skip: int = 0) -> list:
@@ -7698,13 +8143,16 @@ class Neo4jService:
         SKIP/LIMIT windows.
         """
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH (s:Entity)-[r]->(t:Entity)
+            result = session.run(f"""
+                MATCH (s)-[r]->(t)
+                WHERE {_REL_ENDPOINTS}
                 RETURN s.name as source, t.name as target, type(r) as rel_type,
                        r.description as description, r.weight as weight,
                        r.confidence as confidence,
                        r.extraction_method as extraction_method,
                        r.source_document_id as source_document_id,
+                       r.source_document_ids as source_document_ids,
+                       r.source_chunk_ids as source_chunk_ids,
                        r.extracted_at as extracted_at
                 ORDER BY elementId(r)
                 SKIP $skip LIMIT $batch_size
@@ -7801,6 +8249,31 @@ class Neo4jService:
             """, entities=entities)
             return result.single()["cnt"]
 
+    def import_retired_entities_batch(self, entities: list) -> int:
+        """Bulk create RetiredEntity nodes (library import of retired entities)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $entities as entity
+                CREATE (e:RetiredEntity)
+                SET e = entity
+                // exported as ISO text; the age-based purge compares datetimes
+                SET e.retired_at = CASE WHEN entity.retired_at IS NULL THEN null
+                                        ELSE datetime(entity.retired_at) END
+                RETURN count(e) as cnt
+            """, entities=entities)
+            return result.single()["cnt"]
+
+    def export_retired_entities_batched(self, batch_size: int = 500, skip: int = 0) -> list:
+        """Retired entities for library export (section retired_entities.ndjson)."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (e:RetiredEntity)
+                RETURN e{.*} as entity
+                ORDER BY e.name
+                SKIP $skip LIMIT $batch_size
+            """, skip=skip, batch_size=batch_size)
+            return [record["entity"] for record in result]
+
     def import_chunk_mentions_batch(self, mentions: list) -> int:
         """Bulk create Chunk→Entity MENTIONS edges."""
         with self.driver.session() as session:
@@ -7814,47 +8287,45 @@ class Neo4jService:
             return result.single()["cnt"]
 
     def import_relationship(self, source: str, target: str, rel_type: str, props: dict) -> bool:
-        """Create a single Entity-Entity relationship with dynamic type via APOC."""
+        """Create a single Entity-Entity relationship with dynamic type via APOC.
+
+        Endpoints may be retired entities. Claim lists absent from older
+        exports stay unset (read as the legacy single claim).
+        """
+        params = dict(
+            source=source, target=target, rel_type=rel_type,
+            description=props.get("description", ""),
+            weight=props.get("weight", 5.0),
+            confidence=props.get("confidence"),
+            extraction_method=props.get("extraction_method", ""),
+            source_doc_id=props.get("source_document_id"),
+            source_doc_ids=props.get("source_document_ids"),
+            source_chunk_ids=props.get("source_chunk_ids"),
+            extracted_at=props.get("extracted_at"),
+        )
         with self.driver.session() as session:
             try:
-                result = session.run("""
-                    MATCH (s:Entity {name: $source})
-                    MATCH (t:Entity {name: $target})
+                result = session.run(_IMPORT_REL_ENDPOINTS + """
                     CALL apoc.merge.relationship(s, $rel_type, {},
                         {description: $description, weight: $weight, confidence: $confidence,
                          extraction_method: $extraction_method, source_document_id: $source_doc_id,
+                         source_document_ids: $source_doc_ids, source_chunk_ids: $source_chunk_ids,
                          extracted_at: $extracted_at}, t) YIELD rel
                     RETURN type(rel) as rel_type
-                """,
-                    source=source, target=target, rel_type=rel_type,
-                    description=props.get("description", ""),
-                    weight=props.get("weight", 5.0),
-                    confidence=props.get("confidence"),
-                    extraction_method=props.get("extraction_method", ""),
-                    source_doc_id=props.get("source_document_id"),
-                    extracted_at=props.get("extracted_at"),
-                )
+                """, **params)
                 return result.single() is not None
             except Exception:
-                result = session.run("""
-                    MATCH (s:Entity {name: $source})
-                    MATCH (t:Entity {name: $target})
+                result = session.run(_IMPORT_REL_ENDPOINTS + """
                     CREATE (s)-[r:RELATED_TO]->(t)
                     SET r.type = $rel_type, r.description = $description,
                         r.weight = $weight, r.confidence = $confidence,
                         r.extraction_method = $extraction_method,
                         r.source_document_id = $source_doc_id,
+                        r.source_document_ids = $source_doc_ids,
+                        r.source_chunk_ids = $source_chunk_ids,
                         r.extracted_at = $extracted_at
                     RETURN type(r) as rel_type
-                """,
-                    source=source, target=target, rel_type=rel_type,
-                    description=props.get("description", ""),
-                    weight=props.get("weight", 5.0),
-                    confidence=props.get("confidence"),
-                    extraction_method=props.get("extraction_method", ""),
-                    source_doc_id=props.get("source_document_id"),
-                    extracted_at=props.get("extracted_at"),
-                )
+                """, **params)
                 return result.single() is not None
 
     def import_communities_batch(self, communities: list) -> int:
@@ -8114,6 +8585,71 @@ class Neo4jService:
                 SET g += $state
             """, id=connection_id, state=state)
 
+    _REPLACE_TARGET_RETURN = """
+                OPTIONAL MATCH (col:Collection)-[:CONTAINS]->(d)
+                RETURN d.id as id, d.filename as filename, d.file_path as file_path,
+                       d.file_type as file_type,
+                       coalesce(col.id, d.collection_id) as collection_id,
+                       d.file_sha256 as file_sha256,
+                       coalesce(d.processing_status, 'pending') as processing_status,
+                       d.source_key as source_key,
+                       d.git_connection_id as git_connection_id
+                LIMIT 1
+    """
+
+    def find_document_by_source_key(self, source_key: str) -> Optional[dict]:
+        """Document previously uploaded under this stable source key (sync
+        sources: `url:<url>`, `nextcloud:<fileId>`, ...), or None."""
+        with self.driver.session() as session:
+            record = session.run(
+                "MATCH (d:Document {source_key: $key})" + self._REPLACE_TARGET_RETURN,
+                key=source_key,
+            ).single()
+            return dict(record) if record else None
+
+    def get_document_replace_target(self, doc_id: str) -> Optional[dict]:
+        """Same shape as find_document_by_source_key, looked up by id."""
+        with self.driver.session() as session:
+            record = session.run(
+                "MATCH (d:Document {id: $id})" + self._REPLACE_TARGET_RETURN,
+                id=doc_id,
+            ).single()
+            return dict(record) if record else None
+
+    def set_document_source_key(self, doc_id: str, source_key: str) -> None:
+        with self.driver.session() as session:
+            session.run(
+                "MATCH (d:Document {id: $id}) SET d.source_key = $key",
+                id=doc_id, key=source_key,
+            )
+
+    def replace_document_file(
+        self, doc_id: str, *, filename: str, file_size: int, file_path: str,
+        file_type: str, source_key: Optional[str] = None,
+    ) -> None:
+        """Point an existing document at new file bytes (replace in place).
+
+        Chunks/entities are left alone — the processing run decides what to
+        reuse (fingerprint mismatch drops stale chunks). Status goes back to
+        pending so the document is picked up like a fresh upload.
+        """
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.filename = $filename,
+                    d.file_size = $file_size,
+                    d.file_path = $file_path,
+                    d.file_type = $file_type,
+                    d.source_key = coalesce($source_key, d.source_key),
+                    d.updated_at = datetime(),
+                    d.processing_status = 'pending',
+                    d.error_message = null,
+                    d.progress_current = 0,
+                    d.progress_total = 0,
+                    d.progress_message = 'Replaced — queued for processing'
+            """, id=doc_id, filename=filename, file_size=file_size,
+                file_path=file_path, file_type=file_type, source_key=source_key)
+
     def find_git_document(self, connection_id: str, git_path: str) -> Optional[dict]:
         """Find the document for a (connection, repo path) pair — the sync key."""
         with self.driver.session() as session:
@@ -8179,20 +8715,245 @@ class Neo4jService:
             return [dict(record) for record in result]
 
     def delete_relationships_by_source_document(self, doc_id: str) -> int:
-        """Delete entity-to-entity relationships whose provenance is this document.
+        """Release this document's claims on entity-to-entity relationships.
 
         Fills the gap where reprocess/delete only removed relationships when an
         endpoint entity became fully orphaned — leaving stale edges otherwise.
+        Edges still claimed by other documents survive (claim-set provenance).
+        Returns the number of edges actually deleted.
         """
         with self.driver.session() as session:
+            record = session.run(_RELEASE_DOCUMENT_CLAIMS, id=doc_id).single()
+            return record["deleted"] if record else 0
+
+    @retry_on_transient
+    def remove_chunk_claims(self, doc_id: str, chunk_ids: List[str]) -> dict:
+        """Drop the claims `chunk_ids` (chunks of `doc_id`) hold on relationships.
+
+        For the chunk-delta reprocess: when a chunk disappears from a changed
+        document only its own assertions go. The document's claim on an edge is
+        dropped only when its last chunk claim there is removed; an edge is
+        deleted only when that leaves no document claim. Edges this document
+        claims at document level only (no chunk ids) are untouched.
+        """
+        if not chunk_ids:
+            return {"claims_removed": 0, "relationships_deleted": 0}
+        with self.driver.session() as session:
+            record = session.run(
+                _REMOVE_CHUNK_CLAIMS,
+                doc_id=doc_id,
+                prefix=f"{doc_id}_",
+                chunk_ids=list(chunk_ids),
+            ).single()
+        if not record:
+            return {"claims_removed": 0, "relationships_deleted": 0}
+        return {
+            "claims_removed": record["claims_removed"] or 0,
+            "relationships_deleted": record["relationships_deleted"] or 0,
+        }
+
+    # =========================================================================
+    # Chunk-delta reprocess (DocumentProcessor._apply_chunk_delta)
+    # =========================================================================
+    # A changed document keeps the chunks whose content is unchanged and only
+    # re-extracts the new ones. Every step below is idempotent so a run
+    # interrupted between them can be re-planned from what is stored.
+
+    @retry_on_transient
+    def get_chunks_for_delta(self, doc_id: str) -> List[dict]:
+        """Text chunks with the identity the delta planner matches on."""
+        with self.driver.session() as session:
             result = session.run("""
-                MATCH (:Entity)-[r]->(:Entity)
-                WHERE r.source_document_id = $doc_id
-                DELETE r
-                RETURN count(r) as cnt
+                MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE NOT c.id STARTS WITH ($doc_id + '_image_')
+                RETURN c.id AS id, c.content_hash AS content_hash,
+                       c.chunk_index AS chunk_index,
+                       coalesce(c.delta_pending, false) AS delta_pending,
+                       coalesce(c.has_embedding, true) AS has_embedding
+                ORDER BY c.chunk_index
             """, doc_id=doc_id)
-            record = result.single()
-            return record["cnt"] if record else 0
+            return [dict(record) for record in result]
+
+    def apply_chunk_delta_removals(self, doc_id: str, chunk_ids: List[str]) -> dict:
+        """Remove chunks that disappeared from a changed document.
+
+        Order matters for restart safety: the entities those chunks mention
+        are first recorded as orphan candidates on the Document (resolved by
+        finalize_chunk_delta once the new chunks are linked — an entity that
+        merely moved to a new chunk must not be retired/deleted in between),
+        then the chunks' relationship claims are released, then the chunks go.
+        """
+        if not chunk_ids:
+            return {"chunks_deleted": 0, "orphan_candidates": 0,
+                    "claims_removed": 0, "relationships_deleted": 0}
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.id IN $ids
+                OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
+                WITH d, collect(DISTINCT e.name) AS names
+                SET d.delta_orphan_candidates =
+                    [x IN coalesce(d.delta_orphan_candidates, []) WHERE NOT x IN names] + names
+                RETURN size(names) AS candidates
+            """, doc_id=doc_id, ids=list(chunk_ids)).single()
+            candidates = record["candidates"] if record else 0
+        claims = self.remove_chunk_claims(doc_id, chunk_ids)
+        with self.driver.session() as session:
+            record = session.run("""
+                MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.id IN $ids
+                DETACH DELETE c
+                RETURN count(*) AS deleted
+            """, doc_id=doc_id, ids=list(chunk_ids)).single()
+            deleted = record["deleted"] if record else 0
+        return {"chunks_deleted": deleted, "orphan_candidates": candidates, **claims}
+
+    @retry_on_transient
+    def update_chunk_positions(
+        self, positions: List[dict], rels_done_ids: List[str]
+    ) -> None:
+        """Re-index kept chunks ([{id, chunk_index}]) to their position in the
+        new content, and flag the already-extracted ones `rels_extracted` so
+        the per-chunk relationship phase skips them (the completed run that
+        produced them cleared the flag)."""
+        with self.driver.session() as session:
+            if positions:
+                session.run("""
+                    UNWIND $rows AS row
+                    MATCH (c:Chunk {id: row.id})
+                    SET c.chunk_index = row.chunk_index
+                """, rows=positions)
+            if rels_done_ids:
+                session.run("""
+                    UNWIND $ids AS cid
+                    MATCH (c:Chunk {id: cid})
+                    SET c.rels_extracted = true
+                """, ids=list(rels_done_ids))
+
+    @retry_on_transient
+    def set_delta_in_progress(self, doc_id: str, file_sha256: Optional[str]) -> None:
+        """Mark (new bytes' hash) or clear (None) a chunk delta whose stored
+        chunk set is mixed old/new until its fingerprint write."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (d:Document {id: $id})
+                SET d.delta_in_progress = $sha
+            """, id=doc_id, sha=file_sha256)
+
+    @retry_on_transient
+    def mark_chunks_delta_pending(self, chunk_ids: List[str]) -> None:
+        """Flag chunks stored by a delta run but not yet extracted — a re-plan
+        after an interruption reuses their embeddings but re-extracts them."""
+        if not chunk_ids:
+            return
+        with self.driver.session() as session:
+            session.run("""
+                UNWIND $ids AS cid
+                MATCH (c:Chunk {id: cid})
+                SET c.delta_pending = true
+            """, ids=list(chunk_ids))
+
+    @retry_on_transient
+    def get_chunk_mention_names(self, chunk_ids: List[str]) -> Dict[str, List[str]]:
+        """Lower-cased names of the entities each chunk MENTIONS."""
+        if not chunk_ids:
+            return {}
+        with self.driver.session() as session:
+            result = session.run("""
+                UNWIND $ids AS cid
+                MATCH (c:Chunk {id: cid})
+                OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
+                RETURN cid AS id, collect(DISTINCT toLower(e.name)) AS names
+            """, ids=list(chunk_ids))
+            return {record["id"]: list(record["names"]) for record in result}
+
+    @retry_on_transient
+    def unmark_chunks_rels_extracted(self, chunk_ids: List[str]) -> None:
+        """Re-open chunks for per-chunk relationship extraction."""
+        if not chunk_ids:
+            return
+        with self.driver.session() as session:
+            session.run("""
+                UNWIND $ids AS cid
+                MATCH (c:Chunk {id: cid})
+                SET c.rels_extracted = null
+            """, ids=list(chunk_ids))
+
+    def finalize_chunk_delta(
+        self, doc_id: str, file_sha256: str, config_hash: str,
+        clean_start: bool = False,
+    ) -> dict:
+        """Close a successful run (full or delta) under claim tracking.
+
+        Records the completed identity that makes the NEXT change eligible
+        for a chunk delta, clears delta_pending flags, and resolves orphan
+        candidates left by chunk removals:
+          - the doc's id is scrubbed from source_documents of candidates no
+            chunk of this document mentions any more;
+          - candidates no chunk mentions at all and that no document claims
+            (source_documents empty) are retired (curated) or deleted.
+        Entities that merely moved into a new chunk got re-linked before this
+        runs, so they survive untouched.
+
+        claims_version=1 (delta eligibility) is only granted when the run
+        started clean (full cleanup ran / no prior chunks / already tracked)
+        or no pre-claim edge of this doc remains — an edge holding only a
+        document-level claim from before chunk claims can't be released by a
+        chunk delta and would outlive the text that produced it.
+        """
+        with self.driver.session() as session:
+            if clean_start:
+                tracked = True
+            else:
+                rec = session.run("""
+                    MATCH (s)-[r]->(t)
+                    WHERE (s:Entity OR s:RetiredEntity) AND (t:Entity OR t:RetiredEntity)
+                      AND (r.source_document_id = $doc_id
+                           OR $doc_id IN coalesce(r.source_document_ids, []))
+                      AND NOT any(c IN coalesce(r.source_chunk_ids, [])
+                                  WHERE c STARTS WITH ($doc_id + '_'))
+                    RETURN count(r) > 0 AS legacy
+                """, doc_id=doc_id).single()
+                tracked = not (rec and rec["legacy"])
+            record = session.run("""
+                MATCH (d:Document {id: $doc_id})
+                SET d.claims_version = CASE WHEN $tracked THEN 1 ELSE d.claims_version END,
+                    d.completed_file_sha256 = $file_sha256,
+                    d.completed_config_hash = $config_hash
+                WITH d, coalesce(d.delta_orphan_candidates, []) AS names
+                OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.delta_pending = true
+                REMOVE c.delta_pending
+                RETURN DISTINCT names
+            """, doc_id=doc_id, file_sha256=file_sha256,
+                 config_hash=config_hash, tracked=tracked).single()
+            names = list(record["names"]) if record else []
+            if not names:
+                return {"orphans_retired": 0, "orphans_deleted": 0}
+            session.run("""
+                UNWIND $names AS name
+                MATCH (e)
+                WHERE (e:Entity OR e:RetiredEntity) AND e.name = name
+                  AND $doc_id IN coalesce(e.source_documents, [])
+                  AND NOT EXISTS {
+                      MATCH (:Document {id: $doc_id})-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(e)
+                  }
+                SET e.source_documents = [x IN e.source_documents WHERE x <> $doc_id]
+            """, names=names, doc_id=doc_id)
+            orphans = session.run("""
+                UNWIND $names AS name
+                MATCH (e:Entity {name: name})
+                WHERE NOT EXISTS { MATCH (:Chunk)-[:MENTIONS]->(e) }
+                  AND size(coalesce(e.source_documents, [])) = 0
+                RETURN collect(e.name) AS names
+            """, names=names).single()
+            orphan_names = list(orphans["names"]) if orphans else []
+            retired, deleted = _retire_or_delete_orphans(session, orphan_names, doc_id)
+            session.run("""
+                MATCH (d:Document {id: $doc_id})
+                REMOVE d.delta_orphan_candidates
+            """, doc_id=doc_id)
+            return {"orphans_retired": retired, "orphans_deleted": deleted}
 
     # =========================================================================
     # Background task records (persistence for main.py's in-memory task store)
