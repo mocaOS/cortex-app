@@ -35,6 +35,14 @@ verified. Recovery bothCI3.11/Node20+production still needs snapshot/upgrade/ima
 bindings. Next exact maintenance action remains the unchanged-source SSE-stats/
 SHOW_RETRIEVAL_STATS prose trace in the preceding handoff. Older pointers are history.
 
+**2026-10-26 runtime maintenance:** frontend images (`node:26-alpine` in both
+Dockerfiles) and both CI Node jobs (`node-version: "26"`, ci and release) moved off
+EOL Node20 to Node26; `@types/node` is now^26.6.5 and Chat's source prerequisite
+prose follows to Node26. Recorded Node20 executions retain their original basis.
+Gates run for this change were local only (script tests, version sync, docs
+validator, frontend tsc/lint/build, one `node:26-alpine` prod-image smoke); no
+image publish, release or recovery pair was replayed.
+
 ## Latest continuation — optional nonstream projection, v2.20.0
 
 Translate/local/uncommitted; published heads unchanged. Start8812 retained

@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "26"
 
       - name: Tag must equal root package.json version
         run: node scripts/check-version-sync.mjs --tag "${GITHUB_REF_NAME}"
@@ -148,7 +148,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "26"
 
       - name: Generate stack.json
         run: node scripts/build-stack-json.mjs --out stack.json

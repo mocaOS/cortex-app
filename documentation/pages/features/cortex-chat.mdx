@@ -125,7 +125,7 @@ Minted keys live in the key store of the backend they were minted against. Re-po
 
 - A running Cortex instance (personality **Generate** additionally needs a Cortex release that ships `POST /api/llm/completions` — older backends show a clear message)
 - An **admin-tier API key** from that instance — the `ADMIN_API_KEY` value configured in the Cortex backend's environment, **not** a key minted in Settings → API Keys (those are read/manage-tier, `cortex_ro_`/`cortex_rw_`/`cortex_pub_`-prefixed; see the [authentication guide](/guides/authentication))
-- Docker, or Node.js 20+ to run from source (Chat is a Next.js 16 app)
+- Docker, or Node.js 26+ to run from source (Chat is a Next.js 16 app)
 
 ### Environment reference
 

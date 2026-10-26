@@ -10,7 +10,7 @@ This chapter covers deploying your own Cortex Library instance. Whether you're s
 | **RAM** | 4 GB minimum | 8 GB+ recommended |
 | **LLM API Key** | Required | Required |
 | **Domain Name** | Not needed | Required (for SSL) |
-| **Node.js 20+** | Only for local dev (no Docker) | Not needed |
+| **Node.js 26+** | Only for local dev (no Docker) | Not needed |
 | **Python 3.11+** | Only for local dev (no Docker) | Not needed |
 
 **LLM Provider**: You need an API key from OpenAI, Anthropic (via LiteLLM), Azure OpenAI, or any OpenAI-compatible API provider. The Library is LLM-agnostic — any provider that exposes an OpenAI-compatible `/v1/chat/completions` endpoint will work.

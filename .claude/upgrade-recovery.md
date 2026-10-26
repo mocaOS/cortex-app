@@ -184,6 +184,8 @@ Python3.11/Node20 consumer pair and production images for the next disposable
 recovery replay. This closes the target-choice prerequisite only; select the
 snapshot mechanism and supported upgrade pairs and bind retained image identities
 before execution. No restore/DNS/release gate was repeated for this decision.
+**2026-10-26 correction:** CI moved Node20 → Node26, so the CI consumer pair is now
+Python3.11/Node26; the pending replay now targets that pair.
 Current handoff: `qa/NEXT_SESSION.md`, legacy-agentic continuation.
 
 Recorded, not fixed (do not silently work around them in docs):

@@ -209,7 +209,7 @@ Worth knowing as an operator, even though none of it needs configuration: Cortex
 
 - A running Cortex instance (any deployment from [Chapter 3](03-getting-started.md)).
 - An **admin-tier API key** from that instance — the `ADMIN_API_KEY` value configured in the Cortex backend's environment, not a key minted in Settings → API Keys (those are read/manage-tier and cannot mint further keys; see [Chapter 4](04-configuration.md) and [Chapter 17](17-administration.md)). The personality **Generate** flow additionally needs a Cortex release that ships the raw completion endpoint (`POST /api/llm/completions`) — older backends show a clear message and everything else keeps working. That endpoint follows `DEFAULT_REASONING_MODE` (default `off`); on a thinking-by-default model (Qwen3.x) with reasoning left on, the writer can spend its whole token budget on hidden reasoning and the run ends with an "empty answer" error — keep the default or pick a non-thinking model.
-- Node.js 20+ if running from source (Chat is a Next.js 16 app), or Docker
+- Node.js 26+ if running from source (Chat is a Next.js 16 app), or Docker
 
 ### Configuration
 
